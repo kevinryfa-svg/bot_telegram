@@ -33,8 +33,7 @@ PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
 PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
 PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
 
-SERVER_URL = "SERVER_URL = "https://bottelegram-production-60c0.up.railway.app"
-
+SERVER_URL = "https://bottelegram-production-60c0.up.railway.app"
 bot = Bot(token=TOKEN)
 
 app = Flask(__name__)
