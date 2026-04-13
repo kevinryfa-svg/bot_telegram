@@ -711,16 +711,41 @@ def main():
 
     create_tables()
 
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("generarcodigo", generar_codigo))
-    telegram_app.add_handler(CommandHandler("codigos", ver_codigos))
-    telegram_app.add_handler(CommandHandler("usuarios", ver_usuarios))
+    # =========================
+    # COMANDOS
+    # =========================
 
-telegram_app.add_handler(
-    CommandHandler("admin", admin_panel)
-) 
+    telegram_app.add_handler(
+        CommandHandler("start", start)
+    )
 
-    telegram_app.add_handler(CallbackQueryHandler(button))
+    telegram_app.add_handler(
+        CommandHandler("generarcodigo", generar_codigo)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("codigos", ver_codigos)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("usuarios", ver_usuarios)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("admin", admin_panel)
+    )
+
+    # =========================
+    # CALLBACKS
+    # =========================
+
+    telegram_app.add_handler(
+        CallbackQueryHandler(button)
+    )
+
+    # =========================
+    # MENSAJES TEXTO
+    # =========================
 
     telegram_app.add_handler(
         MessageHandler(
@@ -729,7 +754,9 @@ telegram_app.add_handler(
         )
     )
 
-    # 🔴 CONTROLAR NUEVOS MIEMBROS
+    # =========================
+    # NUEVOS MIEMBROS
+    # =========================
 
     telegram_app.add_handler(
         MessageHandler(
@@ -737,6 +764,10 @@ telegram_app.add_handler(
             check_new_member
         )
     )
+
+    # =========================
+    # THREADS
+    # =========================
 
     threading.Thread(
         target=check_expirations,
