@@ -41,6 +41,17 @@ app = Flask(__name__)
 
 
 # =========================
+# RESET TELEGRAM (MUY IMPORTANTE)
+# =========================
+
+try:
+    bot.delete_webhook(drop_pending_updates=True)
+    print("Webhook anterior eliminado correctamente")
+except Exception as e:
+    print("No había webhook previo:", e)
+
+
+# =========================
 # DATABASE
 # =========================
 
@@ -199,18 +210,7 @@ def stripe_webhook():
 
         user_id = session["metadata"]["telegram_id"]
 
-        price_id = session["display_items"][0]["price"]["id"]
-
-        if price_id == PRICE_1_DIA:
-            days = 1
-
-        elif price_id == PRICE_7_DIAS:
-            days = 7
-
-        else:
-            days = 0
-
-        add_user(int(user_id), days)
+        add_user(int(user_id), 1)
 
         invite_link = bot.create_chat_invite_link(
             chat_id=GROUP_ID,
@@ -236,16 +236,18 @@ def home():
 
 
 # =========================
-# START SERVER
+# START
 # =========================
 
 if __name__ == "__main__":
 
     port = int(os.environ.get("PORT"))
 
-    telegram_app.bot.set_webhook(
+    bot.set_webhook(
         url=f"{SERVER_URL}/{TOKEN}"
     )
+
+    print("Webhook nuevo configurado")
 
     app.run(
         host="0.0.0.0",
