@@ -21,7 +21,9 @@ from telegram.ext import (
     filters
 )
 
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from db import conn, create_tables
 
 # =========================
 # CONFIG
@@ -43,7 +45,34 @@ flask_app = Flask(__name__)
 
 telegram_app = ApplicationBuilder().token(TOKEN).build()
 
-authorized_users = set()
+# =========================
+# GUARDAR USUARIO
+# =========================
+
+def add_user(user_id, days):
+
+    if days == 0:
+        expiration = None
+
+    else:
+        expiration = datetime.now() + timedelta(days=days)
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO users (user_id, expiration)
+
+            VALUES (%s, %s)
+
+            ON CONFLICT (user_id)
+
+            DO UPDATE SET expiration=%s
+
+        """, (user_id, expiration, expiration))
+
+        conn.commit()
+
 
 # =========================
 # START
@@ -122,7 +151,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# CONTROLAR ENTRADAS
+# CONTROL ENTRADAS
 # =========================
 
 async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -133,11 +162,18 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_id = member.id
 
-        print("Usuario entró:", user_id)
+        with conn.cursor() as cur:
 
-        if user_id not in authorized_users:
+            cur.execute(
+                "SELECT expiration FROM users WHERE user_id=%s",
+                (user_id,)
+            )
 
-            print("Usuario NO autorizado:", user_id)
+            result = cur.fetchone()
+
+        if not result:
+
+            print("Intruso expulsado:", user_id)
 
             await context.bot.ban_chat_member(
                 chat_id=GROUP_ID,
@@ -148,6 +184,54 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=GROUP_ID,
                 user_id=user_id
             )
+
+
+# =========================
+# REVISAR EXPIRACIONES
+# =========================
+
+def check_expirations():
+
+    while True:
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    "SELECT user_id, expiration FROM users"
+                )
+
+                users = cur.fetchall()
+
+            now = datetime.now()
+
+            for user_id, expiration in users:
+
+                if expiration and now > expiration:
+
+                    print("Expulsando por expiración:", user_id)
+
+                    asyncio.run(
+                        bot.ban_chat_member(
+                            chat_id=GROUP_ID,
+                            user_id=user_id
+                        )
+                    )
+
+                    asyncio.run(
+                        bot.unban_chat_member(
+                            chat_id=GROUP_ID,
+                            user_id=user_id
+                        )
+                    )
+
+        except Exception as e:
+
+            print("Error revisando expiraciones:", e)
+
+        import time
+        time.sleep(60)
 
 
 # =========================
@@ -179,9 +263,22 @@ def stripe_webhook():
 
         user_id = int(session["metadata"]["telegram_id"])
 
-        print("Pago confirmado:", user_id)
+        line_items = stripe.checkout.Session.list_line_items(
+            session["id"]
+        )
 
-        authorized_users.add(user_id)
+        price_id = line_items["data"][0]["price"]["id"]
+
+        if price_id == PRICE_1_DIA:
+            days = 1
+
+        elif price_id == PRICE_7_DIAS:
+            days = 7
+
+        else:
+            days = 0
+
+        add_user(user_id, days)
 
         try:
 
@@ -199,8 +296,6 @@ def stripe_webhook():
 
             asyncio.run(send_link())
 
-            print("Link enviado correctamente")
-
         except Exception as e:
 
             print("Error enviando link:", e)
@@ -214,7 +309,7 @@ def home():
 
 
 # =========================
-# FLASK RUN
+# RUN
 # =========================
 
 def run_flask():
@@ -227,11 +322,9 @@ def run_flask():
     )
 
 
-# =========================
-# MAIN
-# =========================
-
 def main():
+
+    create_tables()
 
     telegram_app.add_handler(
         CommandHandler("start", start)
@@ -252,7 +345,9 @@ def main():
         target=run_flask
     ).start()
 
-    print("Bot iniciado")
+    threading.Thread(
+        target=check_expirations
+    ).start()
 
     telegram_app.run_polling()
 

@@ -1,10 +1,9 @@
-import psycopg2
 import os
+import psycopg2
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 conn = psycopg2.connect(DATABASE_URL)
-
 
 def create_tables():
 
@@ -15,6 +14,7 @@ def create_tables():
         CREATE TABLE IF NOT EXISTS users (
 
             user_id BIGINT PRIMARY KEY,
+
             expiration TIMESTAMP
 
         );
