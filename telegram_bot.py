@@ -9,7 +9,7 @@ from telegram.ext import (
 
 from config import TOKEN
 
-# URL DEL SERVIDOR
+# URL DEL SERVIDOR (tu Railway)
 SERVER_URL = "https://worker-production-9e88.up.railway.app"
 
 
@@ -61,7 +61,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         )
 
+        print("Respuesta servidor:", response.text)
+
         data = response.json()
+
+        if "url" not in data:
+
+            await query.message.reply_text(
+                f"Error Stripe:\n{data}"
+            )
+
+            return
 
         payment_url = data["url"]
 
@@ -71,10 +81,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
 
-        print("Error creando pago:", e)
+        print("ERROR REAL:", e)
 
         await query.message.reply_text(
-            "Error creando el pago ❌"
+            f"Error creando pago:\n{e}"
         )
 
 
