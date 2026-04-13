@@ -1,6 +1,5 @@
 import os
 import stripe
-import psycopg2
 
 from flask import Flask, request
 from datetime import datetime, timedelta
@@ -164,14 +163,14 @@ telegram_app.add_handler(
 # =========================
 
 @app.route(f"/{TOKEN}", methods=["POST"])
-async def telegram_webhook():
+def telegram_webhook():
 
     update = Update.de_json(
         request.get_json(force=True),
         bot
     )
 
-    await telegram_app.process_update(update)
+    telegram_app.update_queue.put_nowait(update)
 
     return "OK"
 
@@ -250,6 +249,8 @@ if __name__ == "__main__":
     )
 
     print("Webhook configurado")
+
+    telegram_app.initialize()
 
     app.run(
         host="0.0.0.0",
