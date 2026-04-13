@@ -5,6 +5,7 @@ import asyncio
 import time
 import random
 import string
+import requests
 
 from telegram import (
     Bot,
@@ -36,7 +37,13 @@ GROUP_ID = int(os.environ.get("GROUP_ID"))
 
 ADMIN_ID = 8761243211
 
+SERVER_URL = os.environ.get("SERVER_URL")
+
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+
+PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
+PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
+PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
 
 bot = Bot(token=TOKEN)
 
@@ -59,7 +66,7 @@ def generate_code():
 
 
 # =========================
-# CREAR CÓDIGO
+# CREAR CÓDIGO (ADMIN)
 # =========================
 
 async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -109,15 +116,7 @@ async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if not context.args:
-
-        await update.message.reply_text(
-            "Uso:\n/codigo TU_CODIGO"
-        )
-
-        return
-
-    code = context.args[0]
+    code = update.message.text.strip()
 
     user_id = update.effective_user.id
 
@@ -189,6 +188,103 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# BOTONES
+# =========================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    keyboard = [
+
+        [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
+
+        [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
+
+        [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")],
+
+        [InlineKeyboardButton("🎟️ Usar código", callback_data="codigo")]
+
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+
+        "Bienvenido 💎\n\n"
+        "Elige una opción:",
+
+        reply_markup=reply_markup
+
+    )
+
+
+# =========================
+# BOTÓN CLICK
+# =========================
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    plan = query.data
+
+    if plan == "codigo":
+
+        await query.message.reply_text(
+            "Introduce tu código:"
+        )
+
+        context.user_data["waiting_code"] = True
+        return
+
+    try:
+
+        response = requests.post(
+            f"{SERVER_URL}/create-checkout-session",
+            json={
+                "telegram_id": user_id,
+                "plan": plan
+            }
+        )
+
+        data = response.json()
+
+        if "url" not in data:
+
+            await query.message.reply_text(
+                f"Error Stripe:\n{data}"
+            )
+
+            return
+
+        payment_url = data["url"]
+
+        await query.message.reply_text(
+            f"💳 Paga aquí:\n{payment_url}"
+        )
+
+    except Exception as e:
+
+        await query.message.reply_text(
+            f"Error creando pago:\n{e}"
+        )
+
+
+# =========================
+# RECIBIR CÓDIGO TEXTO
+# =========================
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if context.user_data.get("waiting_code"):
+
+        context.user_data["waiting_code"] = False
+
+        await usar_codigo(update, context)
+
+
+# =========================
 # CONTROL ENTRADAS
 # =========================
 
@@ -223,7 +319,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# EXPIRACIONES (HILO)
+# EXPIRACIONES
 # =========================
 
 def expiration_thread():
@@ -268,17 +364,6 @@ def expiration_thread():
 
 
 # =========================
-# START
-# =========================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    await update.message.reply_text(
-        "Bienvenido 💎"
-    )
-
-
-# =========================
 # MAIN
 # =========================
 
@@ -295,7 +380,14 @@ def main():
     )
 
     telegram_app.add_handler(
-        CommandHandler("codigo", usar_codigo)
+        CallbackQueryHandler(button)
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_text
+        )
     )
 
     telegram_app.add_handler(
