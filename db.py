@@ -1,14 +1,9 @@
-
-
-
 import psycopg2
-
 import os
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-
-conn = psycopg2.connect("postgresql://postgres:PHhoNqjunRfgGjnkqMYeZkrEQUuFMoqR@metro.proxy.rlwy.net:16800/railway")
-
+conn = psycopg2.connect(DATABASE_URL)
 
 
 def create_tables():
@@ -20,7 +15,6 @@ def create_tables():
         CREATE TABLE IF NOT EXISTS users (
 
             user_id BIGINT PRIMARY KEY,
-
             expiration TIMESTAMP
 
         );
@@ -28,6 +22,3 @@ def create_tables():
         """)
 
         conn.commit()
-
-
-
