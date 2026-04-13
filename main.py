@@ -645,26 +645,19 @@ def main():
         )
     )
 
-# 🔴 CONTROLAR NUEVOS MIEMBROS
+    # 🔴 CONTROLAR NUEVOS MIEMBROS
 
-telegram_app.add_handler(
-
-    MessageHandler(
-
-        filters.StatusUpdate.NEW_CHAT_MEMBERS,
-
-        check_new_member
-
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            check_new_member
+        )
     )
-
-)
 
     threading.Thread(
         target=check_expirations,
         daemon=True
     ).start()
-
-    # 🔴 ARRANCAR FLASK
 
     threading.Thread(
         target=run_flask,
