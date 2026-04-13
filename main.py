@@ -1,7 +1,6 @@
 import os
 import stripe
 import threading
-import asyncio
 import time
 import random
 import string
@@ -34,10 +33,9 @@ from db import conn, create_tables
 
 TOKEN = os.environ.get("TOKEN")
 GROUP_ID = int(os.environ.get("GROUP_ID"))
+SERVER_URL = os.environ.get("SERVER_URL")
 
 ADMIN_ID = 8761243211
-
-SERVER_URL = os.environ.get("SERVER_URL")
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 
@@ -62,7 +60,7 @@ def generate_code():
 
 
 # =========================
-# BOTONES GENERAR CÓDIGO
+# CREAR CÓDIGO (ADMIN)
 # =========================
 
 async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -80,16 +78,14 @@ async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ]
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
-        "Selecciona duración del código:",
-        reply_markup=reply_markup
+        "Selecciona duración:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
 # =========================
-# CREAR CÓDIGO
+# CREAR CÓDIGO CALLBACK
 # =========================
 
 async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,137 +108,24 @@ async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TY
     with conn.cursor() as cur:
 
         cur.execute("""
-            INSERT INTO invite_codes
-            (code, duration)
+            INSERT INTO invite_codes (code, duration)
             VALUES (%s, %s)
         """, (code, duration))
 
         conn.commit()
 
     if duration == 0:
-        duracion_texto = "Permanente"
+        duracion = "Permanente"
     else:
-        duracion_texto = f"{duration} minutos"
+        duracion = f"{duration} minutos"
 
     await query.message.reply_text(
 
         f"✅ Código creado:\n\n"
         f"{code}\n\n"
-        f"Duración: {duracion_texto}"
+        f"Duración: {duracion}"
 
     )
-
-
-# =========================
-# VER CÓDIGOS
-# =========================
-
-async def ver_codigos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-            SELECT code, duration, used
-            FROM invite_codes
-            ORDER BY code DESC
-            LIMIT 20
-        """)
-
-        rows = cur.fetchall()
-
-    if not rows:
-
-        await update.message.reply_text(
-            "No hay códigos."
-        )
-        return
-
-    texto = "🎟️ Últimos códigos:\n\n"
-
-    for code, duration, used in rows:
-
-        estado = "❌ usado" if used else "✅ activo"
-
-        texto += f"{code}\n{duration} min — {estado}\n\n"
-
-    await update.message.reply_text(texto)
-
-
-# =========================
-# BORRAR CÓDIGO
-# =========================
-
-async def borrar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if not context.args:
-
-        await update.message.reply_text(
-            "Uso:\n/borrarcodigo CODIGO"
-        )
-        return
-
-    code = context.args[0]
-
-    with conn.cursor() as cur:
-
-        cur.execute(
-            "DELETE FROM invite_codes WHERE code=%s",
-            (code,)
-        )
-
-        conn.commit()
-
-    await update.message.reply_text(
-        "🗑️ Código eliminado"
-    )
-
-
-# =========================
-# VER USUARIOS
-# =========================
-
-async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-            SELECT user_id, expiration
-            FROM users
-            ORDER BY expiration DESC
-            LIMIT 20
-        """)
-
-        users = cur.fetchall()
-
-    if not users:
-
-        await update.message.reply_text(
-            "No hay usuarios."
-        )
-        return
-
-    texto = "👥 Usuarios activos:\n\n"
-
-    for user_id, expiration in users:
-
-        if expiration:
-
-            texto += f"{user_id}\nExpira: {expiration}\n\n"
-
-        else:
-
-            texto += f"{user_id}\nPermanente\n\n"
-
-    await update.message.reply_text(texto)
 
 
 # =========================
@@ -278,8 +161,11 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if duration == 0:
+
         expiration = None
+
     else:
+
         expiration = datetime.now() + timedelta(
             minutes=duration
         )
@@ -287,8 +173,7 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with conn.cursor() as cur:
 
         cur.execute("""
-            INSERT INTO users
-            (user_id, expiration)
+            INSERT INTO users (user_id, expiration)
             VALUES (%s, %s)
             ON CONFLICT (user_id)
             DO UPDATE SET expiration=%s
@@ -328,11 +213,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ]
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
+
         "Bienvenido 💎\n\nElige una opción:",
-        reply_markup=reply_markup
+
+        reply_markup=InlineKeyboardMarkup(keyboard)
+
     )
 
 
@@ -348,6 +234,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data.startswith("gen_"):
+
         await crear_codigo_callback(update, context)
         return
 
@@ -375,7 +262,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# EXPIRACIONES
+# EXPIRACIONES (SIN ASYNC)
 # =========================
 
 def expiration_thread():
@@ -398,19 +285,29 @@ def expiration_thread():
 
                 if expiration and now > expiration:
 
-                    asyncio.run(
-                        bot.ban_chat_member(
-                            chat_id=GROUP_ID,
-                            user_id=user_id
-                        )
-                    )
+                    try:
 
-                    asyncio.run(
-                        bot.unban_chat_member(
-                            chat_id=GROUP_ID,
-                            user_id=user_id
+                        requests.post(
+                            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+                            json={
+                                "chat_id": GROUP_ID,
+                                "user_id": user_id
+                            }
                         )
-                    )
+
+                        requests.post(
+                            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+                            json={
+                                "chat_id": GROUP_ID,
+                                "user_id": user_id
+                            }
+                        )
+
+                        print("Usuario expulsado:", user_id)
+
+                    except Exception as e:
+
+                        print("Error expulsando:", e)
 
         except Exception as e:
 
@@ -427,17 +324,17 @@ def main():
 
     create_tables()
 
-    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(
+        CommandHandler("start", start)
+    )
 
-    telegram_app.add_handler(CommandHandler("generarcodigo", generar_codigo))
+    telegram_app.add_handler(
+        CommandHandler("generarcodigo", generar_codigo)
+    )
 
-    telegram_app.add_handler(CommandHandler("usuarios", ver_usuarios))
-
-    telegram_app.add_handler(CommandHandler("codigos", ver_codigos))
-
-    telegram_app.add_handler(CommandHandler("borrarcodigo", borrar_codigo))
-
-    telegram_app.add_handler(CallbackQueryHandler(button))
+    telegram_app.add_handler(
+        CallbackQueryHandler(button)
+    )
 
     telegram_app.add_handler(
         MessageHandler(
@@ -447,7 +344,8 @@ def main():
     )
 
     threading.Thread(
-        target=expiration_thread
+        target=expiration_thread,
+        daemon=True
     ).start()
 
     print("Bot iniciado correctamente")
