@@ -1,7 +1,6 @@
 import os
 import stripe
 import threading
-import time
 import random
 import string
 import requests
@@ -19,12 +18,10 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
+    ContextTypes
 )
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from db import conn, create_tables
 
@@ -114,21 +111,14 @@ async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TY
     with conn.cursor() as cur:
 
         cur.execute("""
-
-            INSERT INTO invite_codes
-            (code, duration)
-
+            INSERT INTO invite_codes (code, duration)
             VALUES (%s, %s)
-
         """, (code, duration))
 
         conn.commit()
 
     await query.message.reply_text(
-
-        f"✅ Código creado:\n\n"
-        f"{code}"
-
+        f"✅ Código creado:\n\n{code}"
     )
 
 
@@ -144,22 +134,13 @@ async def ver_codigos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with conn.cursor() as cur:
 
         cur.execute("""
-
             SELECT code, duration, used
             FROM invite_codes
             ORDER BY code DESC
             LIMIT 20
-
         """)
 
         rows = cur.fetchall()
-
-    if not rows:
-
-        await update.message.reply_text(
-            "No hay códigos."
-        )
-        return
 
     texto = "🎟️ Códigos:\n\n"
 
@@ -184,34 +165,19 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with conn.cursor() as cur:
 
         cur.execute("""
-
             SELECT user_id, expiration
             FROM users
             ORDER BY expiration DESC
             LIMIT 20
-
         """)
 
         users = cur.fetchall()
-
-    if not users:
-
-        await update.message.reply_text(
-            "No hay usuarios."
-        )
-        return
 
     texto = "👥 Usuarios:\n\n"
 
     for user_id, expiration in users:
 
-        if expiration:
-
-            texto += f"{user_id}\n{expiration}\n\n"
-
-        else:
-
-            texto += f"{user_id}\nPermanente\n\n"
+        texto += f"{user_id}\n{expiration}\n\n"
 
     await update.message.reply_text(texto)
 
@@ -260,9 +226,7 @@ def create_checkout_session():
 
     )
 
-    return jsonify({
-        "url": session.url
-    })
+    return jsonify({"url": session.url})
 
 
 # =========================
@@ -327,14 +291,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
         [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
-        [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")],
-        [InlineKeyboardButton("🎟️ Usar código", callback_data="codigo")]
+        [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")]
 
     ]
 
     await update.message.reply_text(
 
-        "Bienvenido 💎\n\nElige una opción:",
+        "Bienvenido 💎",
 
         reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -350,31 +313,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    data = query.data
-
-    if data.startswith("gen_"):
-
-        await crear_codigo_callback(update, context)
-        return
-
-    if data == "codigo":
-
-        await query.message.reply_text(
-            "Introduce tu código:"
-        )
-
-        context.user_data["waiting_code"] = True
-        return
-
-    # PAGOS
-
+    plan = query.data
     user_id = query.from_user.id
 
     response = requests.post(
         f"{SERVER_URL}/create-checkout-session",
         json={
             "telegram_id": user_id,
-            "plan": data
+            "plan": plan
         }
     )
 
@@ -386,37 +332,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# MAIN
+# RUN FLASK THREAD
 # =========================
-
-def run_bot():
-
-    create_tables()
-
-    telegram_app.add_handler(
-        CommandHandler("start", start)
-    )
-
-    telegram_app.add_handler(
-        CommandHandler("generarcodigo", generar_codigo)
-    )
-
-    telegram_app.add_handler(
-        CommandHandler("codigos", ver_codigos)
-    )
-
-    telegram_app.add_handler(
-        CommandHandler("usuarios", ver_usuarios)
-    )
-
-    telegram_app.add_handler(
-        CallbackQueryHandler(button)
-    )
-
-    print("Bot iniciado correctamente")
-
-    telegram_app.run_polling()
-
 
 def run_flask():
 
@@ -428,10 +345,29 @@ def run_flask():
     )
 
 
-if __name__ == "__main__":
+# =========================
+# MAIN
+# =========================
+
+def main():
+
+    create_tables()
+
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("generarcodigo", generar_codigo))
+    telegram_app.add_handler(CommandHandler("codigos", ver_codigos))
+    telegram_app.add_handler(CommandHandler("usuarios", ver_usuarios))
+    telegram_app.add_handler(CallbackQueryHandler(button))
 
     threading.Thread(
-        target=run_bot
+        target=run_flask,
+        daemon=True
     ).start()
 
-    run_flask()
+    print("Bot iniciado correctamente")
+
+    telegram_app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
