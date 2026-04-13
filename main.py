@@ -627,10 +627,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     # =========================
+# BOTONES
+# =========================
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+
+
+    # =========================
     # PANEL ADMIN BOTONES
     # =========================
 
     if data == "admin_users":
+
+        if query.from_user.id != ADMIN_ID:
+            return
 
         with conn.cursor() as cur:
 
@@ -649,6 +664,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data == "admin_codes":
+
+        if query.from_user.id != ADMIN_ID:
+            return
 
         with conn.cursor() as cur:
 
@@ -696,6 +714,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_stats":
 
+        if query.from_user.id != ADMIN_ID:
+            return
+
         with conn.cursor() as cur:
 
             cur.execute("""
@@ -714,12 +735,73 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_security":
 
+        if query.from_user.id != ADMIN_ID:
+            return
+
         await query.message.reply_text(
             "🛡️ Seguridad activa\n\nSistema anti-intrusos funcionando."
         )
 
         return
 
+
+    # =========================
+    # GENERAR CÓDIGOS
+    # =========================
+
+    if data.startswith("gen_"):
+
+        await crear_codigo_callback(update, context)
+        return
+
+
+    # =========================
+    # USAR CÓDIGO
+    # =========================
+
+    if data == "codigo":
+
+        context.user_data["waiting_code"] = True
+
+        await query.message.reply_text(
+            "Introduce tu código:"
+        )
+
+        return
+
+
+    # =========================
+    # PAGOS STRIPE
+    # =========================
+
+    user_id = query.from_user.id
+
+    try:
+
+        response = requests.post(
+
+            f"{SERVER_URL}/create-checkout-session",
+
+            json={
+                "telegram_id": user_id,
+                "plan": data
+            }
+
+        )
+
+        payment_url = response.json()["url"]
+
+        await query.message.reply_text(
+
+            f"💳 Paga aquí:\n{payment_url}"
+
+        )
+
+    except Exception as e:
+
+        await query.message.reply_text(
+            "❌ Error creando pago"
+        )
 
     # =========================
     # GENERAR CÓDIGOS
