@@ -3,6 +3,8 @@ import stripe
 import threading
 import asyncio
 import time
+import random
+import string
 
 from flask import Flask, request
 
@@ -34,6 +36,9 @@ from db import conn, create_tables
 TOKEN = os.environ.get("TOKEN")
 GROUP_ID = int(os.environ.get("GROUP_ID"))
 
+# ⚠️ PON AQUÍ TU ID DE TELEGRAM
+ADMIN_ID = 8761243211
+
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
@@ -49,7 +54,170 @@ telegram_app = ApplicationBuilder().token(TOKEN).build()
 
 
 # =========================
-# GUARDAR USUARIO
+# GENERAR CÓDIGOS
+# =========================
+
+def generate_code():
+
+    return ''.join(
+        random.choices(
+            string.ascii_uppercase +
+            string.digits,
+            k=20
+        )
+    )
+
+
+# =========================
+# CREAR CÓDIGO (ADMIN)
+# =========================
+
+async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+
+        await update.message.reply_text("No autorizado")
+        return
+
+    if not context.args:
+
+        await update.message.reply_text(
+
+            "Uso:\n"
+            "/generarcodigo minutos\n\n"
+            "Ejemplos:\n"
+            "15 min → /generarcodigo 15\n"
+            "1 día → /generarcodigo 1440\n"
+            "7 días → /generarcodigo 10080\n"
+            "30 días → /generarcodigo 43200"
+
+        )
+
+        return
+
+    duration = int(context.args[0])
+
+    code = generate_code()
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO invite_codes
+            (code, duration)
+
+            VALUES (%s, %s)
+
+        """, (code, duration))
+
+        conn.commit()
+
+    await update.message.reply_text(
+
+        f"✅ Código creado:\n\n"
+        f"{code}\n\n"
+        f"Duración: {duration} minutos"
+
+    )
+
+
+# =========================
+# USAR CÓDIGO
+# =========================
+
+async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not context.args:
+
+        await update.message.reply_text(
+            "Uso:\n/codigo TU_CODIGO"
+        )
+
+        return
+
+    code = context.args[0]
+
+    user_id = update.effective_user.id
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT duration, used
+            FROM invite_codes
+            WHERE code=%s
+
+        """, (code,))
+
+        result = cur.fetchone()
+
+    if not result:
+
+        await update.message.reply_text(
+            "❌ Código inválido"
+        )
+
+        return
+
+    duration, used = result
+
+    if used:
+
+        await update.message.reply_text(
+            "❌ Código ya usado"
+        )
+
+        return
+
+    expiration = datetime.now() + timedelta(
+        minutes=duration
+    )
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO users
+            (user_id, expiration)
+
+            VALUES (%s, %s)
+
+            ON CONFLICT (user_id)
+            DO UPDATE SET expiration=%s
+
+        """, (user_id, expiration, expiration))
+
+        cur.execute("""
+
+            UPDATE invite_codes
+            SET used=TRUE
+            WHERE code=%s
+
+        """, (code,))
+
+        conn.commit()
+
+    async def send_link():
+
+        invite_link = await bot.create_chat_invite_link(
+            chat_id=GROUP_ID,
+            member_limit=1
+        )
+
+        await bot.send_message(
+            chat_id=user_id,
+            text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
+        )
+
+    asyncio.run(send_link())
+
+    await update.message.reply_text(
+        "✅ Código activado correctamente"
+    )
+
+
+# =========================
+# GUARDAR USUARIO (STRIPE)
 # =========================
 
 def add_user(user_id, days):
@@ -64,12 +232,12 @@ def add_user(user_id, days):
 
         cur.execute("""
 
-            INSERT INTO users (user_id, expiration)
+            INSERT INTO users
+            (user_id, expiration)
 
             VALUES (%s, %s)
 
             ON CONFLICT (user_id)
-
             DO UPDATE SET expiration=%s
 
         """, (user_id, expiration, expiration))
@@ -100,60 +268,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# BOTONES
-# =========================
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.callback_query
-    await query.answer()
-
-    telegram_id = query.from_user.id
-    plan = query.data
-
-    if plan == "1":
-        price = PRICE_1_DIA
-
-    elif plan == "7":
-        price = PRICE_7_DIAS
-
-    else:
-        price = PRICE_PERMANENTE
-
-    try:
-
-        session = stripe.checkout.Session.create(
-
-            payment_method_types=["card"],
-
-            line_items=[{
-                "price": price,
-                "quantity": 1,
-            }],
-
-            mode="payment",
-
-            success_url="https://t.me/TheStarVipBOT",
-            cancel_url="https://t.me/TheStarVipBOT",
-
-            metadata={
-                "telegram_id": str(telegram_id)
-            }
-
-        )
-
-        await query.message.reply_text(
-            f"💳 Paga aquí:\n{session.url}"
-        )
-
-    except Exception as e:
-
-        await query.message.reply_text(
-            f"Error Stripe:\n{e}"
-        )
-
-
-# =========================
 # CONTROL ENTRADAS
 # =========================
 
@@ -175,8 +289,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result = cur.fetchone()
 
         if not result:
-
-            print("Intruso expulsado:", user_id)
 
             await context.bot.ban_chat_member(
                 chat_id=GROUP_ID,
@@ -213,8 +325,6 @@ def check_expirations():
 
                 if expiration and now > expiration:
 
-                    print("Expulsando por expiración:", user_id)
-
                     asyncio.run(
                         bot.ban_chat_member(
                             chat_id=GROUP_ID,
@@ -231,102 +341,14 @@ def check_expirations():
 
         except Exception as e:
 
-            print("Error revisando expiraciones:", e)
-
-        # producción real
+            print("Error expiraciones:", e)
 
         time.sleep(60)
 
 
 # =========================
-# WEBHOOK STRIPE
+# REGISTRAR COMANDOS
 # =========================
-
-@flask_app.route("/webhook", methods=["POST"])
-def stripe_webhook():
-
-    payload = request.data
-    sig_header = request.headers.get("stripe-signature")
-
-    try:
-
-        event = stripe.Webhook.construct_event(
-            payload,
-            sig_header,
-            WEBHOOK_SECRET
-        )
-
-    except Exception as e:
-
-        print("Webhook error:", e)
-        return "Error", 400
-
-    if event["type"] == "checkout.session.completed":
-
-        session = event["data"]["object"]
-
-        user_id = int(session["metadata"]["telegram_id"])
-
-        line_items = stripe.checkout.Session.list_line_items(
-            session["id"]
-        )
-
-        price_id = line_items["data"][0]["price"]["id"]
-
-        # TIEMPOS REALES
-
-        if price_id == PRICE_1_DIA:
-            days = 1
-
-        elif price_id == PRICE_7_DIAS:
-            days = 7
-
-        else:
-            days = 0
-
-        add_user(user_id, days)
-
-        try:
-
-            async def send_link():
-
-                invite_link = await bot.create_chat_invite_link(
-                    chat_id=GROUP_ID,
-                    member_limit=1
-                )
-
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
-                )
-
-            asyncio.run(send_link())
-
-        except Exception as e:
-
-            print("Error enviando link:", e)
-
-    return "OK"
-
-
-@flask_app.route("/")
-def home():
-    return "Bot funcionando"
-
-
-# =========================
-# RUN
-# =========================
-
-def run_flask():
-
-    port = int(os.environ.get("PORT"))
-
-    flask_app.run(
-        host="0.0.0.0",
-        port=port
-    )
-
 
 def main():
 
@@ -337,7 +359,11 @@ def main():
     )
 
     telegram_app.add_handler(
-        CallbackQueryHandler(button)
+        CommandHandler("generarcodigo", generar_codigo)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("codigo", usar_codigo)
     )
 
     telegram_app.add_handler(
@@ -346,10 +372,6 @@ def main():
             check_new_member
         )
     )
-
-    threading.Thread(
-        target=run_flask
-    ).start()
 
     threading.Thread(
         target=check_expirations

@@ -10,12 +10,28 @@ def create_tables():
 
     with conn.cursor() as cur:
 
+        # TABLA USUARIOS
+
         cur.execute("""
 
         CREATE TABLE IF NOT EXISTS users (
 
             user_id BIGINT PRIMARY KEY,
             expiration TIMESTAMP
+
+        );
+
+        """)
+
+        # TABLA CODIGOS
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS invite_codes (
+
+            code TEXT PRIMARY KEY,
+            duration INTEGER,
+            used BOOLEAN DEFAULT FALSE
 
         );
 
