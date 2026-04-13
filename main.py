@@ -391,7 +391,57 @@ def stripe_webhook():
 
         session = event["data"]["object"]
 
-        user_id = session["metadata"]["telegram_id"]
+        user_id = int(
+            session["metadata"]["telegram_id"]
+        )
+
+        # 🔴 OBTENER PLAN PAGADO
+
+        line_items = stripe.checkout.Session.list_line_items(
+            session["id"]
+        )
+
+        price_id = line_items["data"][0]["price"]["id"]
+
+        # 🔴 CALCULAR DURACIÓN
+
+        if price_id == PRICE_1_DIA:
+
+            expiration = datetime.now() + timedelta(days=1)
+
+        elif price_id == PRICE_7_DIAS:
+
+            expiration = datetime.now() + timedelta(days=7)
+
+        elif price_id == PRICE_PERMANENTE:
+
+            expiration = None
+
+        else:
+
+            expiration = None
+
+        # 🔴 GUARDAR USUARIO EN DB
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+            INSERT INTO users
+            (user_id, expiration)
+
+            VALUES (%s, %s)
+
+            ON CONFLICT (user_id)
+            DO UPDATE SET expiration=%s
+
+            """, (user_id, expiration, expiration))
+
+            conn.commit()
+
+        print("Usuario guardado:", user_id)
+
+        # 🔴 CREAR LINK (NO member_limit)
 
         invite_link = requests.post(
 
@@ -399,19 +449,21 @@ def stripe_webhook():
 
             json={
                 "chat_id": GROUP_ID,
-                "member_limit": 1
+                "expire_date": int(time.time()) + 300
             }
 
         ).json()
 
         link = invite_link["result"]["invite_link"]
 
+        # 🔴 ENVIAR LINK
+
         requests.post(
 
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
 
             json={
-                "chat_id": int(user_id),
+                "chat_id": user_id,
                 "text": f"🔗 Tu acceso VIP:\n{link}"
             }
 
