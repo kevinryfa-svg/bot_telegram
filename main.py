@@ -2,6 +2,7 @@ import os
 import stripe
 import threading
 import asyncio
+import time
 
 from flask import Flask, request
 
@@ -25,6 +26,7 @@ from datetime import datetime, timedelta
 
 from db import conn, create_tables
 
+
 # =========================
 # CONFIG
 # =========================
@@ -45,11 +47,14 @@ flask_app = Flask(__name__)
 
 telegram_app = ApplicationBuilder().token(TOKEN).build()
 
+
 # =========================
 # GUARDAR USUARIO
 # =========================
 
 def add_user(user_id, days):
+
+    # ⚠️ PRUEBA: minutos en vez de días
 
     if days == 0:
         expiration = None
@@ -230,8 +235,9 @@ def check_expirations():
 
             print("Error revisando expiraciones:", e)
 
-        import time
-        time.sleep(60)
+        # ⚠️ PRUEBA: revisa cada 10 segundos
+
+        time.sleep(10)
 
 
 # =========================
@@ -269,11 +275,13 @@ def stripe_webhook():
 
         price_id = line_items["data"][0]["price"]["id"]
 
+        # ⚠️ PRUEBA 60 SEGUNDOS
+
         if price_id == PRICE_1_DIA:
-            days = 1
+            days = 0.001   # ≈ 1 minuto
 
         elif price_id == PRICE_7_DIAS:
-            days = 7
+            days = 0.002   # ≈ 2 minutos
 
         else:
             days = 0
