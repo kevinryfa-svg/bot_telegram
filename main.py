@@ -45,20 +45,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
 
-        [InlineKeyboardButton(
-            "🟢 1 día — 5€",
-            callback_data="1"
-        )],
-
-        [InlineKeyboardButton(
-            "🟡 7 días — 10€",
-            callback_data="7"
-        )],
-
-        [InlineKeyboardButton(
-            "🔵 Permanente — 25€",
-            callback_data="0"
-        )]
+        [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
+        [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
+        [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")]
 
     ]
 
@@ -155,14 +144,10 @@ def stripe_webhook():
 
         print("Pago confirmado:", user_id)
 
-        # Crear link único
-
         invite_link = bot.create_chat_invite_link(
             chat_id=GROUP_ID,
             member_limit=1
         )
-
-        # Enviar link al usuario
 
         bot.send_message(
             chat_id=int(user_id),
@@ -172,23 +157,38 @@ def stripe_webhook():
     return "OK"
 
 
-# =========================
-# HOME TEST
-# =========================
-
 @flask_app.route("/")
 def home():
-
     return "Bot funcionando"
 
 
 # =========================
-# TELEGRAM RUN
+# FLASK RUN
 # =========================
 
-def run_bot():
+def run_flask():
 
-    print("Bot Telegram iniciado")
+    port = int(os.environ.get("PORT"))
+
+    flask_app.run(
+        host="0.0.0.0",
+        port=port
+    )
+
+
+# =========================
+# MAIN
+# =========================
+
+def main():
+
+    print("Iniciando Flask...")
+
+    threading.Thread(
+        target=run_flask
+    ).start()
+
+    print("Iniciando Telegram...")
 
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -203,19 +203,5 @@ def run_bot():
     app.run_polling()
 
 
-# =========================
-# MAIN
-# =========================
-
 if __name__ == "__main__":
-
-    threading.Thread(
-        target=run_bot
-    ).start()
-
-    port = int(os.environ.get("PORT"))
-
-    flask_app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    main()
