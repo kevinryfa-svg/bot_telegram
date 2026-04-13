@@ -626,46 +626,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     )
 
-# =========================
-# PANEL ADMIN
-# =========================
-
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    keyboard = [
-
-        [InlineKeyboardButton("👥 Usuarios", callback_data="admin_users")],
-
-        [InlineKeyboardButton("🎟️ Códigos", callback_data="admin_codes")],
-
-        [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")],
-
-        [InlineKeyboardButton("🛡️ Seguridad", callback_data="admin_security")]
-
-    ]
-
-    await update.message.reply_text(
-
-        "🔐 PANEL ADMIN",
-
-        reply_markup=InlineKeyboardMarkup(keyboard)
-
-    )
-
-# =========================
-# BOTONES
-# =========================
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-
     # =========================
     # PANEL ADMIN BOTONES
     # =========================
@@ -675,8 +635,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with conn.cursor() as cur:
 
             cur.execute("""
-            SELECT COUNT(*)
-            FROM users
+                SELECT COUNT(*)
+                FROM users
             """)
 
             total = cur.fetchone()[0]
@@ -688,7 +648,50 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-  if data == "admin_codes":
+    if data == "admin_codes":
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                SELECT code, duration, used
+                FROM invite_codes
+                ORDER BY code DESC
+                LIMIT 20
+            """)
+
+            rows = cur.fetchall()
+
+        if not rows:
+
+            await query.message.reply_text(
+                "No hay códigos creados."
+            )
+
+            return
+
+        texto = "🎟️ Últimos códigos:\n\n"
+
+        for code, duration, used in rows:
+
+            if duration == 0:
+                duracion_texto = "♾️ Permanente"
+
+            elif duration < 1440:
+                duracion_texto = f"{duration} min"
+
+            else:
+                duracion_texto = f"{duration//1440} días"
+
+            estado = "❌ USADO" if used else "✅ ACTIVO"
+
+            texto += (
+                f"{code}\n"
+                f"{duracion_texto} — {estado}\n\n"
+            )
+
+        await query.message.reply_text(texto)
+
+        return
 
 
     if data == "admin_stats":
@@ -696,8 +699,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with conn.cursor() as cur:
 
             cur.execute("""
-            SELECT COUNT(*)
-            FROM users
+                SELECT COUNT(*)
+                FROM users
             """)
 
             users_total = cur.fetchone()[0]
