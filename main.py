@@ -147,13 +147,6 @@ async def ver_codigos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         rows = cur.fetchall()
 
-    if not rows:
-
-        await update.message.reply_text(
-            "No hay códigos."
-        )
-        return
-
     texto = "🎟️ Códigos:\n\n"
 
     for code, duration, used in rows:
@@ -180,26 +173,15 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
             SELECT user_id, expiration
             FROM users
             ORDER BY expiration DESC
-            LIMIT 20
         """)
 
         users = cur.fetchall()
-
-    if not users:
-
-        await update.message.reply_text(
-            "No hay usuarios."
-        )
-        return
 
     texto = "👥 Usuarios:\n\n"
 
     for user_id, expiration in users:
 
-        if expiration:
-            texto += f"{user_id}\n{expiration}\n\n"
-        else:
-            texto += f"{user_id}\nPermanente\n\n"
+        texto += f"{user_id} — {expiration}\n"
 
     await update.message.reply_text(texto)
 
@@ -279,6 +261,107 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# STRIPE CREAR PAGO
+# =========================
+
+@app.route("/create-checkout-session", methods=["POST"])
+def create_checkout_session():
+
+    data = request.json
+
+    telegram_id = data["telegram_id"]
+    plan = data["plan"]
+
+    if plan == "1":
+        price_id = PRICE_1_DIA
+
+    elif plan == "7":
+        price_id = PRICE_7_DIAS
+
+    elif plan == "0":
+        price_id = PRICE_PERMANENTE
+
+    else:
+        return jsonify({"error": "Plan inválido"}), 400
+
+    session = stripe.checkout.Session.create(
+
+        payment_method_types=["card"],
+
+        line_items=[{
+            "price": price_id,
+            "quantity": 1,
+        }],
+
+        mode="payment",
+
+        success_url="https://t.me/TheStarVipBOT",
+        cancel_url="https://t.me/TheStarVipBOT",
+
+        metadata={
+            "telegram_id": str(telegram_id)
+        }
+
+    )
+
+    return jsonify({
+        "url": session.url
+    })
+
+
+# =========================
+# STRIPE WEBHOOK
+# =========================
+
+@app.route("/webhook", methods=["POST"])
+def stripe_webhook():
+
+    payload = request.data
+    sig_header = request.headers.get("stripe-signature")
+
+    try:
+
+        event = stripe.Webhook.construct_event(
+            payload,
+            sig_header,
+            WEBHOOK_SECRET
+        )
+
+    except Exception as e:
+
+        print("Webhook error:", e)
+        return "Error", 400
+
+    if event["type"] == "checkout.session.completed":
+
+        session = event["data"]["object"]
+
+        user_id = session["metadata"]["telegram_id"]
+
+        invite_link = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+            json={
+                "chat_id": GROUP_ID,
+                "member_limit": 1
+            }
+        ).json()
+
+        link = invite_link["result"]["invite_link"]
+
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={
+                "chat_id": int(user_id),
+                "text": f"🔗 Tu acceso VIP:\n{link}"
+            }
+        )
+
+        print("Pago confirmado:", user_id)
+
+    return "OK"
+
+
+# =========================
 # START
 # =========================
 
@@ -327,6 +410,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
+
+    # PAGOS STRIPE
+
+    user_id = query.from_user.id
+
+    response = requests.post(
+        f"{SERVER_URL}/create-checkout-session",
+        json={
+            "telegram_id": user_id,
+            "plan": data
+        }
+    )
+
+    payment_url = response.json()["url"]
+
+    await query.message.reply_text(
+        f"💳 Paga aquí:\n{payment_url}"
+    )
 
 
 # =========================
