@@ -421,6 +421,69 @@ def stripe_webhook():
 
     return "OK"
 
+# =========================
+# CONTROL ENTRADAS GRUPO
+# =========================
+
+async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message:
+        return
+
+    if not update.message.new_chat_members:
+        return
+
+    for member in update.message.new_chat_members:
+
+        user_id = member.id
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                SELECT user_id
+                FROM users
+                WHERE user_id=%s
+
+                """, (user_id,))
+
+                user = cur.fetchone()
+
+            if not user:
+
+                print("Expulsando usuario no autorizado:", user_id)
+
+                requests.post(
+
+                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                    json={
+                        "chat_id": GROUP_ID,
+                        "user_id": user_id
+                    }
+
+                )
+
+                requests.post(
+
+                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                    json={
+                        "chat_id": GROUP_ID,
+                        "user_id": user_id
+                    }
+
+                )
+
+            else:
+
+                print("Usuario autorizado:", user_id)
+
+        except Exception as e:
+
+            print("Error verificando miembro:", e)
 
 # =========================
 # EXPIRACIONES
@@ -581,6 +644,20 @@ def main():
             receive_code
         )
     )
+
+# 🔴 CONTROLAR NUEVOS MIEMBROS
+
+telegram_app.add_handler(
+
+    MessageHandler(
+
+        filters.StatusUpdate.NEW_CHAT_MEMBERS,
+
+        check_new_member
+
+    )
+
+)
 
     threading.Thread(
         target=check_expirations,
