@@ -1,7 +1,8 @@
 import os
 import stripe
+import asyncio
 
-from flask import Flask, request, jsonify
+from flask import Flask, request
 from datetime import datetime, timedelta
 
 from telegram import (
@@ -34,20 +35,10 @@ PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
 PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
 
 SERVER_URL = "https://bottelegram-production-60c0.up.railway.app"
+
 bot = Bot(token=TOKEN)
 
 app = Flask(__name__)
-
-
-# =========================
-# RESET TELEGRAM (MUY IMPORTANTE)
-# =========================
-
-try:
-    bot.delete_webhook(drop_pending_updates=True)
-    print("Webhook anterior eliminado correctamente")
-except Exception as e:
-    print("No había webhook previo:", e)
 
 
 # =========================
@@ -211,14 +202,18 @@ def stripe_webhook():
 
         add_user(int(user_id), 1)
 
-        invite_link = bot.create_chat_invite_link(
-            chat_id=GROUP_ID,
-            member_limit=1
+        invite_link = asyncio.run(
+            bot.create_chat_invite_link(
+                chat_id=GROUP_ID,
+                member_limit=1
+            )
         )
 
-        bot.send_message(
-            chat_id=int(user_id),
-            text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
+        asyncio.run(
+            bot.send_message(
+                chat_id=int(user_id),
+                text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
+            )
         )
 
     return "OK"
@@ -235,18 +230,26 @@ def home():
 
 
 # =========================
-# START
+# START SERVER
 # =========================
 
 if __name__ == "__main__":
 
     port = int(os.environ.get("PORT"))
 
-    bot.set_webhook(
-        url=f"{SERVER_URL}/{TOKEN}"
+    asyncio.run(
+        bot.delete_webhook(
+            drop_pending_updates=True
+        )
     )
 
-    print("Webhook nuevo configurado")
+    asyncio.run(
+        bot.set_webhook(
+            url=f"{SERVER_URL}/{TOKEN}"
+        )
+    )
+
+    print("Webhook configurado correctamente")
 
     app.run(
         host="0.0.0.0",
