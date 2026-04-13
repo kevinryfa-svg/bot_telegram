@@ -639,7 +639,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         [InlineKeyboardButton("👥 Usuarios", callback_data="admin_users")],
 
-        [InlineKeyboardButton("🎟️ Códigos", callback_data="admin_codes")],
+        [InlineKeyboardButton("🎟️ Ver códigos", callback_data="admin_codes")],
+
+        [InlineKeyboardButton("📤 Crear código", callback_data="admin_create_code")],
 
         [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")],
 
@@ -666,6 +668,39 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
+    # =========================
+    # CREAR CÓDIGO DESDE PANEL
+    # =========================
+
+    if data == "admin_create_code":
+
+        if query.from_user.id != ADMIN_ID:
+            return
+
+        keyboard = [
+
+            [InlineKeyboardButton("⏱️ 15 min", callback_data="gen_15")],
+
+            [InlineKeyboardButton("📅 1 día", callback_data="gen_1440")],
+
+            [InlineKeyboardButton("📅 7 días", callback_data="gen_10080")],
+
+            [InlineKeyboardButton("📅 30 días", callback_data="gen_43200")],
+
+            [InlineKeyboardButton("♾️ Permanente", callback_data="gen_perm")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "Selecciona duración del código:",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+        
 
     # =========================
     # PANEL ADMIN BOTONES
