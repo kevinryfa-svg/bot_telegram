@@ -6,8 +6,6 @@ import time
 import random
 import string
 
-from flask import Flask, request
-
 from telegram import (
     Bot,
     Update,
@@ -36,19 +34,15 @@ from db import conn, create_tables
 TOKEN = os.environ.get("TOKEN")
 GROUP_ID = int(os.environ.get("GROUP_ID"))
 
-# ⚠️ PON AQUÍ TU ID DE TELEGRAM
 ADMIN_ID = 8761243211
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
-WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
 PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
 PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
 PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
 
 bot = Bot(token=TOKEN)
-
-flask_app = Flask(__name__)
 
 telegram_app = ApplicationBuilder().token(TOKEN).build()
 
@@ -69,7 +63,7 @@ def generate_code():
 
 
 # =========================
-# CREAR CÓDIGO (ADMIN)
+# CREAR CÓDIGO
 # =========================
 
 async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -82,15 +76,7 @@ async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
 
         await update.message.reply_text(
-
-            "Uso:\n"
-            "/generarcodigo minutos\n\n"
-            "Ejemplos:\n"
-            "15 min → /generarcodigo 15\n"
-            "1 día → /generarcodigo 1440\n"
-            "7 días → /generarcodigo 10080\n"
-            "30 días → /generarcodigo 43200"
-
+            "Uso:\n/generarcodigo minutos"
         )
 
         return
@@ -153,20 +139,14 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not result:
 
-        await update.message.reply_text(
-            "❌ Código inválido"
-        )
-
+        await update.message.reply_text("❌ Código inválido")
         return
 
     duration, used = result
 
     if used:
 
-        await update.message.reply_text(
-            "❌ Código ya usado"
-        )
-
+        await update.message.reply_text("❌ Código ya usado")
         return
 
     expiration = datetime.now() + timedelta(
@@ -197,73 +177,18 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn.commit()
 
-    async def send_link():
+    invite_link = await bot.create_chat_invite_link(
+        chat_id=GROUP_ID,
+        member_limit=1
+    )
 
-        invite_link = await bot.create_chat_invite_link(
-            chat_id=GROUP_ID,
-            member_limit=1
-        )
-
-        await bot.send_message(
-            chat_id=user_id,
-            text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
-        )
-
-    asyncio.run(send_link())
+    await bot.send_message(
+        chat_id=user_id,
+        text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
+    )
 
     await update.message.reply_text(
         "✅ Código activado correctamente"
-    )
-
-
-# =========================
-# GUARDAR USUARIO (STRIPE)
-# =========================
-
-def add_user(user_id, days):
-
-    if days == 0:
-        expiration = None
-
-    else:
-        expiration = datetime.now() + timedelta(days=days)
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            INSERT INTO users
-            (user_id, expiration)
-
-            VALUES (%s, %s)
-
-            ON CONFLICT (user_id)
-            DO UPDATE SET expiration=%s
-
-        """, (user_id, expiration, expiration))
-
-        conn.commit()
-
-
-# =========================
-# START
-# =========================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    keyboard = [
-
-        [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
-        [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
-        [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")]
-
-    ]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        "Bienvenido 💎\n\nElige tu plan:",
-        reply_markup=reply_markup
     )
 
 
@@ -302,10 +227,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# REVISAR EXPIRACIONES
+# EXPIRACIONES (CORREGIDO)
 # =========================
 
-def check_expirations():
+async def expiration_loop():
 
     while True:
 
@@ -325,32 +250,50 @@ def check_expirations():
 
                 if expiration and now > expiration:
 
-                    asyncio.run(
-                        bot.ban_chat_member(
-                            chat_id=GROUP_ID,
-                            user_id=user_id
-                        )
+                    await bot.ban_chat_member(
+                        chat_id=GROUP_ID,
+                        user_id=user_id
                     )
 
-                    asyncio.run(
-                        bot.unban_chat_member(
-                            chat_id=GROUP_ID,
-                            user_id=user_id
-                        )
+                    await bot.unban_chat_member(
+                        chat_id=GROUP_ID,
+                        user_id=user_id
                     )
 
         except Exception as e:
 
             print("Error expiraciones:", e)
 
-        time.sleep(60)
+        await asyncio.sleep(60)
 
 
 # =========================
-# REGISTRAR COMANDOS
+# START
 # =========================
 
-def main():
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    keyboard = [
+
+        [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
+        [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
+        [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")]
+
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Bienvenido 💎\n\nElige tu plan:",
+        reply_markup=reply_markup
+    )
+
+
+# =========================
+# MAIN
+# =========================
+
+async def main():
 
     create_tables()
 
@@ -373,12 +316,15 @@ def main():
         )
     )
 
-    threading.Thread(
-        target=check_expirations
-    ).start()
+    telegram_app.create_task(
+        expiration_loop()
+    )
 
-    telegram_app.run_polling()
+    print("Bot iniciado correctamente")
+
+    await telegram_app.run_polling()
 
 
 if __name__ == "__main__":
-    main()
+
+    asyncio.run(main())
