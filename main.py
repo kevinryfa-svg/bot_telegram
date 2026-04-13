@@ -68,20 +68,14 @@ def generate_code():
 async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
-
-        await update.message.reply_text("No autorizado")
         return
 
     keyboard = [
 
         [InlineKeyboardButton("⏱️ 15 minutos", callback_data="gen_15")],
-
         [InlineKeyboardButton("📅 1 día", callback_data="gen_1440")],
-
         [InlineKeyboardButton("📅 7 días", callback_data="gen_10080")],
-
         [InlineKeyboardButton("📅 30 días", callback_data="gen_43200")],
-
         [InlineKeyboardButton("♾️ Permanente", callback_data="gen_perm")]
 
     ]
@@ -118,28 +112,137 @@ async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TY
     with conn.cursor() as cur:
 
         cur.execute("""
-
             INSERT INTO invite_codes
             (code, duration)
-
             VALUES (%s, %s)
-
         """, (code, duration))
 
         conn.commit()
 
     if duration == 0:
-        text_duration = "Permanente"
+        duracion_texto = "Permanente"
     else:
-        text_duration = f"{duration} minutos"
+        duracion_texto = f"{duration} minutos"
 
     await query.message.reply_text(
 
         f"✅ Código creado:\n\n"
         f"{code}\n\n"
-        f"Duración: {text_duration}"
+        f"Duración: {duracion_texto}"
 
     )
+
+
+# =========================
+# VER CÓDIGOS
+# =========================
+
+async def ver_codigos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+            SELECT code, duration, used
+            FROM invite_codes
+            ORDER BY code DESC
+            LIMIT 20
+        """)
+
+        rows = cur.fetchall()
+
+    if not rows:
+
+        await update.message.reply_text(
+            "No hay códigos."
+        )
+        return
+
+    texto = "🎟️ Últimos códigos:\n\n"
+
+    for code, duration, used in rows:
+
+        estado = "❌ usado" if used else "✅ activo"
+
+        texto += f"{code}\n{duration} min — {estado}\n\n"
+
+    await update.message.reply_text(texto)
+
+
+# =========================
+# BORRAR CÓDIGO
+# =========================
+
+async def borrar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if not context.args:
+
+        await update.message.reply_text(
+            "Uso:\n/borrarcodigo CODIGO"
+        )
+        return
+
+    code = context.args[0]
+
+    with conn.cursor() as cur:
+
+        cur.execute(
+            "DELETE FROM invite_codes WHERE code=%s",
+            (code,)
+        )
+
+        conn.commit()
+
+    await update.message.reply_text(
+        "🗑️ Código eliminado"
+    )
+
+
+# =========================
+# VER USUARIOS
+# =========================
+
+async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+            SELECT user_id, expiration
+            FROM users
+            ORDER BY expiration DESC
+            LIMIT 20
+        """)
+
+        users = cur.fetchall()
+
+    if not users:
+
+        await update.message.reply_text(
+            "No hay usuarios."
+        )
+        return
+
+    texto = "👥 Usuarios activos:\n\n"
+
+    for user_id, expiration in users:
+
+        if expiration:
+
+            texto += f"{user_id}\nExpira: {expiration}\n\n"
+
+        else:
+
+            texto += f"{user_id}\nPermanente\n\n"
+
+    await update.message.reply_text(texto)
 
 
 # =========================
@@ -155,11 +258,9 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with conn.cursor() as cur:
 
         cur.execute("""
-
             SELECT duration, used
             FROM invite_codes
             WHERE code=%s
-
         """, (code,))
 
         result = cur.fetchone()
@@ -186,23 +287,17 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with conn.cursor() as cur:
 
         cur.execute("""
-
             INSERT INTO users
             (user_id, expiration)
-
             VALUES (%s, %s)
-
             ON CONFLICT (user_id)
             DO UPDATE SET expiration=%s
-
         """, (user_id, expiration, expiration))
 
         cur.execute("""
-
             UPDATE invite_codes
             SET used=TRUE
             WHERE code=%s
-
         """, (code,))
 
         conn.commit()
@@ -217,13 +312,9 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
     )
 
-    await update.message.reply_text(
-        "✅ Código activado correctamente"
-    )
-
 
 # =========================
-# START BOTONES
+# START
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -231,11 +322,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
 
         [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
-
         [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
-
         [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")],
-
         [InlineKeyboardButton("🎟️ Usar código", callback_data="codigo")]
 
     ]
@@ -243,17 +331,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-
-        "Bienvenido 💎\n\n"
-        "Elige una opción:",
-
+        "Bienvenido 💎\n\nElige una opción:",
         reply_markup=reply_markup
-
     )
 
 
 # =========================
-# BOTONES GENERALES
+# BOTONES
 # =========================
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -264,7 +348,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data.startswith("gen_"):
-
         await crear_codigo_callback(update, context)
         return
 
@@ -344,17 +427,17 @@ def main():
 
     create_tables()
 
-    telegram_app.add_handler(
-        CommandHandler("start", start)
-    )
+    telegram_app.add_handler(CommandHandler("start", start))
 
-    telegram_app.add_handler(
-        CommandHandler("generarcodigo", generar_codigo)
-    )
+    telegram_app.add_handler(CommandHandler("generarcodigo", generar_codigo))
 
-    telegram_app.add_handler(
-        CallbackQueryHandler(button)
-    )
+    telegram_app.add_handler(CommandHandler("usuarios", ver_usuarios))
+
+    telegram_app.add_handler(CommandHandler("codigos", ver_codigos))
+
+    telegram_app.add_handler(CommandHandler("borrarcodigo", borrar_codigo))
+
+    telegram_app.add_handler(CallbackQueryHandler(button))
 
     telegram_app.add_handler(
         MessageHandler(
