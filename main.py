@@ -688,23 +688,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data == "admin_codes":
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-            SELECT COUNT(*)
-            FROM invite_codes
-            WHERE used=FALSE
-            """)
-
-            total = cur.fetchone()[0]
-
-        await query.message.reply_text(
-            f"🎟️ Códigos activos: {total}"
-        )
-
-        return
+  if data == "admin_codes":
 
 
     if data == "admin_stats":
