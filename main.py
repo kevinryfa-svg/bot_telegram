@@ -666,87 +666,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-# =========================
-# PANEL ADMIN BOTONES
-# =========================
-
-if data == "admin_users":
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-        SELECT COUNT(*)
-        FROM users
-
-        """)
-
-        total = cur.fetchone()[0]
-
-    await query.message.reply_text(
-
-        f"👥 Usuarios activos: {total}"
-
-    )
-
-    return
-
-
-if data == "admin_codes":
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-        SELECT COUNT(*)
-        FROM invite_codes
-        WHERE used=FALSE
-
-        """)
-
-        total = cur.fetchone()[0]
-
-    await query.message.reply_text(
-
-        f"🎟️ Códigos activos: {total}"
-
-    )
-
-    return
-
-
-if data == "admin_stats":
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-        SELECT COUNT(*)
-        FROM users
-
-        """)
-
-        users_total = cur.fetchone()[0]
-
-    await query.message.reply_text(
-
-        f"📊 Estadísticas:\n\nUsuarios activos: {users_total}"
-
-    )
-
-    return
-
-
-if data == "admin_security":
-
-    await query.message.reply_text(
-
-        "🛡️ Seguridad activa\n\nSistema anti-intrusos funcionando."
-
-    )
-
-    return
-
     if data.startswith("gen_"):
 
         await crear_codigo_callback(update, context)
@@ -792,10 +711,6 @@ def main():
 
     create_tables()
 
-    # =========================
-    # COMANDOS
-    # =========================
-
     telegram_app.add_handler(
         CommandHandler("start", start)
     )
@@ -816,17 +731,9 @@ def main():
         CommandHandler("admin", admin_panel)
     )
 
-    # =========================
-    # CALLBACKS
-    # =========================
-
     telegram_app.add_handler(
         CallbackQueryHandler(button)
     )
-
-    # =========================
-    # MENSAJES TEXTO
-    # =========================
 
     telegram_app.add_handler(
         MessageHandler(
@@ -835,9 +742,7 @@ def main():
         )
     )
 
-    # =========================
-    # NUEVOS MIEMBROS
-    # =========================
+    # 🔴 CONTROLAR NUEVOS MIEMBROS
 
     telegram_app.add_handler(
         MessageHandler(
@@ -845,10 +750,6 @@ def main():
             check_new_member
         )
     )
-
-    # =========================
-    # THREADS
-    # =========================
 
     threading.Thread(
         target=check_expirations,
