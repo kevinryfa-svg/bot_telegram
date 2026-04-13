@@ -38,17 +38,13 @@ ADMIN_ID = 8761243211
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 
-PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
-PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
-PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
-
 bot = Bot(token=TOKEN)
 
 telegram_app = ApplicationBuilder().token(TOKEN).build()
 
 
 # =========================
-# GENERAR CÓDIGOS
+# GENERAR CÓDIGO
 # =========================
 
 def generate_code():
@@ -227,10 +223,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# EXPIRACIONES (CORREGIDO)
+# EXPIRACIONES (HILO)
 # =========================
 
-async def expiration_loop():
+def expiration_thread():
 
     while True:
 
@@ -250,21 +246,25 @@ async def expiration_loop():
 
                 if expiration and now > expiration:
 
-                    await bot.ban_chat_member(
-                        chat_id=GROUP_ID,
-                        user_id=user_id
+                    asyncio.run(
+                        bot.ban_chat_member(
+                            chat_id=GROUP_ID,
+                            user_id=user_id
+                        )
                     )
 
-                    await bot.unban_chat_member(
-                        chat_id=GROUP_ID,
-                        user_id=user_id
+                    asyncio.run(
+                        bot.unban_chat_member(
+                            chat_id=GROUP_ID,
+                            user_id=user_id
+                        )
                     )
 
         except Exception as e:
 
             print("Error expiraciones:", e)
 
-        await asyncio.sleep(60)
+        time.sleep(60)
 
 
 # =========================
@@ -273,19 +273,8 @@ async def expiration_loop():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    keyboard = [
-
-        [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
-        [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
-        [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")]
-
-    ]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
-        "Bienvenido 💎\n\nElige tu plan:",
-        reply_markup=reply_markup
+        "Bienvenido 💎"
     )
 
 
@@ -293,7 +282,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # MAIN
 # =========================
 
-async def main():
+def main():
 
     create_tables()
 
@@ -316,15 +305,14 @@ async def main():
         )
     )
 
-    telegram_app.create_task(
-        expiration_loop()
-    )
+    threading.Thread(
+        target=expiration_thread
+    ).start()
 
     print("Bot iniciado correctamente")
 
-    await telegram_app.run_polling()
+    telegram_app.run_polling()
 
 
 if __name__ == "__main__":
-
-    asyncio.run(main())
+    main()
