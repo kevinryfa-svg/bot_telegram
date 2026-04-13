@@ -1,10 +1,3 @@
-import os
-import stripe
-import threading
-
-from flask import Flask
-from datetime import datetime, timedelta
-
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -18,12 +11,11 @@ from telegram.ext import (
     ContextTypes
 )
 
-from db import conn
 from config import TOKEN
 
 
 # =========================
-# TELEGRAM
+# START
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,6 +47,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# =========================
+# BUTTON
+# =========================
+
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
@@ -65,7 +61,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-def run_bot():
+# =========================
+# MAIN
+# =========================
+
+def main():
+
+    print("Bot Telegram iniciado")
 
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -77,37 +79,8 @@ def run_bot():
         CallbackQueryHandler(button)
     )
 
-    print("Bot Telegram iniciado (polling)")
-
     app.run_polling()
 
 
-# =========================
-# FLASK
-# =========================
-
-flask_app = Flask(__name__)
-
-
-@flask_app.route("/")
-def home():
-
-    return "Bot funcionando"
-
-
-# =========================
-# START
-# =========================
-
 if __name__ == "__main__":
-
-    threading.Thread(
-        target=run_bot
-    ).start()
-
-    port = int(os.environ.get("PORT"))
-
-    flask_app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    main()
