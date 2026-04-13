@@ -41,10 +41,6 @@ SERVER_URL = os.environ.get("SERVER_URL")
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 
-PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
-PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
-PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
-
 bot = Bot(token=TOKEN)
 
 telegram_app = ApplicationBuilder().token(TOKEN).build()
@@ -66,7 +62,7 @@ def generate_code():
 
 
 # =========================
-# CREAR CÓDIGO (ADMIN)
+# BOTONES GENERAR CÓDIGO
 # =========================
 
 async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -76,15 +72,46 @@ async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No autorizado")
         return
 
-    if not context.args:
+    keyboard = [
 
-        await update.message.reply_text(
-            "Uso:\n/generarcodigo minutos"
-        )
+        [InlineKeyboardButton("⏱️ 15 minutos", callback_data="gen_15")],
 
+        [InlineKeyboardButton("📅 1 día", callback_data="gen_1440")],
+
+        [InlineKeyboardButton("📅 7 días", callback_data="gen_10080")],
+
+        [InlineKeyboardButton("📅 30 días", callback_data="gen_43200")],
+
+        [InlineKeyboardButton("♾️ Permanente", callback_data="gen_perm")]
+
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Selecciona duración del código:",
+        reply_markup=reply_markup
+    )
+
+
+# =========================
+# CREAR CÓDIGO
+# =========================
+
+async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    if query.from_user.id != ADMIN_ID:
         return
 
-    duration = int(context.args[0])
+    data = query.data
+
+    if data == "gen_perm":
+        duration = 0
+    else:
+        duration = int(data.split("_")[1])
 
     code = generate_code()
 
@@ -101,11 +128,16 @@ async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn.commit()
 
-    await update.message.reply_text(
+    if duration == 0:
+        text_duration = "Permanente"
+    else:
+        text_duration = f"{duration} minutos"
+
+    await query.message.reply_text(
 
         f"✅ Código creado:\n\n"
         f"{code}\n\n"
-        f"Duración: {duration} minutos"
+        f"Duración: {text_duration}"
 
     )
 
@@ -144,9 +176,12 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Código ya usado")
         return
 
-    expiration = datetime.now() + timedelta(
-        minutes=duration
-    )
+    if duration == 0:
+        expiration = None
+    else:
+        expiration = datetime.now() + timedelta(
+            minutes=duration
+        )
 
     with conn.cursor() as cur:
 
@@ -188,7 +223,7 @@ async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# BOTONES
+# START BOTONES
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -218,7 +253,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# BOTÓN CLICK
+# BOTONES GENERALES
 # =========================
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -226,10 +261,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id = query.from_user.id
-    plan = query.data
+    data = query.data
 
-    if plan == "codigo":
+    if data.startswith("gen_"):
+
+        await crear_codigo_callback(update, context)
+        return
+
+    if data == "codigo":
 
         await query.message.reply_text(
             "Introduce tu código:"
@@ -238,41 +277,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_code"] = True
         return
 
-    try:
-
-        response = requests.post(
-            f"{SERVER_URL}/create-checkout-session",
-            json={
-                "telegram_id": user_id,
-                "plan": plan
-            }
-        )
-
-        data = response.json()
-
-        if "url" not in data:
-
-            await query.message.reply_text(
-                f"Error Stripe:\n{data}"
-            )
-
-            return
-
-        payment_url = data["url"]
-
-        await query.message.reply_text(
-            f"💳 Paga aquí:\n{payment_url}"
-        )
-
-    except Exception as e:
-
-        await query.message.reply_text(
-            f"Error creando pago:\n{e}"
-        )
-
 
 # =========================
-# RECIBIR CÓDIGO TEXTO
+# TEXTO
 # =========================
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -282,40 +289,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_code"] = False
 
         await usar_codigo(update, context)
-
-
-# =========================
-# CONTROL ENTRADAS
-# =========================
-
-async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    new_members = update.message.new_chat_members
-
-    for member in new_members:
-
-        user_id = member.id
-
-        with conn.cursor() as cur:
-
-            cur.execute(
-                "SELECT expiration FROM users WHERE user_id=%s",
-                (user_id,)
-            )
-
-            result = cur.fetchone()
-
-        if not result:
-
-            await context.bot.ban_chat_member(
-                chat_id=GROUP_ID,
-                user_id=user_id
-            )
-
-            await context.bot.unban_chat_member(
-                chat_id=GROUP_ID,
-                user_id=user_id
-            )
 
 
 # =========================
@@ -387,13 +360,6 @@ def main():
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             handle_text
-        )
-    )
-
-    telegram_app.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.NEW_CHAT_MEMBERS,
-            check_new_member
         )
     )
 
