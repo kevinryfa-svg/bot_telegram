@@ -1,6 +1,8 @@
 import os
 import stripe
 import requests
+import psycopg2
+
 from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 
@@ -22,7 +24,10 @@ from db import conn
 from config import TOKEN, GROUP_ID
 
 
+# -------------------------
 # CONFIG STRIPE
+# -------------------------
+
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
@@ -31,6 +36,7 @@ PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
 PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
 PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
 
+# DOMINIO CORRECTO
 SERVER_URL = "https://worker-production-9e88.up.railway.app"
 
 bot = Bot(token=TOKEN)
@@ -188,8 +194,7 @@ def stripe_webhook():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "Bienvenido 💎\n\n"
-        "Usa /pagar para comprar acceso."
+        "Bienvenido 💎\n\nUsa /pagar para comprar acceso."
     )
 
 
