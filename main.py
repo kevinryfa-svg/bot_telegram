@@ -6,6 +6,8 @@ import random
 import string
 import requests
 
+from flask import Flask, request, jsonify
+
 from telegram import (
     Bot,
     Update,
@@ -38,10 +40,17 @@ SERVER_URL = os.environ.get("SERVER_URL")
 ADMIN_ID = 8761243211
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+
+PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
+PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
+PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
 
 bot = Bot(token=TOKEN)
 
 telegram_app = ApplicationBuilder().token(TOKEN).build()
+
+app = Flask(__name__)
 
 
 # =========================
@@ -60,7 +69,7 @@ def generate_code():
 
 
 # =========================
-# CREAR CÓDIGO (ADMIN)
+# /generarcodigo
 # =========================
 
 async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -93,9 +102,6 @@ async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
-    if query.from_user.id != ADMIN_ID:
-        return
-
     data = query.data
 
     if data == "gen_perm":
@@ -108,94 +114,207 @@ async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TY
     with conn.cursor() as cur:
 
         cur.execute("""
-            INSERT INTO invite_codes (code, duration)
+
+            INSERT INTO invite_codes
+            (code, duration)
+
             VALUES (%s, %s)
+
         """, (code, duration))
 
         conn.commit()
 
-    if duration == 0:
-        duracion = "Permanente"
-    else:
-        duracion = f"{duration} minutos"
-
     await query.message.reply_text(
 
         f"✅ Código creado:\n\n"
-        f"{code}\n\n"
-        f"Duración: {duracion}"
+        f"{code}"
 
     )
 
 
 # =========================
-# USAR CÓDIGO
+# /codigos
 # =========================
 
-async def usar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ver_codigos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    code = update.message.text.strip()
-
-    user_id = update.effective_user.id
+    if update.effective_user.id != ADMIN_ID:
+        return
 
     with conn.cursor() as cur:
 
         cur.execute("""
-            SELECT duration, used
+
+            SELECT code, duration, used
             FROM invite_codes
-            WHERE code=%s
-        """, (code,))
+            ORDER BY code DESC
+            LIMIT 20
 
-        result = cur.fetchone()
+        """)
 
-    if not result:
+        rows = cur.fetchall()
 
-        await update.message.reply_text("❌ Código inválido")
+    if not rows:
+
+        await update.message.reply_text(
+            "No hay códigos."
+        )
         return
 
-    duration, used = result
+    texto = "🎟️ Códigos:\n\n"
 
-    if used:
+    for code, duration, used in rows:
 
-        await update.message.reply_text("❌ Código ya usado")
+        estado = "❌ usado" if used else "✅ activo"
+
+        texto += f"{code}\n{duration} min — {estado}\n\n"
+
+    await update.message.reply_text(texto)
+
+
+# =========================
+# /usuarios
+# =========================
+
+async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    if duration == 0:
+    with conn.cursor() as cur:
 
-        expiration = None
+        cur.execute("""
+
+            SELECT user_id, expiration
+            FROM users
+            ORDER BY expiration DESC
+            LIMIT 20
+
+        """)
+
+        users = cur.fetchall()
+
+    if not users:
+
+        await update.message.reply_text(
+            "No hay usuarios."
+        )
+        return
+
+    texto = "👥 Usuarios:\n\n"
+
+    for user_id, expiration in users:
+
+        if expiration:
+
+            texto += f"{user_id}\n{expiration}\n\n"
+
+        else:
+
+            texto += f"{user_id}\nPermanente\n\n"
+
+    await update.message.reply_text(texto)
+
+
+# =========================
+# STRIPE CHECKOUT
+# =========================
+
+@app.route("/create-checkout-session", methods=["POST"])
+def create_checkout_session():
+
+    data = request.json
+
+    telegram_id = data["telegram_id"]
+    plan = data["plan"]
+
+    if plan == "1":
+        price_id = PRICE_1_DIA
+
+    elif plan == "7":
+        price_id = PRICE_7_DIAS
+
+    elif plan == "0":
+        price_id = PRICE_PERMANENTE
 
     else:
+        return jsonify({"error": "Plan inválido"}), 400
 
-        expiration = datetime.now() + timedelta(
-            minutes=duration
+    session = stripe.checkout.Session.create(
+
+        payment_method_types=["card"],
+
+        line_items=[{
+            "price": price_id,
+            "quantity": 1,
+        }],
+
+        mode="payment",
+
+        success_url="https://t.me/TheStarVipBOT",
+        cancel_url="https://t.me/TheStarVipBOT",
+
+        metadata={
+            "telegram_id": str(telegram_id)
+        }
+
+    )
+
+    return jsonify({
+        "url": session.url
+    })
+
+
+# =========================
+# STRIPE WEBHOOK
+# =========================
+
+@app.route("/webhook", methods=["POST"])
+def stripe_webhook():
+
+    payload = request.data
+    sig_header = request.headers.get("stripe-signature")
+
+    try:
+
+        event = stripe.Webhook.construct_event(
+            payload,
+            sig_header,
+            WEBHOOK_SECRET
         )
 
-    with conn.cursor() as cur:
+    except Exception as e:
 
-        cur.execute("""
-            INSERT INTO users (user_id, expiration)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
-            DO UPDATE SET expiration=%s
-        """, (user_id, expiration, expiration))
+        print("Webhook error:", e)
+        return "Error", 400
 
-        cur.execute("""
-            UPDATE invite_codes
-            SET used=TRUE
-            WHERE code=%s
-        """, (code,))
+    if event["type"] == "checkout.session.completed":
 
-        conn.commit()
+        session = event["data"]["object"]
 
-    invite_link = await bot.create_chat_invite_link(
-        chat_id=GROUP_ID,
-        member_limit=1
-    )
+        user_id = session["metadata"]["telegram_id"]
 
-    await bot.send_message(
-        chat_id=user_id,
-        text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
-    )
+        invite_link = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+            json={
+                "chat_id": GROUP_ID,
+                "member_limit": 1
+            }
+        ).json()
+
+        link = invite_link["result"]["invite_link"]
+
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={
+                "chat_id": int(user_id),
+                "text": f"🔗 Tu acceso VIP:\n{link}"
+            }
+        )
+
+        print("Pago confirmado:", user_id)
+
+    return "OK"
 
 
 # =========================
@@ -247,80 +366,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_code"] = True
         return
 
+    # PAGOS
 
-# =========================
-# TEXTO
-# =========================
+    user_id = query.from_user.id
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    response = requests.post(
+        f"{SERVER_URL}/create-checkout-session",
+        json={
+            "telegram_id": user_id,
+            "plan": data
+        }
+    )
 
-    if context.user_data.get("waiting_code"):
+    payment_url = response.json()["url"]
 
-        context.user_data["waiting_code"] = False
-
-        await usar_codigo(update, context)
-
-
-# =========================
-# EXPIRACIONES (SIN ASYNC)
-# =========================
-
-def expiration_thread():
-
-    while True:
-
-        try:
-
-            with conn.cursor() as cur:
-
-                cur.execute(
-                    "SELECT user_id, expiration FROM users"
-                )
-
-                users = cur.fetchall()
-
-            now = datetime.now()
-
-            for user_id, expiration in users:
-
-                if expiration and now > expiration:
-
-                    try:
-
-                        requests.post(
-                            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-                            json={
-                                "chat_id": GROUP_ID,
-                                "user_id": user_id
-                            }
-                        )
-
-                        requests.post(
-                            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-                            json={
-                                "chat_id": GROUP_ID,
-                                "user_id": user_id
-                            }
-                        )
-
-                        print("Usuario expulsado:", user_id)
-
-                    except Exception as e:
-
-                        print("Error expulsando:", e)
-
-        except Exception as e:
-
-            print("Error expiraciones:", e)
-
-        time.sleep(60)
+    await query.message.reply_text(
+        f"💳 Paga aquí:\n{payment_url}"
+    )
 
 
 # =========================
 # MAIN
 # =========================
 
-def main():
+def run_bot():
 
     create_tables()
 
@@ -333,25 +402,36 @@ def main():
     )
 
     telegram_app.add_handler(
-        CallbackQueryHandler(button)
+        CommandHandler("codigos", ver_codigos)
     )
 
     telegram_app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle_text
-        )
+        CommandHandler("usuarios", ver_usuarios)
     )
 
-    threading.Thread(
-        target=expiration_thread,
-        daemon=True
-    ).start()
+    telegram_app.add_handler(
+        CallbackQueryHandler(button)
+    )
 
     print("Bot iniciado correctamente")
 
     telegram_app.run_polling()
 
 
+def run_flask():
+
+    port = int(os.environ.get("PORT"))
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
+
+
 if __name__ == "__main__":
-    main()
+
+    threading.Thread(
+        target=run_bot
+    ).start()
+
+    run_flask()
