@@ -783,3 +783,70 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💳 Paga aquí:\n{payment_url}"
 
     )
+
+
+# =========================
+# MAIN
+# =========================
+
+def main():
+
+    create_tables()
+
+    telegram_app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("generarcodigo", generar_codigo)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("codigos", ver_codigos)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("usuarios", ver_usuarios)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("admin", admin_panel)
+    )
+
+    telegram_app.add_handler(
+        CallbackQueryHandler(button)
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            receive_code
+        )
+    )
+
+    # 🔴 CONTROLAR NUEVOS MIEMBROS
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            check_new_member
+        )
+    )
+
+    threading.Thread(
+        target=check_expirations,
+        daemon=True
+    ).start()
+
+    threading.Thread(
+        target=run_flask,
+        daemon=True
+    ).start()
+
+    print("Bot iniciado correctamente")
+
+    telegram_app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
