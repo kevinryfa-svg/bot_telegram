@@ -1,6 +1,6 @@
 import os
 import stripe
-import asyncio
+import psycopg2
 
 from flask import Flask, request
 from datetime import datetime, timedelta
@@ -65,8 +65,11 @@ def add_user(user_id, days):
 
 
 # =========================
-# TELEGRAM COMMANDS
+# TELEGRAM BOT
 # =========================
+
+telegram_app = Application.builder().token(TOKEN).build()
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -107,16 +110,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
 
+        if plan == "1":
+            price = PRICE_1_DIA
+
+        elif plan == "7":
+            price = PRICE_7_DIAS
+
+        else:
+            price = PRICE_PERMANENTE
+
         session = stripe.checkout.Session.create(
 
             payment_method_types=["card"],
 
             line_items=[{
-                "price":
-                    PRICE_1_DIA if plan == "1"
-                    else PRICE_7_DIAS if plan == "7"
-                    else PRICE_PERMANENTE,
-
+                "price": price,
                 "quantity": 1,
             }],
 
@@ -141,8 +149,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Error Stripe:\n{e}"
         )
 
-
-telegram_app = Application.builder().token(TOKEN).build()
 
 telegram_app.add_handler(
     CommandHandler("start", start)
@@ -202,18 +208,14 @@ def stripe_webhook():
 
         add_user(int(user_id), 1)
 
-        invite_link = asyncio.run(
-            bot.create_chat_invite_link(
-                chat_id=GROUP_ID,
-                member_limit=1
-            )
+        invite_link = bot.create_chat_invite_link(
+            chat_id=GROUP_ID,
+            member_limit=1
         )
 
-        asyncio.run(
-            bot.send_message(
-                chat_id=int(user_id),
-                text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
-            )
+        bot.send_message(
+            chat_id=int(user_id),
+            text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
         )
 
     return "OK"
@@ -230,26 +232,24 @@ def home():
 
 
 # =========================
-# START SERVER
+# START
 # =========================
 
 if __name__ == "__main__":
 
     port = int(os.environ.get("PORT"))
 
-    asyncio.run(
-        bot.delete_webhook(
-            drop_pending_updates=True
-        )
+    print("Configurando webhook...")
+
+    bot.delete_webhook(
+        drop_pending_updates=True
     )
 
-    asyncio.run(
-        bot.set_webhook(
-            url=f"{SERVER_URL}/{TOKEN}"
-        )
+    bot.set_webhook(
+        url=f"{SERVER_URL}/{TOKEN}"
     )
 
-    print("Webhook configurado correctamente")
+    print("Webhook configurado")
 
     app.run(
         host="0.0.0.0",
