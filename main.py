@@ -59,8 +59,21 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-
     return "Bot funcionando"
+
+
+# =========================
+# RUN FLASK (🔴 IMPORTANTE)
+# =========================
+
+def run_flask():
+
+    port = int(os.environ.get("PORT", 8000))
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
 
 
 # =========================
@@ -410,7 +423,73 @@ def stripe_webhook():
 
 
 # =========================
-# START
+# EXPIRACIONES
+# =========================
+
+def check_expirations():
+
+    while True:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+            SELECT user_id, expiration
+            FROM users
+
+            WHERE expiration IS NOT NULL
+
+            """)
+
+            rows = cur.fetchall()
+
+            now = datetime.now()
+
+            for user_id, expiration in rows:
+
+                if expiration and now > expiration:
+
+                    try:
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                            json={
+                                "chat_id": GROUP_ID,
+                                "user_id": user_id
+                            }
+
+                        )
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                            json={
+                                "chat_id": GROUP_ID,
+                                "user_id": user_id
+                            }
+
+                        )
+
+                        cur.execute("""
+
+                        DELETE FROM users
+                        WHERE user_id=%s
+
+                        """, (user_id,))
+
+                        conn.commit()
+
+                    except:
+                        pass
+
+        time.sleep(60)
+
+
+# =========================
+# START BOT
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -482,73 +561,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# EXPIRACIONES
-# =========================
-
-def check_expirations():
-
-    while True:
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-            SELECT user_id, expiration
-            FROM users
-
-            WHERE expiration IS NOT NULL
-
-            """)
-
-            rows = cur.fetchall()
-
-            now = datetime.now()
-
-            for user_id, expiration in rows:
-
-                if expiration and now > expiration:
-
-                    try:
-
-                        requests.post(
-
-                            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                            json={
-                                "chat_id": GROUP_ID,
-                                "user_id": user_id
-                            }
-
-                        )
-
-                        requests.post(
-
-                            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                            json={
-                                "chat_id": GROUP_ID,
-                                "user_id": user_id
-                            }
-
-                        )
-
-                        cur.execute("""
-
-                        DELETE FROM users
-                        WHERE user_id=%s
-
-                        """, (user_id,))
-
-                        conn.commit()
-
-                    except:
-
-                        pass
-
-        time.sleep(60)
-
-
-# =========================
 # MAIN
 # =========================
 
@@ -572,6 +584,13 @@ def main():
 
     threading.Thread(
         target=check_expirations,
+        daemon=True
+    ).start()
+
+    # 🔴 ARRANCAR FLASK
+
+    threading.Thread(
+        target=run_flask,
         daemon=True
     ).start()
 
