@@ -1,6 +1,5 @@
 import os
 import stripe
-import psycopg2
 from flask import Flask, request
 from datetime import datetime, timedelta
 
@@ -12,6 +11,11 @@ from config import TOKEN, GROUP_ID
 # STRIPE CONFIG
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+
+# PRICE IDS
+PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
+PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
+PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
 
 bot = Bot(token=TOKEN)
 
@@ -57,23 +61,27 @@ def stripe_webhook():
 
         session = event["data"]["object"]
 
-        product_name = session["display_items"][0]["custom"]["name"]
-
         user_id = session["metadata"]["telegram_id"]
 
-        print("Pago detectado:", product_name)
+        line_items = stripe.checkout.Session.list_line_items(
+            session["id"]
+        )
 
-        if product_name == "Acceso 1 día":
+        price_id = line_items["data"][0]["price"]["id"]
+
+        print("Pago detectado:", price_id)
+
+        if price_id == PRICE_1_DIA:
             days = 1
 
-        elif product_name == "Acceso 7 días":
+        elif price_id == PRICE_7_DIAS:
             days = 7
 
-        elif product_name == "Acceso PERMANENTE":
+        elif price_id == PRICE_PERMANENTE:
             days = 0
 
         else:
-            print("Producto desconocido")
+            print("Precio desconocido")
             return "OK"
 
         add_user(int(user_id), days)
