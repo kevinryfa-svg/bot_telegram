@@ -16,8 +16,12 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes
+    MessageHandler,
+    ContextTypes,
+    filters
 )
+
+from datetime import datetime
 
 # =========================
 # CONFIG
@@ -37,9 +41,12 @@ bot = Bot(token=TOKEN)
 
 flask_app = Flask(__name__)
 
+telegram_app = ApplicationBuilder().token(TOKEN).build()
+
+authorized_users = set()
 
 # =========================
-# TELEGRAM START
+# START
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -61,7 +68,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# BOTONES PAGO
+# BOTONES
 # =========================
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,6 +122,35 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# CONTROLAR ENTRADAS
+# =========================
+
+async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    new_members = update.message.new_chat_members
+
+    for member in new_members:
+
+        user_id = member.id
+
+        print("Usuario entró:", user_id)
+
+        if user_id not in authorized_users:
+
+            print("Usuario NO autorizado:", user_id)
+
+            await context.bot.ban_chat_member(
+                chat_id=GROUP_ID,
+                user_id=user_id
+            )
+
+            await context.bot.unban_chat_member(
+                chat_id=GROUP_ID,
+                user_id=user_id
+            )
+
+
+# =========================
 # WEBHOOK STRIPE
 # =========================
 
@@ -141,13 +177,13 @@ def stripe_webhook():
 
         session = event["data"]["object"]
 
-        user_id = session["metadata"]["telegram_id"]
+        user_id = int(session["metadata"]["telegram_id"])
 
         print("Pago confirmado:", user_id)
 
-        try:
+        authorized_users.add(user_id)
 
-            # 🔥 FUNCIÓN ASYNC CORRECTA
+        try:
 
             async def send_link():
 
@@ -157,7 +193,7 @@ def stripe_webhook():
                 )
 
                 await bot.send_message(
-                    chat_id=int(user_id),
+                    chat_id=user_id,
                     text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
                 )
 
@@ -197,25 +233,28 @@ def run_flask():
 
 def main():
 
-    print("Iniciando Flask...")
+    telegram_app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    telegram_app.add_handler(
+        CallbackQueryHandler(button)
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            check_new_member
+        )
+    )
 
     threading.Thread(
         target=run_flask
     ).start()
 
-    print("Iniciando Telegram...")
+    print("Bot iniciado")
 
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(
-        CommandHandler("start", start)
-    )
-
-    app.add_handler(
-        CallbackQueryHandler(button)
-    )
-
-    app.run_polling()
+    telegram_app.run_polling()
 
 
 if __name__ == "__main__":
