@@ -1,7 +1,11 @@
 import os
 import stripe
+import threading
+
+from flask import Flask, request
 
 from telegram import (
+    Bot,
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup
@@ -19,16 +23,22 @@ from telegram.ext import (
 # =========================
 
 TOKEN = os.environ.get("TOKEN")
+GROUP_ID = int(os.environ.get("GROUP_ID"))
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
 PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
 PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
 PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
 
+bot = Bot(token=TOKEN)
+
+flask_app = Flask(__name__)
+
 
 # =========================
-# START
+# TELEGRAM START
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -61,7 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# BUTTON
+# BOTONES PAGO
 # =========================
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -72,16 +82,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = query.from_user.id
     plan = query.data
 
+    if plan == "1":
+        price = PRICE_1_DIA
+
+    elif plan == "7":
+        price = PRICE_7_DIAS
+
+    else:
+        price = PRICE_PERMANENTE
+
     try:
-
-        if plan == "1":
-            price = PRICE_1_DIA
-
-        elif plan == "7":
-            price = PRICE_7_DIAS
-
-        else:
-            price = PRICE_PERMANENTE
 
         session = stripe.checkout.Session.create(
 
@@ -115,12 +125,70 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# MAIN
+# WEBHOOK STRIPE
 # =========================
 
-def main():
+@flask_app.route("/webhook", methods=["POST"])
+def stripe_webhook():
 
-    print("Bot Telegram iniciado (polling)")
+    payload = request.data
+    sig_header = request.headers.get("stripe-signature")
+
+    try:
+
+        event = stripe.Webhook.construct_event(
+            payload,
+            sig_header,
+            WEBHOOK_SECRET
+        )
+
+    except Exception as e:
+
+        print("Webhook error:", e)
+        return "Error", 400
+
+    if event["type"] == "checkout.session.completed":
+
+        session = event["data"]["object"]
+
+        user_id = session["metadata"]["telegram_id"]
+
+        print("Pago confirmado:", user_id)
+
+        # Crear link único
+
+        invite_link = bot.create_chat_invite_link(
+            chat_id=GROUP_ID,
+            member_limit=1
+        )
+
+        # Enviar link al usuario
+
+        bot.send_message(
+            chat_id=int(user_id),
+            text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
+        )
+
+    return "OK"
+
+
+# =========================
+# HOME TEST
+# =========================
+
+@flask_app.route("/")
+def home():
+
+    return "Bot funcionando"
+
+
+# =========================
+# TELEGRAM RUN
+# =========================
+
+def run_bot():
+
+    print("Bot Telegram iniciado")
 
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -135,5 +203,19 @@ def main():
     app.run_polling()
 
 
+# =========================
+# MAIN
+# =========================
+
 if __name__ == "__main__":
-    main()
+
+    threading.Thread(
+        target=run_bot
+    ).start()
+
+    port = int(os.environ.get("PORT"))
+
+    flask_app.run(
+        host="0.0.0.0",
+        port=port
+    )
