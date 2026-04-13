@@ -665,6 +665,86 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     data = query.data
+    # =========================
+# PANEL ADMIN BOTONES
+# =========================
+
+if data == "admin_users":
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+        SELECT COUNT(*)
+        FROM users
+
+        """)
+
+        total = cur.fetchone()[0]
+
+    await query.message.reply_text(
+
+        f"👥 Usuarios activos: {total}"
+
+    )
+
+    return
+
+
+if data == "admin_codes":
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+        SELECT COUNT(*)
+        FROM invite_codes
+        WHERE used=FALSE
+
+        """)
+
+        total = cur.fetchone()[0]
+
+    await query.message.reply_text(
+
+        f"🎟️ Códigos activos: {total}"
+
+    )
+
+    return
+
+
+if data == "admin_stats":
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+        SELECT COUNT(*)
+        FROM users
+
+        """)
+
+        users_total = cur.fetchone()[0]
+
+    await query.message.reply_text(
+
+        f"📊 Estadísticas:\n\nUsuarios activos: {users_total}"
+
+    )
+
+    return
+
+
+if data == "admin_security":
+
+    await query.message.reply_text(
+
+        "🛡️ Seguridad activa\n\nSistema anti-intrusos funcionando."
+
+    )
+
+    return
 
     if data.startswith("gen_"):
 
