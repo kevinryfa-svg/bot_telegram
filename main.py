@@ -75,20 +75,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
 
-        [InlineKeyboardButton(
-            "🟢 1 día — 5€",
-            callback_data="1"
-        )],
-
-        [InlineKeyboardButton(
-            "🟡 7 días — 10€",
-            callback_data="7"
-        )],
-
-        [InlineKeyboardButton(
-            "🔵 Permanente — 25€",
-            callback_data="0"
-        )]
+        [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
+        [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
+        [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")]
 
     ]
 
@@ -242,6 +231,12 @@ def home():
 if __name__ == "__main__":
 
     port = int(os.environ.get("PORT"))
+
+    print("Inicializando Telegram...")
+
+    asyncio.run(
+        telegram_app.initialize()
+    )
 
     print("Configurando webhook...")
 
