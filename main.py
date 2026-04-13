@@ -1,4 +1,4 @@
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -9,9 +9,51 @@ from config import TOKEN, ADMIN_IDS, GROUP_ID
 from db import create_tables, conn
 
 
+# LINKS STRIPE
+LINK_1_DIA = "https://buy.stripe.com/dRm4gy1JY1fx1YAdOg8bS00"
+LINK_7_DIAS = "https://buy.stripe.com/4gM6oG4Wa1fxbzaeSk8bS01"
+LINK_PERMANENTE = "https://buy.stripe.com/fZu3cu9cq9M31YA39C8bS02"
+
+
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bot funcionando ✅")
+    await update.message.reply_text(
+        "Bienvenido al bot VIP 💎\n\n"
+        "Usa /pagar para ver los planes disponibles."
+    )
+
+
+# /pagar
+async def pagar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🟢 1 día — 5€",
+                url=LINK_1_DIA
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🟡 7 días — 10€",
+                url=LINK_7_DIAS
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔵 Permanente — 25€",
+                url=LINK_PERMANENTE
+            )
+        ]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "💎 Elige tu plan VIP:\n\n"
+        "Pulsa el botón para pagar.",
+        reply_markup=reply_markup
+    )
 
 
 # /id
@@ -31,7 +73,10 @@ async def adduser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(context.args[0])
         days = int(context.args[1])
 
-        expiration = datetime.now() + timedelta(days=days)
+        if days == 0:
+            expiration = None
+        else:
+            expiration = datetime.now() + timedelta(days=days)
 
         with conn.cursor() as cur:
             cur.execute("""
@@ -43,6 +88,11 @@ async def adduser(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             conn.commit()
 
+        await context.bot.unban_chat_member(
+            chat_id=GROUP_ID,
+            user_id=user_id
+        )
+
         invite_link = await context.bot.create_chat_invite_link(
             chat_id=GROUP_ID,
             member_limit=1
@@ -51,15 +101,14 @@ async def adduser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=user_id,
             text=(
-                "✅ Acceso aprobado\n\n"
-                f"Tu acceso vence: {expiration}\n\n"
-                "🔗 Aquí tienes tu enlace único:\n"
+                "✅ Pago recibido\n\n"
+                "Aquí tienes tu enlace VIP:\n"
                 f"{invite_link.invite_link}"
             )
         )
 
         await update.message.reply_text(
-            "Usuario añadido y enlace enviado ✅"
+            "Usuario añadido correctamente ✅"
         )
 
     except Exception as e:
@@ -69,111 +118,6 @@ async def adduser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Uso correcto: /adduser user_id días"
         )
-
-
-# /removeuser
-async def removeuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("No eres admin ❌")
-        return
-
-    try:
-        user_id = int(context.args[0])
-
-        await context.bot.ban_chat_member(
-            chat_id=GROUP_ID,
-            user_id=user_id
-        )
-
-        await context.bot.unban_chat_member(
-            chat_id=GROUP_ID,
-            user_id=user_id
-        )
-
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM users WHERE user_id=%s",
-                (user_id,)
-            )
-            conn.commit()
-
-        await update.message.reply_text(
-            "Usuario eliminado correctamente ⛔"
-        )
-
-    except Exception as e:
-
-        print("Error en removeuser:", e)
-
-        await update.message.reply_text(
-            "Uso correcto: /removeuser user_id"
-        )
-
-
-# /renew
-async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("No eres admin ❌")
-        return
-
-    try:
-        user_id = int(context.args[0])
-        days = int(context.args[1])
-
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE users
-                SET expiration = expiration + INTERVAL '%s days'
-                WHERE user_id=%s
-            """, (days, user_id))
-
-            conn.commit()
-
-        await update.message.reply_text(
-            "Usuario renovado correctamente 🔄"
-        )
-
-    except Exception as e:
-
-        print("Error en renew:", e)
-
-        await update.message.reply_text(
-            "Uso correcto: /renew user_id días"
-        )
-
-
-# /users
-async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("No eres admin ❌")
-        return
-
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT user_id, expiration FROM users
-        """)
-
-        result = cur.fetchall()
-
-    if not result:
-        await update.message.reply_text(
-            "No hay usuarios activos."
-        )
-        return
-
-    text = "Usuarios activos:\n\n"
-
-    for user in result:
-
-        text += (
-            f"ID: {user[0]}\n"
-            f"Expira: {user[1]}\n\n"
-        )
-
-    await update.message.reply_text(text)
 
 
 # Sistema automático
@@ -193,30 +137,11 @@ async def check_users(context: ContextTypes.DEFAULT_TYPE):
         user_id = user[0]
         expiration = user[1]
 
-        if not expiration:
+        if expiration is None:
             continue
-
-        remaining = expiration - now
 
         try:
 
-            # Aviso 24h
-            if timedelta(hours=23, minutes=59) < remaining <= timedelta(hours=24):
-
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text="⚠️ Tu acceso vence en 24 horas."
-                )
-
-            # Aviso 1h
-            if timedelta(minutes=59) < remaining <= timedelta(hours=1):
-
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text="⏰ Tu acceso vence en 1 hora."
-                )
-
-            # Expulsión
             if now > expiration:
 
                 await context.bot.ban_chat_member(
@@ -257,11 +182,9 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("pagar", pagar))
     app.add_handler(CommandHandler("id", id))
     app.add_handler(CommandHandler("adduser", adduser))
-    app.add_handler(CommandHandler("removeuser", removeuser))
-    app.add_handler(CommandHandler("renew", renew))
-    app.add_handler(CommandHandler("users", users))
 
     app.job_queue.run_repeating(
         check_users,
