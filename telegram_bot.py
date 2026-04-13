@@ -1,24 +1,24 @@
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
+
 from config import TOKEN
 
-# URL DE TU SERVIDOR
+# URL DEL SERVIDOR
 SERVER_URL = "https://worker-production-9e88.up.railway.app"
 
 
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    keyboard = [
-        [InlineKeyboardButton("💳 Comprar acceso", callback_data="comprar")]
-    ]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
-        "Bienvenido al sistema VIP 💎",
-        reply_markup=reply_markup
+        "Bienvenido al sistema VIP 💎\n\n"
+        "Escribe /pagar para comprar acceso."
     )
 
 
@@ -51,21 +51,31 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if plan not in ["1", "7", "0"]:
         return
 
-    response = requests.post(
-        f"{SERVER_URL}/create-checkout-session",
-        json={
-            "telegram_id": telegram_id,
-            "plan": plan
-        }
-    )
+    try:
 
-    data = response.json()
+        response = requests.post(
+            f"{SERVER_URL}/create-checkout-session",
+            json={
+                "telegram_id": telegram_id,
+                "plan": plan
+            }
+        )
 
-    payment_url = data["url"]
+        data = response.json()
 
-    await query.message.reply_text(
-        f"💳 Paga aquí:\n{payment_url}"
-    )
+        payment_url = data["url"]
+
+        await query.message.reply_text(
+            f"💳 Paga aquí:\n{payment_url}"
+        )
+
+    except Exception as e:
+
+        print("Error creando pago:", e)
+
+        await query.message.reply_text(
+            "Error creando el pago ❌"
+        )
 
 
 def main():
@@ -75,7 +85,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("pagar", pagar))
 
-    from telegram.ext import CallbackQueryHandler
     app.add_handler(CallbackQueryHandler(button))
 
     print("Bot Telegram iniciado")
