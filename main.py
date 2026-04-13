@@ -1,7 +1,7 @@
 import os
 import stripe
 import requests
-import psycopg2
+import threading
 
 from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
@@ -24,19 +24,17 @@ from db import conn
 from config import TOKEN, GROUP_ID
 
 
-# -------------------------
+# =========================
 # CONFIG STRIPE
-# -------------------------
+# =========================
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
-# PRICE IDS
 PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
 PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
 PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
 
-# DOMINIO CORRECTO
 SERVER_URL = "https://worker-production-9e88.up.railway.app"
 
 bot = Bot(token=TOKEN)
@@ -44,9 +42,9 @@ bot = Bot(token=TOKEN)
 app = Flask(__name__)
 
 
-# -------------------------
+# =========================
 # GUARDAR USUARIO
-# -------------------------
+# =========================
 
 def add_user(user_id, days):
 
@@ -67,9 +65,19 @@ def add_user(user_id, days):
         conn.commit()
 
 
-# -------------------------
+# =========================
+# RUTA TEST
+# =========================
+
+@app.route("/", methods=["GET"])
+def home():
+
+    return "Bot funcionando"
+
+
+# =========================
 # CREAR SESIÓN STRIPE
-# -------------------------
+# =========================
 
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout_session():
@@ -113,7 +121,9 @@ def create_checkout_session():
 
         )
 
-        return jsonify({"url": session.url})
+        return jsonify({
+            "url": session.url
+        })
 
     except Exception as e:
 
@@ -124,9 +134,9 @@ def create_checkout_session():
         }), 500
 
 
-# -------------------------
+# =========================
 # WEBHOOK STRIPE
-# -------------------------
+# =========================
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -187,9 +197,9 @@ def stripe_webhook():
     return "OK"
 
 
-# -------------------------
+# =========================
 # TELEGRAM BOT
-# -------------------------
+# =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -287,19 +297,19 @@ def run_telegram():
     telegram_app.run_polling()
 
 
-# -------------------------
+# =========================
 # MAIN
-# -------------------------
+# =========================
 
 if __name__ == "__main__":
-
-    import threading
 
     threading.Thread(
         target=run_telegram
     ).start()
 
-    port = int(os.environ.get("PORT", 8000))
+    # 🔴 ESTO ES LO IMPORTANTE
+
+    port = int(os.environ.get("PORT"))
 
     app.run(
         host="0.0.0.0",
