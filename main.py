@@ -832,56 +832,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Error creando pago"
         )
 
-    # =========================
-    # GENERAR CÓDIGOS
-    # =========================
-
-    if data.startswith("gen_"):
-
-        await crear_codigo_callback(update, context)
-        return
-
-
-    # =========================
-    # USAR CÓDIGO
-    # =========================
-
-    if data == "codigo":
-
-        context.user_data["waiting_code"] = True
-
-        await query.message.reply_text(
-            "Introduce tu código:"
-        )
-
-        return
-
-
-    # =========================
-    # PAGOS STRIPE
-    # =========================
-
-    user_id = query.from_user.id
-
-    response = requests.post(
-
-        f"{SERVER_URL}/create-checkout-session",
-
-        json={
-            "telegram_id": user_id,
-            "plan": data
-        }
-
-    )
-
-    payment_url = response.json()["url"]
-
-    await query.message.reply_text(
-
-        f"💳 Paga aquí:\n{payment_url}"
-
-    )
-
 
 # =========================
 # MAIN
