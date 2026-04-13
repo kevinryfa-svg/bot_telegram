@@ -1,6 +1,6 @@
 import os
 import stripe
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 
 from telegram import Bot
@@ -8,7 +8,7 @@ from db import conn
 from config import TOKEN, GROUP_ID
 
 
-# STRIPE CONFIG
+# CONFIG
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
@@ -21,6 +21,10 @@ bot = Bot(token=TOKEN)
 
 app = Flask(__name__)
 
+
+# ------------------------
+# GUARDAR USUARIO
+# ------------------------
 
 def add_user(user_id, days):
 
@@ -39,6 +43,57 @@ def add_user(user_id, days):
 
         conn.commit()
 
+
+# ------------------------
+# CREAR PAGO
+# ------------------------
+
+@app.route("/create-checkout-session", methods=["POST"])
+def create_checkout_session():
+
+    data = request.json
+
+    telegram_id = data["telegram_id"]
+    plan = data["plan"]
+
+    if plan == "1":
+        price_id = PRICE_1_DIA
+
+    elif plan == "7":
+        price_id = PRICE_7_DIAS
+
+    elif plan == "0":
+        price_id = PRICE_PERMANENTE
+
+    else:
+        return jsonify({"error": "Plan inválido"}), 400
+
+    session = stripe.checkout.Session.create(
+
+        payment_method_types=["card"],
+
+        line_items=[{
+            "price": price_id,
+            "quantity": 1,
+        }],
+
+        mode="payment",
+
+        success_url="https://t.me/TheStarVipBOT",
+        cancel_url="https://t.me/TheStarVipBOT",
+
+        metadata={
+            "telegram_id": str(telegram_id)
+        }
+
+    )
+
+    return jsonify({"url": session.url})
+
+
+# ------------------------
+# WEBHOOK STRIPE
+# ------------------------
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -81,7 +136,6 @@ def stripe_webhook():
             days = 0
 
         else:
-            print("Precio desconocido")
             return "OK"
 
         add_user(int(user_id), days)
@@ -99,10 +153,18 @@ def stripe_webhook():
     return "OK"
 
 
+# ------------------------
+# HOME
+# ------------------------
+
 @app.route("/", methods=["GET"])
 def home():
     return "Bot funcionando"
 
+
+# ------------------------
+# START
+# ------------------------
 
 if __name__ == "__main__":
 
