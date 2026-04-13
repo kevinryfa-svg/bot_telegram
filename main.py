@@ -1,20 +1,18 @@
 import os
 import stripe
-import requests
-import threading
 
 from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 
 from telegram import (
+    Bot,
     Update,
     InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Bot
+    InlineKeyboardMarkup
 )
 
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes
@@ -25,7 +23,7 @@ from config import TOKEN, GROUP_ID
 
 
 # =========================
-# CONFIG STRIPE
+# CONFIG
 # =========================
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
@@ -43,7 +41,7 @@ app = Flask(__name__)
 
 
 # =========================
-# GUARDAR USUARIO
+# DATABASE
 # =========================
 
 def add_user(user_id, days):
@@ -66,38 +64,45 @@ def add_user(user_id, days):
 
 
 # =========================
-# HOME TEST
+# TELEGRAM COMMANDS
 # =========================
 
-@app.route("/", methods=["GET"])
-def home():
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    return "Bot funcionando"
+    keyboard = [
+
+        [InlineKeyboardButton(
+            "🟢 1 día — 5€",
+            callback_data="1"
+        )],
+
+        [InlineKeyboardButton(
+            "🟡 7 días — 10€",
+            callback_data="7"
+        )],
+
+        [InlineKeyboardButton(
+            "🔵 Permanente — 25€",
+            callback_data="0"
+        )]
+
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Bienvenido 💎\n\nElige tu plan:",
+        reply_markup=reply_markup
+    )
 
 
-# =========================
-# CREAR SESIÓN STRIPE
-# =========================
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-@app.route("/create-checkout-session", methods=["POST"])
-def create_checkout_session():
+    query = update.callback_query
+    await query.answer()
 
-    data = request.json
-
-    telegram_id = data["telegram_id"]
-    plan = data["plan"]
-
-    if plan == "1":
-        price_id = PRICE_1_DIA
-
-    elif plan == "7":
-        price_id = PRICE_7_DIAS
-
-    elif plan == "0":
-        price_id = PRICE_PERMANENTE
-
-    else:
-        return jsonify({"error": "Plan inválido"}), 400
+    telegram_id = query.from_user.id
+    plan = query.data
 
     try:
 
@@ -106,7 +111,11 @@ def create_checkout_session():
             payment_method_types=["card"],
 
             line_items=[{
-                "price": price_id,
+                "price":
+                    PRICE_1_DIA if plan == "1"
+                    else PRICE_7_DIAS if plan == "7"
+                    else PRICE_PERMANENTE,
+
                 "quantity": 1,
             }],
 
@@ -121,21 +130,47 @@ def create_checkout_session():
 
         )
 
-        return jsonify({
-            "url": session.url
-        })
+        await query.message.reply_text(
+            f"💳 Paga aquí:\n{session.url}"
+        )
 
     except Exception as e:
 
-        print("Stripe error:", e)
+        await query.message.reply_text(
+            f"Error Stripe:\n{e}"
+        )
 
-        return jsonify({
-            "error": str(e)
-        }), 500
+
+telegram_app = Application.builder().token(TOKEN).build()
+
+telegram_app.add_handler(
+    CommandHandler("start", start)
+)
+
+telegram_app.add_handler(
+    CallbackQueryHandler(button)
+)
 
 
 # =========================
-# WEBHOOK STRIPE
+# TELEGRAM WEBHOOK
+# =========================
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+async def telegram_webhook():
+
+    update = Update.de_json(
+        request.get_json(force=True),
+        bot
+    )
+
+    await telegram_app.process_update(update)
+
+    return "OK"
+
+
+# =========================
+# STRIPE WEBHOOK
 # =========================
 
 @app.route("/webhook", methods=["POST"])
@@ -164,11 +199,7 @@ def stripe_webhook():
 
         user_id = session["metadata"]["telegram_id"]
 
-        line_items = stripe.checkout.Session.list_line_items(
-            session["id"]
-        )
-
-        price_id = line_items["data"][0]["price"]["id"]
+        price_id = session["display_items"][0]["price"]["id"]
 
         if price_id == PRICE_1_DIA:
             days = 1
@@ -176,11 +207,8 @@ def stripe_webhook():
         elif price_id == PRICE_7_DIAS:
             days = 7
 
-        elif price_id == PRICE_PERMANENTE:
-            days = 0
-
         else:
-            return "OK"
+            days = 0
 
         add_user(int(user_id), days)
 
@@ -198,123 +226,26 @@ def stripe_webhook():
 
 
 # =========================
-# TELEGRAM BOT
+# HOME
 # =========================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@app.route("/")
+def home():
 
-    await update.message.reply_text(
-        "Bienvenido 💎\n\nUsa /pagar para comprar acceso."
-    )
-
-
-async def pagar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    keyboard = [
-
-        [InlineKeyboardButton(
-            "🟢 1 día — 5€",
-            callback_data="1"
-        )],
-
-        [InlineKeyboardButton(
-            "🟡 7 días — 10€",
-            callback_data="7"
-        )],
-
-        [InlineKeyboardButton(
-            "🔵 Permanente — 25€",
-            callback_data="0"
-        )]
-
-    ]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        "Elige tu plan:",
-        reply_markup=reply_markup
-    )
-
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.callback_query
-    await query.answer()
-
-    telegram_id = query.from_user.id
-    plan = query.data
-
-    try:
-
-        response = requests.post(
-            f"{SERVER_URL}/create-checkout-session",
-            json={
-                "telegram_id": telegram_id,
-                "plan": plan
-            }
-        )
-
-        data = response.json()
-
-        if "url" not in data:
-
-            await query.message.reply_text(
-                f"Error Stripe:\n{data}"
-            )
-
-            return
-
-        payment_url = data["url"]
-
-        await query.message.reply_text(
-            f"💳 Paga aquí:\n{payment_url}"
-        )
-
-    except Exception as e:
-
-        await query.message.reply_text(
-            f"Error creando pago:\n{e}"
-        )
-
-
-def run_telegram():
-
-    telegram_app = ApplicationBuilder().token(TOKEN).build()
-
-    telegram_app.add_handler(
-        CommandHandler("start", start)
-    )
-
-    telegram_app.add_handler(
-        CommandHandler("pagar", pagar)
-    )
-
-    telegram_app.add_handler(
-        CallbackQueryHandler(button)
-    )
-
-    # 🔴 LIMPIA CONEXIONES ANTIGUAS
-    telegram_app.bot.delete_webhook(
-        drop_pending_updates=True
-    )
-
-    print("Bot Telegram iniciado")
-
-    telegram_app.run_polling()
+    return "Bot funcionando"
 
 
 # =========================
-# MAIN
+# START SERVER
 # =========================
 
 if __name__ == "__main__":
 
-    threading.Thread(
-        target=run_telegram
-    ).start()
-
     port = int(os.environ.get("PORT"))
+
+    telegram_app.bot.set_webhook(
+        url=f"{SERVER_URL}/{TOKEN}"
+    )
 
     app.run(
         host="0.0.0.0",
