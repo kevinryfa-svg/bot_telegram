@@ -54,8 +54,6 @@ telegram_app = ApplicationBuilder().token(TOKEN).build()
 
 def add_user(user_id, days):
 
-    # ⚠️ PRUEBA: minutos en vez de días
-
     if days == 0:
         expiration = None
 
@@ -235,9 +233,9 @@ def check_expirations():
 
             print("Error revisando expiraciones:", e)
 
-        # ⚠️ PRUEBA: revisa cada 10 segundos
+        # producción real
 
-        time.sleep(10)
+        time.sleep(60)
 
 
 # =========================
@@ -275,13 +273,13 @@ def stripe_webhook():
 
         price_id = line_items["data"][0]["price"]["id"]
 
-        # ⚠️ PRUEBA 60 SEGUNDOS
+        # TIEMPOS REALES
 
         if price_id == PRICE_1_DIA:
-            days = 0.001   # ≈ 1 minuto
+            days = 1
 
         elif price_id == PRICE_7_DIAS:
-            days = 0.002   # ≈ 2 minutos
+            days = 7
 
         else:
             days = 0
