@@ -1,5 +1,6 @@
 import os
 import stripe
+import asyncio
 
 from flask import Flask, request
 from datetime import datetime, timedelta
@@ -64,7 +65,7 @@ def add_user(user_id, days):
 
 
 # =========================
-# TELEGRAM BOT
+# TELEGRAM APP
 # =========================
 
 telegram_app = Application.builder().token(TOKEN).build()
@@ -165,12 +166,16 @@ telegram_app.add_handler(
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
 
+    json_data = request.get_json(force=True)
+
     update = Update.de_json(
-        request.get_json(force=True),
+        json_data,
         bot
     )
 
-    telegram_app.update_queue.put_nowait(update)
+    asyncio.run(
+        telegram_app.process_update(update)
+    )
 
     return "OK"
 
@@ -248,9 +253,7 @@ if __name__ == "__main__":
         url=f"{SERVER_URL}/{TOKEN}"
     )
 
-    print("Webhook configurado")
-
-    telegram_app.initialize()
+    print("Webhook configurado correctamente")
 
     app.run(
         host="0.0.0.0",
