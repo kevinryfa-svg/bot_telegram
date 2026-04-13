@@ -1,6 +1,7 @@
 import os
 import stripe
 import threading
+import asyncio
 
 from flask import Flask, request
 
@@ -146,19 +147,21 @@ def stripe_webhook():
 
         try:
 
-            # Crear link único (SIN async)
+            # 🔥 FUNCIÓN ASYNC CORRECTA
 
-            invite_link = bot.create_chat_invite_link(
-                chat_id=GROUP_ID,
-                member_limit=1
-            )
+            async def send_link():
 
-            # Enviar mensaje
+                invite_link = await bot.create_chat_invite_link(
+                    chat_id=GROUP_ID,
+                    member_limit=1
+                )
 
-            bot.send_message(
-                chat_id=int(user_id),
-                text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
-            )
+                await bot.send_message(
+                    chat_id=int(user_id),
+                    text=f"🔗 Tu acceso VIP:\n{invite_link.invite_link}"
+                )
+
+            asyncio.run(send_link())
 
             print("Link enviado correctamente")
 
