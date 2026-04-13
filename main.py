@@ -232,6 +232,111 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    # =========================
+    # ELIMINAR CÓDIGO
+    # =========================
+
+    if context.user_data.get("delete_code"):
+
+        code = update.message.text.strip().upper()
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                DELETE FROM invite_codes
+                WHERE code=%s
+
+            """, (code,))
+
+            conn.commit()
+
+        await update.message.reply_text(
+            f"❌ Código eliminado:\n{code}"
+        )
+
+        context.user_data["delete_code"] = False
+
+        return
+
+
+    # =========================
+    # BUSCAR USUARIO
+    # =========================
+
+    if context.user_data.get("search_user"):
+
+        user_id = update.message.text.strip()
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT expiration
+                FROM users
+                WHERE user_id=%s
+
+            """, (user_id,))
+
+            row = cur.fetchone()
+
+        if row:
+
+            expiration = row[0]
+
+            await update.message.reply_text(
+                f"👤 Usuario {user_id}\nExpira: {expiration}"
+            )
+
+        else:
+
+            await update.message.reply_text(
+                "Usuario no encontrado"
+            )
+
+        context.user_data["search_user"] = False
+
+        return
+
+
+    # =========================
+    # EXPULSAR USUARIO
+    # =========================
+
+    if context.user_data.get("kick_user"):
+
+        user_id = update.message.text.strip()
+
+        requests.post(
+
+            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+            json={
+                "chat_id": GROUP_ID,
+                "user_id": user_id
+            }
+
+        )
+
+        requests.post(
+
+            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+            json={
+                "chat_id": GROUP_ID,
+                "user_id": user_id
+            }
+
+        )
+
+        await update.message.reply_text(
+            f"🚫 Usuario expulsado:\n{user_id}"
+        )
+
+        context.user_data["kick_user"] = False
+
+        return
+
     if not context.user_data.get("waiting_code"):
         return
 
@@ -643,9 +748,13 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         [InlineKeyboardButton("📤 Crear código", callback_data="admin_create_code")],
 
-        [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")],
+        [InlineKeyboardButton("❌ Eliminar código", callback_data="admin_delete_code")],
 
-        [InlineKeyboardButton("🛡️ Seguridad", callback_data="admin_security")]
+        [InlineKeyboardButton("🔍 Buscar usuario", callback_data="admin_search_user")],
+
+        [InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")],
+
+        [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")]
 
     ]
 
@@ -658,6 +767,37 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =========================
+# BUSCAR USUARIO
+# =========================
+
+async def search_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    context.user_data["search_user"] = True
+
+    await update.message.reply_text(
+        "🔍 Envia el ID del usuario"
+    )
+
+
+# =========================
+# EXPULSAR USUARIO
+# =========================
+
+async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    context.user_data["kick_user"] = True
+
+    await update.message.reply_text(
+        "🚫 Envia el ID del usuario a expulsar"
+    )
+
+# =========================
 # BOTONES
 # =========================
 
@@ -667,6 +807,86 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     data = query.data
+
+
+    # =========================
+    # CREAR CÓDIGO DESDE PANEL
+    # =========================
+
+    if data == "admin_create_code":
+
+        if query.from_user.id != ADMIN_ID:
+            return
+
+        keyboard = [
+
+            [InlineKeyboardButton("⏱️ 15 min", callback_data="gen_15")],
+
+            [InlineKeyboardButton("📅 1 día", callback_data="gen_1440")],
+
+            [InlineKeyboardButton("📅 7 días", callback_data="gen_10080")],
+
+            [InlineKeyboardButton("📅 30 días", callback_data="gen_43200")],
+
+            [InlineKeyboardButton("♾️ Permanente", callback_data="gen_perm")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "Selecciona duración:",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
+    # ELIMINAR CÓDIGO
+    # =========================
+
+    if data == "admin_delete_code":
+
+        context.user_data["delete_code"] = True
+
+        await query.message.reply_text(
+            "❌ Envia el código a eliminar"
+        )
+
+        return
+
+
+    # =========================
+    # BUSCAR USUARIO
+    # =========================
+
+    if data == "admin_search_user":
+
+        context.user_data["search_user"] = True
+
+        await query.message.reply_text(
+            "🔍 Envia el ID del usuario"
+        )
+
+        return
+
+
+    # =========================
+    # EXPULSAR USUARIO
+    # =========================
+
+    if data == "admin_kick_user":
+
+        context.user_data["kick_user"] = True
+
+        await query.message.reply_text(
+            "🚫 Envia el ID del usuario"
+        )
+
+        return
+
 
     # =========================
     # CREAR CÓDIGO DESDE PANEL
@@ -700,7 +920,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
-        
+
 
     # =========================
     # PANEL ADMIN BOTONES
