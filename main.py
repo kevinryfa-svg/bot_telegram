@@ -93,7 +93,7 @@ async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# CALLBACK CREAR CÓDIGO
+# CREAR CÓDIGO
 # =========================
 
 async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -125,6 +125,83 @@ async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.reply_text(
         f"✅ Código creado:\n\n{code}"
     )
+
+
+# =========================
+# /codigos
+# =========================
+
+async def ver_codigos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+            SELECT code, duration, used
+            FROM invite_codes
+            ORDER BY code DESC
+            LIMIT 20
+        """)
+
+        rows = cur.fetchall()
+
+    if not rows:
+
+        await update.message.reply_text(
+            "No hay códigos."
+        )
+        return
+
+    texto = "🎟️ Códigos:\n\n"
+
+    for code, duration, used in rows:
+
+        estado = "❌ usado" if used else "✅ activo"
+
+        texto += f"{code}\n{duration} min — {estado}\n\n"
+
+    await update.message.reply_text(texto)
+
+
+# =========================
+# /usuarios
+# =========================
+
+async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+            SELECT user_id, expiration
+            FROM users
+            ORDER BY expiration DESC
+            LIMIT 20
+        """)
+
+        users = cur.fetchall()
+
+    if not users:
+
+        await update.message.reply_text(
+            "No hay usuarios."
+        )
+        return
+
+    texto = "👥 Usuarios:\n\n"
+
+    for user_id, expiration in users:
+
+        if expiration:
+            texto += f"{user_id}\n{expiration}\n\n"
+        else:
+            texto += f"{user_id}\nPermanente\n\n"
+
+    await update.message.reply_text(texto)
 
 
 # =========================
@@ -202,58 +279,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# STRIPE WEBHOOK
-# =========================
-
-@app.route("/webhook", methods=["POST"])
-def stripe_webhook():
-
-    payload = request.data
-    sig_header = request.headers.get("stripe-signature")
-
-    try:
-
-        event = stripe.Webhook.construct_event(
-            payload,
-            sig_header,
-            WEBHOOK_SECRET
-        )
-
-    except Exception as e:
-
-        print("Webhook error:", e)
-        return "Error", 400
-
-    if event["type"] == "checkout.session.completed":
-
-        session = event["data"]["object"]
-
-        user_id = session["metadata"]["telegram_id"]
-
-        invite_link = requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-            json={
-                "chat_id": GROUP_ID,
-                "member_limit": 1
-            }
-        ).json()
-
-        link = invite_link["result"]["invite_link"]
-
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={
-                "chat_id": int(user_id),
-                "text": f"🔗 Tu acceso VIP:\n{link}"
-            }
-        )
-
-        print("Pago confirmado:", user_id)
-
-    return "OK"
-
-
-# =========================
 # START
 # =========================
 
@@ -303,38 +328,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # PAGOS
-
-    user_id = query.from_user.id
-
-    response = requests.post(
-        f"{SERVER_URL}/create-checkout-session",
-        json={
-            "telegram_id": user_id,
-            "plan": data
-        }
-    )
-
-    payment_url = response.json()["url"]
-
-    await query.message.reply_text(
-        f"💳 Paga aquí:\n{payment_url}"
-    )
-
-
-# =========================
-# FLASK THREAD
-# =========================
-
-def run_flask():
-
-    port = int(os.environ.get("PORT"))
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
-
 
 # =========================
 # MAIN
@@ -346,8 +339,8 @@ def main():
 
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("generarcodigo", generar_codigo))
-    telegram_app.add_handler(CommandHandler("codigos", generar_codigo))
-    telegram_app.add_handler(CommandHandler("usuarios", generar_codigo))
+    telegram_app.add_handler(CommandHandler("codigos", ver_codigos))
+    telegram_app.add_handler(CommandHandler("usuarios", ver_usuarios))
 
     telegram_app.add_handler(CallbackQueryHandler(button))
 
@@ -357,11 +350,6 @@ def main():
             receive_code
         )
     )
-
-    threading.Thread(
-        target=run_flask,
-        daemon=True
-    ).start()
 
     print("Bot iniciado correctamente")
 
