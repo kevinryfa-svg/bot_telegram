@@ -626,7 +626,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     )
 
-    # =========================
+# =========================
+# PANEL ADMIN
+# =========================
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    keyboard = [
+
+        [InlineKeyboardButton("👥 Usuarios", callback_data="admin_users")],
+
+        [InlineKeyboardButton("🎟️ Códigos", callback_data="admin_codes")],
+
+        [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")],
+
+        [InlineKeyboardButton("🛡️ Seguridad", callback_data="admin_security")]
+
+    ]
+
+    await update.message.reply_text(
+
+        "🔐 PANEL ADMIN",
+
+        reply_markup=InlineKeyboardMarkup(keyboard)
+
+    )
+
+# =========================
 # BOTONES
 # =========================
 
