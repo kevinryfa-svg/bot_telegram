@@ -666,10 +666,87 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
+    # =========================
+    # PANEL ADMIN BOTONES
+    # =========================
+
+    if data == "admin_users":
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+            SELECT COUNT(*)
+            FROM users
+            """)
+
+            total = cur.fetchone()[0]
+
+        await query.message.reply_text(
+            f"👥 Usuarios activos: {total}"
+        )
+
+        return
+
+
+    if data == "admin_codes":
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+            SELECT COUNT(*)
+            FROM invite_codes
+            WHERE used=FALSE
+            """)
+
+            total = cur.fetchone()[0]
+
+        await query.message.reply_text(
+            f"🎟️ Códigos activos: {total}"
+        )
+
+        return
+
+
+    if data == "admin_stats":
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+            SELECT COUNT(*)
+            FROM users
+            """)
+
+            users_total = cur.fetchone()[0]
+
+        await query.message.reply_text(
+            f"📊 Estadísticas:\n\nUsuarios activos: {users_total}"
+        )
+
+        return
+
+
+    if data == "admin_security":
+
+        await query.message.reply_text(
+            "🛡️ Seguridad activa\n\nSistema anti-intrusos funcionando."
+        )
+
+        return
+
+
+    # =========================
+    # GENERAR CÓDIGOS
+    # =========================
+
     if data.startswith("gen_"):
 
         await crear_codigo_callback(update, context)
         return
+
+
+    # =========================
+    # USAR CÓDIGO
+    # =========================
 
     if data == "codigo":
 
@@ -680,6 +757,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
+
+
+    # =========================
+    # PAGOS STRIPE
+    # =========================
 
     user_id = query.from_user.id
 
@@ -701,70 +783,3 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💳 Paga aquí:\n{payment_url}"
 
     )
-
-
-# =========================
-# MAIN
-# =========================
-
-def main():
-
-    create_tables()
-
-    telegram_app.add_handler(
-        CommandHandler("start", start)
-    )
-
-    telegram_app.add_handler(
-        CommandHandler("generarcodigo", generar_codigo)
-    )
-
-    telegram_app.add_handler(
-        CommandHandler("codigos", ver_codigos)
-    )
-
-    telegram_app.add_handler(
-        CommandHandler("usuarios", ver_usuarios)
-    )
-
-    telegram_app.add_handler(
-        CommandHandler("admin", admin_panel)
-    )
-
-    telegram_app.add_handler(
-        CallbackQueryHandler(button)
-    )
-
-    telegram_app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            receive_code
-        )
-    )
-
-    # 🔴 CONTROLAR NUEVOS MIEMBROS
-
-    telegram_app.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.NEW_CHAT_MEMBERS,
-            check_new_member
-        )
-    )
-
-    threading.Thread(
-        target=check_expirations,
-        daemon=True
-    ).start()
-
-    threading.Thread(
-        target=run_flask,
-        daemon=True
-    ).start()
-
-    print("Bot iniciado correctamente")
-
-    telegram_app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
