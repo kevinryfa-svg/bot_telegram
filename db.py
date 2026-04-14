@@ -88,4 +88,22 @@ def create_tables():
 
         """)
 
+
+        # =========================
+        # TABLA USUARIOS BANEADOS
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS banned_users (
+
+            user_id BIGINT PRIMARY KEY,
+
+            banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
     print("Tablas verificadas correctamente")

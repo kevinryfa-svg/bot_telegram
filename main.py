@@ -329,6 +329,22 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_id = update.message.text.strip()
 
+        # eliminar de users
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                DELETE FROM users
+                WHERE user_id=%s
+
+            """, (user_id,))
+
+            conn.commit()
+
+
+        # expulsar del grupo
+
         requests.post(
 
             f"https://api.telegram.org/bot{TOKEN}/banChatMember",
@@ -361,6 +377,71 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # BAN PERMANENTE
+    # =========================
+
+    if context.user_data.get("ban_user"):
+
+        user_id = update.message.text.strip()
+
+        try:
+
+            with conn.cursor() as cur:
+
+                # guardar en tabla ban
+
+                cur.execute("""
+
+                    INSERT INTO banned_users
+                    (user_id)
+
+                    VALUES (%s)
+
+                    ON CONFLICT (user_id)
+                    DO NOTHING
+
+                """, (user_id,))
+
+                # eliminar de users
+
+                cur.execute("""
+
+                    DELETE FROM users
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+                conn.commit()
+
+
+            # expulsar del grupo
+
+            requests.post(
+
+                f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                json={
+                    "chat_id": GROUP_ID,
+                    "user_id": user_id
+                }
+
+            )
+
+            await update.message.reply_text(
+                f"⛔ Usuario baneado permanentemente:\n{user_id}"
+            )
+
+        except Exception as e:
+
+            print("Error baneando:", e)
+
+
+        context.user_data["ban_user"] = False
+
+        return
+
+
+    # =========================
     # USO NORMAL DE CÓDIGO
     # =========================
 
@@ -370,6 +451,27 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_code = update.message.text.strip().upper()
 
     with conn.cursor() as cur:
+
+        # comprobar si está baneado
+
+        cur.execute("""
+
+            SELECT user_id
+            FROM banned_users
+            WHERE user_id=%s
+
+        """, (update.effective_user.id,))
+
+        banned = cur.fetchone()
+
+        if banned:
+
+            await update.message.reply_text(
+                "⛔ Estás baneado permanentemente."
+            )
+
+            return
+
 
         cur.execute("""
 
@@ -405,8 +507,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             expiration = datetime.now() + timedelta(minutes=duration)
 
-
-        # 🔧 SQL COMPLETAMENTE CORREGIDO
 
         cur.execute("""
 
@@ -868,6 +968,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         [InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")],
 
+        [InlineKeyboardButton("⛔ Banear usuario", callback_data="admin_ban_user")],
+
         [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")]
 
     ]
@@ -1113,6 +1215,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # BAN PERMANENTE
+    # =========================
+
+    if data == "admin_ban_user":
+
+        context.user_data["ban_user"] = True
+
+        await query.message.reply_text(
+            "⛔ Envia el ID del usuario a BANEAR"
+        )
+
+        return
+
+
+    # =========================
     # ESTADÍSTICAS
     # =========================
 
@@ -1124,8 +1241,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
 
             with conn.cursor() as cur:
-
-                # 👥 Usuarios activos
 
                 cur.execute("""
 
@@ -1139,8 +1254,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 usuarios_activos = cur.fetchone()[0]
 
 
-                # ⛔ Usuarios expirados
-
                 cur.execute("""
 
                     SELECT COUNT(*)
@@ -1153,8 +1266,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 usuarios_expirados = cur.fetchone()[0]
 
 
-                # ♾️ Usuarios permanentes
-
                 cur.execute("""
 
                     SELECT COUNT(*)
@@ -1166,8 +1277,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 usuarios_permanentes = cur.fetchone()[0]
 
 
-                # 💳 Total pagos
-
                 cur.execute("""
 
                     SELECT COUNT(*)
@@ -1178,55 +1287,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total_pagos = cur.fetchone()[0]
 
 
-                # 🕒 Último pago
-
-                cur.execute("""
-
-                    SELECT payment_date
-                    FROM payments
-                    ORDER BY payment_date DESC
-                    LIMIT 1
-
-                """)
-
-                ultimo_pago = cur.fetchone()
-
-                if ultimo_pago:
-
-                    ultimo_pago = ultimo_pago[0].strftime("%Y-%m-%d %H:%M")
-
-                else:
-
-                    ultimo_pago = "Sin pagos"
-
-
-                # 📅 Pagos hoy
-
-                cur.execute("""
-
-                    SELECT COUNT(*)
-                    FROM payments
-                    WHERE DATE(payment_date) = CURRENT_DATE
-
-                """)
-
-                pagos_hoy = cur.fetchone()[0]
-
-
-                # 📅 Pagos este mes
-
-                cur.execute("""
-
-                    SELECT COUNT(*)
-                    FROM payments
-                    WHERE DATE_TRUNC('month', payment_date)
-                    = DATE_TRUNC('month', CURRENT_DATE)
-
-                """)
-
-                pagos_mes = cur.fetchone()[0]
-
-
             texto = (
 
                 "📊 ESTADÍSTICAS\n\n"
@@ -1235,10 +1295,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⛔ Expirados: {usuarios_expirados}\n"
                 f"♾️ Permanentes: {usuarios_permanentes}\n\n"
 
-                f"💳 Pagos totales: {total_pagos}\n"
-                f"📅 Pagos hoy: {pagos_hoy}\n"
-                f"📅 Pagos este mes: {pagos_mes}\n"
-                f"🕒 Último pago: {ultimo_pago}"
+                f"💳 Pagos totales: {total_pagos}"
 
             )
 
