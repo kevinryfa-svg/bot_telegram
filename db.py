@@ -24,13 +24,23 @@ def create_tables():
 
     with conn.cursor() as cur:
 
+        # ⚠️ BORRAR TABLA USERS ANTIGUA
+        # (solo se ejecuta una vez y arregla errores previos)
+
+        cur.execute("""
+
+        DROP TABLE IF EXISTS users;
+
+        """)
+
+
         # =========================
         # TABLA USERS
         # =========================
 
         cur.execute("""
 
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
 
             user_id BIGINT PRIMARY KEY,
 
@@ -40,7 +50,7 @@ def create_tables():
 
             expiration TIMESTAMP
 
-        )
+        );
 
         """)
 
@@ -63,7 +73,7 @@ def create_tables():
 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
-        )
+        );
 
         """)
 
@@ -84,7 +94,7 @@ def create_tables():
 
             plan TEXT
 
-        )
+        );
 
         """)
 
