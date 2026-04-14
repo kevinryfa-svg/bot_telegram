@@ -63,7 +63,7 @@ def home():
 
 
 # =========================
-# RUN FLASK (🔴 IMPORTANTE)
+# RUN FLASK
 # =========================
 
 def run_flask():
@@ -175,9 +175,7 @@ async def ver_codigos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         SELECT code, duration, used
         FROM invite_codes
-
         ORDER BY code DESC
-
         LIMIT 50
 
         """)
@@ -210,7 +208,6 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         SELECT user_id, expiration
         FROM users
-
         ORDER BY expiration DESC
 
         """)
@@ -337,6 +334,11 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
+
+    # =========================
+    # USO NORMAL DE CÓDIGO
+    # =========================
+
     if not context.user_data.get("waiting_code"):
         return
 
@@ -348,7 +350,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         SELECT duration, used
         FROM invite_codes
-
         WHERE code=%s
 
         """, (user_code,))
@@ -372,60 +373,53 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if duration == 0:
+
             expiration = None
+
         else:
+
             expiration = datetime.now() + timedelta(minutes=duration)
+
+
+        # 🔧 SQL COMPLETAMENTE CORREGIDO
 
         cur.execute("""
 
-INSERT INTO users
-(user_id, username, first_name, expiration)
+        INSERT INTO users
+        (user_id, username, first_name, expiration)
 
-VALUES (%s, %s, %s, %s)
-
-ON CONFLICT (user_id)
-DO UPDATE SET
-
-username=%s,
-first_name=%s,
-expiration=%s
-
-""", (
-
-    update.effective_user.id,
-
-    update.effective_user.username,
-
-    update.effective_user.first_name,
-
-    expiration,
-
-    update.effective_user.username,
-
-    update.effective_user.first_name,
-
-    expiration
-
-))
-
-
-        VALUES (%s, %s)
+        VALUES (%s, %s, %s, %s)
 
         ON CONFLICT (user_id)
-        DO UPDATE SET expiration=%s
+        DO UPDATE SET
 
-        """, (update.effective_user.id, expiration, expiration))
+        username=%s,
+        first_name=%s,
+        expiration=%s
+
+        """, (
+
+            update.effective_user.id,
+            update.effective_user.username,
+            update.effective_user.first_name,
+            expiration,
+            update.effective_user.username,
+            update.effective_user.first_name,
+            expiration
+
+        ))
+
 
         cur.execute("""
 
         UPDATE invite_codes
         SET used=TRUE
-
         WHERE code=%s
 
         """, (user_code,))
 
         conn.commit()
+
 
     invite_link = requests.post(
 
@@ -438,13 +432,16 @@ expiration=%s
 
     ).json()
 
+
     link = invite_link["result"]["invite_link"]
+
 
     await update.message.reply_text(
 
         f"🔗 Acceso concedido:\n{link}"
 
     )
+
 
     context.user_data["waiting_code"] = False
 
@@ -470,6 +467,10 @@ def create_checkout_session():
     elif plan == "0":
         price_id = PRICE_PERMANENTE
 
+    else:
+        return jsonify({"error": "Plan inválido"}), 400
+
+
     session = stripe.checkout.Session.create(
 
         payment_method_types=["card"],
@@ -490,10 +491,9 @@ def create_checkout_session():
 
     )
 
+
     return jsonify({
-
         "url": session.url
-
     })
 
 
@@ -520,6 +520,7 @@ def stripe_webhook():
         print("Webhook error:", e)
         return "Error", 400
 
+
     if event["type"] == "checkout.session.completed":
 
         session = event["data"]["object"]
@@ -528,7 +529,10 @@ def stripe_webhook():
             session["metadata"]["telegram_id"]
         )
 
-        # 🔴 OBTENER PLAN PAGADO
+
+        # =========================
+        # OBTENER PLAN PAGADO
+        # =========================
 
         line_items = stripe.checkout.Session.list_line_items(
             session["id"]
@@ -536,7 +540,10 @@ def stripe_webhook():
 
         price_id = line_items["data"][0]["price"]["id"]
 
-        # 🔴 CALCULAR DURACIÓN
+
+        # =========================
+        # CALCULAR DURACIÓN
+        # =========================
 
         if price_id == PRICE_1_DIA:
 
@@ -554,7 +561,10 @@ def stripe_webhook():
 
             expiration = None
 
-        # 🔴 GUARDAR USUARIO EN DB
+
+        # =========================
+        # GUARDAR USUARIO
+        # =========================
 
         with conn.cursor() as cur:
 
@@ -568,13 +578,23 @@ def stripe_webhook():
             ON CONFLICT (user_id)
             DO UPDATE SET expiration=%s
 
-            """, (user_id, expiration, expiration))
+            """, (
+
+                user_id,
+                expiration,
+                expiration
+
+            ))
 
             conn.commit()
 
+
         print("Usuario guardado:", user_id)
 
-        # 🔴 CREAR LINK (NO member_limit)
+
+        # =========================
+        # CREAR LINK VIP (1 uso)
+        # =========================
 
         invite_link = requests.post(
 
@@ -582,14 +602,18 @@ def stripe_webhook():
 
             json={
                 "chat_id": GROUP_ID,
-                "expire_date": int(time.time()) + 300
+                "member_limit": 1
             }
 
         ).json()
 
+
         link = invite_link["result"]["invite_link"]
 
-        # 🔴 ENVIAR LINK
+
+        # =========================
+        # ENVIAR LINK AL USUARIO
+        # =========================
 
         requests.post(
 
@@ -602,9 +626,12 @@ def stripe_webhook():
 
         )
 
+
         print("Pago confirmado:", user_id)
 
+
     return "OK"
+
 
 # =========================
 # CONTROL ENTRADAS GRUPO
@@ -618,6 +645,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.new_chat_members:
         return
 
+
     for member in update.message.new_chat_members:
 
         user_id = member.id
@@ -628,15 +656,16 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
-                SELECT user_id
+                SELECT expiration
                 FROM users
                 WHERE user_id=%s
 
                 """, (user_id,))
 
-                user = cur.fetchone()
+                row = cur.fetchone()
 
-            if not user:
+
+            if not row:
 
                 print("Expulsando usuario no autorizado:", user_id)
 
@@ -664,11 +693,43 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             else:
 
-                print("Usuario autorizado:", user_id)
+                expiration = row[0]
+
+                if expiration and datetime.now() > expiration:
+
+                    print("Usuario expirado:", user_id)
+
+                    requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                        json={
+                            "chat_id": GROUP_ID,
+                            "user_id": user_id
+                        }
+
+                    )
+
+                    requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                        json={
+                            "chat_id": GROUP_ID,
+                            "user_id": user_id
+                        }
+
+                    )
+
+                else:
+
+                    print("Usuario autorizado:", user_id)
+
 
         except Exception as e:
 
             print("Error verificando miembro:", e)
+
 
 # =========================
 # EXPIRACIONES
@@ -684,7 +745,6 @@ def check_expirations():
 
             SELECT user_id, expiration
             FROM users
-
             WHERE expiration IS NOT NULL
 
             """)
@@ -699,33 +759,27 @@ def check_expirations():
 
                     try:
 
+                        print("Expulsando expirado:", user_id)
+
                         requests.post(
-
                             f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
                             json={
                                 "chat_id": GROUP_ID,
                                 "user_id": user_id
                             }
-
                         )
 
                         requests.post(
-
                             f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
                             json={
                                 "chat_id": GROUP_ID,
                                 "user_id": user_id
                             }
-
                         )
 
                         cur.execute("""
-
                         DELETE FROM users
                         WHERE user_id=%s
-
                         """, (user_id,))
 
                         conn.commit()
@@ -758,6 +812,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
 
     )
+
 
 # =========================
 # PANEL ADMIN
@@ -794,36 +849,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     )
 
-# =========================
-# BUSCAR USUARIO
-# =========================
-
-async def search_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    context.user_data["search_user"] = True
-
-    await update.message.reply_text(
-        "🔍 Envia el ID del usuario"
-    )
-
-
-# =========================
-# EXPULSAR USUARIO
-# =========================
-
-async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    context.user_data["kick_user"] = True
-
-    await update.message.reply_text(
-        "🚫 Envia el ID del usuario a expulsar"
-    )
 
 # =========================
 # BOTONES
@@ -838,7 +863,137 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
-    # CREAR CÓDIGO DESDE PANEL
+    # ADMIN USERS
+    # =========================
+
+    if data == "admin_users":
+
+        if query.from_user.id != ADMIN_ID:
+            return
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT user_id, username, first_name, expiration
+                FROM users
+                ORDER BY expiration DESC NULLS LAST
+
+            """)
+
+            users = cur.fetchall()
+
+
+        if not users:
+
+            await query.message.reply_text(
+                "No hay usuarios activos."
+            )
+
+            return
+
+
+        texto = f"👥 Usuarios activos: {len(users)}\n\n"
+
+
+        for user_id, username, first_name, expiration in users:
+
+            nombre = first_name if first_name else "Sin nombre"
+
+            if username:
+                nombre += f" (@{username})"
+
+            if expiration:
+
+                exp = expiration.strftime("%Y-%m-%d")
+
+            else:
+
+                exp = "♾️ Permanente"
+
+
+            texto += (
+
+                f"ID: {user_id}\n"
+                f"Nombre: {nombre}\n"
+                f"Expira: {exp}\n\n"
+
+            )
+
+
+        await query.message.reply_text(texto)
+
+        return
+
+
+    # =========================
+    # VER CÓDIGOS
+    # =========================
+
+    if data == "admin_codes":
+
+        if query.from_user.id != ADMIN_ID:
+            return
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT code, duration, used
+                FROM invite_codes
+                ORDER BY code DESC
+                LIMIT 20
+
+            """)
+
+            rows = cur.fetchall()
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "No hay códigos creados."
+            )
+
+            return
+
+
+        texto = "🎟️ Últimos códigos:\n\n"
+
+
+        for code, duration, used in rows:
+
+            if duration == 0:
+
+                duracion_texto = "♾️ Permanente"
+
+            elif duration < 1440:
+
+                duracion_texto = f"{duration} min"
+
+            else:
+
+                duracion_texto = f"{duration//1440} días"
+
+
+            estado = "❌ USADO" if used else "✅ ACTIVO"
+
+
+            texto += (
+
+                f"{code}\n"
+                f"{duracion_texto} — {estado}\n\n"
+
+            )
+
+
+        await query.message.reply_text(texto)
+
+        return
+
+
+    # =========================
+    # CREAR CÓDIGO
     # =========================
 
     if data == "admin_create_code":
@@ -846,19 +1001,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.from_user.id != ADMIN_ID:
             return
 
+
         keyboard = [
 
             [InlineKeyboardButton("⏱️ 15 min", callback_data="gen_15")],
-
             [InlineKeyboardButton("📅 1 día", callback_data="gen_1440")],
-
             [InlineKeyboardButton("📅 7 días", callback_data="gen_10080")],
-
             [InlineKeyboardButton("📅 30 días", callback_data="gen_43200")],
-
             [InlineKeyboardButton("♾️ Permanente", callback_data="gen_perm")]
 
         ]
+
 
         await query.message.reply_text(
 
@@ -917,162 +1070,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
-    # CREAR CÓDIGO DESDE PANEL
+    # ESTADÍSTICAS
     # =========================
-
-    if data == "admin_create_code":
-
-        if query.from_user.id != ADMIN_ID:
-            return
-
-        keyboard = [
-
-            [InlineKeyboardButton("⏱️ 15 min", callback_data="gen_15")],
-
-            [InlineKeyboardButton("📅 1 día", callback_data="gen_1440")],
-
-            [InlineKeyboardButton("📅 7 días", callback_data="gen_10080")],
-
-            [InlineKeyboardButton("📅 30 días", callback_data="gen_43200")],
-
-            [InlineKeyboardButton("♾️ Permanente", callback_data="gen_perm")]
-
-        ]
-
-        await query.message.reply_text(
-
-            "Selecciona duración del código:",
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
-        )
-
-        return
-
-
-    # =========================
-    # PANEL ADMIN BOTONES
-    # =========================
-
-    if data == "admin_users":
-
-    if query.from_user.id != ADMIN_ID:
-        return
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            SELECT user_id, username, first_name, expiration
-            FROM users
-            ORDER BY expiration DESC NULLS LAST
-
-        """)
-
-        users = cur.fetchall()
-
-    if not users:
-
-        await query.message.reply_text(
-            "No hay usuarios activos."
-        )
-
-        return
-
-    texto = f"👥 Usuarios activos: {len(users)}\n\n"
-
-    for user_id, username, first_name, expiration in users:
-
-        nombre = first_name if first_name else "Sin nombre"
-
-        if username:
-            nombre += f" (@{username})"
-
-        if expiration:
-
-            exp = expiration.strftime("%Y-%m-%d")
-
-        else:
-
-            exp = "♾️ Permanente"
-
-        texto += (
-            f"ID: {user_id}\n"
-            f"Nombre: {nombre}\n"
-            f"Expira: {exp}\n\n"
-        )
-
-    await query.message.reply_text(texto)
-
-    return
-
-        if query.from_user.id != ADMIN_ID:
-            return
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-                SELECT COUNT(*)
-                FROM users
-            """)
-
-            total = cur.fetchone()[0]
-
-        await query.message.reply_text(
-            f"👥 Usuarios activos: {total}"
-        )
-
-        return
-
-
-    if data == "admin_codes":
-
-        if query.from_user.id != ADMIN_ID:
-            return
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-                SELECT code, duration, used
-                FROM invite_codes
-                ORDER BY code DESC
-                LIMIT 20
-            """)
-
-            rows = cur.fetchall()
-
-        if not rows:
-
-            await query.message.reply_text(
-                "No hay códigos creados."
-            )
-
-            return
-
-        texto = "🎟️ Últimos códigos:\n\n"
-
-        for code, duration, used in rows:
-
-            if duration == 0:
-                duracion_texto = "♾️ Permanente"
-
-            elif duration < 1440:
-                duracion_texto = f"{duration} min"
-
-            else:
-                duracion_texto = f"{duration//1440} días"
-
-            estado = "❌ USADO" if used else "✅ ACTIVO"
-
-            texto += (
-                f"{code}\n"
-                f"{duracion_texto} — {estado}\n\n"
-            )
-
-        await query.message.reply_text(texto)
-
-        return
-
 
     if data == "admin_stats":
 
@@ -1082,26 +1081,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with conn.cursor() as cur:
 
             cur.execute("""
+
                 SELECT COUNT(*)
                 FROM users
+
             """)
 
             users_total = cur.fetchone()[0]
 
+
         await query.message.reply_text(
+
             f"📊 Estadísticas:\n\nUsuarios activos: {users_total}"
-        )
 
-        return
-
-
-    if data == "admin_security":
-
-        if query.from_user.id != ADMIN_ID:
-            return
-
-        await query.message.reply_text(
-            "🛡️ Seguridad activa\n\nSistema anti-intrusos funcionando."
         )
 
         return
@@ -1145,13 +1137,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{SERVER_URL}/create-checkout-session",
 
             json={
+
                 "telegram_id": user_id,
                 "plan": data
+
             }
 
         )
 
         payment_url = response.json()["url"]
+
 
         await query.message.reply_text(
 
@@ -1160,6 +1155,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     except Exception as e:
+
+        print(e)
 
         await query.message.reply_text(
             "❌ Error creando pago"
@@ -1204,8 +1201,6 @@ def main():
             receive_code
         )
     )
-
-    # 🔴 CONTROLAR NUEVOS MIEMBROS
 
     telegram_app.add_handler(
         MessageHandler(
