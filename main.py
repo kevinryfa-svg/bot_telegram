@@ -868,60 +868,72 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_users":
 
+        print("DEBUG: admin_users pulsado")
+
         if query.from_user.id != ADMIN_ID:
             return
 
-        with conn.cursor() as cur:
+        try:
 
-            cur.execute("""
+            with conn.cursor() as cur:
 
-                SELECT user_id, username, first_name, expiration
-                FROM users
-                ORDER BY expiration DESC NULLS LAST
+                cur.execute("""
 
-            """)
+                    SELECT user_id, username, first_name, expiration
+                    FROM users
+                    ORDER BY expiration DESC NULLS LAST
 
-            users = cur.fetchall()
+                """)
+
+                users = cur.fetchall()
 
 
-        if not users:
+            if not users:
+
+                await query.message.reply_text(
+                    "No hay usuarios activos."
+                )
+
+                return
+
+
+            texto = f"👥 Usuarios activos: {len(users)}\n\n"
+
+
+            for user_id, username, first_name, expiration in users:
+
+                nombre = first_name if first_name else "Sin nombre"
+
+                if username:
+                    nombre += f" (@{username})"
+
+                if expiration:
+
+                    exp = expiration.strftime("%Y-%m-%d")
+
+                else:
+
+                    exp = "♾️ Permanente"
+
+
+                texto += (
+
+                    f"ID: {user_id}\n"
+                    f"Nombre: {nombre}\n"
+                    f"Expira: {exp}\n\n"
+
+                )
+
+
+            await query.message.reply_text(texto)
+
+        except Exception as e:
+
+            print("ERROR admin_users:", e)
 
             await query.message.reply_text(
-                "No hay usuarios activos."
+                "❌ Error mostrando usuarios"
             )
-
-            return
-
-
-        texto = f"👥 Usuarios activos: {len(users)}\n\n"
-
-
-        for user_id, username, first_name, expiration in users:
-
-            nombre = first_name if first_name else "Sin nombre"
-
-            if username:
-                nombre += f" (@{username})"
-
-            if expiration:
-
-                exp = expiration.strftime("%Y-%m-%d")
-
-            else:
-
-                exp = "♾️ Permanente"
-
-
-            texto += (
-
-                f"ID: {user_id}\n"
-                f"Nombre: {nombre}\n"
-                f"Expira: {exp}\n\n"
-
-            )
-
-
-        await query.message.reply_text(texto)
 
         return
 
