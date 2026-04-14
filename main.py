@@ -1394,7 +1394,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    # =========================
+        # =========================
     # ESTADÍSTICAS
     # =========================
 
@@ -1473,6 +1473,173 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "❌ Error mostrando estadísticas"
+            )
+
+        return
+
+
+    # =========================
+    # REVOCAR TODOS LOS LINKS
+    # =========================
+
+    if data == "admin_revoke_links":
+
+        if query.from_user.id != ADMIN_ID:
+            return
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT invite_link
+                    FROM invite_links
+
+                """)
+
+                links = cur.fetchall()
+
+
+            total = 0
+
+            for (link,) in links:
+
+                try:
+
+                    requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+
+                        json={
+                            "chat_id": GROUP_ID,
+                            "invite_link": link
+                        }
+
+                    )
+
+                    total += 1
+
+                except Exception as e:
+
+                    print("Error revocando link:", e)
+
+
+            await query.message.reply_text(
+
+                f"🔄 {total} links revocados correctamente."
+
+            )
+
+        except Exception as e:
+
+            print("Error revocando todos:", e)
+
+            await query.message.reply_text(
+                "❌ Error revocando links"
+            )
+
+        return
+
+
+    # =========================
+    # REENVIAR LINKS NUEVOS
+    # =========================
+
+    if data == "admin_resend_links":
+
+        if query.from_user.id != ADMIN_ID:
+            return
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT user_id
+                    FROM users
+                    WHERE expiration IS NULL
+                    OR expiration > NOW()
+
+                """)
+
+                users = cur.fetchall()
+
+
+            enviados = 0
+
+            for (user_id,) in users:
+
+                try:
+
+                    invite_link = requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+
+                        json={
+                            "chat_id": GROUP_ID,
+                            "member_limit": 1
+                        }
+
+                    ).json()
+
+
+                    link = invite_link["result"]["invite_link"]
+
+
+                    with conn.cursor() as cur:
+
+                        cur.execute("""
+
+                            DELETE FROM invite_links
+                            WHERE user_id=%s
+
+                        """, (user_id,))
+
+
+                        cur.execute("""
+
+                            INSERT INTO invite_links
+                            (user_id, invite_link)
+
+                            VALUES (%s, %s)
+
+                        """, (user_id, link))
+
+                        conn.commit()
+
+
+                    requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+                        json={
+                            "chat_id": user_id,
+                            "text": f"🔗 Nuevo acceso VIP:\n{link}"
+                        }
+
+                    )
+
+                    enviados += 1
+
+                except Exception as e:
+
+                    print("Error enviando link:", e)
+
+
+            await query.message.reply_text(
+
+                f"📩 {enviados} nuevos links enviados."
+
+            )
+
+        except Exception as e:
+
+            print("Error reenviando:", e)
+
+            await query.message.reply_text(
+                "❌ Error reenviando links"
             )
 
         return
