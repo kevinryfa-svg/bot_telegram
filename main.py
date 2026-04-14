@@ -388,7 +388,56 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
-                # guardar en tabla ban
+                # =========================
+                # REVOCAR LINKS DEL USUARIO
+                # =========================
+
+                cur.execute("""
+
+                    SELECT invite_link
+                    FROM invite_links
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+                links = cur.fetchall()
+
+
+                for (link,) in links:
+
+                    try:
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+
+                            json={
+                                "chat_id": GROUP_ID,
+                                "invite_link": link
+                            }
+
+                        )
+
+                    except Exception as e:
+
+                        print("Error revocando link:", e)
+
+
+                # =========================
+                # BORRAR LINKS GUARDADOS
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM invite_links
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+
+                # =========================
+                # GUARDAR EN BANNED_USERS
+                # =========================
 
                 cur.execute("""
 
@@ -402,7 +451,10 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 """, (user_id,))
 
-                # eliminar de users
+
+                # =========================
+                # ELIMINAR DE USERS
+                # =========================
 
                 cur.execute("""
 
@@ -411,10 +463,13 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 """, (user_id,))
 
+
                 conn.commit()
 
 
-            # expulsar del grupo
+            # =========================
+            # EXPULSAR DEL GRUPO
+            # =========================
 
             requests.post(
 
@@ -426,6 +481,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 }
 
             )
+
 
             await update.message.reply_text(
                 f"⛔ Usuario baneado permanentemente:\n{user_id}"
