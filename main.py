@@ -778,7 +778,42 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
-                # 🔎 Buscar usuario
+                # =========================
+                # 🔒 COMPROBAR SI ESTÁ BANEADO
+                # =========================
+
+                cur.execute("""
+
+                SELECT user_id
+                FROM banned_users
+                WHERE user_id=%s
+
+                """, (user_id,))
+
+                banned = cur.fetchone()
+
+
+                if banned:
+
+                    print("Usuario baneado detectado:", user_id)
+
+                    requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                        json={
+                            "chat_id": GROUP_ID,
+                            "user_id": user_id
+                        }
+
+                    )
+
+                    return
+
+
+                # =========================
+                # 🔎 BUSCAR USUARIO AUTORIZADO
+                # =========================
 
                 cur.execute("""
 
@@ -791,7 +826,9 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 row = cur.fetchone()
 
 
-                # ✅ SI NO EXISTE → EXPULSAR (correcto)
+                # =========================
+                # ❌ NO EXISTE → EXPULSAR
+                # =========================
 
                 if not row:
 
@@ -824,7 +861,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     expiration = row[0]
 
-                    # ⛔ si expirado → expulsar
+
+                    # =========================
+                    # ⛔ EXPIRADO → EXPULSAR
+                    # =========================
 
                     if expiration and datetime.now() > expiration:
 
