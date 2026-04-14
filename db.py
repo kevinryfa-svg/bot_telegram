@@ -24,23 +24,13 @@ def create_tables():
 
     with conn.cursor() as cur:
 
-        # ⚠️ BORRAR TABLA USERS ANTIGUA
-        # (solo se ejecuta una vez y arregla errores previos)
-
-        cur.execute("""
-
-        DROP TABLE IF EXISTS users;
-
-        """)
-
-
         # =========================
         # TABLA USERS
         # =========================
 
         cur.execute("""
 
-        CREATE TABLE users (
+        CREATE TABLE IF NOT EXISTS users (
 
             user_id BIGINT PRIMARY KEY,
 
@@ -98,4 +88,4 @@ def create_tables():
 
         """)
 
-    print("Tablas creadas correctamente")
+    print("Tablas verificadas correctamente")
