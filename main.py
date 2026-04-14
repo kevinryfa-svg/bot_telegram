@@ -1739,6 +1739,10 @@ def main():
     )
 
     telegram_app.add_handler(
+        CommandHandler("debuglinks", debug_links)
+    )
+
+    telegram_app.add_handler(
         CommandHandler("admin", admin_panel)
     )
 

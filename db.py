@@ -106,4 +106,26 @@ def create_tables():
         """)
 
 
+        # =========================
+        # TABLA LINKS INVITACIÓN
+        # (⚠️ ESTA ES LA QUE TE FALTABA)
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS invite_links (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            invite_link TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
     print("Tablas verificadas correctamente")
