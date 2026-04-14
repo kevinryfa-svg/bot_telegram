@@ -788,6 +788,29 @@ def stripe_webhook():
 
 
         # =========================
+        # COMPROBAR SI ESTÁ BANEADO
+        # =========================
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT user_id
+                FROM banned_users
+                WHERE user_id=%s
+
+            """, (user_id,))
+
+            banned = cur.fetchone()
+
+            if banned:
+
+                print("Usuario baneado intentó pagar:", user_id)
+
+                return "OK"
+
+
+        # =========================
         # OBTENER PLAN PAGADO
         # =========================
 
@@ -805,18 +828,22 @@ def stripe_webhook():
         if price_id == PRICE_1_DIA:
 
             expiration = datetime.now() + timedelta(days=1)
+            plan_name = "1 día"
 
         elif price_id == PRICE_7_DIAS:
 
             expiration = datetime.now() + timedelta(days=7)
+            plan_name = "7 días"
 
         elif price_id == PRICE_PERMANENTE:
 
             expiration = None
+            plan_name = "Permanente"
 
         else:
 
             expiration = None
+            plan_name = "Desconocido"
 
 
         # =========================
@@ -842,6 +869,26 @@ def stripe_webhook():
                 expiration
 
             ))
+
+
+            # =========================
+            # REGISTRAR PAGO
+            # =========================
+
+            cur.execute("""
+
+            INSERT INTO payments
+            (user_id, plan)
+
+            VALUES (%s, %s)
+
+            """, (
+
+                user_id,
+                plan_name
+
+            ))
+
 
             conn.commit()
 
@@ -876,7 +923,7 @@ def stripe_webhook():
 
             with conn.cursor() as cur:
 
-                # borrar links antiguos del usuario
+                # borrar links antiguos
 
                 cur.execute("""
 
@@ -886,7 +933,7 @@ def stripe_webhook():
                 """, (user_id,))
 
 
-                # guardar nuevo link
+                # guardar nuevo
 
                 cur.execute("""
 
@@ -915,6 +962,25 @@ def stripe_webhook():
             json={
                 "chat_id": user_id,
                 "text": f"🔗 Tu acceso VIP:\n{link}"
+            }
+
+        )
+
+
+        # =========================
+        # AVISAR AL ADMIN
+        # =========================
+
+        requests.post(
+
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+            json={
+                "chat_id": ADMIN_ID,
+                "text":
+                f"💳 Nuevo pago recibido\n\n"
+                f"Usuario: {user_id}\n"
+                f"Plan: {plan_name}"
             }
 
         )
@@ -960,7 +1026,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 banned = cur.fetchone()
 
-
                 if banned:
 
                     print("Usuario baneado detectado:", user_id)
@@ -995,12 +1060,35 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                 # =========================
-                # ❌ NO EXISTE → EXPULSAR
+                # ❌ NO EXISTE → POSIBLE LINK COMPARTIDO
                 # =========================
 
                 if not row:
 
-                    print("Expulsando usuario no autorizado:", user_id)
+                    print("Usuario no autorizado detectado:", user_id)
+
+
+                    # intentar detectar dueño del link
+
+                    cur.execute("""
+
+                    SELECT user_id
+                    FROM invite_links
+
+                    """)
+
+                    all_links = cur.fetchall()
+
+                    owner_id = None
+
+                    if all_links:
+
+                        # si hay links guardados, asumir último como sospechoso
+
+                        owner_id = all_links[-1][0]
+
+
+                    # expulsar intruso
 
                     requests.post(
 
@@ -1025,18 +1113,104 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
 
+                    # si detectamos dueño → expulsarlo también
+
+                    if owner_id:
+
+                        print("Posible link compartido por:", owner_id)
+
+                        try:
+
+                            requests.post(
+
+                                f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                                json={
+                                    "chat_id": GROUP_ID,
+                                    "user_id": owner_id
+                                }
+
+                            )
+
+                        except Exception as e:
+
+                            print("Error expulsando dueño:", e)
+
+
+                        # avisar admin
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+                            json={
+                                "chat_id": ADMIN_ID,
+                                "text":
+                                f"⚠️ LINK COMPARTIDO DETECTADO\n\n"
+                                f"Dueño sospechoso: {owner_id}\n"
+                                f"Intruso detectado: {user_id}"
+                            }
+
+                        )
+
+
                 else:
 
                     expiration = row[0]
 
 
                     # =========================
-                    # ⛔ EXPIRADO → EXPULSAR
+                    # ⛔ EXPIRADO → EXPULSAR + REVOCAR LINK
                     # =========================
 
                     if expiration and datetime.now() > expiration:
 
                         print("Usuario expirado:", user_id)
+
+
+                        # revocar sus links
+
+                        cur.execute("""
+
+                        SELECT invite_link
+                        FROM invite_links
+                        WHERE user_id=%s
+
+                        """, (user_id,))
+
+                        links = cur.fetchall()
+
+                        for (link,) in links:
+
+                            try:
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+
+                                    json={
+                                        "chat_id": GROUP_ID,
+                                        "invite_link": link
+                                    }
+
+                                )
+
+                            except Exception as e:
+
+                                print("Error revocando link:", e)
+
+
+                        # borrar links guardados
+
+                        cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE user_id=%s
+
+                        """, (user_id,))
+
+
+                        # expulsar usuario
 
                         requests.post(
 
@@ -1100,6 +1274,56 @@ def check_expirations():
 
                         print("Expulsando expirado:", user_id)
 
+                        # =========================
+                        # REVOCAR LINKS DEL USUARIO
+                        # =========================
+
+                        cur.execute("""
+
+                        SELECT invite_link
+                        FROM invite_links
+                        WHERE user_id=%s
+
+                        """, (user_id,))
+
+                        links = cur.fetchall()
+
+                        for (link,) in links:
+
+                            try:
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+
+                                    json={
+                                        "chat_id": GROUP_ID,
+                                        "invite_link": link
+                                    }
+
+                                )
+
+                            except Exception as e:
+
+                                print("Error revocando link expirado:", e)
+
+
+                        # =========================
+                        # BORRAR LINKS GUARDADOS
+                        # =========================
+
+                        cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE user_id=%s
+
+                        """, (user_id,))
+
+
+                        # =========================
+                        # EXPULSAR USUARIO
+                        # =========================
+
                         requests.post(
                             f"https://api.telegram.org/bot{TOKEN}/banChatMember",
                             json={
@@ -1116,15 +1340,43 @@ def check_expirations():
                             }
                         )
 
+
+                        # =========================
+                        # ELIMINAR DE USERS
+                        # =========================
+
                         cur.execute("""
+
                         DELETE FROM users
                         WHERE user_id=%s
+
                         """, (user_id,))
+
 
                         conn.commit()
 
-                    except:
-                        pass
+
+                        # =========================
+                        # AVISAR AL ADMIN
+                        # =========================
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+                            json={
+                                "chat_id": ADMIN_ID,
+                                "text":
+                                f"⛔ Usuario expirado eliminado\n\n"
+                                f"User ID: {user_id}"
+                            }
+
+                        )
+
+
+                    except Exception as e:
+
+                        print("Error procesando expiración:", e)
 
         time.sleep(60)
 
