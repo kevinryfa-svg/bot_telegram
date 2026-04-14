@@ -561,6 +561,47 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = invite_link["result"]["invite_link"]
 
 
+    # =========================
+    # GUARDAR LINK EN DATABASE
+    # =========================
+
+    try:
+
+        with conn.cursor() as cur:
+
+            # borrar links antiguos del usuario
+
+            cur.execute("""
+
+                DELETE FROM invite_links
+                WHERE user_id=%s
+
+            """, (update.effective_user.id,))
+
+
+            # guardar nuevo link
+
+            cur.execute("""
+
+                INSERT INTO invite_links
+                (user_id, invite_link)
+
+                VALUES (%s, %s)
+
+            """, (
+
+                update.effective_user.id,
+                link
+
+            ))
+
+            conn.commit()
+
+    except Exception as e:
+
+        print("Error guardando invite link:", e)
+
+
     await update.message.reply_text(
 
         f"🔗 Acceso concedido:\n{link}"
@@ -734,6 +775,30 @@ def stripe_webhook():
 
 
         link = invite_link["result"]["invite_link"]
+
+
+        # =========================
+        # GUARDAR LINK EN DATABASE
+        # =========================
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    INSERT INTO invite_links
+                    (user_id, invite_link)
+
+                    VALUES (%s, %s)
+
+                """, (user_id, link))
+
+                conn.commit()
+
+        except Exception as e:
+
+            print("Error guardando invite link:", e)
 
 
         # =========================
@@ -1009,6 +1074,10 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")],
 
         [InlineKeyboardButton("⛔ Banear usuario", callback_data="admin_ban_user")],
+
+        [InlineKeyboardButton("🔄 Revocar todos los links", callback_data="admin_revoke_links")],
+
+        [InlineKeyboardButton("📩 Reenviar links nuevos", callback_data="admin_resend_links")],
 
         [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")]
 
