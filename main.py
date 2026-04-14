@@ -1121,23 +1121,137 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.from_user.id != ADMIN_ID:
             return
 
-        with conn.cursor() as cur:
+        try:
 
-            cur.execute("""
+            with conn.cursor() as cur:
 
-                SELECT COUNT(*)
-                FROM users
+                # 👥 Usuarios activos
 
-            """)
+                cur.execute("""
 
-            users_total = cur.fetchone()[0]
+                    SELECT COUNT(*)
+                    FROM users
+                    WHERE expiration IS NULL
+                    OR expiration > NOW()
+
+                """)
+
+                usuarios_activos = cur.fetchone()[0]
 
 
-        await query.message.reply_text(
+                # ⛔ Usuarios expirados
 
-            f"📊 Estadísticas:\n\nUsuarios activos: {users_total}"
+                cur.execute("""
 
-        )
+                    SELECT COUNT(*)
+                    FROM users
+                    WHERE expiration IS NOT NULL
+                    AND expiration < NOW()
+
+                """)
+
+                usuarios_expirados = cur.fetchone()[0]
+
+
+                # ♾️ Usuarios permanentes
+
+                cur.execute("""
+
+                    SELECT COUNT(*)
+                    FROM users
+                    WHERE expiration IS NULL
+
+                """)
+
+                usuarios_permanentes = cur.fetchone()[0]
+
+
+                # 💳 Total pagos
+
+                cur.execute("""
+
+                    SELECT COUNT(*)
+                    FROM payments
+
+                """)
+
+                total_pagos = cur.fetchone()[0]
+
+
+                # 🕒 Último pago
+
+                cur.execute("""
+
+                    SELECT payment_date
+                    FROM payments
+                    ORDER BY payment_date DESC
+                    LIMIT 1
+
+                """)
+
+                ultimo_pago = cur.fetchone()
+
+                if ultimo_pago:
+
+                    ultimo_pago = ultimo_pago[0].strftime("%Y-%m-%d %H:%M")
+
+                else:
+
+                    ultimo_pago = "Sin pagos"
+
+
+                # 📅 Pagos hoy
+
+                cur.execute("""
+
+                    SELECT COUNT(*)
+                    FROM payments
+                    WHERE DATE(payment_date) = CURRENT_DATE
+
+                """)
+
+                pagos_hoy = cur.fetchone()[0]
+
+
+                # 📅 Pagos este mes
+
+                cur.execute("""
+
+                    SELECT COUNT(*)
+                    FROM payments
+                    WHERE DATE_TRUNC('month', payment_date)
+                    = DATE_TRUNC('month', CURRENT_DATE)
+
+                """)
+
+                pagos_mes = cur.fetchone()[0]
+
+
+            texto = (
+
+                "📊 ESTADÍSTICAS\n\n"
+
+                f"👥 Activos: {usuarios_activos}\n"
+                f"⛔ Expirados: {usuarios_expirados}\n"
+                f"♾️ Permanentes: {usuarios_permanentes}\n\n"
+
+                f"💳 Pagos totales: {total_pagos}\n"
+                f"📅 Pagos hoy: {pagos_hoy}\n"
+                f"📅 Pagos este mes: {pagos_mes}\n"
+                f"🕒 Último pago: {ultimo_pago}"
+
+            )
+
+
+            await query.message.reply_text(texto)
+
+        except Exception as e:
+
+            print("ERROR admin_stats:", e)
+
+            await query.message.reply_text(
+                "❌ Error mostrando estadísticas"
+            )
 
         return
 
