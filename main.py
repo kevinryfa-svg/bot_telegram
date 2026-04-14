@@ -224,6 +224,31 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# DEBUG DATABASE
+# =========================
+
+async def debug_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+        SELECT COUNT(*)
+        FROM users
+
+        """)
+
+        total = cur.fetchone()[0]
+
+    await update.message.reply_text(
+        f"Usuarios en DB: {total}"
+    )
+
+
+# =========================
 # USAR CÓDIGO
 # =========================
 
@@ -1197,6 +1222,11 @@ def main():
 
     telegram_app.add_handler(
         CommandHandler("usuarios", ver_usuarios)
+    )
+
+    # 🔧 NUEVO COMANDO DEBUG
+    telegram_app.add_handler(
+        CommandHandler("debugdb", debug_db)
     )
 
     telegram_app.add_handler(
