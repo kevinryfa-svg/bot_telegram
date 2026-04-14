@@ -249,6 +249,41 @@ async def debug_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# DEBUG LINKS
+# =========================
+
+async def debug_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+            SELECT COUNT(*)
+            FROM invite_links
+
+            """)
+
+            total = cur.fetchone()[0]
+
+        await update.message.reply_text(
+            f"Links guardados: {total}"
+        )
+
+    except Exception as e:
+
+        print("Error debug links:", e)
+
+        await update.message.reply_text(
+            "Error leyendo invite_links"
+        )
+
+
+# =========================
 # USAR CÓDIGO
 # =========================
 
