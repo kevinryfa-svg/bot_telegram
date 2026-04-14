@@ -670,7 +670,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.new_chat_members:
         return
 
-
     for member in update.message.new_chat_members:
 
         user_id = member.id
@@ -678,6 +677,8 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
 
             with conn.cursor() as cur:
+
+                # 🔎 Buscar usuario
 
                 cur.execute("""
 
@@ -690,39 +691,11 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 row = cur.fetchone()
 
 
-            if not row:
+                # ✅ SI NO EXISTE → EXPULSAR (correcto)
 
-                print("Expulsando usuario no autorizado:", user_id)
+                if not row:
 
-                requests.post(
-
-                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                    json={
-                        "chat_id": GROUP_ID,
-                        "user_id": user_id
-                    }
-
-                )
-
-                requests.post(
-
-                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                    json={
-                        "chat_id": GROUP_ID,
-                        "user_id": user_id
-                    }
-
-                )
-
-            else:
-
-                expiration = row[0]
-
-                if expiration and datetime.now() > expiration:
-
-                    print("Usuario expirado:", user_id)
+                    print("Expulsando usuario no autorizado:", user_id)
 
                     requests.post(
 
@@ -746,9 +719,42 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     )
 
+
                 else:
 
-                    print("Usuario autorizado:", user_id)
+                    expiration = row[0]
+
+                    # ⛔ si expirado → expulsar
+
+                    if expiration and datetime.now() > expiration:
+
+                        print("Usuario expirado:", user_id)
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                            json={
+                                "chat_id": GROUP_ID,
+                                "user_id": user_id
+                            }
+
+                        )
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                            json={
+                                "chat_id": GROUP_ID,
+                                "user_id": user_id
+                            }
+
+                        )
+
+                    else:
+
+                        print("Usuario autorizado:", user_id)
 
 
         except Exception as e:
