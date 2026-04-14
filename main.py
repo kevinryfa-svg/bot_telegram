@@ -876,6 +876,18 @@ def stripe_webhook():
 
             with conn.cursor() as cur:
 
+                # borrar links antiguos del usuario
+
+                cur.execute("""
+
+                    DELETE FROM invite_links
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+
+                # guardar nuevo link
+
                 cur.execute("""
 
                     INSERT INTO invite_links
