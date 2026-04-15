@@ -364,9 +364,9 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_id = update.message.text.strip()
 
-        # eliminar de users
-
         with conn.cursor() as cur:
+
+            # eliminar usuario
 
             cur.execute("""
 
@@ -375,10 +375,50 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             """, (user_id,))
 
+
+            # revocar links del usuario
+
+            cur.execute("""
+
+                SELECT invite_link
+                FROM invite_links
+                WHERE user_id=%s
+
+            """, (user_id,))
+
+            links = cur.fetchall()
+
+            for (link,) in links:
+
+                try:
+
+                    requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+
+                        json={
+                            "chat_id": GROUP_ID,
+                            "invite_link": link
+                        }
+
+                    )
+
+                except Exception as e:
+
+                    print("Error revocando link:", e)
+
+
+            # borrar links
+
+            cur.execute("""
+
+                DELETE FROM invite_links
+                WHERE user_id=%s
+
+            """, (user_id,))
+
             conn.commit()
 
-
-        # expulsar del grupo
 
         requests.post(
 
@@ -423,10 +463,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
-                # =========================
-                # REVOCAR LINKS DEL USUARIO
-                # =========================
-
                 cur.execute("""
 
                     SELECT invite_link
@@ -436,7 +472,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """, (user_id,))
 
                 links = cur.fetchall()
-
 
                 for (link,) in links:
 
@@ -458,10 +493,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         print("Error revocando link:", e)
 
 
-                # =========================
-                # BORRAR LINKS GUARDADOS
-                # =========================
-
                 cur.execute("""
 
                     DELETE FROM invite_links
@@ -469,10 +500,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 """, (user_id,))
 
-
-                # =========================
-                # GUARDAR EN BANNED_USERS
-                # =========================
 
                 cur.execute("""
 
@@ -487,10 +514,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """, (user_id,))
 
 
-                # =========================
-                # ELIMINAR DE USERS
-                # =========================
-
                 cur.execute("""
 
                     DELETE FROM users
@@ -501,10 +524,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 conn.commit()
 
-
-            # =========================
-            # EXPULSAR DEL GRUPO
-            # =========================
 
             requests.post(
 
@@ -542,8 +561,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_code = update.message.text.strip().upper()
 
     with conn.cursor() as cur:
-
-        # comprobar si está baneado
 
         cur.execute("""
 
@@ -590,6 +607,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+
         if duration == 0:
 
             expiration = None
@@ -634,6 +652,48 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         """, (user_code,))
 
+
+        # 🔴 REVOCAR LINKS ANTIGUOS
+
+        cur.execute("""
+
+            SELECT invite_link
+            FROM invite_links
+            WHERE user_id=%s
+
+        """, (update.effective_user.id,))
+
+        old_links = cur.fetchall()
+
+        for (old_link,) in old_links:
+
+            try:
+
+                requests.post(
+
+                    f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+
+                    json={
+                        "chat_id": GROUP_ID,
+                        "invite_link": old_link
+                    }
+
+                )
+
+            except Exception as e:
+
+                print("Error revocando link:", e)
+
+
+        # borrar antiguos
+
+        cur.execute("""
+
+            DELETE FROM invite_links
+            WHERE user_id=%s
+
+        """, (update.effective_user.id,))
+
         conn.commit()
 
 
@@ -652,25 +712,9 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = invite_link["result"]["invite_link"]
 
 
-    # =========================
-    # GUARDAR LINK EN DATABASE
-    # =========================
-
     try:
 
         with conn.cursor() as cur:
-
-            # borrar links antiguos del usuario
-
-            cur.execute("""
-
-                DELETE FROM invite_links
-                WHERE user_id=%s
-
-            """, (update.effective_user.id,))
-
-
-            # guardar nuevo link
 
             cur.execute("""
 
