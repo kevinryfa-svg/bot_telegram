@@ -599,6 +599,21 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """, (user_id,))
 
 
+                # 🔴 RESETEAR WARNINGS A 0 (CLAVE PARA EVITAR AVISOS FALSOS)
+
+                cur.execute("""
+
+                    INSERT INTO link_warnings
+                    (user_id, warnings)
+
+                    VALUES (%s, 0)
+
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET warnings=0
+
+                """, (user_id,))
+
+
                 # 🔴 BORRAR LINKS ANTIGUOS (ESTO ARREGLA LOS WARNINGS)
 
                 cur.execute("""
