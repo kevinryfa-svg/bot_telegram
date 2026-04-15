@@ -2517,19 +2517,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
 
-    keyboard.append([
-
-        InlineKeyboardButton(
-
-            "🎟️ Usar código de invitación",
-
-            callback_data="codigo"
-
-        )
-
-    ])
-
-
     # =========================
     # MENSAJE BIENVENIDA
     # =========================
@@ -2602,6 +2589,141 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
 
+    # =========================
+    # ENTRAR A GRUPO
+    # =========================
+
+    if data.startswith("group_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+
+        group_id = int(data.split("_")[1])
+
+
+        # =========================
+        # GUARDAR GRUPO SELECCIONADO
+        # =========================
+
+        context.user_data["selected_group"] = group_id
+
+
+        # =========================
+        # OBTENER PLANES DEL GRUPO
+        # =========================
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT name, price_id
+
+                    FROM plans
+
+                    WHERE group_id=%s
+                    AND is_active=TRUE
+
+                    ORDER BY id ASC
+
+                """, (group_id,))
+
+                plans = cur.fetchall()
+
+        except Exception as e:
+
+            print("Error cargando planes:", e)
+
+            await query.message.reply_text(
+                "❌ Error cargando planes."
+            )
+
+            return
+
+
+        if not plans:
+
+            await query.message.reply_text(
+                "⚠️ Este grupo no tiene planes disponibles."
+            )
+
+            return
+
+
+        keyboard = []
+
+
+        for name, price_id in plans:
+
+            keyboard.append([
+
+                InlineKeyboardButton(
+
+                    name,
+
+                    callback_data=price_id
+
+                )
+
+            ])
+
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                "🎟️ Usar código",
+
+                callback_data="codigo"
+
+            )
+
+        ])
+
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                "⬅️ Volver",
+
+                callback_data="back_groups"
+
+            )
+
+        ])
+
+
+        await query.message.reply_text(
+
+            "Selecciona un plan:",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+    # =========================
+    # VOLVER A GRUPOS
+    # =========================
+
+    if data == "back_groups":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        await start(update, context)
+
+        return
+    
+    
     # =========================
     # RECUPERAR ACCESO
     # =========================
