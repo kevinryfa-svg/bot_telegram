@@ -1754,6 +1754,68 @@ def check_expirations():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    user_id = update.effective_user.id
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT expiration
+            FROM users
+            WHERE user_id=%s
+
+        """, (user_id,))
+
+        row = cur.fetchone()
+
+    # =========================
+    # USUARIO EXISTENTE
+    # =========================
+
+    if row:
+
+        expiration = row[0]
+
+        if expiration and datetime.now() > expiration:
+
+            keyboard = [
+
+                [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
+                [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
+                [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")]
+
+            ]
+
+            await update.message.reply_text(
+
+                "⛔ Tu suscripción ha expirado.\n\nSelecciona un plan:",
+
+                reply_markup=InlineKeyboardMarkup(keyboard)
+
+            )
+
+            return
+
+
+        keyboard = [
+
+            [InlineKeyboardButton("🔄 Recuperar acceso", callback_data="recover_access")],
+
+            [InlineKeyboardButton("🎟️ Usar código", callback_data="codigo")]
+
+        ]
+
+        await update.message.reply_text(
+
+            "👋 Bienvenido de nuevo.\n\nPuedes recuperar tu acceso:",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
     keyboard = [
 
         [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
@@ -1828,6 +1890,103 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     data = query.data
+
+
+    # =========================
+    # RECUPERAR ACCESO
+    # =========================
+
+    if data == "recover_access":
+
+        user_id = query.from_user.id
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT expiration
+                FROM users
+                WHERE user_id=%s
+
+            """, (user_id,))
+
+            row = cur.fetchone()
+
+        if not row:
+
+            await query.message.reply_text(
+                "❌ No tienes acceso activo."
+            )
+
+            return
+
+
+        expiration = row[0]
+
+        if expiration and datetime.now() > expiration:
+
+            await query.message.reply_text(
+                "⛔ Tu suscripción ha expirado."
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT invite_link
+                FROM invite_links
+                WHERE user_id=%s
+                ORDER BY created_at DESC
+                LIMIT 1
+
+            """, (user_id,))
+
+            link_row = cur.fetchone()
+
+
+        if link_row:
+
+            link = link_row[0]
+
+        else:
+
+            invite_link = requests.post(
+
+                f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+
+                json={
+                    "chat_id": GROUP_ID,
+                    "member_limit": 1
+                }
+
+            ).json()
+
+            link = invite_link["result"]["invite_link"]
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    INSERT INTO invite_links
+                    (user_id, invite_link)
+
+                    VALUES (%s, %s)
+
+                """, (user_id, link))
+
+                conn.commit()
+
+
+        await query.message.reply_text(
+
+            f"🔗 Tu acceso VIP:\n{link}"
+
+        )
+
+        return
 
 
     # =========================
