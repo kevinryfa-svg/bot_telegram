@@ -573,7 +573,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if context.user_data.get("unban_user"):
 
-        user_id = update.message.text.strip()
+        user_id = int(update.message.text.strip())
 
         try:
 
@@ -594,6 +594,16 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cur.execute("""
 
                     DELETE FROM link_warnings
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+
+                # 🔴 BORRAR LINKS ANTIGUOS (ESTO ARREGLA LOS WARNINGS)
+
+                cur.execute("""
+
+                    DELETE FROM invite_links
                     WHERE user_id=%s
 
                 """, (user_id,))
