@@ -800,7 +800,129 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["unban_user"] = False
 
         return
+    
 
+    # =========================
+    # CREACIÓN GRUPO — WIZARD
+    # =========================
+
+    if context.user_data.get("creating_group"):
+
+        step = context.user_data.get("group_step")
+
+        text = update.message.text.strip()
+
+
+        # =========================
+        # PASO 1 — NOMBRE GRUPO
+        # =========================
+
+        if step == 1:
+
+            context.user_data["new_group_data"]["name"] = text
+            context.user_data["group_step"] = 2
+
+            await update.message.reply_text(
+
+                "Paso 2️⃣\n\n"
+
+                "Envía ahora el ID del grupo de Telegram.\n\n"
+
+                "⚠️ El bot debe estar añadido como ADMIN."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 2 — GROUP ID
+        # =========================
+
+        if step == 2:
+
+            try:
+
+                group_id = int(text)
+
+            except:
+
+                await update.message.reply_text(
+                    "❌ ID inválido. Intenta nuevamente."
+                )
+
+                return
+
+
+            context.user_data["new_group_data"]["telegram_group_id"] = group_id
+            context.user_data["group_step"] = 3
+
+            await update.message.reply_text(
+
+                "Paso 3️⃣\n\n"
+
+                "Verificando permisos del bot..."
+
+            )
+
+
+            # Verificar bot admin
+
+            try:
+
+                r = requests.get(
+
+                    f"https://api.telegram.org/bot{TOKEN}/getChatMember",
+
+                    params={
+
+                        "chat_id": group_id,
+                        "user_id": TOKEN.split(":")[0]
+
+                    }
+
+                ).json()
+
+
+                status = r["result"]["status"]
+
+                if status not in ["administrator", "creator"]:
+
+                    await update.message.reply_text(
+
+                        "❌ El bot no es administrador del grupo."
+
+                    )
+
+                    return
+
+
+            except Exception as e:
+
+                print("Error verificando admin:", e)
+
+                await update.message.reply_text(
+
+                    "❌ No se pudo verificar el grupo."
+
+                )
+
+                return
+
+
+            context.user_data["group_step"] = 4
+
+            await update.message.reply_text(
+
+                "Paso 4️⃣\n\n"
+
+                "¿Cuántos planes quieres crear?\n\n"
+
+                "Ejemplo: 1, 2, 3..."
+
+            )
+
+            return
 
     # =========================
     # USO NORMAL DE CÓDIGO
@@ -2441,6 +2563,32 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
+
+    # =========================
+    # AÑADIR GRUPO — INICIO WIZARD
+    # =========================
+
+    if data == "admin_add_group":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        context.user_data["creating_group"] = True
+        context.user_data["group_step"] = 1
+        context.user_data["new_group_data"] = {}
+
+        await query.message.reply_text(
+
+            "📦 CREAR NUEVO GRUPO\n\n"
+
+            "Paso 1️⃣\n"
+            "Introduce el nombre del grupo."
+
+        )
+
+        return    
 
 
     # =========================
