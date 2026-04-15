@@ -2444,85 +2444,112 @@ def check_expirations():
 
 
 # =========================
-# START BOT
+# START BOT — MENÚ GRUPOS
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
 
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            SELECT expiration
-            FROM users
-            WHERE user_id=%s
-
-        """, (user_id,))
-
-        row = cur.fetchone()
 
     # =========================
-    # USUARIO EXISTENTE
+    # OBTENER GRUPOS ACTIVOS
     # =========================
 
-    if row:
+    try:
 
-        expiration = row[0]
+        with conn.cursor() as cur:
 
-        if expiration and datetime.now() > expiration:
+            cur.execute("""
 
-            keyboard = [
+                SELECT id, name
 
-                [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
-                [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
-                [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")]
+                FROM groups
 
-            ]
+                WHERE is_active=TRUE
+                AND telegram_group_id != 0
 
-            await update.message.reply_text(
+                ORDER BY id ASC
 
-                "⛔ Tu suscripción ha expirado.\n\nSelecciona un plan:",
+            """)
 
-                reply_markup=InlineKeyboardMarkup(keyboard)
+            groups = cur.fetchall()
 
-            )
+    except Exception as e:
 
-            return
-
-
-        keyboard = [
-
-            [InlineKeyboardButton("🔄 Recuperar acceso", callback_data="recover_access")],
-
-            [InlineKeyboardButton("🎟️ Usar código", callback_data="codigo")]
-
-        ]
+        print("Error cargando grupos:", e)
 
         await update.message.reply_text(
-
-            "👋 Bienvenido de nuevo.\n\nPuedes recuperar tu acceso:",
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
+            "❌ Error cargando grupos."
         )
 
         return
 
 
-    keyboard = [
+    if not groups:
 
-        [InlineKeyboardButton("🟢 1 día — 5€", callback_data="1")],
-        [InlineKeyboardButton("🟡 7 días — 10€", callback_data="7")],
-        [InlineKeyboardButton("🔵 Permanente — 25€", callback_data="0")],
-        [InlineKeyboardButton("🎟️ Usar código", callback_data="codigo")]
+        await update.message.reply_text(
+            "⚠️ No hay grupos disponibles todavía."
+        )
 
-    ]
+        return
+
+
+    # =========================
+    # CREAR BOTONES DE GRUPOS
+    # =========================
+
+    keyboard = []
+
+
+    for group_id, group_name in groups:
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                group_name,
+
+                callback_data=f"group_{group_id}"
+
+            )
+
+        ])
+
+
+    keyboard.append([
+
+        InlineKeyboardButton(
+
+            "🎟️ Usar código de invitación",
+
+            callback_data="codigo"
+
+        )
+
+    ])
+
+
+    # =========================
+    # MENSAJE BIENVENIDA
+    # =========================
+
+    mensaje = (
+
+        "👋 Bienvenido\n\n"
+
+        "Nos alegra que estés aquí.\n\n"
+
+        "A continuación puedes ver los grupos disponibles.\n\n"
+
+        "Selecciona uno para ver sus planes."
+
+    )
+
 
     await update.message.reply_text(
 
-        "Bienvenido 💎",
+        mensaje,
 
         reply_markup=InlineKeyboardMarkup(keyboard)
 
