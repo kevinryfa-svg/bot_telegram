@@ -40,6 +40,14 @@ def create_tables():
 
             invite_link TEXT,
 
+            preview_text TEXT,
+
+            preview_file_id TEXT,
+
+            stripe_secret_key TEXT,
+
+            bot_is_admin BOOLEAN DEFAULT FALSE,
+
             is_active BOOLEAN DEFAULT TRUE,
 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -319,9 +327,17 @@ def create_tables():
 
         cur.execute("""
 
-        INSERT INTO groups (id, name)
+        INSERT INTO groups (
+            id,
+            name,
+            telegram_group_id
+        )
 
-        VALUES (1, 'Grupo Principal')
+        VALUES (
+            1,
+            'Grupo Principal',
+            0
+        )
 
         ON CONFLICT (id) DO NOTHING;
 
