@@ -493,6 +493,8 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         print("Error revocando link:", e)
 
 
+                # borrar links
+
                 cur.execute("""
 
                     DELETE FROM invite_links
@@ -500,6 +502,18 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 """, (user_id,))
 
+
+                # borrar avisos
+
+                cur.execute("""
+
+                    DELETE FROM link_warnings
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+
+                # guardar en baneados
 
                 cur.execute("""
 
@@ -513,6 +527,8 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 """, (user_id,))
 
+
+                # eliminar usuario
 
                 cur.execute("""
 
@@ -552,9 +568,74 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
-    # USO NORMAL DE CÓDIGO
+    # DESBAN PERMANENTE
     # =========================
 
+    if context.user_data.get("unban_user"):
+
+        user_id = update.message.text.strip()
+
+        try:
+
+            with conn.cursor() as cur:
+
+                # quitar de baneados
+
+                cur.execute("""
+
+                    DELETE FROM banned_users
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+
+                # limpiar avisos
+
+                cur.execute("""
+
+                    DELETE FROM link_warnings
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+
+                conn.commit()
+
+
+            # permitir volver a entrar
+
+            requests.post(
+
+                f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                json={
+                    "chat_id": GROUP_ID,
+                    "user_id": user_id
+                }
+
+            )
+
+
+            await update.message.reply_text(
+
+                f"♻️ Usuario desbaneado:\n{user_id}"
+
+            )
+
+        except Exception as e:
+
+            print("Error desbaneando:", e)
+
+
+        context.user_data["unban_user"] = False
+
+        return
+
+
+    # =========================
+    # USO NORMAL DE CÓDIGO
+    # =========================
+    
     if not context.user_data.get("waiting_code"):
         return
 
@@ -1615,9 +1696,13 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         [InlineKeyboardButton("⛔ Banear usuario", callback_data="admin_ban_user")],
 
+        [InlineKeyboardButton("♻️ Desbanear usuario", callback_data="admin_unban_user")],
+
         [InlineKeyboardButton("🔄 Revocar todos los links", callback_data="admin_revoke_links")],
 
         [InlineKeyboardButton("📩 Reenviar links nuevos", callback_data="admin_resend_links")],
+
+        [InlineKeyboardButton("📜 Logs incidentes", callback_data="admin_logs")],
 
         [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")]
 
@@ -1878,7 +1963,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-        # =========================
+    # =========================
+    # DESBANEAR USUARIO
+    # =========================
+
+    if data == "admin_unban_user":
+
+        context.user_data["unban_user"] = True
+
+        await query.message.reply_text(
+            "♻️ Envia el ID del usuario a DESBANEAR"
+        )
+
+        return
+
+
+    # =========================
     # ESTADÍSTICAS
     # =========================
 
