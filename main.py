@@ -599,28 +599,129 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """, (user_id,))
 
 
-                conn.commit()
+                # comprobar si tiene suscripción válida
+
+                cur.execute("""
+
+                    SELECT expiration
+                    FROM users
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+                row = cur.fetchone()
+
+                expiration = None
+
+                if row:
+                    expiration = row[0]
 
 
-            # permitir volver a entrar
+                # permitir volver a entrar
 
-            requests.post(
+                requests.post(
 
-                f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
 
-                json={
-                    "chat_id": GROUP_ID,
-                    "user_id": user_id
-                }
+                    json={
+                        "chat_id": GROUP_ID,
+                        "user_id": user_id
+                    }
 
-            )
+                )
 
 
-            await update.message.reply_text(
+                # =========================
+                # SI TIENE SUSCRIPCIÓN ACTIVA
+                # =========================
 
-                f"♻️ Usuario desbaneado:\n{user_id}"
+                if expiration and expiration > datetime.now():
 
-            )
+                    # borrar links antiguos
+
+                    cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE user_id=%s
+
+                    """, (user_id,))
+
+
+                    # crear link nuevo
+
+                    invite_link = requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+
+                        json={
+                            "chat_id": GROUP_ID,
+                            "member_limit": 1
+                        }
+
+                    ).json()
+
+
+                    link = invite_link["result"]["invite_link"]
+
+
+                    # guardar link
+
+                    cur.execute("""
+
+                        INSERT INTO invite_links
+                        (user_id, invite_link)
+
+                        VALUES (%s, %s)
+
+                    """, (user_id, link))
+
+
+                    conn.commit()
+
+
+                    # enviar link nuevo
+
+                    requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+                        json={
+
+                            "chat_id": user_id,
+
+                            "text":
+
+                            "♻️ Has sido desbaneado.\n\n"
+
+                            "Tu suscripción sigue activa.\n"
+
+                            "Aquí tienes tu nuevo acceso:\n\n"
+
+                            f"{link}"
+
+                        }
+
+                    )
+
+
+                    await update.message.reply_text(
+
+                        f"♻️ Usuario desbaneado y link enviado:\n{user_id}"
+
+                    )
+
+
+                else:
+
+                    conn.commit()
+
+
+                    await update.message.reply_text(
+
+                        f"♻️ Usuario desbaneado:\n{user_id}"
+
+                    )
+
 
         except Exception as e:
 
@@ -635,7 +736,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # =========================
     # USO NORMAL DE CÓDIGO
     # =========================
-    
+
     if not context.user_data.get("waiting_code"):
         return
 
