@@ -3317,7 +3317,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # MENÚ INTERNO DEL GRUPO
     # =========================
 
-    if data.startswith("edit_group_") and data.count("_") == 2:
+    if data.startswith("edit_group_") and data.split("_")[2].isdigit():
 
         try:
             await query.message.delete()
