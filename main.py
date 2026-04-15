@@ -764,7 +764,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # =========================
     # USO NORMAL DE CÓDIGO
     # =========================
-    
+
     if not context.user_data.get("waiting_code"):
         return
 
@@ -1632,6 +1632,83 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             }
 
                         )
+
+                    else:
+
+                        # =========================
+                        # NUEVA BIENVENIDA CON TIEMPO RESTANTE
+                        # =========================
+
+                        try:
+
+                            if expiration is None:
+
+                                tiempo_texto = "♾️ Permanente"
+
+                            else:
+
+                                tiempo_restante = expiration - datetime.now()
+
+                                dias = tiempo_restante.days
+                                horas = tiempo_restante.seconds // 3600
+
+                                if dias > 0:
+
+                                    tiempo_texto = f"{dias} días"
+
+                                elif horas > 0:
+
+                                    tiempo_texto = f"{horas} horas"
+
+                                else:
+
+                                    tiempo_texto = "menos de 1 hora"
+
+
+                            bienvenida = requests.post(
+
+                                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+                                json={
+
+                                    "chat_id": GROUP_ID,
+
+                                    "text":
+
+                                    "👋 Bienvenido al VIP\n\n"
+
+                                    f"⏳ Tiempo restante: {tiempo_texto}\n\n"
+
+                                    "Disfruta el contenido."
+
+                                }
+
+                            ).json()
+
+
+                            if "result" in bienvenida:
+
+                                message_id = bienvenida["result"]["message_id"]
+
+                                time.sleep(10)
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
+
+                                    json={
+
+                                        "chat_id": GROUP_ID,
+
+                                        "message_id": message_id
+
+                                    }
+
+                                )
+
+                        except Exception as e:
+
+                            print("Error bienvenida:", e)
 
 
         except Exception as e:
