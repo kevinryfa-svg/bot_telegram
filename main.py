@@ -644,22 +644,10 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 else:
 
-                    # 🔴 SI NO EXISTE EN USERS, RECREARLO
-                    # ESTO EVITA QUE EL USUARIO SEA DETECTADO COMO INTRUSO
+                    # 🔴 NO CREAR expiration NULL
+                    # SOLO INFORMAR PARA DEBUG
 
-                    expiration = None
-
-                    cur.execute("""
-
-                        INSERT INTO users
-                        (user_id, expiration)
-
-                        VALUES (%s, %s)
-
-                        ON CONFLICT (user_id)
-                        DO NOTHING
-
-                    """, (user_id, expiration))
+                    print("Usuario no encontrado en users al desbanear:", user_id)
 
 
                 # permitir volver a entrar
@@ -1733,7 +1721,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 json={
 
-                                    "chat_id": GROUP_ID,
+                                    "chat_id": user_id,
 
                                     "text":
 
