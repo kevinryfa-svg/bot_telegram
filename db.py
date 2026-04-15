@@ -25,7 +25,7 @@ def create_tables():
     with conn.cursor() as cur:
 
         # =========================
-        # TABLA GROUPS (FASE 3)
+        # TABLA GROUPS
         # =========================
 
         cur.execute("""
@@ -58,7 +58,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA USERS (AMPLIADA)
+        # TABLA USERS
         # =========================
 
         cur.execute("""
@@ -91,7 +91,40 @@ def create_tables():
 
 
         # =========================
-        # TABLA PLANES (FASE 2)
+        # TABLA ADMINS (NUEVA)
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS admins (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            is_super_admin BOOLEAN DEFAULT FALSE,
+
+            can_manage_users BOOLEAN DEFAULT FALSE,
+
+            can_manage_codes BOOLEAN DEFAULT FALSE,
+
+            can_manage_groups BOOLEAN DEFAULT FALSE,
+
+            can_manage_payments BOOLEAN DEFAULT FALSE,
+
+            can_view_stats BOOLEAN DEFAULT FALSE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
+        # TABLA PLANES
         # =========================
 
         cur.execute("""
@@ -122,7 +155,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA SUSCRIPCIONES (FASE 2)
+        # TABLA SUSCRIPCIONES
         # =========================
 
         cur.execute("""
@@ -178,7 +211,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA PAGOS (AMPLIADA)
+        # TABLA PAGOS
         # =========================
 
         cur.execute("""
@@ -276,7 +309,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA LOGS (MUY IMPORTANTE)
+        # TABLA LOGS
         # =========================
 
         cur.execute("""
@@ -301,7 +334,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA CONFIGURACIÓN ADMIN
+        # TABLA CONFIG
         # =========================
 
         cur.execute("""
@@ -322,7 +355,7 @@ def create_tables():
 
 
         # =========================
-        # CREAR GRUPO DEFAULT
+        # GRUPO DEFAULT
         # =========================
 
         cur.execute("""
@@ -344,4 +377,4 @@ def create_tables():
         """)
 
 
-    print("Base de datos preparada para Fase 1, 2 y 3")
+    print("Base de datos FULL preparada 🚀")
