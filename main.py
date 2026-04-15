@@ -2043,8 +2043,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     SELECT user_id
                     FROM users
-                    WHERE expiration IS NULL
-                    OR expiration > NOW()
+
+                    WHERE
+                    (
+                        expiration IS NULL
+                        OR expiration > NOW()
+                    )
+
+                    AND user_id NOT IN (
+
+                        SELECT user_id
+                        FROM banned_users
+
+                    )
 
                 """)
 
