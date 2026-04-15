@@ -635,7 +635,33 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # SI TIENE SUSCRIPCIÓN ACTIVA
                 # =========================
 
-                if expiration and expiration > datetime.now():
+                if expiration is None or expiration > datetime.now():
+
+                    # calcular tiempo restante
+
+                    if expiration is None:
+
+                        tiempo_texto = "♾️ Permanente"
+
+                    else:
+
+                        tiempo_restante = expiration - datetime.now()
+
+                        dias = tiempo_restante.days
+                        horas = tiempo_restante.seconds // 3600
+
+                        if dias > 0:
+
+                            tiempo_texto = f"{dias} días"
+
+                        elif horas > 0:
+
+                            tiempo_texto = f"{horas} horas"
+
+                        else:
+
+                            tiempo_texto = "menos de 1 hora"
+
 
                     # borrar links antiguos
 
@@ -679,7 +705,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     conn.commit()
 
 
-                    # enviar link nuevo
+                    # enviar link nuevo con tiempo restante
 
                     requests.post(
 
@@ -693,7 +719,9 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             "♻️ Has sido desbaneado.\n\n"
 
-                            "Tu suscripción sigue activa.\n"
+                            "Tu suscripción sigue activa.\n\n"
+
+                            f"⏳ Tiempo restante: {tiempo_texto}\n\n"
 
                             "Aquí tienes tu nuevo acceso:\n\n"
 
@@ -736,7 +764,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # =========================
     # USO NORMAL DE CÓDIGO
     # =========================
-
+    
     if not context.user_data.get("waiting_code"):
         return
 
