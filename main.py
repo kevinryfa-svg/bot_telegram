@@ -34,7 +34,7 @@ from db import conn, create_tables
 # =========================
 
 TOKEN = os.environ.get("TOKEN")
-GROUP_ID = int(os.environ.get("GROUP_ID"))
+GROUP_ID = int(os.environ.get("GROUP_ID", "0"))
 SERVER_URL = os.environ.get("SERVER_URL")
 
 ADMIN_ID = 8761243211
@@ -90,6 +90,40 @@ def generate_code():
         )
     )
 
+
+# =========================
+# OBTENER GROUP_ID DINÁMICO
+# =========================
+
+def get_group_id():
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT telegram_group_id
+                FROM groups
+                WHERE is_active=TRUE
+                ORDER BY id ASC
+                LIMIT 1
+
+            """)
+
+            row = cur.fetchone()
+
+            if row:
+
+                return row[0]
+
+    except Exception as e:
+
+        print("Error obteniendo group_id:", e)
+
+
+    return GROUP_ID
+    
 
 # =========================
 # CREAR CÓDIGO ADMIN
@@ -397,7 +431,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
                         json={
-                            "chat_id": GROUP_ID,
+                            "chat_id": get_group_id(),
                             "invite_link": link
                         }
 
@@ -425,7 +459,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"https://api.telegram.org/bot{TOKEN}/banChatMember",
 
             json={
-                "chat_id": GROUP_ID,
+                "chat_id": get_group_id(),
                 "user_id": user_id
             }
 
@@ -436,7 +470,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
 
             json={
-                "chat_id": GROUP_ID,
+                "chat_id": get_group_id(),
                 "user_id": user_id
             }
 
@@ -482,7 +516,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
                             json={
-                                "chat_id": GROUP_ID,
+                                "chat_id": get_group_id(),
                                 "invite_link": link
                             }
 
@@ -542,7 +576,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"https://api.telegram.org/bot{TOKEN}/banChatMember",
 
                 json={
-                    "chat_id": GROUP_ID,
+                    "chat_id": get_group_id(),
                     "user_id": user_id
                 }
 
@@ -665,7 +699,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
 
                     json={
-                        "chat_id": GROUP_ID,
+                        "chat_id": get_group_id(),
                         "user_id": user_id
                     }
 
@@ -721,7 +755,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
                         json={
-                            "chat_id": GROUP_ID,
+                            "chat_id": get_group_id(),
                             "member_limit": 1
                         }
 
@@ -1258,7 +1292,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
                     json={
-                        "chat_id": GROUP_ID,
+                        "chat_id": get_group_id(),
                         "invite_link": old_link
                     }
 
@@ -1286,7 +1320,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
         json={
-            "chat_id": GROUP_ID,
+            "chat_id": get_group_id(),
             "member_limit": 1
         }
 
@@ -1566,7 +1600,7 @@ def stripe_webhook():
             f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
             json={
-                "chat_id": GROUP_ID,
+                "chat_id": get_group_id(),
                 "member_limit": 1
             }
 
@@ -1696,7 +1730,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"https://api.telegram.org/bot{TOKEN}/banChatMember",
 
                         json={
-                            "chat_id": GROUP_ID,
+                            "chat_id": get_group_id(),
                             "user_id": user_id
                         }
 
@@ -1736,7 +1770,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"https://api.telegram.org/bot{TOKEN}/banChatMember",
 
                         json={
-                            "chat_id": GROUP_ID,
+                            "chat_id": get_group_id(),
                             "user_id": user_id
                         }
 
@@ -1747,7 +1781,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
 
                         json={
-                            "chat_id": GROUP_ID,
+                            "chat_id": get_group_id(),
                             "user_id": user_id
                         }
 
@@ -1836,7 +1870,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
                                     json={
-                                        "chat_id": GROUP_ID,
+                                        "chat_id": get_group_id(),
                                         "invite_link": link
                                     }
 
@@ -1880,7 +1914,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 f"https://api.telegram.org/bot{TOKEN}/banChatMember",
 
                                 json={
-                                    "chat_id": GROUP_ID,
+                                    "chat_id": get_group_id(),
                                     "user_id": owner_id
                                 }
 
@@ -1938,7 +1972,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
                                 json={
-                                    "chat_id": GROUP_ID,
+                                    "chat_id": get_group_id(),
                                     "member_limit": 1
                                 }
 
@@ -2040,7 +2074,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"https://api.telegram.org/bot{TOKEN}/banChatMember",
 
                             json={
-                                "chat_id": GROUP_ID,
+                                "chat_id": get_group_id(),
                                 "user_id": user_id
                             }
 
@@ -2051,7 +2085,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
 
                             json={
-                                "chat_id": GROUP_ID,
+                                "chat_id": get_group_id(),
                                 "user_id": user_id
                             }
 
@@ -2122,7 +2156,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                     json={
 
-                                        "chat_id": GROUP_ID,
+                                        "chat_id": get_group_id(),
 
                                         "message_id": message_id
 
@@ -2323,7 +2357,7 @@ def check_expirations():
                                     f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
                                     json={
-                                        "chat_id": GROUP_ID,
+                                        "chat_id": get_group_id(),
                                         "invite_link": link
                                     }
 
@@ -2353,7 +2387,7 @@ def check_expirations():
                         requests.post(
                             f"https://api.telegram.org/bot{TOKEN}/banChatMember",
                             json={
-                                "chat_id": GROUP_ID,
+                                "chat_id": get_group_id(),
                                 "user_id": user_id
                             }
                         )
@@ -2361,7 +2395,7 @@ def check_expirations():
                         requests.post(
                             f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
                             json={
-                                "chat_id": GROUP_ID,
+                                "chat_id": get_group_id(),
                                 "user_id": user_id
                             }
                         )
@@ -2605,7 +2639,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
                 json={
-                    "chat_id": GROUP_ID,
+                    "chat_id": get_group_id(),
                     "member_limit": 1
                 }
 
@@ -3299,7 +3333,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
                         json={
-                            "chat_id": GROUP_ID,
+                            "chat_id": get_group_id(),
                             "invite_link": link
                         }
 
@@ -3376,7 +3410,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
                         json={
-                            "chat_id": GROUP_ID,
+                            "chat_id": get_group_id(),
                             "member_limit": 1
                         }
 
