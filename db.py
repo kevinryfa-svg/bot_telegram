@@ -69,7 +69,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA LOG PAGOS
+        # TABLA PAGOS
         # =========================
 
         cur.execute("""
@@ -90,7 +90,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA USUARIOS BANEADOS
+        # TABLA BANEADOS
         # =========================
 
         cur.execute("""
@@ -107,8 +107,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA LINKS INVITACIÓN
-        # (⚠️ ESTA ES LA QUE TE FALTABA)
+        # TABLA LINKS
         # =========================
 
         cur.execute("""
@@ -122,6 +121,23 @@ def create_tables():
             invite_link TEXT,
 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
+        # TABLA AVISOS LINK
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS link_warnings (
+
+            user_id BIGINT PRIMARY KEY,
+
+            warnings INTEGER DEFAULT 0
 
         );
 
