@@ -25,7 +25,32 @@ def create_tables():
     with conn.cursor() as cur:
 
         # =========================
-        # TABLA USERS
+        # TABLA GROUPS (FASE 3)
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS groups (
+
+            id SERIAL PRIMARY KEY,
+
+            name TEXT,
+
+            telegram_group_id BIGINT,
+
+            invite_link TEXT,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
+        # TABLA USERS (AMPLIADA)
         # =========================
 
         cur.execute("""
@@ -38,7 +63,81 @@ def create_tables():
 
             first_name TEXT,
 
-            expiration TIMESTAMP
+            expiration TIMESTAMP,
+
+            group_id INTEGER DEFAULT 1,
+
+            stripe_customer_id TEXT,
+
+            stripe_subscription_id TEXT,
+
+            subscription_active BOOLEAN DEFAULT FALSE,
+
+            last_invite_link TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
+        # TABLA PLANES (FASE 2)
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS plans (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER,
+
+            name TEXT,
+
+            price_id TEXT,
+
+            amount INTEGER,
+
+            currency TEXT,
+
+            duration_days INTEGER,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
+        # TABLA SUSCRIPCIONES (FASE 2)
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS subscriptions (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            stripe_subscription_id TEXT,
+
+            price_id TEXT,
+
+            status TEXT,
+
+            start_date TIMESTAMP,
+
+            end_date TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
         );
 
@@ -61,6 +160,8 @@ def create_tables():
 
             used BOOLEAN DEFAULT FALSE,
 
+            group_id INTEGER DEFAULT 1,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
         );
@@ -69,7 +170,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA PAGOS
+        # TABLA PAGOS (AMPLIADA)
         # =========================
 
         cur.execute("""
@@ -79,6 +180,16 @@ def create_tables():
             id SERIAL PRIMARY KEY,
 
             user_id BIGINT,
+
+            group_id INTEGER,
+
+            stripe_payment_id TEXT,
+
+            amount INTEGER,
+
+            currency TEXT,
+
+            status TEXT,
 
             payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
@@ -99,6 +210,8 @@ def create_tables():
 
             user_id BIGINT PRIMARY KEY,
 
+            group_id INTEGER DEFAULT 1,
+
             banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
         );
@@ -118,9 +231,15 @@ def create_tables():
 
             user_id BIGINT,
 
+            group_id INTEGER,
+
             invite_link TEXT,
 
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            is_active BOOLEAN DEFAULT TRUE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            revoked_at TIMESTAMP
 
         );
 
@@ -135,13 +254,78 @@ def create_tables():
 
         CREATE TABLE IF NOT EXISTS link_warnings (
 
-            user_id BIGINT PRIMARY KEY,
+            user_id BIGINT,
 
-            warnings INTEGER DEFAULT 0
+            group_id INTEGER DEFAULT 1,
+
+            warnings INTEGER DEFAULT 0,
+
+            PRIMARY KEY (user_id, group_id)
 
         );
 
         """)
 
 
-    print("Tablas verificadas correctamente")
+        # =========================
+        # TABLA LOGS (MUY IMPORTANTE)
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS logs (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            action TEXT,
+
+            details TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
+        # TABLA CONFIGURACIÓN ADMIN
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS admin_settings (
+
+            id SERIAL PRIMARY KEY,
+
+            key TEXT UNIQUE,
+
+            value TEXT,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
+        # CREAR GRUPO DEFAULT
+        # =========================
+
+        cur.execute("""
+
+        INSERT INTO groups (id, name)
+
+        VALUES (1, 'Grupo Principal')
+
+        ON CONFLICT (id) DO NOTHING;
+
+        """)
+
+
+    print("Base de datos preparada para Fase 1, 2 y 3")
