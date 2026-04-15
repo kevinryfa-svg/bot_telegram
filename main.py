@@ -2207,6 +2207,45 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Bot añadido a grupo:", group_name, group_id)
 
 
+            # =========================
+            # VERIFICAR QUIÉN AÑADIÓ EL BOT
+            # =========================
+
+            try:
+
+                added_by = update.message.from_user.id
+
+            except:
+
+                added_by = None
+
+
+            if added_by != ADMIN_ID:
+
+                print("Bot añadido por usuario NO autorizado:", added_by)
+
+
+                await context.bot.send_message(
+
+                    chat_id=ADMIN_ID,
+
+                    text=
+
+                    "⚠️ BOT AÑADIDO POR USUARIO NO AUTORIZADO\n\n"
+
+                    f"Grupo: {group_name}\n"
+
+                    f"ID: {group_id}\n"
+
+                    f"Usuario: {added_by}\n\n"
+
+                    "El grupo NO ha sido registrado."
+
+                )
+
+                return
+
+
             try:
 
                 # =========================
@@ -2232,21 +2271,38 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if status not in ["administrator", "creator"]:
 
+                    # AVISO EN EL GRUPO
+
+                    await context.bot.send_message(
+
+                        chat_id=group_id,
+
+                        text=
+
+                        "⚠️ Necesito permisos de administrador.\n\n"
+
+                        "Por favor, hazme ADMIN con todos los permisos "
+
+                        "para poder gestionar accesos correctamente."
+
+                    )
+
+
+                    # AVISO AL ADMIN
+
                     await context.bot.send_message(
 
                         chat_id=ADMIN_ID,
 
                         text=
 
-                        "⚠️ BOT AÑADIDO A GRUPO\n\n"
+                        "⚠️ BOT AÑADIDO SIN PERMISOS\n\n"
 
                         f"Grupo: {group_name}\n"
 
                         f"ID: {group_id}\n\n"
 
-                        "❌ El bot NO es administrador.\n"
-
-                        "Debes darle permisos completos."
+                        "Debes darle permisos de administrador."
 
                     )
 
@@ -2266,7 +2322,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         VALUES (%s, %s)
 
-                        ON CONFLICT DO NOTHING
+                        ON CONFLICT (telegram_group_id) DO NOTHING
 
                     """, (
 
@@ -2723,7 +2779,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
     
-    
+
     # =========================
     # RECUPERAR ACCESO
     # =========================
