@@ -2196,6 +2196,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("♻️ Desbanear usuario", callback_data="admin_unban_user")],
 
+            [InlineKeyboardButton("🔄 Reset warnings", callback_data="admin_reset_warnings")],
+
+            [InlineKeyboardButton("🔀 Mover usuario grupo", callback_data="admin_move_user")],
+
             [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
 
         ]
@@ -2212,7 +2216,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
-    # MENÚ CÓDIGOS
+    # MENÚ ACCESOS
     # =========================
 
     if data == "menu_codes":
@@ -2229,6 +2233,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📋 Ver códigos", callback_data="admin_codes")],
 
             [InlineKeyboardButton("❌ Eliminar código", callback_data="admin_delete_code")],
+
+            [InlineKeyboardButton("🔄 Revocar links", callback_data="admin_revoke_links")],
+
+            [InlineKeyboardButton("📩 Reenviar links", callback_data="admin_resend_links")],
 
             [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
 
@@ -2266,6 +2274,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("❌ Eliminar grupo", callback_data="admin_delete_group")],
 
+            [InlineKeyboardButton("👑 Gestionar admins", callback_data="admin_manage_admins")],
+
+            [InlineKeyboardButton("🎬 Configurar preview", callback_data="admin_preview_group")],
+
+            [InlineKeyboardButton("💳 Configurar planes", callback_data="admin_group_plans")],
+
+            [InlineKeyboardButton("🔗 Vincular Stripe", callback_data="admin_link_stripe")],
+
             [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
 
         ]
@@ -2282,7 +2298,115 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
-    # VOLVER MENÚ PRINCIPAL
+    # MENÚ PAGOS
+    # =========================
+
+    if data == "menu_payments":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+
+            [InlineKeyboardButton("📋 Ver pagos", callback_data="admin_view_payments")],
+
+            [InlineKeyboardButton("🔍 Buscar pago", callback_data="admin_search_payment")],
+
+            [InlineKeyboardButton("📩 Reenviar acceso", callback_data="admin_resend_access")],
+
+            [InlineKeyboardButton("❌ Cancelar suscripción", callback_data="admin_cancel_subscription")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "💳 GESTIÓN PAGOS",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
+    # MENÚ NEGOCIO
+    # =========================
+
+    if data == "menu_business":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+
+            [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")],
+
+            [InlineKeyboardButton("👥 Usuarios activos", callback_data="admin_active_users")],
+
+            [InlineKeyboardButton("💰 Ingresos", callback_data="admin_income")],
+
+            [InlineKeyboardButton("🔄 Revocar todos links", callback_data="admin_revoke_links")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "📊 GESTIÓN NEGOCIO",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
+    # MENÚ LOGS
+    # =========================
+
+    if data == "menu_logs":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+
+            [InlineKeyboardButton("📜 Ver logs", callback_data="admin_logs")],
+
+            [InlineKeyboardButton("👥 Logs usuarios", callback_data="admin_logs_users")],
+
+            [InlineKeyboardButton("💳 Logs pagos", callback_data="admin_logs_payments")],
+
+            [InlineKeyboardButton("🔐 Logs seguridad", callback_data="admin_logs_security")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "📜 LOGS SISTEMA",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
+    # VOLVER AL MENÚ PRINCIPAL
     # =========================
 
     if data == "admin_back_main":
