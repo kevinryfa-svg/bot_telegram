@@ -1930,6 +1930,136 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# DETECTAR BOT AÑADIDO A GRUPO
+# =========================
+
+async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message:
+        return
+
+    if not update.message.new_chat_members:
+        return
+
+
+    bot_id = int(TOKEN.split(":")[0])
+
+
+    for member in update.message.new_chat_members:
+
+
+        # =========================
+        # SI EL MIEMBRO ES EL BOT
+        # =========================
+
+        if member.id == bot_id:
+
+            group_id = update.message.chat.id
+            group_name = update.message.chat.title
+
+            print("Bot añadido a grupo:", group_name, group_id)
+
+
+            try:
+
+                # =========================
+                # VERIFICAR PERMISOS ADMIN
+                # =========================
+
+                r = requests.get(
+
+                    f"https://api.telegram.org/bot{TOKEN}/getChatMember",
+
+                    params={
+
+                        "chat_id": group_id,
+                        "user_id": bot_id
+
+                    }
+
+                ).json()
+
+
+                status = r["result"]["status"]
+
+
+                if status not in ["administrator", "creator"]:
+
+                    await context.bot.send_message(
+
+                        chat_id=ADMIN_ID,
+
+                        text=
+
+                        "⚠️ BOT AÑADIDO A GRUPO\n\n"
+
+                        f"Grupo: {group_name}\n"
+
+                        f"ID: {group_id}\n\n"
+
+                        "❌ El bot NO es administrador.\n"
+
+                        "Debes darle permisos completos."
+
+                    )
+
+                    return
+
+
+                # =========================
+                # GUARDAR GRUPO EN DATABASE
+                # =========================
+
+                with conn.cursor() as cur:
+
+                    cur.execute("""
+
+                        INSERT INTO groups
+                        (name, telegram_group_id)
+
+                        VALUES (%s, %s)
+
+                        ON CONFLICT DO NOTHING
+
+                    """, (
+
+                        group_name,
+                        group_id
+
+                    ))
+
+
+                await context.bot.send_message(
+
+                    chat_id=ADMIN_ID,
+
+                    text=
+
+                    "✅ NUEVO GRUPO DETECTADO\n\n"
+
+                    f"Nombre: {group_name}\n"
+
+                    f"ID: {group_id}\n\n"
+
+                    "El grupo ha sido registrado correctamente."
+
+                )
+
+
+            except Exception as e:
+
+                print("Error detectando grupo:", e)
+
+                await context.bot.send_message(
+
+                    chat_id=ADMIN_ID,
+
+                    text="❌ Error verificando grupo nuevo."
+
+                )
+
+
+# =========================
 # EXPIRACIONES
 # =========================
 
@@ -3220,6 +3350,15 @@ def main():
             check_new_member
         )
     )
+    
+
+    telegram_app.add_handler(
+    MessageHandler(
+        filters.StatusUpdate.NEW_CHAT_MEMBERS,
+        detect_bot_added
+    )
+)
+
 
     threading.Thread(
         target=check_expirations,
