@@ -355,24 +355,43 @@ def create_tables():
 
 
         # =========================
-        # GRUPO DEFAULT
+        # ASEGURAR UNIQUE TELEGRAM GROUP
+        # =========================
+
+        try:
+
+            cur.execute("""
+
+            ALTER TABLE groups
+
+            ADD CONSTRAINT unique_telegram_group
+
+            UNIQUE (telegram_group_id);
+
+            """)
+
+        except Exception:
+
+            pass
+
+
+        # =========================
+        # GRUPO DEFAULT (SEGURO)
         # =========================
 
         cur.execute("""
 
         INSERT INTO groups (
-            id,
             name,
             telegram_group_id
         )
 
         VALUES (
-            1,
             'Grupo Principal',
             0
         )
 
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (telegram_group_id) DO NOTHING;
 
         """)
 
