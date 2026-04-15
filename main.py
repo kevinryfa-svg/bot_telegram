@@ -2031,7 +2031,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# PANEL ADMIN
+# PANEL ADMIN PRINCIPAL
 # =========================
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2041,29 +2041,17 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
 
-        [InlineKeyboardButton("👥 Usuarios", callback_data="admin_users")],
+        [InlineKeyboardButton("👥 Gestión Usuarios", callback_data="menu_users")],
 
-        [InlineKeyboardButton("🎟️ Ver códigos", callback_data="admin_codes")],
+        [InlineKeyboardButton("🎟️ Gestión Accesos", callback_data="menu_codes")],
 
-        [InlineKeyboardButton("📤 Crear código", callback_data="admin_create_code")],
+        [InlineKeyboardButton("📦 Gestión Grupos", callback_data="menu_groups")],
 
-        [InlineKeyboardButton("❌ Eliminar código", callback_data="admin_delete_code")],
+        [InlineKeyboardButton("💳 Gestión Pagos", callback_data="menu_payments")],
 
-        [InlineKeyboardButton("🔍 Buscar usuario", callback_data="admin_search_user")],
+        [InlineKeyboardButton("📊 Gestión Negocio", callback_data="menu_business")],
 
-        [InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")],
-
-        [InlineKeyboardButton("⛔ Banear usuario", callback_data="admin_ban_user")],
-
-        [InlineKeyboardButton("♻️ Desbanear usuario", callback_data="admin_unban_user")],
-
-        [InlineKeyboardButton("🔄 Revocar todos los links", callback_data="admin_revoke_links")],
-
-        [InlineKeyboardButton("📩 Reenviar links nuevos", callback_data="admin_resend_links")],
-
-        [InlineKeyboardButton("📜 Logs incidentes", callback_data="admin_logs")],
-
-        [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")]
+        [InlineKeyboardButton("📜 Logs", callback_data="menu_logs")]
 
     ]
 
@@ -2179,6 +2167,152 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
 
             f"🔗 Tu acceso VIP:\n{link}"
+
+        )
+
+        return
+
+
+    # =========================
+    # MENÚ USUARIOS
+    # =========================
+
+    if data == "menu_users":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+
+            [InlineKeyboardButton("📋 Ver usuarios", callback_data="admin_users")],
+
+            [InlineKeyboardButton("🔍 Buscar usuario", callback_data="admin_search_user")],
+
+            [InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")],
+
+            [InlineKeyboardButton("⛔ Banear usuario", callback_data="admin_ban_user")],
+
+            [InlineKeyboardButton("♻️ Desbanear usuario", callback_data="admin_unban_user")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "👥 GESTIÓN USUARIOS",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
+    # MENÚ CÓDIGOS
+    # =========================
+
+    if data == "menu_codes":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+
+            [InlineKeyboardButton("📤 Crear código", callback_data="admin_create_code")],
+
+            [InlineKeyboardButton("📋 Ver códigos", callback_data="admin_codes")],
+
+            [InlineKeyboardButton("❌ Eliminar código", callback_data="admin_delete_code")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "🎟️ GESTIÓN ACCESOS",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
+    # MENÚ GRUPOS
+    # =========================
+
+    if data == "menu_groups":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+
+            [InlineKeyboardButton("➕ Añadir grupo", callback_data="admin_add_group")],
+
+            [InlineKeyboardButton("📋 Ver grupos", callback_data="admin_view_groups")],
+
+            [InlineKeyboardButton("✏️ Editar grupo", callback_data="admin_edit_group")],
+
+            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="admin_delete_group")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "📦 GESTIÓN GRUPOS",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
+    # VOLVER MENÚ PRINCIPAL
+    # =========================
+
+    if data == "admin_back_main":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+
+            [InlineKeyboardButton("👥 Gestión Usuarios", callback_data="menu_users")],
+
+            [InlineKeyboardButton("🎟️ Gestión Accesos", callback_data="menu_codes")],
+
+            [InlineKeyboardButton("📦 Gestión Grupos", callback_data="menu_groups")],
+
+            [InlineKeyboardButton("💳 Gestión Pagos", callback_data="menu_payments")],
+
+            [InlineKeyboardButton("📊 Gestión Negocio", callback_data="menu_business")],
+
+            [InlineKeyboardButton("📜 Logs", callback_data="menu_logs")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "🔐 PANEL ADMIN",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
 
         )
 
