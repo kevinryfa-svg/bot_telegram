@@ -3403,22 +3403,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "skip_preview":
 
-        context.user_data["new_preview_file"] = None
+        context.user_data["editing_preview"] = False
+        context.user_data.pop("new_preview_file", None)
+
+        group_id = context.user_data.get("selected_group_admin")
+
 
         keyboard = [
 
-            [InlineKeyboardButton("💾 Guardar cambios", callback_data="save_preview")],
+            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
 
-            [InlineKeyboardButton("❌ Descartar", callback_data="cancel_preview")]
+            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
+
+            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
+
+            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
+
+            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
+
+            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
 
         ]
 
 
         await query.message.reply_text(
 
-            "Preview omitido.\n\n"
-
-            "¿Deseas guardar cambios?",
+            "⏭ Preview omitido.",
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -3463,9 +3475,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Error guardando preview:", e)
 
 
+        context.user_data["editing_preview"] = False
+        context.user_data.pop("new_preview_file", None)
+
+
+        keyboard = [
+
+            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
+
+            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
+
+            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
+
+            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
+
+            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
+
+            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
+
+        ]
+
+
         await query.message.reply_text(
 
-            "✅ Preview actualizado correctamente."
+            "✅ Preview actualizado correctamente.",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
 
         )
 
@@ -3478,10 +3515,35 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "cancel_preview":
 
         context.user_data["editing_preview"] = False
+        context.user_data.pop("new_preview_file", None)
+
+        group_id = context.user_data.get("selected_group_admin")
+
+
+        keyboard = [
+
+            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
+
+            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
+
+            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
+
+            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
+
+            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
+
+            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
+
+        ]
+
 
         await query.message.reply_text(
 
-            "❌ Cambios descartados."
+            "❌ Cambios descartados.",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
 
         )
 
