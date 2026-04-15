@@ -639,7 +639,27 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 expiration = None
 
                 if row:
+
                     expiration = row[0]
+
+                else:
+
+                    # 🔴 SI NO EXISTE EN USERS, RECREARLO
+                    # ESTO EVITA QUE EL USUARIO SEA DETECTADO COMO INTRUSO
+
+                    expiration = None
+
+                    cur.execute("""
+
+                        INSERT INTO users
+                        (user_id, expiration)
+
+                        VALUES (%s, %s)
+
+                        ON CONFLICT (user_id)
+                        DO NOTHING
+
+                    """, (user_id, expiration))
 
 
                 # permitir volver a entrar
