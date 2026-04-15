@@ -3375,7 +3375,78 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
+        group_id = context.user_data.get("selected_group_admin")
+
+
+        # =========================
+        # OBTENER PREVIEW ACTUAL
+        # =========================
+
+        current_preview = None
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT preview_file_id
+
+                    FROM groups
+
+                    WHERE id=%s
+
+                """, (group_id,))
+
+                row = cur.fetchone()
+
+                if row:
+
+                    current_preview = row[0]
+
+        except Exception as e:
+
+            print("Error obteniendo preview:", e)
+
+
         context.user_data["editing_preview"] = True
+
+
+        # =========================
+        # MOSTRAR PREVIEW ACTUAL
+        # =========================
+
+        if current_preview:
+
+            try:
+
+                await context.bot.send_photo(
+
+                    chat_id=query.message.chat_id,
+
+                    photo=current_preview,
+
+                    caption="📸 Preview actual del grupo"
+
+                )
+
+            except:
+
+                try:
+
+                    await context.bot.send_video(
+
+                        chat_id=query.message.chat_id,
+
+                        video=current_preview,
+
+                        caption="📸 Preview actual del grupo"
+
+                    )
+
+                except Exception as e:
+
+                    print("Error mostrando preview:", e)
 
 
         keyboard = [
@@ -3389,7 +3460,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
 
-            "🎬 Envía una imagen o video para el preview.",
+            "🎬 Envía una imagen o video para el nuevo preview.",
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -3542,6 +3613,45 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
 
             "❌ Cambios descartados.",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
+    # VOLVER DESDE PREVIEW
+    # =========================
+
+    if data == "edit_group_back":
+
+        context.user_data["editing_preview"] = False
+        context.user_data.pop("new_preview_file", None)
+
+        keyboard = [
+
+            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
+
+            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
+
+            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
+
+            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
+
+            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
+
+            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
+
+        ]
+
+
+        await query.message.reply_text(
+
+            "🔧 CONFIGURACIÓN DEL GRUPO",
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
