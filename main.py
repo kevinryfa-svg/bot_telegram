@@ -1060,32 +1060,12 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                 # =========================
-                # ❌ NO EXISTE → POSIBLE LINK COMPARTIDO
+                # ❌ NO EXISTE → LINK COMPARTIDO REAL
                 # =========================
 
                 if not row:
 
-                    print("Usuario no autorizado detectado:", user_id)
-
-
-                    # intentar detectar dueño del link
-
-                    cur.execute("""
-
-                    SELECT user_id
-                    FROM invite_links
-
-                    """)
-
-                    all_links = cur.fetchall()
-
-                    owner_id = None
-
-                    if all_links:
-
-                        # si hay links guardados, asumir último como sospechoso
-
-                        owner_id = all_links[-1][0]
+                    print("Intruso detectado:", user_id)
 
 
                     # expulsar intruso
@@ -1113,28 +1093,82 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
 
-                    # si detectamos dueño → expulsarlo también
+                    # buscar último dueño de link válido
 
-                    if owner_id:
+                    cur.execute("""
 
-                        print("Posible link compartido por:", owner_id)
+                    SELECT user_id
+                    FROM invite_links
+                    ORDER BY created_at DESC
+                    LIMIT 1
 
-                        try:
+                    """)
 
-                            requests.post(
+                    owner = cur.fetchone()
 
-                                f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+                    if owner:
 
-                                json={
-                                    "chat_id": GROUP_ID,
-                                    "user_id": owner_id
-                                }
+                        owner_id = owner[0]
 
-                            )
+                        print("Link compartido por:", owner_id)
 
-                        except Exception as e:
 
-                            print("Error expulsando dueño:", e)
+                        # expulsar dueño
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                            json={
+                                "chat_id": GROUP_ID,
+                                "user_id": owner_id
+                            }
+
+                        )
+
+
+                        # revocar links del dueño
+
+                        cur.execute("""
+
+                        SELECT invite_link
+                        FROM invite_links
+                        WHERE user_id=%s
+
+                        """, (owner_id,))
+
+                        links = cur.fetchall()
+
+                        for (link,) in links:
+
+                            try:
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+
+                                    json={
+                                        "chat_id": GROUP_ID,
+                                        "invite_link": link
+                                    }
+
+                                )
+
+                            except Exception as e:
+
+                                print("Error revocando link:", e)
+
+
+                        # borrar links
+
+                        cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE user_id=%s
+
+                        """, (owner_id,))
+
+                        conn.commit()
 
 
                         # avisar admin
@@ -1144,11 +1178,19 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
 
                             json={
+
                                 "chat_id": ADMIN_ID,
+
                                 "text":
+
                                 f"⚠️ LINK COMPARTIDO DETECTADO\n\n"
-                                f"Dueño sospechoso: {owner_id}\n"
-                                f"Intruso detectado: {user_id}"
+
+                                f"Dueño del link: {owner_id}\n"
+
+                                f"Intruso detectado: {user_id}\n\n"
+
+                                f"Ambos expulsados."
+
                             }
 
                         )
@@ -1167,8 +1209,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         print("Usuario expirado:", user_id)
 
-
-                        # revocar sus links
 
                         cur.execute("""
 
@@ -1200,8 +1240,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 print("Error revocando link:", e)
 
 
-                        # borrar links guardados
-
                         cur.execute("""
 
                         DELETE FROM invite_links
@@ -1209,8 +1247,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         """, (user_id,))
 
-
-                        # expulsar usuario
 
                         requests.post(
 
@@ -1233,6 +1269,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             }
 
                         )
+
 
                     else:
 
