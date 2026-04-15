@@ -3254,7 +3254,57 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
     
-    
+
+    # =========================
+    # MENÚ INTERNO DEL GRUPO
+    # =========================
+
+    if data.startswith("edit_group_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+
+        group_id = int(data.split("_")[2])
+
+
+        # Guardar grupo seleccionado
+
+        context.user_data["selected_group_admin"] = group_id
+
+
+        keyboard = [
+
+            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
+
+            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
+
+            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
+
+            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
+
+            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
+
+            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
+
+        ]
+
+
+        await query.message.reply_text(
+
+            "🔧 CONFIGURACIÓN DEL GRUPO",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+        
+            
     # =========================
     # ADMIN USERS
     # =========================
