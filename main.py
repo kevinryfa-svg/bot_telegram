@@ -988,9 +988,42 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print("Error guardando invite link:", e)
 
 
+    # =========================
+    # CALCULAR TIEMPO RESTANTE
+    # =========================
+
+    if expiration is None:
+
+        tiempo_texto = "♾️ Permanente"
+
+    else:
+
+        tiempo_restante = expiration - datetime.now()
+
+        dias = tiempo_restante.days
+        horas = tiempo_restante.seconds // 3600
+        minutos = (tiempo_restante.seconds % 3600) // 60
+
+        if dias > 0:
+
+            tiempo_texto = f"{dias} días"
+
+        elif horas > 0:
+
+            tiempo_texto = f"{horas} horas"
+
+        else:
+
+            tiempo_texto = f"{minutos} minutos"
+
+
     await update.message.reply_text(
 
-        f"🔗 Acceso concedido:\n{link}"
+        "🔗 Acceso concedido\n\n"
+
+        f"⏳ Tiempo restante: {tiempo_texto}\n\n"
+
+        f"{link}"
 
     )
 
