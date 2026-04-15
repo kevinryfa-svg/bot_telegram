@@ -528,14 +528,10 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """, (user_id,))
 
 
-                # eliminar usuario
+                # 🔴 NO ELIMINAR USUARIO
+                # MANTENER USERS PARA CONSERVAR EXPIRATION
 
-                cur.execute("""
-
-                    DELETE FROM users
-                    WHERE user_id=%s
-
-                """, (user_id,))
+                print("Usuario marcado como baneado sin borrar users:", user_id)
 
 
                 conn.commit()
