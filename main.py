@@ -1374,16 +1374,33 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     # buscar dueño del link
 
-                    cur.execute("""
+                    used_link = None
 
-                    SELECT user_id
-                    FROM invite_links
-                    ORDER BY created_at DESC
-                    LIMIT 1
+                    try:
 
-                    """)
+                        used_link = update.message.invite_link.invite_link
 
-                    owner = cur.fetchone()
+                    except:
+
+                        used_link = None
+
+
+                    if used_link:
+
+                        cur.execute("""
+
+                        SELECT user_id
+                        FROM invite_links
+                        WHERE invite_link=%s
+
+                        """, (used_link,))
+
+                        owner = cur.fetchone()
+
+                    else:
+
+                        owner = None
+
 
                     if owner:
 
