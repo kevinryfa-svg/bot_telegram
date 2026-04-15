@@ -923,7 +923,218 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             return
+    
+    # =========================
+    # CREACIÓN PLANES — PASO 4
+    # =========================
 
+        if step == 4:
+
+            try:
+
+                total_plans = int(text)
+
+            except:
+
+                await update.message.reply_text(
+                    "❌ Número inválido."
+                )
+
+                return
+
+
+            context.user_data["new_group_data"]["total_plans"] = total_plans
+            context.user_data["new_group_data"]["plans"] = []
+
+            context.user_data["current_plan"] = 1
+            context.user_data["group_step"] = 5
+
+            await update.message.reply_text(
+
+                f"Paso 5️⃣\n\n"
+
+                f"Introduce el NOMBRE del plan 1."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 5 — NOMBRE PLAN
+        # =========================
+
+        if step == 5:
+
+            context.user_data["current_plan_name"] = text
+            context.user_data["group_step"] = 6
+
+            await update.message.reply_text(
+
+                "Paso 6️⃣\n\n"
+
+                "Introduce el PRICE ID de Stripe."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 6 — PRICE ID
+        # =========================
+
+        if step == 6:
+
+            context.user_data["current_price_id"] = text
+            context.user_data["group_step"] = 7
+
+            await update.message.reply_text(
+
+                "Paso 7️⃣\n\n"
+
+                "Introduce duración en días."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 7 — DURACIÓN
+        # =========================
+
+        if step == 7:
+
+            try:
+
+                duration_days = int(text)
+
+            except:
+
+                await update.message.reply_text(
+                    "❌ Número inválido."
+                )
+
+                return
+
+
+            plans = context.user_data["new_group_data"]["plans"]
+
+            plans.append({
+
+                "name": context.user_data["current_plan_name"],
+                "price_id": context.user_data["current_price_id"],
+                "duration_days": duration_days
+
+            })
+
+
+            total_plans = context.user_data["new_group_data"]["total_plans"]
+
+            current = context.user_data["current_plan"]
+
+
+            if current < total_plans:
+
+                context.user_data["current_plan"] += 1
+                context.user_data["group_step"] = 5
+
+                next_plan = context.user_data["current_plan"]
+
+                await update.message.reply_text(
+
+                    f"Plan {next_plan}\n\n"
+
+                    "Introduce el NOMBRE del plan."
+
+                )
+
+                return
+
+
+            # =========================
+            # GUARDAR PLANES EN DB
+            # =========================
+
+            group_data = context.user_data["new_group_data"]
+
+            group_name = group_data["name"]
+            telegram_group_id = group_data["telegram_group_id"]
+
+
+            with conn.cursor() as cur:
+
+                # buscar grupo
+
+                cur.execute("""
+
+                    SELECT id
+                    FROM groups
+                    WHERE telegram_group_id=%s
+
+                """, (telegram_group_id,))
+
+                row = cur.fetchone()
+
+
+                if row:
+
+                    group_id = row[0]
+
+                else:
+
+                    cur.execute("""
+
+                        INSERT INTO groups
+                        (name, telegram_group_id)
+
+                        VALUES (%s, %s)
+
+                        RETURNING id
+
+                    """, (
+
+                        group_name,
+                        telegram_group_id
+
+                    ))
+
+                    group_id = cur.fetchone()[0]
+
+
+                # guardar planes
+
+                for plan in group_data["plans"]:
+
+                    cur.execute("""
+
+                        INSERT INTO plans
+                        (group_id, name, price_id, duration_days)
+
+                        VALUES (%s, %s, %s, %s)
+
+                    """, (
+
+                        group_id,
+                        plan["name"],
+                        plan["price_id"],
+                        plan["duration_days"]
+
+                    ))
+
+
+            await update.message.reply_text(
+
+                "✅ Grupo y planes creados correctamente."
+
+            )
+
+
+            context.user_data["creating_group"] = False
+
+            return
+            
     # =========================
     # USO NORMAL DE CÓDIGO
     # =========================
