@@ -1253,8 +1253,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
 
 
-                            # aviso usuario
-
                             requests.post(
 
                                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -1273,8 +1271,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             )
 
-
-                            # aviso admin
 
                             requests.post(
 
@@ -1299,10 +1295,43 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         else:
 
+                            # =========================
+                            # CREAR LINK NUEVO
+                            # =========================
+
+                            invite_link = requests.post(
+
+                                f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+
+                                json={
+                                    "chat_id": GROUP_ID,
+                                    "member_limit": 1
+                                }
+
+                            ).json()
+
+                            new_link = invite_link["result"]["invite_link"]
+
+
+                            # =========================
+                            # GUARDAR LINK NUEVO
+                            # =========================
+
+                            cur.execute("""
+
+                                INSERT INTO invite_links
+                                (user_id, invite_link)
+
+                                VALUES (%s, %s)
+
+                            """, (owner_id, new_link))
+
                             conn.commit()
 
 
-                            # aviso usuario
+                            # =========================
+                            # AVISO USUARIO + LINK
+                            # =========================
 
                             requests.post(
 
@@ -1316,7 +1345,13 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                     f"⚠️ AVISO {warnings}/3\n\n"
 
-                                    "Hemos detectado que has compartido tu link.\n"
+                                    "Hemos detectado que has compartido tu link.\n\n"
+
+                                    "Tu link anterior ha sido invalidado.\n"
+
+                                    "Aquí tienes uno nuevo:\n\n"
+
+                                    f"{new_link}\n\n"
 
                                     "Si llegas a 3 avisos serás baneado."
 
@@ -1324,8 +1359,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             )
 
-
-                            # aviso admin
 
                             requests.post(
 
