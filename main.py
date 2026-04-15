@@ -2972,19 +2972,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("➕ Añadir grupo", callback_data="admin_add_group")],
 
-            [InlineKeyboardButton("📋 Ver grupos", callback_data="admin_view_groups")],
-
             [InlineKeyboardButton("✏️ Editar grupo", callback_data="admin_edit_group")],
 
-            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="admin_delete_group")],
-
-            [InlineKeyboardButton("👑 Gestionar admins", callback_data="admin_manage_admins")],
-
-            [InlineKeyboardButton("🎬 Configurar preview", callback_data="admin_preview_group")],
-
-            [InlineKeyboardButton("💳 Configurar planes", callback_data="admin_group_plans")],
-
-            [InlineKeyboardButton("🔗 Vincular Stripe", callback_data="admin_link_stripe")],
+            [InlineKeyboardButton("📋 Ver grupos", callback_data="admin_view_groups")],
 
             [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
 
@@ -3173,6 +3163,98 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return    
 
 
+    # =========================
+    # EDITAR GRUPO — LISTA
+    # =========================
+
+    if data == "admin_edit_group":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT id, name
+
+                    FROM groups
+
+                    WHERE telegram_group_id != 0
+
+                    ORDER BY id ASC
+
+                """)
+
+                groups = cur.fetchall()
+
+        except Exception as e:
+
+            print("Error cargando grupos:", e)
+
+            await query.message.reply_text(
+                "❌ Error cargando grupos."
+            )
+
+            return
+
+
+        if not groups:
+
+            await query.message.reply_text(
+                "⚠️ No hay grupos disponibles."
+            )
+
+            return
+
+
+        keyboard = []
+
+
+        for group_id, group_name in groups:
+
+            keyboard.append([
+
+                InlineKeyboardButton(
+
+                    group_name,
+
+                    callback_data=f"edit_group_{group_id}"
+
+                )
+
+            ])
+
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                "⬅️ Volver",
+
+                callback_data="menu_groups"
+
+            )
+
+        ])
+
+
+        await query.message.reply_text(
+
+            "Selecciona el grupo a editar:",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+    
+    
     # =========================
     # ADMIN USERS
     # =========================
