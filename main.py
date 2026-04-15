@@ -1170,7 +1170,65 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["creating_group"] = False
 
             return
-            
+
+async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    # =========================
+    # RECIBIR PREVIEW MEDIA
+    # =========================
+
+    if context.user_data.get("editing_preview"):
+
+        file_id = None
+
+        if update.message.photo:
+
+            file_id = update.message.photo[-1].file_id
+
+        elif update.message.video:
+
+            file_id = update.message.video.file_id
+
+        else:
+
+            await update.message.reply_text(
+                "❌ Debes enviar imagen o video."
+            )
+
+            return
+
+
+        context.user_data["new_preview_file"] = file_id
+
+
+        keyboard = [
+
+            [InlineKeyboardButton(
+                "💾 Guardar cambios",
+                callback_data="save_preview"
+            )],
+
+            [InlineKeyboardButton(
+                "❌ Descartar",
+                callback_data="cancel_preview"
+            )]
+
+        ]
+
+
+        await update.message.reply_text(
+
+            "Preview recibido.\n\n"
+
+            "¿Deseas guardar cambios?",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
     # =========================
     # USO NORMAL DE CÓDIGO
     # =========================
@@ -3303,8 +3361,133 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
-        
-            
+
+
+    # =========================
+    # EDITAR PREVIEW
+    # =========================
+
+    if data == "edit_group_preview":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+
+        context.user_data["editing_preview"] = True
+
+
+        keyboard = [
+
+            [InlineKeyboardButton("⏭ Omitir", callback_data="skip_preview")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="edit_group_back")]
+
+        ]
+
+
+        await query.message.reply_text(
+
+            "🎬 Envía una imagen o video para el preview.",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+    
+    # =========================
+    # OMITIR PREVIEW
+    # =========================
+
+    if data == "skip_preview":
+
+        context.user_data["new_preview_file"] = None
+
+        keyboard = [
+
+            [InlineKeyboardButton("💾 Guardar cambios", callback_data="save_preview")],
+
+            [InlineKeyboardButton("❌ Descartar", callback_data="cancel_preview")]
+
+        ]
+
+
+        await query.message.reply_text(
+
+            "Preview omitido.\n\n"
+
+            "¿Deseas guardar cambios?",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+    # =========================
+    # GUARDAR PREVIEW
+    # =========================
+
+    if data == "save_preview":
+
+        group_id = context.user_data.get("selected_group_admin")
+
+        file_id = context.user_data.get("new_preview_file")
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE groups
+
+                    SET preview_file_id=%s
+
+                    WHERE id=%s
+
+                """, (
+
+                    file_id,
+                    group_id
+
+                ))
+
+                conn.commit()
+
+        except Exception as e:
+
+            print("Error guardando preview:", e)
+
+
+        await query.message.reply_text(
+
+            "✅ Preview actualizado correctamente."
+
+        )
+
+        return
+
+    # =========================
+    # CANCELAR PREVIEW
+    # =========================
+
+    if data == "cancel_preview":
+
+        context.user_data["editing_preview"] = False
+
+        await query.message.reply_text(
+
+            "❌ Cambios descartados."
+
+        )
+
+        return
+
+
     # =========================
     # ADMIN USERS
     # =========================
