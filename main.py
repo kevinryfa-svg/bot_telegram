@@ -904,6 +904,8 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             try:
 
+                bot_id = int(TOKEN.split(":")[0])
+
                 r = requests.get(
 
                     f"https://api.telegram.org/bot{TOKEN}/getChatMember",
@@ -911,7 +913,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     params={
 
                         "chat_id": group_id,
-                        "user_id": TOKEN.split(":")[0]
+                        "user_id": bot_id
 
                     }
 
