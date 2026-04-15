@@ -644,10 +644,22 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 else:
 
-                    # 🔴 NO CREAR expiration NULL
-                    # SOLO INFORMAR PARA DEBUG
+                    # 🔴 SI NO EXISTE EN USERS, CREARLO TEMPORALMENTE
+                    # EVITA QUE SEA DETECTADO COMO INTRUSO
 
-                    print("Usuario no encontrado en users al desbanear:", user_id)
+                    expiration = datetime.now() + timedelta(minutes=5)
+
+                    cur.execute("""
+
+                        INSERT INTO users
+                        (user_id, expiration)
+
+                        VALUES (%s, %s)
+
+                        ON CONFLICT (user_id)
+                        DO NOTHING
+
+                    """, (user_id, expiration))
 
 
                 # permitir volver a entrar
