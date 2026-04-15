@@ -105,8 +105,8 @@ def get_group_id():
 
                 SELECT telegram_group_id
                 FROM groups
-                WHERE is_active=TRUE
-                ORDER BY id ASC
+                WHERE telegram_group_id IS NOT NULL
+                ORDER BY id DESC
                 LIMIT 1
 
             """)
@@ -3566,6 +3566,7 @@ def main():
     )
 
     # 🔧 NUEVO COMANDO DEBUG
+
     telegram_app.add_handler(
         CommandHandler("debugdb", debug_db)
     )
@@ -3589,20 +3590,25 @@ def main():
         )
     )
 
+    # =========================
+    # DETECTAR BOT Y USUARIOS NUEVOS
+    # =========================
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            detect_bot_added
+        ),
+        group=0
+    )
+
     telegram_app.add_handler(
         MessageHandler(
             filters.StatusUpdate.NEW_CHAT_MEMBERS,
             check_new_member
-        )
+        ),
+        group=1
     )
-    
-
-    telegram_app.add_handler(
-    MessageHandler(
-        filters.StatusUpdate.NEW_CHAT_MEMBERS,
-        detect_bot_added
-    )
-)
 
 
     threading.Thread(
