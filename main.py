@@ -3808,6 +3808,163 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # AÑADIR PLAN — INICIO
+    # =========================
+
+    if data == "add_group_plan":
+
+        context.user_data["adding_plan"] = True
+        context.user_data["add_plan_step"] = 1
+
+        await query.message.reply_text(
+
+            "➕ CREAR NUEVO PLAN\n\n"
+
+            "Paso 1️⃣\n"
+            "Introduce el nombre del plan."
+
+        )
+
+        return
+
+
+    # =========================
+    # EDITAR PLAN — SELECCIÓN
+    # =========================
+
+    if data == "edit_group_plan_select":
+
+        group_id = context.user_data.get("selected_group_admin")
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id, name
+                FROM plans
+                WHERE group_id=%s
+                AND is_active=TRUE
+                ORDER BY id ASC
+
+            """, (group_id,))
+
+            plans = cur.fetchall()
+
+
+        if not plans:
+
+            await query.message.reply_text(
+                "⚠️ No hay planes disponibles."
+            )
+
+            return
+
+
+        keyboard = []
+
+
+        for plan_id, name in plans:
+
+            keyboard.append([
+
+                InlineKeyboardButton(
+                    name,
+                    callback_data=f"edit_plan_{plan_id}"
+                )
+
+            ])
+
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data="edit_group_plans"
+            )
+
+        ])
+
+
+        await query.message.reply_text(
+
+            "✏️ Selecciona el plan a editar:",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
+    # ELIMINAR PLAN — SELECCIÓN
+    # =========================
+
+    if data == "delete_group_plan_select":
+
+        group_id = context.user_data.get("selected_group_admin")
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id, name
+                FROM plans
+                WHERE group_id=%s
+                AND is_active=TRUE
+                ORDER BY id ASC
+
+            """, (group_id,))
+
+            plans = cur.fetchall()
+
+
+        if not plans:
+
+            await query.message.reply_text(
+                "⚠️ No hay planes disponibles."
+            )
+
+            return
+
+
+        keyboard = []
+
+
+        for plan_id, name in plans:
+
+            keyboard.append([
+
+                InlineKeyboardButton(
+                    name,
+                    callback_data=f"delete_plan_{plan_id}"
+                )
+
+            ])
+
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data="edit_group_plans"
+            )
+
+        ])
+
+
+        await query.message.reply_text(
+
+            "🗑 Selecciona el plan a eliminar:",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
     # ADMIN USERS
     # =========================
 
