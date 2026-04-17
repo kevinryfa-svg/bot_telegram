@@ -3680,6 +3680,134 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # VER PLANES DEL GRUPO
+    # =========================
+
+    if data == "view_group_plans":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+
+        group_id = context.user_data.get("selected_group_admin")
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT id,
+                           name,
+                           amount,
+                           currency,
+                           duration_days
+
+                    FROM plans
+
+                    WHERE group_id=%s
+                    AND is_active=TRUE
+
+                    ORDER BY id ASC
+
+                """, (group_id,))
+
+                plans = cur.fetchall()
+
+        except Exception as e:
+
+            print("Error cargando planes:", e)
+
+            await query.message.reply_text(
+                "❌ Error cargando planes."
+            )
+
+            return
+
+
+        if not plans:
+
+            keyboard = [
+
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data="edit_group_plans"
+                )]
+
+            ]
+
+            await query.message.reply_text(
+
+                "⚠️ Este grupo no tiene planes creados.",
+
+                reply_markup=InlineKeyboardMarkup(keyboard)
+
+            )
+
+            return
+
+
+        texto = "📋 PLANES DEL GRUPO\n\n"
+
+
+        for plan_id, name, amount, currency, duration in plans:
+
+            if duration == 0:
+
+                duracion_texto = "♾️ Permanente"
+
+            else:
+
+                duracion_texto = f"{duration} días"
+
+
+            if amount and currency:
+
+                precio_texto = f"{amount} {currency}"
+
+            else:
+
+                precio_texto = "No definido"
+
+
+            texto += (
+
+                f"🆔 {plan_id}\n"
+
+                f"📦 {name}\n"
+
+                f"💰 {precio_texto}\n"
+
+                f"⏳ {duracion_texto}\n\n"
+
+            )
+
+
+        keyboard = [
+
+            [InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data="edit_group_plans"
+            )]
+
+        ]
+
+
+        await query.message.reply_text(
+
+            texto,
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
     # ADMIN USERS
     # =========================
 
