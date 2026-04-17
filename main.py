@@ -1297,6 +1297,199 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
     # =========================
+    # AÑADIR PLAN — WIZARD
+    # =========================
+
+    if context.user_data.get("adding_plan"):
+
+        step = context.user_data.get("add_plan_step")
+
+        text = update.message.text.strip()
+
+
+        # =========================
+        # PASO 1 — NOMBRE
+        # =========================
+
+        if step == 1:
+
+            context.user_data["new_plan_name"] = text
+            context.user_data["add_plan_step"] = 2
+
+            await update.message.reply_text(
+
+                "Paso 2️⃣\n\n"
+
+                "Introduce el PRICE ID."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 2 — PRICE ID
+        # =========================
+
+        if step == 2:
+
+            context.user_data["new_price_id"] = text
+            context.user_data["add_plan_step"] = 3
+
+            await update.message.reply_text(
+
+                "Paso 3️⃣\n\n"
+
+                "Introduce duración en días."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 3 — DURACIÓN
+        # =========================
+
+        if step == 3:
+
+            try:
+
+                duration_days = int(text)
+
+            except:
+
+                await update.message.reply_text(
+                    "❌ Número inválido."
+                )
+
+                return
+
+
+            context.user_data["new_duration"] = duration_days
+            context.user_data["add_plan_step"] = 4
+
+            await update.message.reply_text(
+
+                "Paso 4️⃣\n\n"
+
+                "Introduce el PRECIO.\n"
+
+                "Ejemplo: 10"
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 4 — PRECIO
+        # =========================
+
+        if step == 4:
+
+            try:
+
+                amount = int(text)
+
+            except:
+
+                await update.message.reply_text(
+                    "❌ Precio inválido."
+                )
+
+                return
+
+
+            context.user_data["new_amount"] = amount
+            context.user_data["add_plan_step"] = 5
+
+            await update.message.reply_text(
+
+                "Paso 5️⃣\n\n"
+
+                "Introduce la MONEDA.\n"
+
+                "Ejemplo: EUR"
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 5 — MONEDA Y GUARDAR
+        # =========================
+
+        if step == 5:
+
+            currency = text.upper()
+
+            group_id = context.user_data.get("selected_group_admin")
+
+            plan_name = context.user_data.get("new_plan_name")
+
+            price_id = context.user_data.get("new_price_id")
+
+            duration_days = context.user_data.get("new_duration")
+
+            amount = context.user_data.get("new_amount")
+
+
+            try:
+
+                with conn.cursor() as cur:
+
+                    cur.execute("""
+
+                        INSERT INTO plans
+                        (
+                            group_id,
+                            name,
+                            price_id,
+                            duration_days,
+                            amount,
+                            currency
+                        )
+
+                        VALUES (%s, %s, %s, %s, %s, %s)
+
+                    """, (
+
+                        group_id,
+                        plan_name,
+                        price_id,
+                        duration_days,
+                        amount,
+                        currency
+
+                    ))
+
+                    conn.commit()
+
+            except Exception as e:
+
+                print("Error creando plan:", e)
+
+                await update.message.reply_text(
+                    "❌ Error creando plan."
+                )
+
+                return
+
+
+            context.user_data["adding_plan"] = False
+
+            await update.message.reply_text(
+
+                "✅ Plan creado correctamente."
+
+            )
+
+            return
+
+
+    # =========================
     # EDITAR PLAN — WIZARD
     # =========================
 
