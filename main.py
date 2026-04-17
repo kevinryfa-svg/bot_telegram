@@ -1230,6 +1230,131 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
     # =========================
+    # EDITAR PLAN — WIZARD
+    # =========================
+
+    if context.user_data.get("editing_plan"):
+
+        step = context.user_data.get("edit_plan_step")
+
+        text = update.message.text.strip()
+
+
+        # =========================
+        # PASO 1 — NUEVO NOMBRE
+        # =========================
+
+        if step == 1:
+
+            context.user_data["edit_plan_name"] = text
+            context.user_data["edit_plan_step"] = 2
+
+            await update.message.reply_text(
+
+                "Paso 2️⃣\n\n"
+
+                "Introduce el nuevo PRICE ID."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 2 — NUEVO PRICE ID
+        # =========================
+
+        if step == 2:
+
+            context.user_data["edit_plan_price"] = text
+            context.user_data["edit_plan_step"] = 3
+
+            await update.message.reply_text(
+
+                "Paso 3️⃣\n\n"
+
+                "Introduce la nueva duración en días."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 3 — NUEVA DURACIÓN
+        # =========================
+
+        if step == 3:
+
+            try:
+
+                duration_days = int(text)
+
+            except:
+
+                await update.message.reply_text(
+                    "❌ Número inválido."
+                )
+
+                return
+
+
+            plan_id = context.user_data.get("editing_plan_id")
+
+            name = context.user_data.get("edit_plan_name")
+
+            price_id = context.user_data.get("edit_plan_price")
+
+
+            try:
+
+                with conn.cursor() as cur:
+
+                    cur.execute("""
+
+                        UPDATE plans
+
+                        SET
+                            name=%s,
+                            price_id=%s,
+                            duration_days=%s
+
+                        WHERE id=%s
+
+                    """, (
+
+                        name,
+                        price_id,
+                        duration_days,
+                        plan_id
+
+                    ))
+
+                    conn.commit()
+
+            except Exception as e:
+
+                print("Error editando plan:", e)
+
+                await update.message.reply_text(
+                    "❌ Error editando plan."
+                )
+
+                return
+
+
+            context.user_data["editing_plan"] = False
+
+            await update.message.reply_text(
+
+                "✅ Plan actualizado correctamente."
+
+            )
+
+            return
+
+
+    # =========================
     # USO NORMAL DE CÓDIGO
     # =========================
 
@@ -4513,6 +4638,72 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "❌ Error reenviando links"
             )
+
+        return
+
+
+    # =========================
+    # ELIMINAR PLAN — REAL
+    # =========================
+
+    if data.startswith("delete_plan_"):
+
+        plan_id = int(data.split("_")[2])
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE plans
+
+                    SET is_active=FALSE
+
+                    WHERE id=%s
+
+                """, (plan_id,))
+
+                conn.commit()
+
+        except Exception as e:
+
+            print("Error eliminando plan:", e)
+
+            await query.message.reply_text(
+                "❌ Error eliminando plan."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🗑 Plan eliminado correctamente."
+        )
+
+        return
+
+
+    # =========================
+    # EDITAR PLAN — INICIO
+    # =========================
+
+    if data.startswith("edit_plan_"):
+
+        plan_id = int(data.split("_")[2])
+
+        context.user_data["editing_plan"] = True
+        context.user_data["editing_plan_id"] = plan_id
+        context.user_data["edit_plan_step"] = 1
+
+        await query.message.reply_text(
+
+            "✏️ EDITAR PLAN\n\n"
+
+            "Paso 1️⃣\n"
+            "Introduce el nuevo nombre del plan."
+
+        )
 
         return
 
