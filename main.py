@@ -1055,13 +1055,75 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
 
+            context.user_data["current_duration"] = duration_days
+            context.user_data["group_step"] = 8
+
+            await update.message.reply_text(
+
+                "Paso 8️⃣\n\n"
+
+                "Introduce el PRECIO del plan.\n"
+
+                "Ejemplo: 10"
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 8 — PRECIO
+        # =========================
+
+        if step == 8:
+
+            try:
+
+                amount = int(text)
+
+            except:
+
+                await update.message.reply_text(
+                    "❌ Precio inválido."
+                )
+
+                return
+
+
+            context.user_data["current_amount"] = amount
+            context.user_data["group_step"] = 9
+
+            await update.message.reply_text(
+
+                "Paso 9️⃣\n\n"
+
+                "Introduce la MONEDA.\n"
+
+                "Ejemplo: EUR"
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 9 — MONEDA
+        # =========================
+
+        if step == 9:
+
+            currency = text.upper()
+
+
             plans = context.user_data["new_group_data"]["plans"]
 
             plans.append({
 
                 "name": context.user_data["current_plan_name"],
                 "price_id": context.user_data["current_price_id"],
-                "duration_days": duration_days
+                "duration_days": context.user_data["current_duration"],
+                "amount": context.user_data["current_amount"],
+                "currency": currency
 
             })
 
@@ -1101,8 +1163,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
-                # buscar grupo
-
                 cur.execute("""
 
                     SELECT id
@@ -1139,23 +1199,30 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     group_id = cur.fetchone()[0]
 
 
-                # guardar planes
-
                 for plan in group_data["plans"]:
 
                     cur.execute("""
 
                         INSERT INTO plans
-                        (group_id, name, price_id, duration_days)
+                        (
+                            group_id,
+                            name,
+                            price_id,
+                            duration_days,
+                            amount,
+                            currency
+                        )
 
-                        VALUES (%s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s)
 
                     """, (
 
                         group_id,
                         plan["name"],
                         plan["price_id"],
-                        plan["duration_days"]
+                        plan["duration_days"],
+                        plan["amount"],
+                        plan["currency"]
 
                     ))
 
@@ -4642,46 +4709,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    # =========================
-    # ELIMINAR PLAN — REAL
-    # =========================
 
-    if data.startswith("delete_plan_"):
-
-        plan_id = int(data.split("_")[2])
-
-        try:
-
-            with conn.cursor() as cur:
-
-                cur.execute("""
-
-                    UPDATE plans
-
-                    SET is_active=FALSE
-
-                    WHERE id=%s
-
-                """, (plan_id,))
-
-                conn.commit()
-
-        except Exception as e:
-
-            print("Error eliminando plan:", e)
-
-            await query.message.reply_text(
-                "❌ Error eliminando plan."
-            )
-
-            return
-
-
-        await query.message.reply_text(
-            "🗑 Plan eliminado correctamente."
-        )
-
-        return
 
 
     # =========================
