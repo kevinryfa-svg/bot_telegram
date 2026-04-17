@@ -3965,6 +3965,48 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # ELIMINAR PLAN — REAL
+    # =========================
+
+    if data.startswith("delete_plan_"):
+
+        plan_id = int(data.split("_")[2])
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE plans
+
+                    SET is_active=FALSE
+
+                    WHERE id=%s
+
+                """, (plan_id,))
+
+                conn.commit()
+
+        except Exception as e:
+
+            print("Error eliminando plan:", e)
+
+            await query.message.reply_text(
+                "❌ Error eliminando plan."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🗑 Plan eliminado correctamente."
+        )
+
+        return
+
+
+    # =========================
     # ADMIN USERS
     # =========================
 
