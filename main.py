@@ -1559,11 +1559,70 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
 
 
+            context.user_data["edit_plan_duration"] = duration_days
+            context.user_data["edit_plan_step"] = 4
+
+            await update.message.reply_text(
+
+                "Paso 4️⃣\n\n"
+
+                "Introduce el nuevo PRECIO."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 4 — NUEVO PRECIO
+        # =========================
+
+        if step == 4:
+
+            try:
+
+                amount = int(text)
+
+            except:
+
+                await update.message.reply_text(
+                    "❌ Precio inválido."
+                )
+
+                return
+
+
+            context.user_data["edit_plan_amount"] = amount
+            context.user_data["edit_plan_step"] = 5
+
+            await update.message.reply_text(
+
+                "Paso 5️⃣\n\n"
+
+                "Introduce la nueva MONEDA."
+
+            )
+
+            return
+
+
+        # =========================
+        # PASO 5 — NUEVA MONEDA
+        # =========================
+
+        if step == 5:
+
+            currency = text.upper()
+
             plan_id = context.user_data.get("editing_plan_id")
 
             name = context.user_data.get("edit_plan_name")
 
             price_id = context.user_data.get("edit_plan_price")
+
+            duration_days = context.user_data.get("edit_plan_duration")
+
+            amount = context.user_data.get("edit_plan_amount")
 
 
             try:
@@ -1577,7 +1636,9 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                         SET
                             name=%s,
                             price_id=%s,
-                            duration_days=%s
+                            duration_days=%s,
+                            amount=%s,
+                            currency=%s
 
                         WHERE id=%s
 
@@ -1586,6 +1647,8 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                         name,
                         price_id,
                         duration_days,
+                        amount,
+                        currency,
                         plan_id
 
                     ))
