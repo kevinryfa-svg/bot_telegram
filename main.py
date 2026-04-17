@@ -1919,38 +1919,71 @@ def create_checkout_session():
     plan = data["plan"]
     group_id = data.get("group_id")
 
-    if plan == "1":
-        price_id = PRICE_1_DIA
+    try:
 
-    elif plan == "7":
-        price_id = PRICE_7_DIAS
+        with conn.cursor() as cur:
 
-    elif plan == "0":
-        price_id = PRICE_PERMANENTE
+            cur.execute("""
 
-    else:
-        return jsonify({"error": "Plan inválido"}), 400
+                SELECT price_id
+
+                FROM plans
+
+                WHERE price_id=%s
+                AND group_id=%s
+                AND is_active=TRUE
+
+            """, (
+
+                plan,
+                group_id
+
+            ))
+
+            row = cur.fetchone()
+
+        if not row:
+
+            return jsonify({"error": "Plan inválido"}), 400
+
+        price_id = row[0]
+
+    except Exception as e:
+
+        print("Error obteniendo price_id:", e)
+
+        return jsonify({"error": "Error interno"}), 500
 
 
-    session = stripe.checkout.Session.create(
+    try:
 
-        payment_method_types=["card"],
+        session = stripe.checkout.Session.create(
 
-        line_items=[{
-            "price": price_id,
-            "quantity": 1,
-        }],
+            payment_method_types=["card"],
 
-        mode="payment",
+            line_items=[{
+                "price": price_id,
+                "quantity": 1,
+            }],
 
-        success_url="https://t.me/TheStarVipBOT",
-        cancel_url="https://t.me/TheStarVipBOT",
+            mode="payment",
 
-        metadata={
-            "telegram_id": str(telegram_id)
-        }
+            success_url="https://t.me/TheStarVipBOT",
+            cancel_url="https://t.me/TheStarVipBOT",
 
-    )
+            metadata={
+                "telegram_id": str(telegram_id),
+                "group_id": str(group_id),
+                "price_id": price_id
+            }
+
+        )
+
+    except Exception as e:
+
+        print("Error creando sesión Stripe:", e)
+
+        return jsonify({"error": "Error creando sesión"}), 500
 
 
     return jsonify({
