@@ -1917,6 +1917,7 @@ def create_checkout_session():
 
     telegram_id = data["telegram_id"]
     plan = data["plan"]
+    group_id = data.get("group_id")
 
     if plan == "1":
         price_id = PRICE_1_DIA
@@ -3221,11 +3222,37 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for name, price_id in plans:
 
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT amount, currency
+
+                    FROM plans
+
+                    WHERE price_id=%s
+
+                """, (price_id,))
+
+                price_data = cur.fetchone()
+
+
+            if price_data:
+
+                amount, currency = price_data
+
+                button_text = f"{name} — {amount} {currency}"
+
+            else:
+
+                button_text = name
+
+
             keyboard.append([
 
                 InlineKeyboardButton(
 
-                    name,
+                    button_text,
 
                     callback_data=price_id
 
@@ -5023,6 +5050,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = query.from_user.id
 
+    group_id = context.user_data.get("selected_group")
+
     try:
 
         response = requests.post(
@@ -5032,7 +5061,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             json={
 
                 "telegram_id": user_id,
-                "plan": data
+                "plan": data,
+                "group_id": group_id
 
             }
 
