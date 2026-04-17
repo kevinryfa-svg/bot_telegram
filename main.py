@@ -2023,6 +2023,12 @@ def stripe_webhook():
             session["metadata"]["telegram_id"]
         )
 
+        group_id = int(
+            session["metadata"]["group_id"]
+        )
+
+        price_id = session["metadata"]["price_id"]
+
 
         # =========================
         # COMPROBAR SI ESTÁ BANEADO
@@ -2043,44 +2049,66 @@ def stripe_webhook():
             if banned:
 
                 print("Usuario baneado intentó pagar:", user_id)
-
                 return "OK"
 
 
         # =========================
-        # OBTENER PLAN PAGADO
+        # OBTENER PLAN
         # =========================
 
-        line_items = stripe.checkout.Session.list_line_items(
-            session["id"]
-        )
+        try:
 
-        price_id = line_items["data"][0]["price"]["id"]
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT duration_days
+
+                    FROM plans
+
+                    WHERE price_id=%s
+                    AND group_id=%s
+
+                """, (
+
+                    price_id,
+                    group_id
+
+                ))
+
+                row = cur.fetchone()
+
+        except Exception as e:
+
+            print("Error obteniendo plan:", e)
+            return "OK"
+
+
+        if not row:
+
+            print("Plan no encontrado:", price_id)
+            return "OK"
+
+
+        duration_days = row[0]
 
 
         # =========================
-        # CALCULAR DURACIÓN
+        # CALCULAR EXPIRACIÓN
         # =========================
 
-        if price_id == PRICE_1_DIA:
-
-            expiration = datetime.now() + timedelta(days=1)
-            plan_name = "1 día"
-
-        elif price_id == PRICE_7_DIAS:
-
-            expiration = datetime.now() + timedelta(days=7)
-            plan_name = "7 días"
-
-        elif price_id == PRICE_PERMANENTE:
+        if duration_days == 0:
 
             expiration = None
-            plan_name = "Permanente"
+            plan_name = "♾️ Permanente"
 
         else:
 
-            expiration = None
-            plan_name = "Desconocido"
+            expiration = datetime.now() + timedelta(
+                days=duration_days
+            )
+
+            plan_name = f"{duration_days} días"
 
 
         # =========================
@@ -2091,19 +2119,25 @@ def stripe_webhook():
 
             cur.execute("""
 
-            INSERT INTO users
-            (user_id, expiration)
+                INSERT INTO users
+                (user_id, expiration, group_id)
 
-            VALUES (%s, %s)
+                VALUES (%s, %s, %s)
 
-            ON CONFLICT (user_id)
-            DO UPDATE SET expiration=%s
+                ON CONFLICT (user_id)
+                DO UPDATE SET
+
+                expiration=%s,
+                group_id=%s
 
             """, (
 
                 user_id,
                 expiration,
-                expiration
+                group_id,
+
+                expiration,
+                group_id
 
             ))
 
@@ -2114,14 +2148,15 @@ def stripe_webhook():
 
             cur.execute("""
 
-            INSERT INTO payments
-            (user_id, plan)
+                INSERT INTO payments
+                (user_id, group_id, plan)
 
-            VALUES (%s, %s)
+                VALUES (%s, %s, %s)
 
             """, (
 
                 user_id,
+                group_id,
                 plan_name
 
             ))
@@ -2134,7 +2169,42 @@ def stripe_webhook():
 
 
         # =========================
-        # CREAR LINK VIP (1 uso)
+        # OBTENER TELEGRAM GROUP ID
+        # =========================
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT telegram_group_id
+
+                    FROM groups
+
+                    WHERE id=%s
+
+                """, (group_id,))
+
+                row = cur.fetchone()
+
+        except Exception as e:
+
+            print("Error obteniendo grupo:", e)
+            return "OK"
+
+
+        if not row:
+
+            print("Grupo no encontrado:", group_id)
+            return "OK"
+
+
+        telegram_group_id = row[0]
+
+
+        # =========================
+        # CREAR LINK VIP
         # =========================
 
         invite_link = requests.post(
@@ -2142,7 +2212,7 @@ def stripe_webhook():
             f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
             json={
-                "chat_id": get_group_id(),
+                "chat_id": telegram_group_id,
                 "member_limit": 1
             }
 
@@ -2153,14 +2223,12 @@ def stripe_webhook():
 
 
         # =========================
-        # GUARDAR LINK EN DATABASE
+        # GUARDAR LINK
         # =========================
 
         try:
 
             with conn.cursor() as cur:
-
-                # borrar links antiguos
 
                 cur.execute("""
 
@@ -2170,16 +2238,20 @@ def stripe_webhook():
                 """, (user_id,))
 
 
-                # guardar nuevo
-
                 cur.execute("""
 
                     INSERT INTO invite_links
-                    (user_id, invite_link)
+                    (user_id, group_id, invite_link)
 
-                    VALUES (%s, %s)
+                    VALUES (%s, %s, %s)
 
-                """, (user_id, link))
+                """, (
+
+                    user_id,
+                    group_id,
+                    link
+
+                ))
 
                 conn.commit()
 
@@ -2215,9 +2287,13 @@ def stripe_webhook():
             json={
                 "chat_id": ADMIN_ID,
                 "text":
+
                 f"💳 Nuevo pago recibido\n\n"
+
                 f"Usuario: {user_id}\n"
+                f"Grupo ID: {group_id}\n"
                 f"Plan: {plan_name}"
+
             }
 
         )
