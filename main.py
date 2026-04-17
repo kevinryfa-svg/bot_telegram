@@ -3622,6 +3622,62 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+    # =========================
+    # EDITAR PLANES — MENÚ
+    # =========================
+
+    if data == "edit_group_plans":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+
+        group_id = context.user_data.get("selected_group_admin")
+
+
+        keyboard = [
+
+            [InlineKeyboardButton(
+                "📋 Ver planes",
+                callback_data="view_group_plans"
+            )],
+
+            [InlineKeyboardButton(
+                "➕ Añadir plan",
+                callback_data="add_group_plan"
+            )],
+
+            [InlineKeyboardButton(
+                "✏️ Editar plan",
+                callback_data="edit_group_plan_select"
+            )],
+
+            [InlineKeyboardButton(
+                "🗑 Eliminar plan",
+                callback_data="delete_group_plan_select"
+            )],
+
+            [InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data=f"edit_group_{group_id}"
+            )]
+
+        ]
+
+
+        await query.message.reply_text(
+
+            "💳 GESTIÓN DE PLANES\n\n"
+            "Selecciona una opción:",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
 
     # =========================
     # ADMIN USERS
