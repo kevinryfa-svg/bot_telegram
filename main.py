@@ -1171,7 +1171,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
-async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # =========================
     # RECIBIR PREVIEW MEDIA
@@ -3621,43 +3621,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    # =========================
-    # VOLVER DESDE PREVIEW
-    # =========================
-
-    if data == "edit_group_back":
-
-        context.user_data["editing_preview"] = False
-        context.user_data.pop("new_preview_file", None)
-
-        keyboard = [
-
-            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
-
-            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
-
-            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
-
-            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
-
-            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
-
-            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
-
-            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
-
-        ]
-
-
-        await query.message.reply_text(
-
-            "🔧 CONFIGURACIÓN DEL GRUPO",
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
-        )
-
-        return
 
 
     # =========================
@@ -4281,6 +4244,13 @@ def main():
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             receive_code
+        )
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.ALL,
+            receive_admin_inputs
         )
     )
 
