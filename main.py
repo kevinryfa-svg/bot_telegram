@@ -2800,15 +2800,13 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         f"Usuario: {added_by}\n\n"
 
-                        "El grupo NO ha sido registrado."
+                        "El grupo ha sido detectado pero no autorizado."
 
                     )
 
                 except Exception as e:
 
                     print("Error enviando aviso admin:", e)
-
-                return
 
 
             # =========================
