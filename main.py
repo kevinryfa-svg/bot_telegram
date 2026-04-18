@@ -2145,16 +2145,51 @@ def stripe_webhook():
             session["metadata"]["group_id"]
         )
 
+        # Obtener telegram_group_id real
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT telegram_group_id
+
+                FROM groups
+
+                WHERE id=%s
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+            if not row:
+
+                print("ERROR: grupo no encontrado en DB:", group_id)
+
+                return "OK"
+
+            telegram_group_id = row[0]
+
+
         invite_link = requests.post(
 
             f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
             json={
-                "chat_id": group_id,
+                "chat_id": telegram_group_id,
                 "member_limit": 1
             }
 
         ).json()
+
+
+        print("Respuesta createChatInviteLink:", invite_link)
+
+
+        if "result" not in invite_link:
+
+            print("ERROR creando invite link:", invite_link)
+
+            return "OK"
 
 
         link = invite_link["result"]["invite_link"]
