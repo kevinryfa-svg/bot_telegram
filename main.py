@@ -2787,29 +2787,6 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context):
 
             try:
 
-                await context.bot.send_message(
-
-                    chat_id=ADMIN_ID,
-
-                    text=
-
-                    "⚠️ BOT SALIENDO DEL GRUPO\n\n"
-
-                    f"Grupo: {group_name}\n"
-
-                    f"ID: {group_id}\n\n"
-
-                    "No fue asignado como administrador."
-
-                )
-
-            except Exception as e:
-
-                print("Error enviando aviso admin:", e)
-
-
-            try:
-
                 await context.bot.leave_chat(group_id)
 
                 print("Bot salió del grupo automáticamente.")
@@ -2825,35 +2802,34 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context):
         print(f"Bot ES administrador en grupo: {group_name} ({group_id})")
 
 
-        # =========================
-        # GUARDAR GRUPO EN DATABASE
-        # =========================
-
         print("Intentando guardar grupo en DB...")
+
 
         with conn.cursor() as cur:
 
             cur.execute("""
 
                 SELECT id
+
                 FROM groups
+
                 WHERE telegram_group_id=%s
 
             """, (group_id,))
 
             existing = cur.fetchone()
 
+
             if existing:
 
                 print("Grupo ya existe en DB — no se duplica.")
-
-                print(f"Registro finalizado para grupo: {group_name}")
 
             else:
 
                 cur.execute("""
 
                     INSERT INTO groups
+
                     (name, telegram_group_id)
 
                     VALUES (%s, %s)
@@ -2869,7 +2845,8 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context):
 
                 print("Grupo guardado correctamente en DB.")
 
-                print(f"Registro finalizado para grupo: {group_name}")
+
+        print(f"Registro finalizado para grupo: {group_name}")
 
 
         try:
