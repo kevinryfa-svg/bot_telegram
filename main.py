@@ -2391,9 +2391,15 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     try:
 
-                        used_link = update.message.invite_link.invite_link
+                        if update.message.invite_link:
 
-                    except:
+                            used_link = update.message.invite_link.invite_link
+
+                            print("Link usado detectado:", used_link)
+
+                    except Exception as e:
+
+                        print("Error obteniendo invite_link:", e)
 
                         used_link = None
 
