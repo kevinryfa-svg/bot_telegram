@@ -2822,7 +2822,7 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context):
             return
 
 
-        print("Bot ES administrador del grupo.")
+        print(f"Bot ES administrador en grupo: {group_name} ({group_id})")
 
 
         # =========================
