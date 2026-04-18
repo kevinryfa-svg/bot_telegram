@@ -2471,7 +2471,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     if not owner:
 
-                        print("Buscando owner por último link...")
+                        print("Fallback activado — buscando último link")
 
                         cur.execute("""
 
