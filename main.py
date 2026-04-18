@@ -2777,7 +2777,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
             # =========================
-            # SI NO FUE EL ADMIN
+            # AVISO SI NO FUE EL ADMIN
             # =========================
 
             if added_by and added_by != ADMIN_ID:
@@ -2800,13 +2800,15 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         f"Usuario: {added_by}\n\n"
 
-                        "El grupo ha sido detectado pero no autorizado."
+                        "El grupo será registrado igualmente."
 
                     )
 
                 except Exception as e:
 
                     print("Error enviando aviso admin:", e)
+
+            print("Continuando registro del grupo...")
 
 
             # =========================
