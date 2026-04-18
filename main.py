@@ -844,11 +844,17 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     cur.execute("""
 
                         INSERT INTO invite_links
-                        (user_id, invite_link)
+                        (user_id, group_id, invite_link)
 
-                        VALUES (%s, %s)
+                        VALUES (%s, %s, %s)
 
-                    """, (user_id, link))
+                    """, (
+
+                        user_id,
+                        get_group_id(),
+                        link
+
+                    ))
 
 
                     conn.commit()
