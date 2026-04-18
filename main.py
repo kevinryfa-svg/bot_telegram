@@ -2835,24 +2835,37 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context):
 
             cur.execute("""
 
-                INSERT INTO groups
-                (name, telegram_group_id)
+                SELECT id
+                FROM groups
+                WHERE telegram_group_id=%s
 
-                VALUES (%s, %s)
+            """, (group_id,))
 
-                ON CONFLICT (telegram_group_id)
-                DO NOTHING
+            existing = cur.fetchone()
 
-            """, (
+            if existing:
 
-                group_name,
-                group_id
+                print("Grupo ya existe en DB — no se duplica.")
 
-            ))
+            else:
 
-            conn.commit()
+                cur.execute("""
 
-        print("Grupo guardado correctamente en DB.")
+                    INSERT INTO groups
+                    (name, telegram_group_id)
+
+                    VALUES (%s, %s)
+
+                """, (
+
+                    group_name,
+                    group_id
+
+                ))
+
+                conn.commit()
+
+                print("Grupo guardado correctamente en DB.")
 
 
         try:
@@ -2962,6 +2975,27 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     print("Error enviando aviso admin:", e)
 
             print("Continuando registro del grupo...")
+
+
+            try:
+
+                await context.bot.send_message(
+
+                    chat_id=group_id,
+
+                    text=
+
+                    "⚠️ Necesito permisos de administrador.\n\n"
+
+                    "Por favor asígnamelos en los próximos 30 segundos.\n\n"
+
+                    "Si no, abandonaré el grupo automáticamente."
+
+                )
+
+            except Exception as e:
+
+                print("Error enviando aviso al grupo:", e)
 
 
             # =========================
