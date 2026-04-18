@@ -2732,6 +2732,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 
 
+# =========================
+# DETECTAR BOT AÑADIDO A GRUPO
+# =========================
+
 async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message:
@@ -2769,36 +2773,42 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
             # =========================
-            # AVISO SI NO FUE EL ADMIN
+            # SI NO FUE EL ADMIN
             # =========================
 
             if added_by != ADMIN_ID:
 
                 print("Bot añadido por usuario NO autorizado:", added_by)
 
-                await context.bot.send_message(
+                try:
 
-                    chat_id=ADMIN_ID,
+                    await context.bot.send_message(
 
-                    text=
+                        chat_id=ADMIN_ID,
 
-                    "⚠️ BOT AÑADIDO POR USUARIO NO AUTORIZADO\n\n"
+                        text=
 
-                    f"Grupo: {group_name}\n"
+                        "⚠️ BOT AÑADIDO POR USUARIO NO AUTORIZADO\n\n"
 
-                    f"ID: {group_id}\n"
+                        f"Grupo: {group_name}\n"
 
-                    f"Usuario: {added_by}\n\n"
+                        f"ID: {group_id}\n"
 
-                    "El grupo NO ha sido registrado."
+                        f"Usuario: {added_by}\n\n"
 
-                )
+                        "El grupo NO ha sido registrado."
+
+                    )
+
+                except Exception as e:
+
+                    print("Error enviando aviso admin:", e)
 
                 return
 
 
             # =========================
-            # VERIFICAR ADMIN
+            # VERIFICAR SI ES ADMIN
             # =========================
 
             try:
@@ -2822,37 +2832,56 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if status not in ["administrator", "creator"]:
 
-                    await context.bot.send_message(
+                    # Avisar en el grupo
 
-                        chat_id=group_id,
+                    try:
 
-                        text=
+                        await context.bot.send_message(
 
-                        "⚠️ Necesito permisos de administrador.\n\n"
+                            chat_id=group_id,
 
-                        "Hazme ADMIN para poder gestionar accesos."
+                            text=
 
-                    )
+                            "⚠️ Necesito permisos de administrador.\n\n"
 
-                    await context.bot.send_message(
+                            "Hazme ADMIN para poder gestionar accesos."
 
-                        chat_id=ADMIN_ID,
+                        )
 
-                        text=
+                    except Exception as e:
 
-                        "⚠️ BOT AÑADIDO SIN PERMISOS\n\n"
+                        print("Error enviando mensaje al grupo:", e)
 
-                        f"Grupo: {group_name}\n"
 
-                        f"ID: {group_id}"
+                    # Avisar al admin
 
-                    )
+                    try:
+
+                        await context.bot.send_message(
+
+                            chat_id=ADMIN_ID,
+
+                            text=
+
+                            "⚠️ BOT AÑADIDO SIN PERMISOS\n\n"
+
+                            f"Grupo: {group_name}\n"
+
+                            f"ID: {group_id}\n\n"
+
+                            "Debes hacerlo administrador."
+
+                        )
+
+                    except Exception as e:
+
+                        print("Error enviando aviso admin:", e)
 
                     return
 
 
                 # =========================
-                # GUARDAR GRUPO
+                # GUARDAR GRUPO EN DATABASE
                 # =========================
 
                 with conn.cursor() as cur:
@@ -2877,34 +2906,50 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     conn.commit()
 
 
-                await context.bot.send_message(
+                # =========================
+                # CONFIRMAR AL ADMIN
+                # =========================
 
-                    chat_id=ADMIN_ID,
+                try:
 
-                    text=
+                    await context.bot.send_message(
 
-                    "✅ NUEVO GRUPO DETECTADO\n\n"
+                        chat_id=ADMIN_ID,
 
-                    f"Nombre: {group_name}\n"
+                        text=
 
-                    f"ID: {group_id}\n\n"
+                        "✅ NUEVO GRUPO DETECTADO\n\n"
 
-                    "Grupo registrado correctamente."
+                        f"Nombre: {group_name}\n"
 
-                )
+                        f"ID: {group_id}\n\n"
+
+                        "Grupo registrado correctamente."
+
+                    )
+
+                except Exception as e:
+
+                    print("Error enviando confirmación:", e)
 
 
             except Exception as e:
 
                 print("Error detectando grupo:", e)
 
-                await context.bot.send_message(
+                try:
 
-                    chat_id=ADMIN_ID,
+                    await context.bot.send_message(
 
-                    text="❌ Error verificando grupo."
+                        chat_id=ADMIN_ID,
 
-                )
+                        text="❌ Error verificando grupo."
+
+                    )
+
+                except:
+
+                    pass
 
 
 # =========================
