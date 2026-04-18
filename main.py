@@ -1682,7 +1682,10 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
     # USO NORMAL DE CÓDIGO
     # =========================
 
-    if not context.user_data.get("waiting_code"):
+    if context.user_data.get("waiting_code"):
+
+        await receive_code(update, context)
+
         return
 
     user_code = update.message.text.strip().upper()
@@ -5479,18 +5482,11 @@ def main():
     )
 
     telegram_app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            receive_code
-        )
+    MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        receive_admin_inputs
     )
-
-    telegram_app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            receive_admin_inputs
-        )
-    )
+)
 
     # =========================
     # DETECTAR BOT Y USUARIOS NUEVOS
