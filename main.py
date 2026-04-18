@@ -588,8 +588,14 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     SELECT invite_link
                     FROM invite_links
                     WHERE user_id=%s
+                    AND group_id=%s
 
-                """, (user_id,))
+                """, (
+
+                    user_id,
+                    get_group_id()
+
+                ))
 
                 links = cur.fetchall()
 
@@ -627,10 +633,16 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
-                    DELETE FROM link_warnings
+                    DELETE FROM invite_links
                     WHERE user_id=%s
+                    AND group_id=%s
 
-                """, (user_id,))
+                """, (
+
+                    user_id,
+                    get_group_id()
+
+                ))
 
 
                 # guardar en baneados
@@ -1878,11 +1890,17 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         cur.execute("""
 
-            SELECT invite_link
-            FROM invite_links
-            WHERE user_id=%s
+    SELECT invite_link
+    FROM invite_links
+    WHERE user_id=%s
+    AND group_id=%s
 
-        """, (update.effective_user.id,))
+""", (
+
+    update.effective_user.id,
+    get_group_id()
+
+))
 
         old_links = cur.fetchall()
 
@@ -1910,10 +1928,16 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         cur.execute("""
 
-            DELETE FROM invite_links
-            WHERE user_id=%s
+    DELETE FROM invite_links
+    WHERE user_id=%s
+    AND group_id=%s
 
-        """, (update.effective_user.id,))
+""", (
+
+    update.effective_user.id,
+    get_group_id()
+
+))
 
         conn.commit()
 
@@ -1939,17 +1963,18 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
             cur.execute("""
 
-                INSERT INTO invite_links
-                (user_id, invite_link)
+    INSERT INTO invite_links
+    (user_id, group_id, invite_link)
 
-                VALUES (%s, %s)
+    VALUES (%s, %s, %s)
 
-            """, (
+""", (
 
-                update.effective_user.id,
-                link
+    update.effective_user.id,
+    get_group_id(),
+    link
 
-            ))
+))
 
             conn.commit()
 
@@ -2296,12 +2321,16 @@ def stripe_webhook():
 
                 # borrar links antiguos
 
-                cur.execute("""
-
                     DELETE FROM invite_links
                     WHERE user_id=%s
+                    AND group_id=%s
 
-                """, (user_id,))
+                """, (
+
+                    user_id,
+                    telegram_group_id
+
+                ))
 
 
                 # guardar nuevo
@@ -2309,11 +2338,17 @@ def stripe_webhook():
                 cur.execute("""
 
                     INSERT INTO invite_links
-                    (user_id, invite_link)
+                    (user_id, group_id, invite_link)
 
-                    VALUES (%s, %s)
+                    VALUES (%s, %s, %s)
 
-                """, (user_id, link))
+                """, (
+
+                    user_id,
+                    telegram_group_id,
+                    link
+
+                ))
 
                 conn.commit()
 
@@ -2506,8 +2541,14 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         SELECT user_id
                         FROM invite_links
                         WHERE invite_link=%s
+                        AND group_id=%s
 
-                        """, (used_link,))
+                        """, (
+
+                            used_link,
+                            telegram_group_id
+
+                        ))
 
                         owner = cur.fetchone()
 
@@ -2526,10 +2567,11 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         SELECT user_id
                         FROM invite_links
+                        WHERE group_id=%s
                         ORDER BY created_at DESC
                         LIMIT 1
 
-                        """)
+                        """, (telegram_group_id,))
 
                         owner = cur.fetchone()
 
@@ -2573,8 +2615,14 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         SELECT invite_link
                         FROM invite_links
                         WHERE user_id=%s
+                        AND group_id=%s
 
-                        """, (owner_id,))
+                        """, (
+
+                            owner_id,
+                            telegram_group_id
+
+                        ))
 
                         links = cur.fetchall()
 
@@ -2602,8 +2650,14 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         DELETE FROM invite_links
                         WHERE user_id=%s
+                        AND group_id=%s
 
-                        """, (owner_id,))
+                        """, (
+
+                            owner_id,
+                            telegram_group_id
+
+                        ))
 
 
                         # =========================
@@ -2705,11 +2759,17 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             cur.execute("""
 
                                 INSERT INTO invite_links
-                                (user_id, invite_link)
+                                (user_id, group_id, invite_link)
 
-                                VALUES (%s, %s)
+                                VALUES (%s, %s, %s)
 
-                            """, (owner_id, new_link))
+                            """, (
+
+                                owner_id,
+                                telegram_group_id,
+                                new_link
+
+                            ))
 
                             conn.commit()
 
@@ -3759,11 +3819,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cur.execute("""
 
                     INSERT INTO invite_links
-                    (user_id, invite_link)
+                    (user_id, group_id, invite_link)
 
-                    VALUES (%s, %s)
+                    VALUES (%s, %s, %s)
 
-                """, (user_id, link))
+                """, (
+
+                    user_id,
+                    get_group_id(),
+                    link
+
+                ))
 
                 conn.commit()
 
@@ -5461,11 +5527,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         cur.execute("""
 
                             INSERT INTO invite_links
-                            (user_id, invite_link)
+                            (user_id, group_id, invite_link)
 
-                            VALUES (%s, %s)
+                            VALUES (%s, %s, %s)
 
-                        """, (user_id, link))
+                        """, (
+
+                            user_id,
+                            get_group_id(),
+                            link
+
+                        ))
 
                         conn.commit()
 
