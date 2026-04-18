@@ -2247,6 +2247,16 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_id = member.id
 
+        # =========================
+        # IGNORAR AL BOT
+        # =========================
+
+        if user_id == context.bot.id:
+
+            print("Bot detectado entrando — ignorando control.")
+
+            return
+
         try:
 
             with conn.cursor() as cur:
