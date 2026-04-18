@@ -2721,6 +2721,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # DETECTAR BOT AÑADIDO A GRUPO
 # =========================
 
+
 async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message:
@@ -2730,7 +2731,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    bot_id = int(TOKEN.split(":")[0])
+    bot_id = context.bot.id
 
 
     for member in update.message.new_chat_members:
@@ -2748,10 +2749,6 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Bot añadido a grupo:", group_name, group_id)
 
 
-            # =========================
-            # VERIFICAR QUIÉN AÑADIÓ EL BOT
-            # =========================
-
             try:
 
                 added_by = update.message.from_user.id
@@ -2761,10 +2758,13 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 added_by = None
 
 
+            # =========================
+            # AVISO SI NO FUE EL ADMIN
+            # =========================
+
             if added_by != ADMIN_ID:
 
                 print("Bot añadido por usuario NO autorizado:", added_by)
-
 
                 await context.bot.send_message(
 
@@ -2787,11 +2787,11 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
 
-            try:
+            # =========================
+            # VERIFICAR ADMIN
+            # =========================
 
-                # =========================
-                # VERIFICAR PERMISOS ADMIN
-                # =========================
+            try:
 
                 r = requests.get(
 
@@ -2812,8 +2812,6 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if status not in ["administrator", "creator"]:
 
-                    # AVISO EN EL GRUPO
-
                     await context.bot.send_message(
 
                         chat_id=group_id,
@@ -2822,14 +2820,9 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         "⚠️ Necesito permisos de administrador.\n\n"
 
-                        "Por favor, hazme ADMIN con todos los permisos "
-
-                        "para poder gestionar accesos correctamente."
+                        "Hazme ADMIN para poder gestionar accesos."
 
                     )
-
-
-                    # AVISO AL ADMIN
 
                     await context.bot.send_message(
 
@@ -2841,9 +2834,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         f"Grupo: {group_name}\n"
 
-                        f"ID: {group_id}\n\n"
-
-                        "Debes darle permisos de administrador."
+                        f"ID: {group_id}"
 
                     )
 
@@ -2851,7 +2842,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                 # =========================
-                # GUARDAR GRUPO EN DATABASE
+                # GUARDAR GRUPO
                 # =========================
 
                 with conn.cursor() as cur:
@@ -2863,7 +2854,8 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         VALUES (%s, %s)
 
-                        ON CONFLICT (telegram_group_id) DO NOTHING
+                        ON CONFLICT (telegram_group_id)
+                        DO NOTHING
 
                     """, (
 
@@ -2871,6 +2863,8 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         group_id
 
                     ))
+
+                    conn.commit()
 
 
                 await context.bot.send_message(
@@ -2885,7 +2879,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     f"ID: {group_id}\n\n"
 
-                    "El grupo ha sido registrado correctamente."
+                    "Grupo registrado correctamente."
 
                 )
 
@@ -2898,7 +2892,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     chat_id=ADMIN_ID,
 
-                    text="❌ Error verificando grupo nuevo."
+                    text="❌ Error verificando grupo."
 
                 )
 
