@@ -2968,7 +2968,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # ESPERAR 30s ANTES DE VERIFICAR ADMIN
             # =========================
 
-            print("Esperando 30 segundos antes de verificar permisos...")
+            
 
             asyncio.create_task(
 
