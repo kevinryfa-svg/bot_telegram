@@ -319,6 +319,46 @@ async def debug_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# DEBUG COLUMNAS invite_links
+# =========================
+
+async def debug_columns(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'invite_links'
+
+            """)
+
+            columns = cur.fetchall()
+
+        texto = "📋 Columnas invite_links:\n\n"
+
+        for col in columns:
+
+            texto += f"- {col[0]}\n"
+
+        await update.message.reply_text(texto)
+
+    except Exception as e:
+
+        print("Error debug columns:", e)
+
+        await update.message.reply_text(
+            "Error leyendo columnas"
+        )
+
+
+# =========================
 # USAR CÓDIGO
 # =========================
 
@@ -5542,6 +5582,10 @@ def main():
 
     telegram_app.add_handler(
         CommandHandler("debuglinks", debug_links)
+    )
+
+    telegram_app.add_handler(
+         CommandHandler("debugcolumns", debug_columns)
     )
 
     telegram_app.add_handler(
