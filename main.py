@@ -2780,7 +2780,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # SI NO FUE EL ADMIN
             # =========================
 
-            if added_by != ADMIN_ID:
+            if added_by and added_by != ADMIN_ID:
 
                 print("Bot añadido por usuario NO autorizado:", added_by)
 
