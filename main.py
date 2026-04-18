@@ -2738,6 +2738,9 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    print("detect_bot_added ejecutado")
+
+
     if not update.message:
         return
 
