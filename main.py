@@ -2732,7 +2732,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # VERIFICAR ADMIN DESPUÉS DE 30s
 # =========================
 
-async def verificar_admin_despues(group_id, group_name, bot_id, context):
+async def verificar_admin_despues(group_id, group_name, bot_id, context, added_by):
 
     print("Esperando 30 segundos antes de verificar permisos...")
 
