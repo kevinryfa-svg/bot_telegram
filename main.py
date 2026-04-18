@@ -2867,6 +2867,8 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context):
 
                 print("Grupo guardado correctamente en DB.")
 
+                print(f"Registro finalizado para grupo: {group_name}")
+
 
         try:
 
