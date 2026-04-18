@@ -2141,12 +2141,16 @@ def stripe_webhook():
         # CREAR LINK VIP (1 uso)
         # =========================
 
+        group_id = int(
+            session["metadata"]["group_id"]
+        )
+
         invite_link = requests.post(
 
             f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
             json={
-                "chat_id": get_group_id(),
+                "chat_id": group_id,
                 "member_limit": 1
             }
 
