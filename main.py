@@ -2941,6 +2941,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 added_by = None
 
+            print("Bot añadido por usuario:", added_by)
 
             # =========================
             # AVISO SI NO FUE EL ADMIN
