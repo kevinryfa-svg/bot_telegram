@@ -3729,6 +3729,39 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # CANCELAR CREACIÓN GRUPO
+    # =========================
+
+    if data == "cancel_create_group":
+
+        context.user_data["creating_group"] = False
+        context.user_data.pop("new_group_data", None)
+        context.user_data.pop("group_step", None)
+
+        keyboard = [
+
+            [InlineKeyboardButton("➕ Añadir grupo", callback_data="admin_add_group")],
+
+            [InlineKeyboardButton("✏️ Editar grupo", callback_data="admin_edit_group")],
+
+            [InlineKeyboardButton("📋 Ver grupos", callback_data="admin_view_groups")],
+
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+
+        ]
+
+        await query.message.reply_text(
+
+            "📦 GESTIÓN GRUPOS",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
     # VER GRUPOS
     # =========================
 
@@ -3990,17 +4023,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["group_step"] = 1
         context.user_data["new_group_data"] = {}
 
+        keyboard = [
+
+            [InlineKeyboardButton(
+                "⬅️ Cancelar creación",
+                callback_data="cancel_create_group"
+            )]
+
+        ]
+
         await query.message.reply_text(
 
             "📦 CREAR NUEVO GRUPO\n\n"
 
             "Paso 1️⃣\n"
-            "Introduce el nombre del grupo."
+            "Introduce el nombre del grupo.",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
 
         )
 
-        return    
-
+        return
+    
 
     # =========================
     # EDITAR GRUPO — LISTA
