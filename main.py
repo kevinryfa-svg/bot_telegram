@@ -359,6 +359,39 @@ async def debug_columns(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# FIX DB - AÑADIR group_id
+# =========================
+
+async def fixdb_group_column(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+            ALTER TABLE invite_links
+            ADD COLUMN group_id BIGINT;
+
+            """)
+
+        await update.message.reply_text(
+            "✅ Columna group_id añadida correctamente."
+        )
+
+    except Exception as e:
+
+        print("Error fixdb:", e)
+
+        await update.message.reply_text(
+            f"⚠️ Posible error (puede que ya exista): {e}"
+        )
+
+
+# =========================
 # USAR CÓDIGO
 # =========================
 
@@ -5584,6 +5617,10 @@ def main():
 
     telegram_app.add_handler(
          CommandHandler("debugcolumns", debug_columns)
+    )
+
+    telegram_app.add_handler(
+         CommandHandler("fixdb", fixdb_group_column)
     )
 
     telegram_app.add_handler(
