@@ -50,6 +50,8 @@ def create_tables():
 
             is_active BOOLEAN DEFAULT TRUE,
 
+            added_by BIGINT,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
         );
