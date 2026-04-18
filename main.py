@@ -5,6 +5,7 @@ import random
 import string
 import requests
 import time
+import asyncio
 
 from flask import Flask, request, jsonify
 
@@ -2728,8 +2729,162 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# DETECTAR BOT AÑADIDO A GRUPO
+# VERIFICAR ADMIN DESPUÉS DE 30s
 # =========================
+
+async def verificar_admin_despues(group_id, group_name, bot_id, context):
+
+    print("Esperando 30 segundos antes de verificar permisos...")
+
+    await asyncio.sleep(30)
+
+    try:
+
+        print("Verificando permisos del bot...")
+
+        r = requests.get(
+
+            f"https://api.telegram.org/bot{TOKEN}/getChatMember",
+
+            params={
+
+                "chat_id": group_id,
+                "user_id": bot_id
+
+            }
+
+        ).json()
+
+        print("Respuesta completa getChatMember:", r)
+
+        status = r["result"]["status"]
+
+        print("Status del bot en grupo:", status)
+
+
+        if status not in ["administrator", "creator"]:
+
+            print("Bot NO es administrador después de 30s.")
+
+            try:
+
+                await context.bot.send_message(
+
+                    chat_id=group_id,
+
+                    text=
+
+                    "⚠️ No tengo permisos de administrador.\n\n"
+
+                    "Saldré del grupo en este momento."
+
+                )
+
+            except Exception as e:
+
+                print("Error enviando mensaje al grupo:", e)
+
+
+            try:
+
+                await context.bot.send_message(
+
+                    chat_id=ADMIN_ID,
+
+                    text=
+
+                    "⚠️ BOT SALIENDO DEL GRUPO\n\n"
+
+                    f"Grupo: {group_name}\n"
+
+                    f"ID: {group_id}\n\n"
+
+                    "No fue asignado como administrador."
+
+                )
+
+            except Exception as e:
+
+                print("Error enviando aviso admin:", e)
+
+
+            try:
+
+                await context.bot.leave_chat(group_id)
+
+                print("Bot salió del grupo automáticamente.")
+
+            except Exception as e:
+
+                print("Error saliendo del grupo:", e)
+
+
+            return
+
+
+        print("Bot ES administrador del grupo.")
+
+
+        # =========================
+        # GUARDAR GRUPO EN DATABASE
+        # =========================
+
+        print("Intentando guardar grupo en DB...")
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO groups
+                (name, telegram_group_id)
+
+                VALUES (%s, %s)
+
+                ON CONFLICT (telegram_group_id)
+                DO NOTHING
+
+            """, (
+
+                group_name,
+                group_id
+
+            ))
+
+            conn.commit()
+
+        print("Grupo guardado correctamente en DB.")
+
+
+        try:
+
+            print("Enviando confirmación al ADMIN...")
+
+            await context.bot.send_message(
+
+                chat_id=ADMIN_ID,
+
+                text=
+
+                "✅ NUEVO GRUPO DETECTADO\n\n"
+
+                f"Nombre: {group_name}\n"
+
+                f"ID: {group_id}\n\n"
+
+                "Grupo registrado correctamente."
+
+            )
+
+            print("Mensaje enviado al ADMIN.")
+
+        except Exception as e:
+
+            print("Error enviando confirmación:", e)
+
+
+    except Exception as e:
+
+        print("Error verificando grupo:", e)
 
 
 # =========================
@@ -2740,8 +2895,6 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     print("detect_bot_added ejecutado")
 
-    if not update.message:
-        return
     if not update.message:
         return
 
@@ -2811,165 +2964,29 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Continuando registro del grupo...")
 
 
-# =========================
-# VERIFICAR SI ES ADMIN
-# =========================
+            # =========================
+            # ESPERAR 30s ANTES DE VERIFICAR ADMIN
+            # =========================
 
-            try:
+            print("Esperando 30 segundos antes de verificar permisos...")
 
-                print("Verificando permisos del bot...")
+            asyncio.create_task(
 
-                r = requests.get(
+                verificar_admin_despues(
 
-                    f"https://api.telegram.org/bot{TOKEN}/getChatMember",
+                    group_id,
 
-                    params={
+                    group_name,
 
-                        "chat_id": group_id,
-                        "user_id": bot_id
+                    bot_id,
 
-                    }
+                    context
 
-                ).json()
+                )
 
+            )
 
-                print("Respuesta completa getChatMember:", r)
-
-                status = r["result"]["status"]
-
-                print("Status del bot en grupo:", status)
-
-
-                if status not in ["administrator", "creator"]:
-
-                    print("Bot NO es administrador del grupo.")
-
-                    try:
-
-                        await context.bot.send_message(
-
-                            chat_id=group_id,
-
-                            text=
-
-                            "⚠️ Necesito permisos de administrador.\n\n"
-
-                            "Hazme ADMIN para poder gestionar accesos."
-
-                        )
-
-                    except Exception as e:
-
-                        print("Error enviando mensaje al grupo:", e)
-
-
-                    try:
-
-                        await context.bot.send_message(
-
-                            chat_id=ADMIN_ID,
-
-                            text=
-
-                            "⚠️ BOT AÑADIDO SIN PERMISOS\n\n"
-
-                            f"Grupo: {group_name}\n"
-
-                            f"ID: {group_id}\n\n"
-
-                            "Debes hacerlo administrador."
-
-                        )
-
-                    except Exception as e:
-
-                        print("Error enviando aviso admin:", e)
-
-                    return
-
-                else:
-
-                    print("Bot ES administrador del grupo.")
-
-
-                # =========================
-                # GUARDAR GRUPO EN DATABASE
-                # =========================
-
-                print("Intentando guardar grupo en DB...")
-
-                with conn.cursor() as cur:
-
-                    cur.execute("""
-
-                        INSERT INTO groups
-                        (name, telegram_group_id)
-
-                        VALUES (%s, %s)
-
-                        ON CONFLICT (telegram_group_id)
-                        DO NOTHING
-
-                    """, (
-
-                        group_name,
-                        group_id
-
-                    ))
-
-                    conn.commit()
-
-                print("Grupo guardado correctamente en DB.")
-
-
-                # =========================
-                # CONFIRMAR AL ADMIN
-                # =========================
-
-                try:
-
-                    print("Enviando confirmación al ADMIN...")
-
-                    await context.bot.send_message(
-
-                        chat_id=ADMIN_ID,
-
-                        text=
-
-                        "✅ NUEVO GRUPO DETECTADO\n\n"
-
-                        f"Nombre: {group_name}\n"
-
-                        f"ID: {group_id}\n\n"
-
-                        "Grupo registrado correctamente."
-
-                    )
-
-                    print("Mensaje enviado al ADMIN.")
-
-                except Exception as e:
-
-                    print("Error enviando confirmación:", e)
-
-
-            except Exception as e:
-
-                print("Error detectando grupo:", e)
-
-                try:
-
-                    await context.bot.send_message(
-
-                        chat_id=ADMIN_ID,
-
-                        text="❌ Error verificando grupo."
-
-                    )
-
-                except:
-
-                    pass
+            return
 
 
 # =========================
