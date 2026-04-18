@@ -2404,6 +2404,12 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         used_link = None
 
 
+                    owner = None
+
+                    # =========================
+                    # INTENTAR BUSCAR OWNER POR LINK
+                    # =========================
+
                     if used_link:
 
                         cur.execute("""
@@ -2416,9 +2422,29 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         owner = cur.fetchone()
 
-                    else:
+                        print("Owner encontrado por link:", owner)
 
-                        owner = None
+
+                    # =========================
+                    # SI NO HAY LINK → BUSCAR ÚLTIMO LINK
+                    # =========================
+
+                    if not owner:
+
+                        print("Buscando owner por último link...")
+
+                        cur.execute("""
+
+                        SELECT user_id
+                        FROM invite_links
+                        ORDER BY created_at DESC
+                        LIMIT 1
+
+                        """)
+
+                        owner = cur.fetchone()
+
+                        print("Owner encontrado por fallback:", owner)
 
 
                     if owner:
