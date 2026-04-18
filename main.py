@@ -2847,6 +2847,8 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context):
 
                 print("Grupo ya existe en DB — no se duplica.")
 
+                print(f"Registro finalizado para grupo: {group_name}")
+
             else:
 
                 cur.execute("""
