@@ -2740,7 +2740,8 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     print("detect_bot_added ejecutado")
 
-
+    if not update.message:
+        return
     if not update.message:
         return
 
@@ -5245,7 +5246,7 @@ def main():
 
     telegram_app.add_handler(
         MessageHandler(
-            filters.ALL,
+            filters.TEXT & ~filters.COMMAND,
             receive_admin_inputs
         )
     )
