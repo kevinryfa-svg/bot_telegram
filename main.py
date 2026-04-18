@@ -3729,6 +3729,108 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # VER GRUPOS
+    # =========================
+
+if data == "admin_view_groups":
+
+    print("DEBUG: admin_view_groups pulsado")
+
+    try:
+        await query.message.delete()
+    except:
+        pass
+
+    try:
+
+        print("DEBUG: consultando groups...")
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id, name, telegram_group_id
+
+                FROM groups
+
+                WHERE telegram_group_id != 0
+
+                ORDER BY id ASC
+
+            """)
+
+            groups = cur.fetchall()
+
+        print("DEBUG groups:", groups)
+
+    except Exception as e:
+
+        print("ERROR cargando grupos:", e)
+
+        await query.message.reply_text(
+            f"❌ Error cargando grupos:\n{str(e)}"
+        )
+
+        return
+
+
+    if not groups:
+
+        await query.message.reply_text(
+            "⚠️ No hay grupos registrados."
+        )
+
+        return
+
+
+    texto = "📋 GRUPOS REGISTRADOS\n\n"
+
+
+    try:
+
+        for group_id, name, telegram_id in groups:
+
+            texto += (
+
+                f"🆔 ID interno: {group_id}\n"
+                f"📦 Nombre: {name}\n"
+                f"📡 Telegram ID: {telegram_id}\n\n"
+
+            )
+
+    except Exception as e:
+
+        print("ERROR construyendo texto:", e)
+
+        await query.message.reply_text(
+            f"❌ Error procesando grupos:\n{str(e)}"
+        )
+
+        return
+
+
+    keyboard = [
+
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="menu_groups"
+        )]
+
+    ]
+
+
+    await query.message.reply_text(
+
+        texto,
+
+        reply_markup=InlineKeyboardMarkup(keyboard)
+
+    )
+
+    return
+
+
+    # =========================
     # MENÚ PAGOS
     # =========================
 
