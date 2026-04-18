@@ -2811,11 +2811,13 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Continuando registro del grupo...")
 
 
-            # =========================
-            # VERIFICAR SI ES ADMIN
-            # =========================
+# =========================
+# VERIFICAR SI ES ADMIN
+# =========================
 
             try:
+
+                print("Verificando permisos del bot...")
 
                 r = requests.get(
 
@@ -2831,12 +2833,16 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ).json()
 
 
+                print("Respuesta completa getChatMember:", r)
+
                 status = r["result"]["status"]
+
+                print("Status del bot en grupo:", status)
 
 
                 if status not in ["administrator", "creator"]:
 
-                    # Avisar en el grupo
+                    print("Bot NO es administrador del grupo.")
 
                     try:
 
@@ -2856,8 +2862,6 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         print("Error enviando mensaje al grupo:", e)
 
-
-                    # Avisar al admin
 
                     try:
 
@@ -2882,6 +2886,10 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         print("Error enviando aviso admin:", e)
 
                     return
+
+                else:
+
+                    print("Bot ES administrador del grupo.")
 
 
                 # =========================
