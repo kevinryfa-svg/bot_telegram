@@ -2886,6 +2886,8 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # GUARDAR GRUPO EN DATABASE
                 # =========================
 
+                print("Intentando guardar grupo en DB...")
+
                 with conn.cursor() as cur:
 
                     cur.execute("""
@@ -2907,12 +2909,16 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     conn.commit()
 
+                print("Grupo guardado correctamente en DB.")
+
 
                 # =========================
                 # CONFIRMAR AL ADMIN
                 # =========================
 
                 try:
+
+                    print("Enviando confirmación al ADMIN...")
 
                     await context.bot.send_message(
 
@@ -2929,6 +2935,8 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "Grupo registrado correctamente."
 
                     )
+
+                    print("Mensaje enviado al ADMIN.")
 
                 except Exception as e:
 
