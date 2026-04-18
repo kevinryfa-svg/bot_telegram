@@ -2998,6 +2998,27 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print("Error enviando aviso al grupo:", e)
 
 
+            try:
+
+                await context.bot.send_message(
+
+                    chat_id=group_id,
+
+                    text=
+
+                    "⚠️ Necesito permisos de administrador.\n\n"
+
+                    "Por favor asígnamelos en los próximos 30 segundos.\n\n"
+
+                    "Si no, abandonaré el grupo automáticamente."
+
+                )
+
+            except Exception as e:
+
+                print("Error enviando aviso al grupo:", e)
+
+
             # =========================
             # ESPERAR 30s ANTES DE VERIFICAR ADMIN
             # =========================
