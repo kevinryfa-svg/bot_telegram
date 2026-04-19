@@ -3857,10 +3857,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 SELECT invite_link
                 FROM invite_links
                 WHERE user_id=%s
+                AND group_id=%s
                 ORDER BY created_at DESC
                 LIMIT 1
 
-            """, (user_id,))
+            """, (
+
+                user_id,
+                get_group_id()
+
+            ))
 
             link_row = cur.fetchone()
 
