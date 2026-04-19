@@ -2822,6 +2822,87 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     expiration = row[0]
 
 
+                    # =========================
+                    # VERIFICAR QUE EL LINK ES DEL USUARIO
+                    # =========================
+
+                    used_link = None
+
+                    try:
+
+                        if update.message.invite_link:
+
+                            used_link = update.message.invite_link.invite_link
+
+                    except Exception as e:
+
+                        print("Error obteniendo invite_link:", e)
+
+
+                    if used_link:
+
+                        cur.execute("""
+
+                            SELECT user_id
+                            FROM invite_links
+                            WHERE invite_link=%s
+                            AND group_id=%s
+
+                        """, (
+
+                            used_link,
+                            telegram_group_id
+
+                        ))
+
+                        owner = cur.fetchone()
+
+                        if owner:
+
+                            owner_id = owner[0]
+
+                            if owner_id != user_id:
+
+                                print("Intruso usando link ajeno:", user_id)
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                                    json={
+                                        "chat_id": telegram_group_id,
+                                        "user_id": user_id
+                                    }
+
+                                )
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                                    json={
+                                        "chat_id": telegram_group_id,
+                                        "user_id": user_id
+                                    }
+
+                                )
+
+                                return
+
+
+                    if expiration and datetime.now() > expiration:
+
+                        print("Usuario expirado:", user_id)
+
+
+                        cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE user_id=%s
+
+                        """, (user_id,))
+
+
                     if expiration and datetime.now() > expiration:
 
                         print("Usuario expirado:", user_id)
@@ -5695,11 +5776,11 @@ def main():
     )
 
     telegram_app.add_handler(
-        CommandHandler("debugcolumns", debug_columns)
+         CommandHandler("debugcolumns", debug_columns)
     )
 
     telegram_app.add_handler(
-        CommandHandler("fixdb", fixdb_group_column)
+         CommandHandler("fixdb", fixdb_group_column)
     )
 
     telegram_app.add_handler(
@@ -5710,23 +5791,19 @@ def main():
         CallbackQueryHandler(button)
     )
 
-    # =========================
-    # HANDLERS DE TEXTO
-    # =========================
-
     telegram_app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            receive_code
-        )
+    MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        receive_code
     )
+)
 
-    telegram_app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            receive_admin_inputs
-        )
+telegram_app.add_handler(
+    MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        receive_admin_inputs
     )
+)
 
     # =========================
     # DETECTAR BOT Y USUARIOS NUEVOS
@@ -5747,6 +5824,7 @@ def main():
         ),
         group=1
     )
+
 
     threading.Thread(
         target=check_expirations,
