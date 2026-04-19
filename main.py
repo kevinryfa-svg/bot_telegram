@@ -2611,87 +2611,85 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             owner_id = owner[0]
 
-                            print("Ejecutando warnings para:", owner_id)                            
+                            print("Owner encontrado por fallback:", owner_id)
 
 
-                    if owner:
+                            # =========================
+                            # SUMAR AVISO
+                            # =========================
 
-                        owner_id = owner[0]
+                            cur.execute("""
 
-                        # =========================
-                        # SUMAR AVISO
-                        # =========================
-                        cur.execute("""
+                            INSERT INTO link_warnings
+                            (user_id, warnings)
 
-                        INSERT INTO link_warnings
-                        (user_id, warnings)
+                            VALUES (%s, 1)
 
-                        VALUES (%s, 1)
+                            ON CONFLICT (user_id)
 
-                        ON CONFLICT (user_id)
+                            DO UPDATE SET
 
-                        DO UPDATE SET
+                            warnings = link_warnings.warnings + 1
 
-                        warnings = link_warnings.warnings + 1
+                            RETURNING warnings
 
-                        RETURNING warnings
+                            """, (owner_id,))
 
-                        """, (owner_id,))
-                        warnings = cur.fetchone()[0]
+                            warnings = cur.fetchone()[0]
 
 
-                        # =========================
-                        # REVOCAR LINKS
-                        # =========================
+                            # =========================
+                            # REVOCAR LINKS
+                            # =========================
 
-                        cur.execute("""
+                            cur.execute("""
 
-                        SELECT invite_link
-                        FROM invite_links
-                        WHERE user_id=%s
-                        AND group_id=%s
+                            SELECT invite_link
+                            FROM invite_links
+                            WHERE user_id=%s
+                            AND group_id=%s
 
-                        """, (
+                            """, (
 
-                            owner_id,
-                            telegram_group_id
+                                owner_id,
+                                telegram_group_id
 
-                        ))
+                            ))
 
-                        links = cur.fetchall()
+                            links = cur.fetchall()
 
-                        for (link,) in links:
+                            for (link,) in links:
 
-                            try:
+                                try:
 
-                                requests.post(
+                                    requests.post(
 
-                                    f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+                                        f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
-                                    json={
-                                        "chat_id": telegram_group_id,
-                                        "invite_link": link
-                                    }
+                                        json={
+                                            "chat_id": telegram_group_id,
+                                            "invite_link": link
+                                        }
 
-                                )
+                                    )
 
-                            except Exception as e:
+                                except Exception as e:
 
-                                print("Error revocando link:", e)
+                                    print("Error revocando link:", e)
 
 
-                        cur.execute("""
+                            cur.execute("""
 
-                        DELETE FROM invite_links
-                        WHERE user_id=%s
-                        AND group_id=%s
+                            DELETE FROM invite_links
+                            WHERE user_id=%s
+                            AND group_id=%s
 
-                        """, (
+                            """, (
 
-                            owner_id,
-                            telegram_group_id
+                                owner_id,
+                                telegram_group_id
 
-                        ))
+                            ))
 
 
                         # =========================
