@@ -2906,7 +2906,31 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         )
 
-                        return
+                        # =========================
+                        # BUSCAR OWNER POR FALLBACK
+                        # =========================
+
+                        owner = None
+
+                        cur.execute("""
+
+                        SELECT user_id
+                        FROM invite_links
+                        WHERE group_id=%s
+                        ORDER BY created_at DESC
+                        LIMIT 1
+
+                        """, (telegram_group_id,))
+
+                        fallback_owner = cur.fetchone()
+
+                        if fallback_owner:
+
+                            owner_id = fallback_owner[0]
+
+                            owner = (owner_id,)
+
+                            print("Owner encontrado por fallback:", owner_id)
 
 
                     # =========================
