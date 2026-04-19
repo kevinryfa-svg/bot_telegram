@@ -2605,6 +2605,15 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             print("Owner encontrado por fallback:", owner_id)
 
 
+                            # =========================
+                            # FORZAR EJECUCIÓN WARNINGS
+                            # =========================
+
+                            owner_id = owner[0]
+
+                            print("Ejecutando warnings para:", owner_id)                            
+
+
                     if owner:
 
                         owner_id = owner[0]
