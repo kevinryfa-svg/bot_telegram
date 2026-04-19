@@ -2859,6 +2859,55 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                     # =========================
+                    # VERIFICAR QUE TIENE LINK ASIGNADO
+                    # =========================
+
+                    cur.execute("""
+
+                    SELECT id
+                    FROM invite_links
+                    WHERE user_id=%s
+                    AND group_id=%s
+
+                    """, (
+
+                        user_id,
+                        telegram_group_id
+
+                    ))
+
+                    link_exists = cur.fetchone()
+
+                    if not link_exists:
+
+                        print("Intruso sin link asignado:", user_id)
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                            json={
+                                "chat_id": telegram_group_id,
+                                "user_id": user_id
+                            }
+
+                        )
+
+                        requests.post(
+
+                            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                            json={
+                                "chat_id": telegram_group_id,
+                                "user_id": user_id
+                            }
+
+                        )
+
+                        return
+
+
+                    # =========================
                     # VERIFICAR QUE EL LINK ES DEL USUARIO
                     # =========================
 
