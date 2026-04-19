@@ -3045,7 +3045,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             # DETENER FLUJO DEL INTRUSO
                             # =========================
 
-                            return
 
 
                     # =========================
