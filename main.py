@@ -619,16 +619,6 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         print("Error revocando link:", e)
 
 
-                # borrar links
-
-                cur.execute("""
-
-                    DELETE FROM invite_links
-                    WHERE user_id=%s
-
-                """, (user_id,))
-
-
                 # borrar avisos
 
                 cur.execute("""
@@ -1852,17 +1842,17 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         cur.execute("""
 
-        INSERT INTO users
-        (user_id, username, first_name, expiration)
+            INSERT INTO users
+            (user_id, username, first_name, expiration)
 
-        VALUES (%s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s)
 
-        ON CONFLICT (user_id)
-        DO UPDATE SET
+            ON CONFLICT (user_id)
+            DO UPDATE SET
 
-        username=%s,
-        first_name=%s,
-        expiration=%s
+                username=%s,
+                first_name=%s,
+                expiration=%s
 
         """, (
 
@@ -1876,31 +1866,29 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         ))
 
-
         cur.execute("""
 
-        UPDATE invite_codes
-        SET used=TRUE
-        WHERE code=%s
+            UPDATE invite_codes
+            SET used=TRUE
+            WHERE code=%s
 
         """, (user_code,))
 
 
-        # 🔴 REVOCAR LINKS ANTIGUOS
-
         cur.execute("""
 
-    SELECT invite_link
-    FROM invite_links
-    WHERE user_id=%s
-    AND group_id=%s
+            SELECT invite_link
+            FROM invite_links
+            WHERE user_id=%s
+            AND group_id=%s
 
-""", (
+        """, (
 
-    update.effective_user.id,
-    get_group_id()
+            update.effective_user.id,
+            get_group_id()
 
-))
+        ))
+
 
         old_links = cur.fetchall()
 
@@ -1918,7 +1906,6 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                     }
 
                 )
-
             except Exception as e:
 
                 print("Error revocando link:", e)
@@ -1928,16 +1915,16 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         cur.execute("""
 
-    DELETE FROM invite_links
-    WHERE user_id=%s
-    AND group_id=%s
+            DELETE FROM invite_links
+            WHERE user_id=%s
+            AND group_id=%s
 
-""", (
+        """, (
 
-    update.effective_user.id,
-    get_group_id()
+            update.effective_user.id,
+            get_group_id()
 
-))
+        ))
 
         conn.commit()
 
@@ -2321,6 +2308,8 @@ def stripe_webhook():
 
                 # borrar links antiguos
 
+                cur.execute("""
+
                     DELETE FROM invite_links
                     WHERE user_id=%s
                     AND group_id=%s
@@ -2349,6 +2338,7 @@ def stripe_webhook():
                     link
 
                 ))
+
 
                 conn.commit()
 
