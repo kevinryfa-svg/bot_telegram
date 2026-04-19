@@ -2552,6 +2552,8 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         print("Fallback activado — buscando último link")
 
+                        owner = None
+
                         cur.execute("""
 
                         SELECT user_id
@@ -2973,19 +2975,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 )
 
                                 return
-
-
-                    if expiration and datetime.now() > expiration:
-
-                        print("Usuario expirado:", user_id)
-
-
-                        cur.execute("""
-
-                        DELETE FROM invite_links
-                        WHERE user_id=%s
-
-                        """, (user_id,))
 
 
                     if expiration and datetime.now() > expiration:
