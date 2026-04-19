@@ -941,13 +941,12 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text.strip()
 
 
-        # =========================
         # PASO 1 — NOMBRE GRUPO
-        # =========================
 
         if step == 1:
 
             context.user_data["new_group_data"]["name"] = text
+
             context.user_data["group_step"] = 2
 
             await update.message.reply_text(
