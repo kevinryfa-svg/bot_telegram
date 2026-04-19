@@ -2600,8 +2600,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 owner = (owner_id,)
 
-                        owner = cur.fetchone()
-
                         print("Owner encontrado por fallback:", owner)
 
 
