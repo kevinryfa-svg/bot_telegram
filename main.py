@@ -2562,6 +2562,44 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         """, (telegram_group_id,))
 
+                        fallback_owner = cur.fetchone()
+
+                        if fallback_owner:
+
+                            owner_id = fallback_owner[0]
+
+                            # =========================
+                            # SI EL QUE ENTRA NO ES EL OWNER
+                            # =========================
+
+                            if user_id != owner_id:
+
+                                print("Intruso detectado por fallback:", user_id)
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                                    json={
+                                        "chat_id": telegram_group_id,
+                                        "user_id": user_id
+                                    }
+
+                                )
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                                    json={
+                                        "chat_id": telegram_group_id,
+                                        "user_id": user_id
+                                    }
+
+                                )
+
+                                owner = (owner_id,)
+
                         owner = cur.fetchone()
 
                         print("Owner encontrado por fallback:", owner)
