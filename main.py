@@ -2600,20 +2600,18 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 )
 
-                                owner = (owner_id,)
+                            owner = (owner_id,)
 
-                        print("Owner encontrado por fallback:", owner)
+                            print("Owner encontrado por fallback:", owner_id)
 
 
                     if owner:
 
                         owner_id = owner[0]
 
-
                         # =========================
                         # SUMAR AVISO
                         # =========================
-
                         cur.execute("""
 
                         INSERT INTO link_warnings
