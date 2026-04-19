@@ -2506,7 +2506,9 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     try:
 
-                        if update.message.invite_link:
+                        if hasattr(update.message, "invite_link"):
+
+                            used_link = update.message.invite_link.invite_link
 
                             used_link = update.message.invite_link.invite_link
 
@@ -2607,6 +2609,8 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             # =========================
                             # FORZAR EJECUCIÓN WARNINGS
                             # =========================
+
+                            warnings = 0
 
                             if owner:
 
@@ -2923,6 +2927,8 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         owner = None
 
+                        warnings = 0
+
                         cur.execute("""
 
                         SELECT user_id
@@ -2941,7 +2947,105 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             owner = (owner_id,)
 
-                            print("Owner encontrado por fallback:", owner_id)
+                            print(
+                                "Owner encontrado por fallback:",
+                                owner_id
+                            )
+
+                            # =========================
+                            # SUMAR AVISO
+                            # =========================
+
+                            cur.execute("""
+
+                                INSERT INTO link_warnings
+                                (user_id, warnings)
+
+                                VALUES (%s, 1)
+
+                                ON CONFLICT (user_id)
+
+                                DO UPDATE SET
+
+                                    warnings = link_warnings.warnings + 1
+
+                                RETURNING warnings
+
+                            """, (owner_id,))
+
+                            warnings = cur.fetchone()[0]
+
+                            print(
+                                "Warnings actuales:",
+                                warnings
+                            )
+
+                            # =========================
+                            # REVOCAR LINKS DEL OWNER
+                            # =========================
+
+                            cur.execute("""
+
+                                SELECT invite_link
+                                FROM invite_links
+                                WHERE user_id=%s
+                                AND group_id=%s
+
+                            """, (
+
+                                owner_id,
+                                telegram_group_id
+
+                            ))
+
+                            links = cur.fetchall()
+
+                            for (link,) in links:
+
+                                try:
+
+                                    requests.post(
+
+                                        f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+
+                                        json={
+                                            "chat_id": telegram_group_id,
+                                            "invite_link": link
+                                        }
+
+                                    )
+
+                                except Exception as e:
+
+                                    print(
+                                        "Error revocando link:",
+                                        e
+                                    )
+
+                            # =========================
+                            # BORRAR LINKS ANTIGUOS
+                            # =========================
+
+                            cur.execute("""
+
+                                DELETE FROM invite_links
+                                WHERE user_id=%s
+                                AND group_id=%s
+
+                            """, (
+
+                                owner_id,
+                                telegram_group_id
+
+                            ))
+
+                            conn.commit()
+
+                            # =========================
+                            # DETENER FLUJO DEL INTRUSO
+                            # =========================
+
+                            return
 
 
                     # =========================
@@ -2952,7 +3056,9 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     try:
 
-                        if update.message.invite_link:
+                        if hasattr(update.message, "invite_link"):
+
+                            used_link = update.message.invite_link.invite_link
 
                             used_link = update.message.invite_link.invite_link
 
