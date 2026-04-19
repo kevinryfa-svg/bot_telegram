@@ -2612,42 +2612,39 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 owner_id = owner[0]
 
-                            print("Owner encontrado por fallback:", owner_id)
+                                print(
+                                    "Owner encontrado por fallback:",
+                                    owner_id
+                                )
 
-                            # =========================
-                            # DETENER FLUJO DEL INTRUSO
-                            # =========================
+                                # =========================
+                                # SUMAR AVISO
+                                # =========================
 
-                            return
+                                cur.execute("""
 
+                                    INSERT INTO link_warnings
+                                    (user_id, warnings)
 
-                            # =========================
-                            # SUMAR AVISO
-                            # =========================
+                                    VALUES (%s, 1)
 
-                            cur.execute("""
+                                    ON CONFLICT (user_id)
 
-                            INSERT INTO link_warnings
-                            (user_id, warnings)
+                                    DO UPDATE SET
 
-                            VALUES (%s, 1)
+                                        warnings = link_warnings.warnings + 1
 
-                            ON CONFLICT (user_id)
+                                    RETURNING warnings
 
-                            DO UPDATE SET
+                                """, (owner_id,))
 
-                            warnings = link_warnings.warnings + 1
-
-                            RETURNING warnings
-
-                            """, (owner_id,))
-
-                            warnings = cur.fetchone()[0]
+                                warnings = cur.fetchone()[0]
 
 
-                            # =========================
-                            # REVOCAR LINKS
-                            # =========================
+                                # =========================
+                                # REVOCAR LINKS
+                                # =========================
+
 
                             cur.execute("""
 
