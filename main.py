@@ -5776,11 +5776,11 @@ def main():
     )
 
     telegram_app.add_handler(
-         CommandHandler("debugcolumns", debug_columns)
+        CommandHandler("debugcolumns", debug_columns)
     )
 
     telegram_app.add_handler(
-         CommandHandler("fixdb", fixdb_group_column)
+        CommandHandler("fixdb", fixdb_group_column)
     )
 
     telegram_app.add_handler(
@@ -5792,18 +5792,18 @@ def main():
     )
 
     telegram_app.add_handler(
-    MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        receive_code
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            receive_code
+        )
     )
-)
 
-telegram_app.add_handler(
-    MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        receive_admin_inputs
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            receive_admin_inputs
+        )
     )
-)
 
     # =========================
     # DETECTAR BOT Y USUARIOS NUEVOS
@@ -5824,7 +5824,6 @@ telegram_app.add_handler(
         ),
         group=1
     )
-
 
     threading.Thread(
         target=check_expirations,
