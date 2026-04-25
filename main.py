@@ -1393,9 +1393,9 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
     # AÑADIR PLAN — WIZARD
     # =========================
 
-    if context.user_data.get("adding_plan"):
+    if context.user_data.get("creating_plan"):
 
-        step = context.user_data.get("add_plan_step")
+        step = context.user_data.get("create_plan_step")
 
         text = update.message.text.strip()
 
@@ -1407,7 +1407,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
         if step == 1:
 
             context.user_data["new_plan_name"] = text
-            context.user_data["add_plan_step"] = 2
+            context.user_data["create_plan_step"] = 2
 
             await update.message.reply_text(
 
@@ -1427,7 +1427,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
         if step == 2:
 
             context.user_data["new_price_id"] = text
-            context.user_data["add_plan_step"] = 3
+            context.user_data["create_plan_step"] = 3
 
             await update.message.reply_text(
 
@@ -1460,7 +1460,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
             context.user_data["new_duration"] = duration_days
-            context.user_data["add_plan_step"] = 4
+            context.user_data["create_plan_step"] = 4
 
             await update.message.reply_text(
 
@@ -1495,7 +1495,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
             context.user_data["new_amount"] = amount
-            context.user_data["add_plan_step"] = 5
+            context.user_data["create_plan_step"] = 5
 
             await update.message.reply_text(
 
@@ -1571,7 +1571,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
 
 
-            context.user_data["adding_plan"] = False
+            context.user_data["creating_plan"] = False
 
             await update.message.reply_text(
 
