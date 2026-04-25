@@ -1799,6 +1799,12 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         return
 
+    # ⚠️ IMPORTANTE:
+    # Si no estamos esperando código → NO procesar
+
+    if not context.user_data.get("waiting_code"):
+        return
+
     user_code = update.message.text.strip().upper()
 
     with conn.cursor() as cur:
