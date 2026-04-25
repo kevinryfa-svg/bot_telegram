@@ -36,7 +36,7 @@ def create_tables():
 
             name TEXT,
 
-            telegram_group_id BIGINT,
+            telegram_group_id BIGINT UNIQUE,
 
             invite_link TEXT,
 
@@ -60,22 +60,22 @@ def create_tables():
 
 
         # =========================
-        # TABLA USERS
+        # TABLA USERS (MULTI-GRUPO)
         # =========================
 
         cur.execute("""
 
         CREATE TABLE IF NOT EXISTS users (
 
-            user_id BIGINT PRIMARY KEY,
+            user_id BIGINT,
+
+            group_id INTEGER,
 
             username TEXT,
 
             first_name TEXT,
 
             expiration TIMESTAMP,
-
-            group_id INTEGER DEFAULT 1,
 
             stripe_customer_id TEXT,
 
@@ -85,7 +85,9 @@ def create_tables():
 
             last_invite_link TEXT,
 
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            PRIMARY KEY (user_id, group_id)
 
         );
 
@@ -93,7 +95,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA ADMINS (NUEVA)
+        # TABLA ADMINS
         # =========================
 
         cur.execute("""
@@ -203,7 +205,7 @@ def create_tables():
 
             used BOOLEAN DEFAULT FALSE,
 
-            group_id INTEGER DEFAULT 1,
+            group_id INTEGER,
 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
@@ -244,18 +246,20 @@ def create_tables():
 
 
         # =========================
-        # TABLA BANEADOS
+        # TABLA BANEADOS (MULTI-GRUPO)
         # =========================
 
         cur.execute("""
 
         CREATE TABLE IF NOT EXISTS banned_users (
 
-            user_id BIGINT PRIMARY KEY,
+            user_id BIGINT,
 
-            group_id INTEGER DEFAULT 1,
+            group_id INTEGER,
 
-            banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            PRIMARY KEY (user_id, group_id)
 
         );
 
@@ -282,7 +286,9 @@ def create_tables():
 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-            revoked_at TIMESTAMP
+            revoked_at TIMESTAMP,
+
+            UNIQUE (user_id, group_id)
 
         );
 
@@ -290,7 +296,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA AVISOS LINK
+        # TABLA WARNINGS
         # =========================
 
         cur.execute("""
@@ -299,7 +305,7 @@ def create_tables():
 
             user_id BIGINT,
 
-            group_id INTEGER DEFAULT 1,
+            group_id INTEGER,
 
             warnings INTEGER DEFAULT 0,
 
@@ -357,40 +363,23 @@ def create_tables():
 
 
         # =========================
-        # ASEGURAR UNIQUE TELEGRAM GROUP
-        # =========================
-
-        try:
-
-            cur.execute("""
-
-            ALTER TABLE groups
-
-            ADD CONSTRAINT unique_telegram_group
-
-            UNIQUE (telegram_group_id);
-
-            """)
-
-        except Exception:
-
-            pass
-
-
-        # =========================
-        # GRUPO DEFAULT (SEGURO)
+        # GRUPO DEFAULT
         # =========================
 
         cur.execute("""
 
         INSERT INTO groups (
+
             name,
             telegram_group_id
+
         )
 
         VALUES (
+
             'Grupo Principal',
             0
+
         )
 
         ON CONFLICT (telegram_group_id) DO NOTHING;
@@ -398,4 +387,4 @@ def create_tables():
         """)
 
 
-    print("Base de datos FULL preparada 🚀 v2")
+    print("Base de datos FULL preparada 🚀")
