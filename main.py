@@ -398,6 +398,20 @@ async def fixdb_group_column(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # =========================
+    # ⚠️ CONTROL GLOBAL — SOLO ACTUAR SI CORRESPONDE
+    # =========================
+
+    if not (
+        context.user_data.get("waiting_code")
+        or context.user_data.get("delete_code")
+        or context.user_data.get("search_user")
+        or context.user_data.get("kick_user")
+        or context.user_data.get("ban_user")
+        or context.user_data.get("unban_user")
+    ):
+        return
+
+    # =========================
     # ELIMINAR CÓDIGO
     # =========================
 
