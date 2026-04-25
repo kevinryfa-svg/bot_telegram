@@ -1403,24 +1403,6 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
 
-    # =========================
-    # AÑADIR PLAN — WIZARD
-    # =========================
-
-
-            await update.message.reply_text(
-
-                "✅ Plan creado correctamente."
-
-            )
-
-            return
-
-
-    # =========================
-    # EDITAR PLAN — WIZARD
-    # =========================
-
     if context.user_data.get("editing_plan"):
 
         step = context.user_data.get("edit_plan_step")
