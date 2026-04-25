@@ -3096,8 +3096,125 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             conn.commit()
 
                             # =========================
-                            # DETENER FLUJO DEL INTRUSO
+                            # CREAR LINK NUEVO
                             # =========================
+
+                            invite_link = requests.post(
+
+                                f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+
+                                json={
+                                    "chat_id": telegram_group_id,
+                                    "member_limit": 1
+                                }
+
+                            ).json()
+
+                            if "result" in invite_link:
+
+                                new_link = invite_link["result"]["invite_link"]
+
+                                # =========================
+                                # GUARDAR LINK NUEVO
+                                # =========================
+
+                                cur.execute("""
+
+                                    INSERT INTO invite_links
+                                    (user_id, group_id, invite_link)
+
+                                    VALUES (%s, %s, %s)
+
+                                """, (
+
+                                    owner_id,
+                                    telegram_group_id,
+                                    new_link
+
+                                ))
+
+                                conn.commit()
+
+                                # =========================
+                                # ENVIAR AVISO USUARIO
+                                # =========================
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+                                    json={
+
+                                        "chat_id": owner_id,
+
+                                        "text":
+
+                                        f"⚠️ AVISO {warnings}/3\n\n"
+
+                                        "Hemos detectado que has compartido tu link.\n\n"
+
+                                        "Tu link anterior ha sido invalidado.\n"
+
+                                        "Aquí tienes uno nuevo:\n\n"
+
+                                        f"{new_link}\n\n"
+
+                                        "Si llegas a 3 avisos serás baneado."
+
+                                    }
+
+                                )
+
+                                # =========================
+                                # ENVIAR AVISO ADMIN
+                                # =========================
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+                                    json={
+
+                                        "chat_id": ADMIN_ID,
+
+                                        "text":
+
+                                        f"⚠️ LINK COMPARTIDO\n\n"
+
+                                        f"Usuario: {owner_id}\n"
+
+                                        f"Aviso: {warnings}/3\n"
+
+                                        f"Intruso: {user_id}"
+
+                                    }
+
+                                )
+
+                        return
+
+                    # =========================
+                    # BORRAR LINKS ANTIGUOS
+                    # =========================
+
+                    cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE user_id=%s
+                        AND group_id=%s
+
+                    """, (
+
+                        owner_id,
+                        telegram_group_id
+
+                    ))
+
+                    conn.commit()
+
+                    # =========================
+                    # DETENER FLUJO DEL INTRUSO
+                    # =========================
 
 
 
