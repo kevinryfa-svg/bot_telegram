@@ -6531,6 +6531,13 @@ def main():
         )
     )
 
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            receive_admin_inputs
+        )
+    )
+
 
     # =========================
     # DETECTAR BOT Y USUARIOS NUEVOS
