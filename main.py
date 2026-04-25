@@ -6527,14 +6527,14 @@ def main():
     telegram_app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            receive_code
+            receive_admin_inputs
         )
     )
 
     telegram_app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            receive_admin_inputs
+            receive_code
         )
     )
 
