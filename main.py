@@ -5432,27 +5432,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
-    # AÑADIR PLAN — INICIO
-    # =========================
-
-    if data == "add_group_plan":
-
-        context.user_data["adding_plan"] = True
-        context.user_data["add_plan_step"] = 1
-
-        await query.message.reply_text(
-
-            "➕ CREAR NUEVO PLAN\n\n"
-
-            "Paso 1️⃣\n"
-            "Introduce el nombre del plan."
-
-        )
-
-        return
-
-
-    # =========================
     # EDITAR PLAN — SELECCIÓN
     # =========================
 
