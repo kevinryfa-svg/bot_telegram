@@ -2818,6 +2818,56 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             # AVISO USUARIO + LINK
                             # =========================
 
+                            # =========================
+                            # CREAR LINK NUEVO
+                            # =========================
+
+                            invite_link = requests.post(
+
+                                f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+
+                                json={
+                                    "chat_id": telegram_group_id,
+                                    "member_limit": 1
+                                }
+
+                            ).json()
+
+                            if "result" not in invite_link:
+
+                                print("Error creando nuevo link:", invite_link)
+
+                                return
+
+                            new_link = invite_link["result"]["invite_link"]
+
+
+                            # =========================
+                            # GUARDAR LINK NUEVO
+                            # =========================
+
+                            cur.execute("""
+
+                                INSERT INTO invite_links
+                                (user_id, group_id, invite_link)
+
+                                VALUES (%s, %s, %s)
+
+                            """, (
+
+                                owner_id,
+                                telegram_group_id,
+                                new_link
+
+                            ))
+
+                            conn.commit()
+
+
+                            # =========================
+                            # ENVIAR AVISO AL USUARIO
+                            # =========================
+
                             requests.post(
 
                                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -2844,6 +2894,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             )
 
+
+                            # =========================
+                            # ENVIAR AVISO AL ADMIN
+                            # =========================
 
                             requests.post(
 
@@ -3044,8 +3098,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             # =========================
                             # DETENER FLUJO DEL INTRUSO
                             # =========================
-
-                            return
 
 
 
