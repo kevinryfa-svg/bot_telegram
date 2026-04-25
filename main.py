@@ -5482,96 +5482,144 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # BORRAR PLANES
                 # =========================
 
-                cur.execute("""
+                try:
 
-                    DELETE FROM plans
-                    WHERE group_id=%s
+                    cur.execute("""
 
-                """, (group_id,))
+                        DELETE FROM plans
+                        WHERE group_id=%s
+
+                    """, (group_id,))
+
+                except Exception as e:
+
+                    print("Error borrando plans:", e)
 
 
                 # =========================
                 # BORRAR USUARIOS
                 # =========================
 
-                cur.execute("""
+                try:
 
-                    DELETE FROM users
-                    WHERE group_id=%s
+                    cur.execute("""
 
-                """, (group_id,))
+                        DELETE FROM users
+                        WHERE group_id=%s
+
+                    """, (group_id,))
+
+                except Exception as e:
+
+                    print("Error borrando users:", e)
 
 
                 # =========================
                 # BORRAR LINKS
                 # =========================
 
-                cur.execute("""
+                try:
 
-                    DELETE FROM invite_links
-                    WHERE group_id=%s
+                    cur.execute("""
 
-                """, (group_id,))
+                        DELETE FROM invite_links
+                        WHERE group_id=%s
+
+                    """, (group_id,))
+
+                except Exception as e:
+
+                    print("Error borrando invite_links:", e)
 
 
                 # =========================
                 # BORRAR WARNINGS
                 # =========================
 
-                cur.execute("""
+                try:
 
-                    DELETE FROM link_warnings
-                    WHERE group_id=%s
+                    cur.execute("""
 
-                """, (group_id,))
+                        DELETE FROM link_warnings
+                        WHERE group_id=%s
+
+                    """, (group_id,))
+
+                except Exception as e:
+
+                    print("Error borrando link_warnings:", e)
 
 
                 # =========================
                 # BORRAR PAGOS
                 # =========================
 
-                cur.execute("""
+                try:
 
-                    DELETE FROM payments
-                    WHERE group_id=%s
+                    cur.execute("""
 
-                """, (group_id,))
+                        DELETE FROM payments
+                        WHERE group_id=%s
+
+                    """, (group_id,))
+
+                except Exception as e:
+
+                    print("Error borrando payments:", e)
 
 
                 # =========================
                 # BORRAR SUBSCRIPTIONS
                 # =========================
 
-                cur.execute("""
+                try:
 
-                    DELETE FROM subscriptions
-                    WHERE group_id=%s
+                    cur.execute("""
 
-                """, (group_id,))
+                        DELETE FROM subscriptions
+                        WHERE group_id=%s
+
+                    """, (group_id,))
+
+                except Exception as e:
+
+                    print("Error borrando subscriptions:", e)
 
 
                 # =========================
                 # BORRAR BANEADOS
                 # =========================
 
-                cur.execute("""
+                try:
 
-                    DELETE FROM banned_users
-                    WHERE group_id=%s
+                    cur.execute("""
 
-                """, (group_id,))
+                        DELETE FROM banned_users
+                        WHERE group_id=%s
+
+                    """, (group_id,))
+
+                except Exception as e:
+
+                    print("Error borrando banned_users:", e)
 
 
                 # =========================
                 # BORRAR ADMINS
                 # =========================
 
-                cur.execute("""
+                try:
 
-                    DELETE FROM admins
-                    WHERE group_id=%s
+                    cur.execute("""
 
-                """, (group_id,))
+                        DELETE FROM admins
+                        WHERE group_id=%s
+
+                    """, (group_id,))
+
+                except Exception as e:
+
+                    print("Error borrando admins:", e)
 
 
                 # =========================
@@ -5725,24 +5773,32 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         group_id
                     )
 
-                    # borrar links del grupo
+                    try:
 
-                    cur.execute("""
+                        cur.execute("""
 
-                        DELETE FROM invite_links
-                        WHERE group_id=%s
+                            DELETE FROM invite_links
+                            WHERE group_id=%s
 
-                    """, (group_id,))
+                        """, (group_id,))
+
+                    except Exception as e:
+
+                        print("Error borrando invite_links:", e)
 
 
-                    # borrar grupo
+                    try:
 
-                    cur.execute("""
+                        cur.execute("""
 
-                        DELETE FROM groups
-                        WHERE telegram_group_id=%s
+                            DELETE FROM groups
+                            WHERE id=%s
 
-                    """, (group_id,))
+                        """, (group_id,))
+
+                    except Exception as e:
+
+                        print("Error borrando groups:", e)
 
 
                 conn.commit()
