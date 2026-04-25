@@ -398,4 +398,4 @@ def create_tables():
         """)
 
 
-    print("Base de datos FULL preparada 🚀")
+    print("Base de datos FULL preparada 🚀 v2")
