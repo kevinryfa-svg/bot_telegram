@@ -1397,6 +1397,11 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         step = context.user_data.get("create_plan_step")
 
+        # SEGURIDAD — SI NO EXISTE STEP
+        if not step:
+            context.user_data["create_plan_step"] = 1
+            step = 1
+
         text = update.message.text.strip()
 
 
