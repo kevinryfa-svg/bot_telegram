@@ -443,4 +443,36 @@ def create_tables():
             pass
 
 
+        # =========================
+        # MIGRACIÓN COLUMNAS group_id
+        # =========================
+
+        tablas_migracion = [
+
+            ("users", "group_id"),
+            ("payments", "group_id"),
+            ("banned_users", "group_id"),
+            ("link_warnings", "group_id")
+
+        ]
+
+        for tabla, columna in tablas_migracion:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE {tabla}
+
+                    ADD COLUMN {columna} INTEGER DEFAULT 1
+
+                """)
+
+                print(f"Columna añadida en {tabla}: {columna}")
+
+            except Exception:
+
+                print(f"Columna ya existe en {tabla}")
+
+
     print("Base de datos FULL preparada 🚀")
