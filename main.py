@@ -3035,6 +3035,79 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
 
                             # =========================
+                            # BAN SI LLEGA A 3
+                            # =========================
+
+                            if warnings >= 3:
+
+                                print(
+                                    "Usuario baneado por warnings:",
+                                    owner_id
+                                )
+
+                                cur.execute("""
+
+                                    INSERT INTO banned_users
+                                    (user_id)
+
+                                    VALUES (%s)
+
+                                    ON CONFLICT DO NOTHING
+
+                                """, (owner_id,))
+
+                                conn.commit()
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                                    json={
+                                        "chat_id": telegram_group_id,
+                                        "user_id": owner_id
+                                    }
+
+                                )
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+                                    json={
+
+                                        "chat_id": owner_id,
+
+                                        "text":
+
+                                        "⛔ Has sido baneado permanentemente.\n\n"
+
+                                        "Motivo: Compartir links repetidamente."
+
+                                    }
+
+                                )
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+
+                                    json={
+
+                                        "chat_id": ADMIN_ID,
+
+                                        "text":
+
+                                        f"⛔ USUARIO BANEADO\n\n"
+
+                                        f"User ID: {owner_id}"
+
+                                    }
+
+                                )
+
+                                return
+
+                            # =========================
                             # REVOCAR LINKS DEL OWNER
                             # =========================
 
