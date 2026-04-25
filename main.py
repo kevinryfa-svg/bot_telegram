@@ -6524,21 +6524,23 @@ def main():
         CallbackQueryHandler(button)
     )
 
+    # =========================
+    # ⚠️ ORDEN CORRECTO HANDLERS TEXTO
+    # =========================
+
     telegram_app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             receive_admin_inputs
         )
     )
-    
+
     telegram_app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             receive_code
         )
     )
-
-
 
 
     # =========================
