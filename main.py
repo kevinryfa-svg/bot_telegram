@@ -3193,30 +3193,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         return
 
-                    # =========================
-                    # BORRAR LINKS ANTIGUOS
-                    # =========================
-
-                    cur.execute("""
-
-                        DELETE FROM invite_links
-                        WHERE user_id=%s
-                        AND group_id=%s
-
-                    """, (
-
-                        owner_id,
-                        telegram_group_id
-
-                    ))
-
-                    conn.commit()
-
-                    # =========================
-                    # DETENER FLUJO DEL INTRUSO
-                    # =========================
-
-
 
                     # =========================
                     # VERIFICAR QUE EL LINK ES DEL USUARIO
@@ -3227,8 +3203,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     try:
 
                         if hasattr(update.message, "invite_link"):
-
-                            used_link = update.message.invite_link.invite_link
 
                             used_link = update.message.invite_link.invite_link
 
