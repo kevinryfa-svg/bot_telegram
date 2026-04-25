@@ -387,4 +387,60 @@ def create_tables():
         """)
 
 
+        # =========================
+        # MIGRACIÓN TABLAS ANTIGUAS
+        # =========================
+
+        try:
+
+            cur.execute("""
+
+                ALTER TABLE users
+                ADD COLUMN group_id INTEGER DEFAULT 1
+
+            """)
+
+        except Exception:
+            pass
+
+
+        try:
+
+            cur.execute("""
+
+                ALTER TABLE payments
+                ADD COLUMN group_id INTEGER DEFAULT 1
+
+            """)
+
+        except Exception:
+            pass
+
+
+        try:
+
+            cur.execute("""
+
+                ALTER TABLE banned_users
+                ADD COLUMN group_id INTEGER DEFAULT 1
+
+            """)
+
+        except Exception:
+            pass
+
+
+        try:
+
+            cur.execute("""
+
+                ALTER TABLE link_warnings
+                ADD COLUMN group_id INTEGER DEFAULT 1
+
+            """)
+
+        except Exception:
+            pass
+
+
     print("Base de datos FULL preparada 🚀")
