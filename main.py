@@ -5534,6 +5534,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         plan_id = int(data.split("_")[2])
 
+        group_id = context.user_data.get("selected_group_admin")
+
         try:
 
             with conn.cursor() as cur:
@@ -5547,6 +5549,55 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     WHERE id=%s
 
                 """, (plan_id,))
+
+
+                # =========================
+                # NUEVO — VERIFICAR SI QUEDAN PLANES
+                # =========================
+
+                cur.execute("""
+
+                    SELECT COUNT(*)
+                    FROM plans
+                    WHERE group_id=%s
+                    AND is_active=TRUE
+
+                """, (group_id,))
+
+                remaining_plans = cur.fetchone()[0]
+
+
+                # =========================
+                # NUEVO — SI NO QUEDAN PLANES
+                # BORRAR GRUPO COMPLETO
+                # =========================
+
+                if remaining_plans == 0:
+
+                    print(
+                        "Eliminando grupo sin planes:",
+                        group_id
+                    )
+
+                    # borrar links del grupo
+
+                    cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE group_id=%s
+
+                    """, (group_id,))
+
+
+                    # borrar grupo
+
+                    cur.execute("""
+
+                        DELETE FROM groups
+                        WHERE telegram_group_id=%s
+
+                    """, (group_id,))
+
 
                 conn.commit()
 
