@@ -5459,6 +5459,164 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # ELIMINAR GRUPO — CONFIRMAR
+    # =========================
+
+    if data == "delete_group_confirm":
+
+        group_id = context.user_data.get("selected_group_admin")
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "❌ No se encontró el grupo."
+            )
+
+            return
+
+        try:
+
+            with conn.cursor() as cur:
+
+                # =========================
+                # BORRAR PLANES
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM plans
+                    WHERE group_id=%s
+
+                """, (group_id,))
+
+
+                # =========================
+                # BORRAR USUARIOS
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM users
+                    WHERE group_id=%s
+
+                """, (group_id,))
+
+
+                # =========================
+                # BORRAR LINKS
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM invite_links
+                    WHERE group_id=%s
+
+                """, (group_id,))
+
+
+                # =========================
+                # BORRAR WARNINGS
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM link_warnings
+                    WHERE group_id=%s
+
+                """, (group_id,))
+
+
+                # =========================
+                # BORRAR PAGOS
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM payments
+                    WHERE group_id=%s
+
+                """, (group_id,))
+
+
+                # =========================
+                # BORRAR SUBSCRIPTIONS
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM subscriptions
+                    WHERE group_id=%s
+
+                """, (group_id,))
+
+
+                # =========================
+                # BORRAR BANEADOS
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM banned_users
+                    WHERE group_id=%s
+
+                """, (group_id,))
+
+
+                # =========================
+                # BORRAR ADMINS
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM admins
+                    WHERE group_id=%s
+
+                """, (group_id,))
+
+
+                # =========================
+                # BORRAR CÓDIGOS
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM invite_codes
+                    WHERE group_id=%s
+
+                """, (group_id,))
+
+
+                # =========================
+                # BORRAR GRUPO
+                # =========================
+
+                cur.execute("""
+
+                    DELETE FROM groups
+                    WHERE id=%s
+
+                """, (group_id,))
+
+
+                conn.commit()
+
+
+            await query.message.reply_text(
+                "🗑 Grupo eliminado correctamente."
+            )
+
+        except Exception as e:
+
+            print("Error eliminando grupo:", e)
+
+            await query.message.reply_text(
+                "❌ Error eliminando grupo."
+            )
+
+        return
+
+
+    # =========================
     # ELIMINAR PLAN — SELECCIÓN
     # =========================
 
