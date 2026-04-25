@@ -5575,18 +5575,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                 # =========================
-                # BORRAR CÓDIGOS
-                # =========================
-
-                cur.execute("""
-
-                    DELETE FROM invite_codes
-                    WHERE group_id=%s
-
-                """, (group_id,))
-
-
-                # =========================
                 # BORRAR GRUPO
                 # =========================
 
