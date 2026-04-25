@@ -5242,6 +5242,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # AÑADIR PLAN — INICIO
+    # =========================
+
+    if data == "add_group_plan":
+
+        group_id = context.user_data.get("selected_group_admin")
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "❌ No se encontró el grupo."
+            )
+
+            return
+
+
+        context.user_data["adding_plan"] = True
+        context.user_data["add_plan_step"] = 1
+        context.user_data["new_plan"] = {}
+
+
+        await query.message.reply_text(
+
+            "➕ CREAR NUEVO PLAN\n\n"
+
+            "Paso 1️⃣\n"
+            "Introduce el nombre del plan.\n\n"
+
+            "Ejemplo:\n"
+            "VIP Mensual"
+
+        )
+
+        return
+
+
+    # =========================
     # VER PLANES DEL GRUPO
     # =========================
 
