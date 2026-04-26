@@ -3769,7 +3769,7 @@ def check_expirations():
 
                         cur.execute("""
 
-                        SELECT invite_link
+                        SELECT invite_link, group_id
                         FROM invite_links
                         WHERE user_id=%s
 
@@ -3777,27 +3777,21 @@ def check_expirations():
 
                         links = cur.fetchall()
 
-                        for (link,) in links:
+                        for link, group_id in links:
 
                             try:
 
-                                # Obtener group_id real desde invite_links
+                                # Obtener telegram_group_id real desde groups
 
                                 cur.execute("""
 
-                                SELECT group_id
-                                FROM invite_links
-                                WHERE user_id=%s
-                                LIMIT 1
+                                SELECT telegram_group_id
+                                FROM groups
+                                WHERE id=%s
 
-                                """, (user_id,))
+                                """, (group_id,))
 
                                 group_row = cur.fetchone()
-
-                                if not group_row:
-                                    continue
-
-                                telegram_group_id = group_row[0]
 
                                 if not group_row:
                                     continue
@@ -3836,52 +3830,67 @@ def check_expirations():
                         # EXPULSAR USUARIO
                         # =========================
 
-                        if group_row:
+                        for link, group_id in links:
 
-                            telegram_group_id = group_row[0]
+                            try:
 
-                            ban_response = requests.post(
+                                cur.execute("""
 
-                                f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+                                SELECT telegram_group_id
+                                FROM groups
+                                WHERE id=%s
 
-                                json={
-                                    "chat_id": telegram_group_id,
-                                    "user_id": user_id
-                                }
+                                """, (group_id,))
 
-                            ).json()
+                                group_row = cur.fetchone()
 
+                                if not group_row:
+                                    continue
 
-                            if not ban_response.get("ok"):
+                                telegram_group_id = group_row[0]
 
-                                print(
-                                    "Error expulsando usuario:",
-                                    ban_response
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                                    json={
+                                        "chat_id": telegram_group_id,
+                                        "user_id": user_id
+                                    }
+
                                 )
 
+                                requests.post(
 
-                            requests.post(
+                                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
 
-                                f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+                                    json={
+                                        "chat_id": telegram_group_id,
+                                        "user_id": user_id
+                                    }
 
-                                json={
-                                    "chat_id": telegram_group_id,
-                                    "user_id": user_id
-                                }
+                                )
 
-                            )
+                            except Exception as e:
 
+                                print("Error expulsando usuario:", e)
 
                         # =========================
-                        # ELIMINAR DE USERS
+                        # ELIMINAR SOLO EXPIRADOS
                         # =========================
 
                         cur.execute("""
 
                         DELETE FROM users
                         WHERE user_id=%s
+                        AND expiration <= %s
 
-                        """, (user_id,))
+                        """, (
+
+                            user_id,
+                            now
+
+                        ))
 
 
                         conn.commit()
