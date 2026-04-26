@@ -2981,7 +2981,15 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             """, (owner_id,))
 
-                            warnings = cur.fetchone()[0]
+                            row = cur.fetchone()
+
+                            if not row:
+
+                                warnings = 1
+
+                            else:
+
+                                warnings = row[0]
 
                             print(
                                 "Warnings actuales:",
