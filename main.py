@@ -3759,18 +3759,23 @@ def check_expirations():
 
                             try:
 
-                                # Obtener group_id desde invite_link
+                                # Obtener group_id real desde invite_links
 
                                 cur.execute("""
 
-                                SELECT telegram_group_id
-                                FROM groups
-                                ORDER BY id ASC
+                                SELECT group_id
+                                FROM invite_links
+                                WHERE user_id=%s
                                 LIMIT 1
 
-                                """)
+                                """, (user_id,))
 
                                 group_row = cur.fetchone()
+
+                                if not group_row:
+                                    continue
+
+                                telegram_group_id = group_row[0]
 
                                 if not group_row:
                                     continue
@@ -3813,20 +3818,35 @@ def check_expirations():
 
                             telegram_group_id = group_row[0]
 
-                            requests.post(
+                            ban_response = requests.post(
+
                                 f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
                                 json={
                                     "chat_id": telegram_group_id,
                                     "user_id": user_id
                                 }
-                            )
+
+                            ).json()
+
+
+                            if not ban_response.get("ok"):
+
+                                print(
+                                    "Error expulsando usuario:",
+                                    ban_response
+                                )
+
 
                             requests.post(
+
                                 f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
                                 json={
                                     "chat_id": telegram_group_id,
                                     "user_id": user_id
                                 }
+
                             )
 
 
