@@ -4027,20 +4027,82 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # COMPROBAR SUSCRIPCIÓN ACTIVA
+    # =========================
+
+    tiempo_texto = None
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT expiration
+
+                FROM users
+
+                WHERE user_id=%s
+
+            """, (user_id,))
+
+            row = cur.fetchone()
+
+            if row:
+
+                expiration = row[0]
+
+                if expiration:
+
+                    tiempo_texto = format_tiempo_restante(
+                        expiration
+                    )
+
+                else:
+
+                    tiempo_texto = "♾️ Permanente"
+
+    except Exception as e:
+
+        print(
+            "Error verificando suscripción:",
+            e
+        )
+
+
+    # =========================
     # MENSAJE BIENVENIDA
     # =========================
 
-    mensaje = (
+    if tiempo_texto:
 
-        "👋 Bienvenido\n\n"
+        mensaje = (
 
-        "Nos alegra que estés aquí.\n\n"
+            "👋 Bienvenido\n\n"
 
-        "A continuación puedes ver los grupos disponibles.\n\n"
+            "⏳ Tu suscripción actual:\n"
 
-        "Selecciona uno para ver sus planes."
+            f"{tiempo_texto}\n\n"
 
-    )
+            "A continuación puedes ver los grupos disponibles.\n\n"
+
+            "Selecciona uno para ver sus planes."
+
+        )
+
+    else:
+
+        mensaje = (
+
+            "👋 Bienvenido\n\n"
+
+            "Nos alegra que estés aquí.\n\n"
+
+            "A continuación puedes ver los grupos disponibles.\n\n"
+
+            "Selecciona uno para ver sus planes."
+
+        )
 
 
     message = update.message or update.callback_query.message
