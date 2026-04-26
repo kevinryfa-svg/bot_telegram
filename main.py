@@ -4102,6 +4102,105 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # MIS SUSCRIPCIONES ACTIVAS
+    # =========================
+
+    if data == "mis_subs":
+
+        try:
+
+            await query.message.delete()
+
+        except:
+
+            pass
+
+
+        user_id = query.from_user.id
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT DISTINCT il.group_id, g.name
+
+                    FROM invite_links il
+
+                    JOIN groups g
+                    ON il.group_id = g.telegram_group_id
+
+                    WHERE il.user_id=%s
+
+                """, (user_id,))
+
+                rows = cur.fetchall()
+
+        except Exception as e:
+
+            print("Error cargando suscripciones:", e)
+
+            await query.message.reply_text(
+                "❌ Error cargando suscripciones."
+            )
+
+            return
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "⚠️ No tienes suscripciones activas."
+            )
+
+            return
+
+
+        keyboard = []
+
+
+        for group_id, group_name in rows:
+
+            keyboard.append([
+
+                InlineKeyboardButton(
+
+                    f"📦 {group_name}",
+
+                    callback_data=f"mysub_{group_id}"
+
+                )
+
+            ])
+
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                "⬅️ Volver",
+
+                callback_data="back_groups"
+
+            )
+
+        ])
+
+
+        await query.message.reply_text(
+
+            "📦 Tus suscripciones activas:",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
     # ENTRAR A GRUPO
     # =========================
 
