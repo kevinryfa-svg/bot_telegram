@@ -27,6 +27,44 @@ from telegram.ext import (
 
 from datetime import datetime, timedelta
 
+
+# =========================
+# FORMATEAR TIEMPO RESTANTE
+# =========================
+
+def format_tiempo_restante(expiration):
+
+    if expiration is None:
+
+        return "♾️ Permanente"
+
+    tiempo_restante = expiration - datetime.now()
+
+    total_segundos = int(
+        tiempo_restante.total_seconds()
+    )
+
+    if total_segundos <= 0:
+
+        return "Expirado"
+
+    dias = total_segundos // 86400
+    horas = (total_segundos % 86400) // 3600
+    minutos = (total_segundos % 3600) // 60
+
+    if dias > 0:
+
+        return f"{dias}d {horas}h {minutos}m"
+
+    elif horas > 0:
+
+        return f"{horas}h {minutos}m"
+
+    else:
+
+        return f"{minutos}m"
+
+
 from db import conn, create_tables
 
 
@@ -152,115 +190,6 @@ async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
 
     )
-
-
-# =========================
-# CALLBACK CREAR CÓDIGO
-# =========================
-
-async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-
-    if not data.startswith("gen_"):
-        return
-
-    if data == "gen_perm":
-        duration = 0
-    else:
-        duration = int(data.split("_")[1])
-
-    code = generate_code()
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-        INSERT INTO invite_codes
-        (code, duration, used)
-
-        VALUES (%s, %s, FALSE)
-
-        """, (code, duration))
-
-        conn.commit()
-
-    await query.message.reply_text(
-
-        f"✅ Código creado:\n\n{code}"
-
-    )
-
-
-# =========================
-# VER CÓDIGOS
-# =========================
-
-async def ver_codigos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-        SELECT code, duration, used
-        FROM invite_codes
-        ORDER BY code DESC
-        LIMIT 50
-
-        """)
-
-        rows = cur.fetchall()
-
-    texto = "🎟️ Códigos:\n\n"
-
-    for code, duration, used in rows:
-
-        estado = "❌ usado" if used else "✅ activo"
-
-        texto += f"{code}\n{duration} min — {estado}\n\n"
-
-    await update.message.reply_text(texto)
-
-
-# =========================
-# VER USUARIOS
-# =========================
-
-async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-        SELECT user_id, expiration
-        FROM users
-        ORDER BY expiration DESC
-
-        """)
-
-        users = cur.fetchall()
-
-    texto = "👥 Usuarios:\n\n"
-
-    for user_id, expiration in users:
-
-        texto += f"{user_id} — {expiration}\n"
-
-    await update.message.reply_text(texto)
-
-
-# =========================
-# DEBUG DATABASE
-# =========================
 
 async def debug_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -816,28 +745,9 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     # calcular tiempo restante
 
-                    if expiration is None:
-
-                        tiempo_texto = "♾️ Permanente"
-
-                    else:
-
-                        tiempo_restante = expiration - datetime.now()
-
-                        dias = tiempo_restante.days
-                        horas = tiempo_restante.seconds // 3600
-
-                        if dias > 0:
-
-                            tiempo_texto = f"{dias} días"
-
-                        elif horas > 0:
-
-                            tiempo_texto = f"{horas} horas"
-
-                        else:
-
-                            tiempo_texto = "menos de 1 hora"
+                    tiempo_texto = format_tiempo_restante(
+                        expiration
+                    )
 
 
                     # borrar links antiguos
@@ -1977,29 +1887,9 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
     # CALCULAR TIEMPO RESTANTE
     # =========================
 
-    if expiration is None:
-
-        tiempo_texto = "♾️ Permanente"
-
-    else:
-
-        tiempo_restante = expiration - datetime.now()
-
-        dias = tiempo_restante.days
-        horas = tiempo_restante.seconds // 3600
-        minutos = (tiempo_restante.seconds % 3600) // 60
-
-        if dias > 0:
-
-            tiempo_texto = f"{dias} días"
-
-        elif horas > 0:
-
-            tiempo_texto = f"{horas} horas"
-
-        else:
-
-            tiempo_texto = f"{minutos} minutos"
+    tiempo_texto = format_tiempo_restante(
+        expiration
+    )
 
 
     await update.message.reply_text(
@@ -3426,28 +3316,9 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         try:
 
-                            if expiration is None:
-
-                                tiempo_texto = "♾️ Permanente"
-
-                            else:
-
-                                tiempo_restante = expiration - datetime.now()
-
-                                dias = tiempo_restante.days
-                                horas = tiempo_restante.seconds // 3600
-
-                                if dias > 0:
-
-                                    tiempo_texto = f"{dias} días"
-
-                                elif horas > 0:
-
-                                    tiempo_texto = f"{horas} horas"
-
-                                else:
-
-                                    tiempo_texto = "menos de 1 hora"
+                            tiempo_texto = format_tiempo_restante(
+                                expiration
+                            )
 
 
                             bienvenida = requests.post(
