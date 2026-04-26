@@ -2112,9 +2112,25 @@ def stripe_webhook():
 
                 else:
 
-                    expiration = datetime.now() + timedelta(
-                        days=int(duration_days)
-                    )
+                    duration_value = int(duration_days)
+
+                    # =========================
+                    # MODO INTELIGENTE DURACIÓN
+                    # < 1440 → minutos
+                    # >= 1440 → días
+                    # =========================
+
+                    if duration_value < 1440:
+
+                        expiration = datetime.now() + timedelta(
+                            minutes=duration_value
+                        )
+
+                    else:
+
+                        expiration = datetime.now() + timedelta(
+                            days=duration_value // 1440
+                        )
 
         except Exception as e:
 
