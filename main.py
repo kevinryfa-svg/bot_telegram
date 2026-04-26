@@ -4201,6 +4201,191 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # DETALLE DE SUSCRIPCIÓN
+    # =========================
+
+    if data.startswith("mysub_"):
+
+        try:
+
+            await query.message.delete()
+
+        except:
+
+            pass
+
+
+        user_id = query.from_user.id
+
+        telegram_group_id = int(
+            data.split("_")[1]
+        )
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                # =========================
+                # OBTENER NOMBRE GRUPO
+                # =========================
+
+                cur.execute("""
+
+                    SELECT name
+
+                    FROM groups
+
+                    WHERE telegram_group_id=%s
+
+                """, (telegram_group_id,))
+
+                group_row = cur.fetchone()
+
+
+                if not group_row:
+
+                    await query.message.reply_text(
+                        "❌ Grupo no encontrado."
+                    )
+
+                    return
+
+
+                group_name = group_row[0]
+
+
+                # =========================
+                # OBTENER EXPIRATION
+                # =========================
+
+                cur.execute("""
+
+                    SELECT expiration
+
+                    FROM users
+
+                    WHERE user_id=%s
+
+                """, (user_id,))
+
+                user_row = cur.fetchone()
+
+
+                if not user_row:
+
+                    await query.message.reply_text(
+                        "❌ No tienes suscripción activa."
+                    )
+
+                    return
+
+
+                expiration = user_row[0]
+
+
+                # =========================
+                # OBTENER LINK ACTUAL
+                # =========================
+
+                cur.execute("""
+
+                    SELECT invite_link
+
+                    FROM invite_links
+
+                    WHERE user_id=%s
+                    AND group_id=%s
+
+                    ORDER BY created_at DESC
+
+                    LIMIT 1
+
+                """, (
+
+                    user_id,
+                    telegram_group_id
+
+                ))
+
+                link_row = cur.fetchone()
+
+
+        except Exception as e:
+
+            print("Error cargando detalle suscripción:", e)
+
+            await query.message.reply_text(
+                "❌ Error cargando suscripción."
+            )
+
+            return
+
+
+        # =========================
+        # FORMATEAR TIEMPO
+        # =========================
+
+        tiempo_texto = format_tiempo_restante(
+            expiration
+        )
+
+
+        # =========================
+        # OBTENER LINK
+        # =========================
+
+        if link_row:
+
+            link = link_row[0]
+
+        else:
+
+            link = "No disponible"
+
+
+        keyboard = [
+
+            [
+
+                InlineKeyboardButton(
+
+                    "⬅️ Volver",
+
+                    callback_data="mis_subs"
+
+                )
+
+            ]
+
+        ]
+
+
+        mensaje = (
+
+            f"📦 {group_name}\n\n"
+
+            f"⏳ Tiempo restante:\n"
+            f"{tiempo_texto}\n\n"
+
+            f"🔗 Tu link:\n"
+            f"{link}"
+
+        )
+
+
+        await query.message.reply_text(
+
+            mensaje,
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    # =========================
     # ENTRAR A GRUPO
     # =========================
 
