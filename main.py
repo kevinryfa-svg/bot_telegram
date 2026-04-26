@@ -3766,134 +3766,158 @@ def check_expirations():
 
                     try:
 
-                        print("Expulsando expirado:", user_id)
+                        print(
+                            "Expulsando expirado:",
+                            user_id,
+                            "grupo:",
+                            group_id
+                        )
 
                         # =========================
-                        # OBTENER TODOS LOS LINKS DEL USUARIO
+                        # OBTENER TELEGRAM_GROUP_ID
                         # =========================
 
                         cur.execute("""
 
-                        SELECT invite_link, group_id
+                        SELECT telegram_group_id
+                        FROM groups
+                        WHERE id=%s
+
+                        """, (group_id,))
+
+                        group_row = cur.fetchone()
+
+                        if not group_row:
+                            continue
+
+                        telegram_group_id = group_row[0]
+
+
+                        # =========================
+                        # OBTENER LINK DEL GRUPO
+                        # =========================
+
+                        cur.execute("""
+
+                        SELECT invite_link
                         FROM invite_links
                         WHERE user_id=%s
+                        AND group_id=%s
 
-                        """, (user_id,))
+                        """, (
+
+                            user_id,
+                            group_id
+
+                        ))
 
                         links = cur.fetchall()
 
-                        for link, group_id in links:
+
+                        # =========================
+                        # REVOCAR LINKS
+                        # =========================
+
+                        for (link,) in links:
 
                             try:
-
-                                # Obtener telegram_group_id real desde groups
-
-                                cur.execute("""
-
-                                SELECT telegram_group_id
-                                FROM groups
-                                WHERE id=%s
-
-                                """, (group_id,))
-
-                                group_row = cur.fetchone()
-
-                                if not group_row:
-                                    continue
-
-                                telegram_group_id = group_row[0]
 
                                 requests.post(
 
                                     f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
                                     json={
+
                                         "chat_id": telegram_group_id,
+
                                         "invite_link": link
+
                                     }
 
                                 )
 
                             except Exception as e:
 
-                                print("Error revocando link expirado:", e)
-
-
-                        # =========================
-                        # BORRAR LINKS GUARDADOS
-                        # =========================
-
-                        cur.execute("""
-
-                        DELETE FROM invite_links
-                        WHERE user_id=%s
-
-                        """, (user_id,))
+                                print(
+                                    "Error revocando link expirado:",
+                                    e
+                                )
 
 
                         # =========================
                         # EXPULSAR USUARIO
                         # =========================
 
-                        for link, group_id in links:
+                        try:
 
-                            try:
+                            requests.post(
 
-                                cur.execute("""
+                                f"https://api.telegram.org/bot{TOKEN}/banChatMember",
 
-                                SELECT telegram_group_id
-                                FROM groups
-                                WHERE id=%s
+                                json={
 
-                                """, (group_id,))
+                                    "chat_id": telegram_group_id,
 
-                                group_row = cur.fetchone()
+                                    "user_id": user_id
 
-                                if not group_row:
-                                    continue
+                                }
 
-                                telegram_group_id = group_row[0]
+                            )
 
-                                requests.post(
+                            requests.post(
 
-                                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+                                f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
 
-                                    json={
-                                        "chat_id": telegram_group_id,
-                                        "user_id": user_id
-                                    }
+                                json={
 
-                                )
+                                    "chat_id": telegram_group_id,
 
-                                requests.post(
+                                    "user_id": user_id
 
-                                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+                                }
 
-                                    json={
-                                        "chat_id": telegram_group_id,
-                                        "user_id": user_id
-                                    }
+                            )
 
-                                )
+                        except Exception as e:
 
-                            except Exception as e:
+                            print(
+                                "Error expulsando usuario:",
+                                e
+                            )
 
-                                print("Error expulsando usuario:", e)
 
                         # =========================
-                        # ELIMINAR SOLO EXPIRADOS
+                        # BORRAR SOLO LINK EXPIRADO
+                        # =========================
+
+                        cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE user_id=%s
+                        AND group_id=%s
+
+                        """, (
+
+                            user_id,
+                            group_id
+
+                        ))
+
+
+                        # =========================
+                        # BORRAR SOLO SUSCRIPCIÓN EXPIRADA
                         # =========================
 
                         cur.execute("""
 
                         DELETE FROM users
                         WHERE user_id=%s
-                        AND expiration <= %s
+                        AND group_id=%s
 
                         """, (
 
                             user_id,
-                            now
+                            group_id
 
                         ))
 
@@ -3902,7 +3926,7 @@ def check_expirations():
 
 
                         # =========================
-                        # AVISAR AL ADMIN
+                        # AVISAR ADMIN
                         # =========================
 
                         requests.post(
@@ -3910,10 +3934,17 @@ def check_expirations():
                             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
 
                             json={
+
                                 "chat_id": ADMIN_ID,
+
                                 "text":
+
                                 f"⛔ Usuario expirado eliminado\n\n"
-                                f"User ID: {user_id}"
+
+                                f"User ID: {user_id}\n"
+
+                                f"Grupo ID: {group_id}"
+
                             }
 
                         )
@@ -3921,7 +3952,13 @@ def check_expirations():
 
                     except Exception as e:
 
-                        print("Error procesando expiración:", e)
+                        print(
+
+                            "Error procesando expiración:",
+
+                            e
+
+                        )
 
         time.sleep(60)
 
