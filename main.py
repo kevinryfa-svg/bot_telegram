@@ -99,10 +99,6 @@ ADMIN_ID = 8761243211
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
-PRICE_1_DIA = "price_1TLZBDBbMxuRndhhV03r5m3T"
-PRICE_7_DIAS = "price_1TLZCKBbMxuRndhhD8V9VYrp"
-PRICE_PERMANENTE = "price_1TLZDQBbMxuRndhhYMG0Qf69"
-
 bot = Bot(token=TOKEN)
 
 telegram_app = ApplicationBuilder().token(TOKEN).build()
