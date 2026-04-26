@@ -4027,10 +4027,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
-    # COMPROBAR SUSCRIPCIÓN ACTIVA
+    # COMPROBAR SUSCRIPCIONES ACTIVAS
     # =========================
 
-    tiempo_texto = None
+    suscripciones_texto = ""
 
     try:
 
@@ -4038,19 +4038,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             cur.execute("""
 
-                SELECT expiration
+                SELECT DISTINCT g.name, u.expiration
 
-                FROM users
+                FROM invite_links il
 
-                WHERE user_id=%s
+                JOIN groups g
+                ON il.group_id = g.telegram_group_id
+
+                LEFT JOIN users u
+                ON il.user_id = u.user_id
+
+                WHERE il.user_id=%s
 
             """, (user_id,))
 
-            row = cur.fetchone()
+            rows = cur.fetchall()
 
-            if row:
 
-                expiration = row[0]
+        if rows:
+
+            for group_name, expiration in rows:
 
                 if expiration:
 
@@ -4062,10 +4069,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     tiempo_texto = "♾️ Permanente"
 
+
+                suscripciones_texto += (
+
+                    f"⏳ Tu suscripción actual al grupo {group_name}:\n"
+
+                    f"{tiempo_texto}\n\n"
+
+                )
+
     except Exception as e:
 
         print(
-            "Error verificando suscripción:",
+            "Error verificando suscripciones:",
             e
         )
 
@@ -4074,17 +4090,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # MENSAJE BIENVENIDA
     # =========================
 
-    if tiempo_texto:
+    if suscripciones_texto:
 
         mensaje = (
 
             "👋 Bienvenido\n\n"
 
-            "⏳ Tu suscripción actual:\n"
+            f"{suscripciones_texto}"
 
-            f"{tiempo_texto}\n\n"
-
-            "A continuación puedes ver los grupos disponibles.\n\n"
+            "A continuación puedes ver los grupos disponibles para suscribirte.\n\n"
 
             "Selecciona uno para ver sus planes."
 
@@ -4098,7 +4112,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             "Nos alegra que estés aquí.\n\n"
 
-            "A continuación puedes ver los grupos disponibles.\n\n"
+            "A continuación puedes ver los grupos disponibles para suscribirte.\n\n"
 
             "Selecciona uno para ver sus planes."
 
