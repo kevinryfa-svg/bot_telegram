@@ -4120,7 +4120,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
-                    SELECT name, price_id
+                    SELECT name,
+                           price_id,
+                           amount,
+                           currency
 
                     FROM plans
 
@@ -4156,26 +4159,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
 
 
-        for name, price_id in plans:
+        for name, price_id, amount, currency in plans:
 
-            with conn.cursor() as cur:
-
-                cur.execute("""
-
-                    SELECT amount, currency
-
-                    FROM plans
-
-                    WHERE price_id=%s
-
-                """, (price_id,))
-
-                price_data = cur.fetchone()
-
-
-            if price_data:
-
-                amount, currency = price_data
+            if amount and currency:
 
                 button_text = f"{name} — {amount} {currency}"
 
