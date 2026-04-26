@@ -2166,16 +2166,18 @@ def stripe_webhook():
             cur.execute("""
 
             INSERT INTO users
-            (user_id, expiration)
+            (user_id, group_id, expiration)
 
-            VALUES (%s, %s)
+            VALUES (%s, %s, %s)
 
-            ON CONFLICT (user_id)
+            ON CONFLICT (user_id, group_id)
+
             DO UPDATE SET expiration=%s
 
             """, (
 
                 user_id,
+                metadata_group_id,
                 expiration,
                 expiration
 
