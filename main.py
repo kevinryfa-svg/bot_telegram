@@ -4090,7 +4090,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # MENSAJE BIENVENIDA
     # =========================
 
-    # Si aún no existe la variable, crearla
     suscripciones_texto = ""
 
     try:
@@ -4107,10 +4106,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ON u.group_id = g.id
 
                 WHERE u.user_id=%s
-                AND (
-                    u.expiration IS NULL
-                    OR u.expiration > NOW()
-                )
 
                 ORDER BY g.name ASC
 
@@ -4122,18 +4117,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 for group_name, expiration in subs:
 
-                    tiempo_texto = format_tiempo_restante(
-                        expiration
-                    )
+                    # FILTRAR EN PYTHON (no en SQL)
 
-                    suscripciones_texto += (
+                    if expiration is None or expiration > datetime.now():
 
-                        f"⏳ Tu suscripción actual al grupo "
-                        f"({group_name}):\n"
+                        tiempo_texto = format_tiempo_restante(
+                            expiration
+                        )
 
-                        f"{tiempo_texto}\n\n"
+                        suscripciones_texto += (
 
-                    )
+                            f"⏳ Tu suscripción actual al grupo "
+                            f"({group_name}):\n"
+
+                            f"{tiempo_texto}\n\n"
+
+                        )
 
     except Exception as e:
 
