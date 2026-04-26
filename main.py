@@ -4090,6 +4090,59 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # MENSAJE BIENVENIDA
     # =========================
 
+    # Si aún no existe la variable, crearla
+    suscripciones_texto = ""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT g.name, u.expiration
+
+                FROM users u
+
+                JOIN groups g
+                ON u.group_id = g.id
+
+                WHERE u.user_id=%s
+                AND (
+                    u.expiration IS NULL
+                    OR u.expiration > NOW()
+                )
+
+                ORDER BY g.name ASC
+
+            """, (user_id,))
+
+            subs = cur.fetchall()
+
+            if subs:
+
+                for group_name, expiration in subs:
+
+                    tiempo_texto = format_tiempo_restante(
+                        expiration
+                    )
+
+                    suscripciones_texto += (
+
+                        f"⏳ Tu suscripción actual al grupo "
+                        f"({group_name}):\n"
+
+                        f"{tiempo_texto}\n\n"
+
+                    )
+
+    except Exception as e:
+
+        print(
+            "Error cargando suscripciones:",
+            e
+        )
+
+
     if suscripciones_texto:
 
         mensaje = (
