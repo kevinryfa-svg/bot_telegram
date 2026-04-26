@@ -5783,42 +5783,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # =========================
                 # NUEVO — SI NO QUEDAN PLANES
-                # BORRAR GRUPO COMPLETO
+                # NO BORRAR GRUPO — SOLO INFORMAR
                 # =========================
 
                 if remaining_plans == 0:
 
                     print(
-                        "Eliminando grupo sin planes:",
+                        "Grupo sin planes restantes:",
                         group_id
                     )
-
-                    try:
-
-                        cur.execute("""
-
-                            DELETE FROM invite_links
-                            WHERE group_id=%s
-
-                        """, (group_id,))
-
-                    except Exception as e:
-
-                        print("Error borrando invite_links:", e)
-
-
-                    try:
-
-                        cur.execute("""
-
-                            DELETE FROM groups
-                            WHERE id=%s
-
-                        """, (group_id,))
-
-                    except Exception as e:
-
-                        print("Error borrando groups:", e)
 
 
                 conn.commit()
