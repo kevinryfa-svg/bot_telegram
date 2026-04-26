@@ -2172,25 +2172,69 @@ def stripe_webhook():
         # CALCULAR DURACIÓN
         # =========================
 
-        if price_id == PRICE_1_DIA:
+        try:
 
-            expiration = datetime.now() + timedelta(days=1)
-            plan_name = "1 día"
+            metadata_group_id = int(
+                session["metadata"]["group_id"]
+            )
 
-        elif price_id == PRICE_7_DIAS:
+            with conn.cursor() as cur:
 
-            expiration = datetime.now() + timedelta(days=7)
-            plan_name = "7 días"
+                cur.execute("""
 
-        elif price_id == PRICE_PERMANENTE:
+                    SELECT duration_days, name
+
+                    FROM plans
+
+                    WHERE price_id=%s
+                    AND group_id=%s
+
+                """, (
+
+                    price_id,
+                    metadata_group_id
+
+                ))
+
+                row = cur.fetchone()
+
+
+            if not row:
+
+                print(
+                    "ERROR: plan no encontrado:",
+                    price_id,
+                    metadata_group_id
+                )
+
+                expiration = None
+                plan_name = "Desconocido"
+
+            else:
+
+                duration_days, plan_name = row
+
+                # Protección contra valores inválidos
+
+                if duration_days is None or duration_days == 0:
+
+                    expiration = None
+
+                else:
+
+                    expiration = datetime.now() + timedelta(
+                        days=int(duration_days)
+                    )
+
+        except Exception as e:
+
+            print(
+                "Error calculando duración:",
+                e
+            )
 
             expiration = None
-            plan_name = "Permanente"
-
-        else:
-
-            expiration = None
-            plan_name = "Desconocido"
+            plan_name = "Error"
 
 
         # =========================
