@@ -4030,7 +4030,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-    await update.message.reply_text(
+    message = update.message or update.callback_query.message
+
+
+    await message.reply_text(
 
         mensaje,
 
