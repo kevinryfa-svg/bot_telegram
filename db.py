@@ -95,6 +95,33 @@ def create_tables():
 
 
         # =========================
+        # ASEGURAR PRIMARY KEY MULTI-GRUPO
+        # =========================
+
+        try:
+
+            cur.execute("""
+
+            ALTER TABLE users
+            DROP CONSTRAINT IF EXISTS users_pkey;
+
+            """)
+
+            cur.execute("""
+
+            ALTER TABLE users
+            ADD PRIMARY KEY (user_id, group_id);
+
+            """)
+
+            print("PRIMARY KEY users corregida")
+
+        except Exception as e:
+
+            print("PK users ya correcta:", e)
+
+
+        # =========================
         # TABLA ADMINS
         # =========================
 
