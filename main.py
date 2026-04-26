@@ -3747,7 +3747,7 @@ def check_expirations():
 
             cur.execute("""
 
-            SELECT user_id, expiration
+            SELECT user_id, group_id, expiration
             FROM users
             WHERE expiration IS NOT NULL
 
@@ -3757,7 +3757,7 @@ def check_expirations():
 
             now = datetime.now()
 
-            for user_id, expiration in rows:
+            for user_id, group_id, expiration in rows:
 
                 if expiration and now > expiration:
 
