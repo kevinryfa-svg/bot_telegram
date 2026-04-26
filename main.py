@@ -3987,6 +3987,46 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # NUEVO — BOTÓN MIS SUSCRIPCIONES
+    # =========================
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT DISTINCT group_id
+
+                FROM invite_links
+
+                WHERE user_id=%s
+
+            """, (user_id,))
+
+            user_groups = cur.fetchall()
+
+
+        if user_groups:
+
+            keyboard.append([
+
+                InlineKeyboardButton(
+
+                    "🔐 Ver mis suscripciones activas",
+
+                    callback_data="mis_subs"
+
+                )
+
+            ])
+
+    except Exception as e:
+
+        print("Error verificando suscripciones:", e)
+
+
+    # =========================
     # MENSAJE BIENVENIDA
     # =========================
 
