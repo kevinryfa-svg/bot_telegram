@@ -2071,6 +2071,9 @@ def stripe_webhook():
 
         price_id = line_items["data"][0]["price"]["id"]
 
+        metadata_group_id = int(
+            session["metadata"]["group_id"]
+        )
 
         # =========================
         # CALCULAR DURACIÓN
