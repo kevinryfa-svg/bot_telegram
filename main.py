@@ -3836,6 +3836,24 @@ def check_expirations():
 
                                 )
 
+
+                                # =========================
+                                # MARCAR LINK COMO INACTIVO
+                                # =========================
+
+                                cur.execute("""
+
+                                UPDATE invite_links
+
+                                SET is_active=FALSE,
+
+                                    revoked_at=NOW()
+
+                                WHERE invite_link=%s
+
+                                """, (link,))
+
+
                             except Exception as e:
 
                                 print(
@@ -3895,6 +3913,7 @@ def check_expirations():
                         DELETE FROM invite_links
                         WHERE user_id=%s
                         AND group_id=%s
+                        AND is_active=FALSE
 
                         """, (
 
