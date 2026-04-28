@@ -4466,8 +4466,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     FROM users
 
                     WHERE user_id=%s
+                    AND group_id=%s
 
-                """, (user_id,))
+                """, (
+
+                    user_id,
+                    telegram_group_id
+
+                ))
 
                 user_row = cur.fetchone()
 
@@ -4496,6 +4502,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     WHERE user_id=%s
                     AND group_id=%s
+                    AND is_active=TRUE
 
                     ORDER BY created_at DESC
 
