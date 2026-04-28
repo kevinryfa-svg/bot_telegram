@@ -4328,7 +4328,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     FROM invite_links il
 
                     JOIN groups g
-                    ON il.group_id = g.id
+                    ON il.group_id = g.telegram_group_id
 
                     WHERE il.user_id=%s
 
@@ -4337,16 +4337,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """, (user_id,))
 
                 rows = cur.fetchall()
-
-        except Exception as e:
-
-            print("Error cargando suscripciones:", e)
-
-            await query.message.reply_text(
-                "❌ Error cargando suscripciones."
-            )
-
-            return
 
         except Exception as e:
 
