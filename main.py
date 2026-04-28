@@ -4456,6 +4456,35 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                 # =========================
+                # OBTENER group_id REAL
+                # =========================
+
+                cur.execute("""
+
+                    SELECT id
+
+                    FROM groups
+
+                    WHERE telegram_group_id=%s
+
+                """, (telegram_group_id,))
+
+                group_id_row = cur.fetchone()
+
+
+                if not group_id_row:
+
+                    await query.message.reply_text(
+                        "❌ Grupo no encontrado."
+                    )
+
+                    return
+
+
+                real_group_id = group_id_row[0]
+
+
+                # =========================
                 # OBTENER EXPIRATION
                 # =========================
 
@@ -4467,11 +4496,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     WHERE user_id=%s
                     AND group_id=%s
-
+                    AND is_active=TRUE
+                            
                 """, (
 
                     user_id,
-                    telegram_group_id
+                    real_group_id
 
                 ))
 
