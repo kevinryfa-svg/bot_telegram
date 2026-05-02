@@ -3359,8 +3359,42 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         try:
 
+                            # =========================
+                            # OBTENER expiration REAL DEL GRUPO
+                            # =========================
+
+                            with conn.cursor() as cur:
+
+                                cur.execute("""
+
+                                    SELECT expiration
+
+                                    FROM users
+
+                                    WHERE user_id=%s
+                                    AND group_id=%s
+
+                                """, (
+
+                                    user_id,
+                                    group_id
+
+                                ))
+
+                                row_exp = cur.fetchone()
+
+
+                                if row_exp:
+
+                                    expiration_real = row_exp[0]
+
+                                else:
+
+                                    expiration_real = None
+
+
                             tiempo_texto = format_tiempo_restante(
-                                expiration
+                                expiration_real
                             )
 
 
