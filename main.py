@@ -3626,12 +3626,10 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
 
 
 # =========================
-# DETECTAR BOT AÑADIDO A GRUPO
+# DETECTAR USUARIO ENTRANDO AL GRUPO
 # =========================
 
-async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    print("detect_bot_added ejecutado")
+async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message:
         return
@@ -3640,141 +3638,212 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    bot_id = context.bot.id
+    telegram_group_id = update.message.chat.id
 
 
     for member in update.message.new_chat_members:
 
-
-        # =========================
-        # SI EL MIEMBRO ES EL BOT
-        # =========================
-
-        if member.id == bot_id:
-
-            group_id = update.message.chat.id
-            group_name = update.message.chat.title
-
-            print("Bot añadido a grupo:", group_name, group_id)
+        user_id = member.id
+        username = member.username
+        first_name = member.first_name
 
 
-            try:
+        # Evitar verificar al propio bot
 
-                added_by = update.message.from_user.id
-
-            except:
-
-                added_by = None
-
-            print("Bot añadido por usuario:", added_by)
-
-            # =========================
-            # AVISO SI NO FUE EL ADMIN
-            # =========================
-
-            if added_by and added_by != ADMIN_ID:
-
-                print("Bot añadido por usuario NO autorizado:", added_by)
-
-                try:
-
-                    await context.bot.send_message(
-
-                        chat_id=ADMIN_ID,
-
-                        text=
-
-                        "⚠️ BOT AÑADIDO POR USUARIO NO AUTORIZADO\n\n"
-
-                        f"Grupo: {group_name}\n"
-
-                        f"ID: {group_id}\n"
-
-                        f"Usuario: {added_by}\n\n"
-
-                        "El grupo será registrado igualmente."
-
-                    )
-
-                except Exception as e:
-
-                    print("Error enviando aviso admin:", e)
-
-            print("Continuando registro del grupo...")
-
-
-            try:
-
-                await context.bot.send_message(
-
-                    chat_id=group_id,
-
-                    text=
-
-                    "⚠️ Necesito permisos de administrador.\n\n"
-
-                    "Por favor asígnamelos en los próximos 30 segundos.\n\n"
-
-                    "Si no, abandonaré el grupo automáticamente."
-
-                )
-
-            except Exception as e:
-
-                print("Error enviando aviso al grupo:", e)
-
-
-            try:
-
-                await context.bot.send_message(
-
-                    chat_id=group_id,
-
-                    text=
-
-                    "⚠️ Necesito permisos de administrador.\n\n"
-
-                    "Por favor asígnamelos en los próximos 30 segundos.\n\n"
-
-                    "Si no, abandonaré el grupo automáticamente."
-
-                )
-
-            except Exception as e:
-
-                print("Error enviando aviso al grupo:", e)
-
-
-            # =========================
-            # ESPERAR 30s ANTES DE VERIFICAR ADMIN
-            # =========================
-
-            
-
-            asyncio.create_task(
-
-                verificar_admin_despues(
-
-                    group_id,
-
-                    group_name,
-
-                    bot_id,
-
-                    context,
-                  
-                    added_by                    
-
-                )
-
-            )
-
+        if user_id == context.bot.id:
             return
 
 
-# =========================
-# EXPIRACIONES
-# =========================
+        print(
+            "Usuario detectado entrando:",
+            user_id
+        )
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                # =========================
+                # OBTENER group_id REAL
+                # =========================
+
+                cur.execute("""
+
+                    SELECT id
+
+                    FROM groups
+
+                    WHERE telegram_group_id=%s
+
+                """, (telegram_group_id,))
+
+                group_row = cur.fetchone()
+
+
+                if not group_row:
+
+                    print(
+                        "Grupo no encontrado en DB:",
+                        telegram_group_id
+                    )
+
+                    return
+
+
+                group_id = group_row[0]
+
+
+                # =========================
+                # VERIFICAR SUSCRIPCIÓN
+                # =========================
+
+                cur.execute("""
+
+                    SELECT expiration
+
+                    FROM users
+
+                    WHERE user_id=%s
+                    AND group_id=%s
+
+                """, (
+
+                    user_id,
+                    group_id
+
+                ))
+
+                user_row = cur.fetchone()
+
+
+                # =========================
+                # SI NO EXISTE → LINK NO REGISTRADO
+                # =========================
+
+                if not user_row:
+
+                    print(
+                        "Usuario sin suscripción:",
+                        user_id
+                    )
+
+
+                    keyboard = [
+
+                        [
+
+                            InlineKeyboardButton(
+                                "✅ ACEPTAR",
+                                callback_data=
+                                f"allow_user_{user_id}_{group_id}"
+                            )
+
+                        ],
+
+                        [
+
+                            InlineKeyboardButton(
+                                "❌ EXPULSAR",
+                                callback_data=
+                                f"deny_user_{user_id}_{group_id}"
+                            )
+
+                        ]
+
+                    ]
+
+
+                    try:
+
+                        await context.bot.send_message(
+
+                            chat_id=ADMIN_ID,
+
+                            text=
+
+                            "🚨 ACCESO NO AUTORIZADO DETECTADO\n\n"
+
+                            f"Usuario: {first_name}\n"
+
+                            f"Username: @{username}\n"
+
+                            f"ID: {user_id}\n\n"
+
+                            "Ha entrado con un link no registrado.\n\n"
+
+                            "¿Deseas permitirlo o expulsarlo?",
+
+                            reply_markup=
+                            InlineKeyboardMarkup(keyboard)
+
+                        )
+
+                    except Exception as e:
+
+                        print(
+                            "Error enviando aviso admin:",
+                            e
+                        )
+
+
+                    return
+
+
+                expiration = user_row[0]
+
+
+                # =========================
+                # SI EXPIRADO → EXPULSAR
+                # =========================
+
+                if expiration and datetime.now() > expiration:
+
+                    print(
+                        "Usuario expirado detectado:",
+                        user_id
+                    )
+
+
+                    requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                        json={
+
+                            "chat_id": telegram_group_id,
+
+                            "user_id": user_id
+
+                        }
+
+                    )
+
+
+                    requests.post(
+
+                        f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                        json={
+
+                            "chat_id": telegram_group_id,
+
+                            "user_id": user_id
+
+                        }
+
+                    )
+
+
+                    return
+
+
+        except Exception as e:
+
+            print(
+                "Error verificando usuario:",
+                e
+            )   
 
 def check_expirations():
 
@@ -4971,6 +5040,142 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
 
         )
+
+        return
+
+
+    # =========================
+    # ADMIN — PERMITIR USUARIO
+    # =========================
+
+    if data.startswith("allow_user_"):
+
+        parts = data.split("_")
+
+        user_id = int(parts[2])
+        group_id = int(parts[3])
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    INSERT INTO users
+
+                    (user_id, group_id, expiration)
+
+                    VALUES (%s, %s, NULL)
+
+                    ON CONFLICT
+                    (user_id, group_id)
+
+                    DO UPDATE SET expiration=NULL
+
+                """, (
+
+                    user_id,
+                    group_id
+
+                ))
+
+                conn.commit()
+
+
+            await query.message.reply_text(
+
+                "✅ Usuario permitido permanentemente."
+
+            )
+
+
+        except Exception as e:
+
+            print(
+                "Error permitiendo usuario:",
+                e
+            )
+
+        return
+
+
+    # =========================
+    # ADMIN — EXPULSAR USUARIO
+    # =========================
+
+    if data.startswith("deny_user_"):
+
+        parts = data.split("_")
+
+        user_id = int(parts[2])
+        group_id = int(parts[3])
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT telegram_group_id
+
+                    FROM groups
+
+                    WHERE id=%s
+
+                """, (group_id,))
+
+                row = cur.fetchone()
+
+
+            if row:
+
+                telegram_group_id = row[0]
+
+
+                requests.post(
+
+                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+
+                    json={
+
+                        "chat_id": telegram_group_id,
+
+                        "user_id": user_id
+
+                    }
+
+                )
+
+
+                requests.post(
+
+                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
+
+                    json={
+
+                        "chat_id": telegram_group_id,
+
+                        "user_id": user_id
+
+                    }
+
+                )
+
+
+            await query.message.reply_text(
+
+                "❌ Usuario expulsado."
+
+            )
+
+
+        except Exception as e:
+
+            print(
+                "Error expulsando usuario:",
+                e
+            )
 
         return
 
@@ -7214,6 +7419,12 @@ def main():
         )
     )
 
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            detect_user_join
+        )
+   )
 
     # =========================
     # DETECTAR BOT Y USUARIOS NUEVOS
