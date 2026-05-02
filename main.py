@@ -3905,15 +3905,37 @@ def check_expirations():
 
 
                         # =========================
-                        # BORRAR SOLO LINK EXPIRADO
+                        # DESACTIVAR LINK EXPIRADO
+                        # =========================
+
+                        cur.execute("""
+
+                        UPDATE invite_links
+
+                        SET is_active=FALSE,
+                            revoked_at=NOW()
+
+                        WHERE user_id=%s
+                        AND group_id=%s
+
+                        """, (
+
+                            user_id,
+                            group_id
+
+                        ))
+
+
+                        # =========================
+                        # BORRAR LINK DESACTIVADO
                         # =========================
 
                         cur.execute("""
 
                         DELETE FROM invite_links
+
                         WHERE user_id=%s
                         AND group_id=%s
-                        AND is_active=FALSE
 
                         """, (
 
@@ -4496,8 +4518,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     WHERE user_id=%s
                     AND group_id=%s
-                    AND is_active=TRUE
-                            
+
                 """, (
 
                     user_id,
