@@ -4082,10 +4082,13 @@ def check_expirations():
                                     }
 
                                 )
-                                
+
                                 print(
-                                     "Respuesta revokeChatInviteLink:",
-                                     response.json()
+
+                                    "Respuesta revokeChatInviteLink:",
+
+                                    response.json()
+
                                 )
 
 
@@ -4109,8 +4112,11 @@ def check_expirations():
                             except Exception as e:
 
                                 print(
+
                                     "Error revocando link expirado:",
+
                                     e
+
                                 )
 
 
