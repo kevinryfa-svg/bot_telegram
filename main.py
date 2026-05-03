@@ -3310,8 +3310,14 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         DELETE FROM invite_links
                         WHERE user_id=%s
+                        AND group_id=%s
 
-                        """, (user_id,))
+                        """, (
+
+                            user_id,
+                            telegram_group_id
+
+                        ))
 
 
                         requests.post(
