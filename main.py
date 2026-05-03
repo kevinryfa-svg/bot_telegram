@@ -2747,22 +2747,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         else:
 
-                            # =========================
-                            # CREAR LINK NUEVO
-                            # =========================
 
-                            invite_link = requests.post(
-
-                                f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-
-                                json={
-                                    "chat_id": telegram_group_id,
-                                    "member_limit": 1
-                                }
-
-                            ).json()
-
-                            new_link = invite_link["result"]["invite_link"]
 
 
                             # =========================
@@ -3423,41 +3408,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 message_id = bienvenida["result"]["message_id"]
 
-                                # =========================
-                                # OBTENER group_id REAL
-                                # =========================
-
-                                try:
-
-                                    with conn.cursor() as cur:
-
-                                        cur.execute("""
-
-                                            SELECT id
-
-                                            FROM groups
-
-                                            WHERE telegram_group_id=%s
-
-                                        """, (telegram_group_id,))
-
-                                        group_row = cur.fetchone()
-
-                                        if not group_row:
-                                            return
-
-                                        group_id = group_row[0]
-
-                                except Exception as e:
-
-                                    print(
-                                        "Error obteniendo group_id:",
-                                        e
-                                    )
-
-                                    return
-
-
                                 time.sleep(10)
 
                                 requests.post(
@@ -3476,10 +3426,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         except Exception as e:
 
-                            print(
-                                "Error bienvenida:",
-                                e
-                            )
+                            print("Error bienvenida:", e)
 
 
         except Exception as e:
