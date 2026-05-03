@@ -3348,38 +3348,55 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         try:
 
-                            # =========================
-                            # OBTENER expiration REAL DEL GRUPO
-                            # =========================
-
-                            with conn.cursor() as cur:
-
-                                cur.execute("""
-
-                                    SELECT expiration
-
-                                    FROM users
-
-                                    WHERE user_id=%s
-                                    AND group_id=%s
-
-                                """, (
-
-                                    user_id,
-                                    group_id
-
-                                ))
-
-                                row_exp = cur.fetchone()
+                            tiempo_texto = format_tiempo_restante(
+                                expiration
+                            )
 
 
-                                if row_exp:
+                            bienvenida = requests.post(
 
-                                    expiration_real = row_exp[0]
+                                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
 
-                                else:
+                                json={
 
-                                    expiration_real = None
+                                    "chat_id": user_id,
+
+                                    "text":
+
+                                    "👋 Bienvenido al VIP\n\n"
+
+                                    f"⏳ Tiempo restante: {tiempo_texto}\n\n"
+
+                                    "Disfruta el contenido."
+
+                                }
+
+                            ).json()
+
+
+                            if "result" in bienvenida:
+
+                                message_id = bienvenida["result"]["message_id"]
+
+                                time.sleep(10)
+
+                                requests.post(
+
+                                    f"https://api.telegram.org/bot{TOKEN}/deleteMessage",
+
+                                    json={
+
+                                        "chat_id": telegram_group_id,
+
+                                        "message_id": message_id
+
+                                    }
+
+                                )
+
+                        except Exception as e:
+
+                            print("Error bienvenida:", e)
 
 
                             tiempo_texto = format_tiempo_restante(
