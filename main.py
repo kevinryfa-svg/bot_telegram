@@ -2789,13 +2789,19 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             ).json()
 
-                            if "result" not in invite_link:
 
-                                print("Error creando nuevo link:", invite_link)
+                            if "result" in invite_link:
+
+                                new_link = invite_link["result"]["invite_link"]
+
+                            else:
+
+                                print(
+                                    "Error creando nuevo link:",
+                                    invite_link
+                                )
 
                                 return
-
-                            new_link = invite_link["result"]["invite_link"]
 
 
                             # =========================
