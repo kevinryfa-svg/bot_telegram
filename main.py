@@ -4069,7 +4069,7 @@ def check_expirations():
 
                             try:
 
-                                requests.post(
+                                response = requests.post(
 
                                     f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
@@ -4081,6 +4081,11 @@ def check_expirations():
 
                                     }
 
+                                )
+                                
+                                print(
+                                     "Respuesta revokeChatInviteLink:",
+                                     response.json()
                                 )
 
 
