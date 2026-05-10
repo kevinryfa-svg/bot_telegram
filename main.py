@@ -7210,12 +7210,36 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 try:
 
+                    # =========================
+                    # OBTENER GRUPO REAL DEL LINK
+                    # =========================
+
+                    with conn.cursor() as cur2:
+
+                        cur2.execute("""
+
+                            SELECT group_id
+                            FROM invite_links
+                            WHERE invite_link=%s
+
+                        """, (link,))
+
+                        group_row = cur2.fetchone()
+
+
+                    if not group_row:
+                        continue
+
+
+                    telegram_group_id = group_row[0]
+
+
                     response = requests.post(
 
                         f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
                         json={
-                            "chat_id": get_group_id(),
+                            "chat_id": telegram_group_id,
                             "invite_link": link
                         }
 
