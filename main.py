@@ -4951,16 +4951,126 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         # =========================
-        # OBTENER LINK
+        # REVOCAR LINKS ANTIGUOS
         # =========================
 
-        if link_row:
+        with conn.cursor() as cur:
 
-            link = link_row[0]
+            cur.execute("""
 
-        else:
+                SELECT invite_link
 
-            link = "No disponible"
+                FROM invite_links
+
+                WHERE user_id=%s
+                AND group_id=%s
+
+            """, (
+
+                user_id,
+                telegram_group_id
+
+            ))
+
+            old_links = cur.fetchall()
+
+
+            for (old_link,) in old_links:
+
+                try:
+
+                    revoke_link(
+                        telegram_group_id,
+                        old_link
+                    )
+
+                    cur.execute("""
+
+                        UPDATE invite_links
+
+                        SET is_active=FALSE,
+                            revoked_at=NOW()
+
+                        WHERE invite_link=%s
+
+                    """, (old_link,))
+
+                except Exception as e:
+
+                    print(
+                        "Error revocando link:",
+                        e
+                    )
+
+
+            cur.execute("""
+
+                DELETE FROM invite_links
+
+                WHERE user_id=%s
+                AND group_id=%s
+
+            """, (
+
+                user_id,
+                telegram_group_id
+
+            ))
+
+            conn.commit()
+
+
+        # =========================
+        # CREAR LINK NUEVO
+        # =========================
+
+        invite_link = requests.post(
+
+            f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+
+            json={
+                "chat_id": telegram_group_id,
+                "member_limit": 1,
+                "expire_date": int(time.time()) + 180
+            }
+
+        ).json()
+
+
+        if "result" not in invite_link:
+
+            await query.message.reply_text(
+                "❌ Error creando acceso."
+            )
+
+            return
+
+
+        link = invite_link["result"]["invite_link"]
+
+
+        # =========================
+        # GUARDAR LINK NUEVO
+        # =========================
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO invite_links
+                (user_id, group_id, invite_link)
+
+                VALUES (%s, %s, %s)
+
+            """, (
+
+                user_id,
+                telegram_group_id,
+                link
+
+            ))
+
+            conn.commit()
 
 
         keyboard = [
@@ -4987,7 +5097,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏳ Tiempo restante:\n"
             f"{tiempo_texto}\n\n"
 
-            f"🔗 Tu link:\n"
+            "⚠️ Este link expirará en 3 minutos.\n\n"
+
+            f"🔗 Tu nuevo acceso:\n"
             f"{link}"
 
         )
