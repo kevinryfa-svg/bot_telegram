@@ -7126,7 +7126,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 try:
 
-                    requests.post(
+                    response = requests.post(
 
                         f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
@@ -7135,13 +7135,33 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "invite_link": link
                         }
 
+                    ).json()
+
+
+                    print(
+                        "Respuesta revoke:",
+                        response
                     )
 
-                    total += 1
+
+                    if response.get("ok"):
+
+                        total += 1
+
+                    else:
+
+                        print(
+                            "Error real revocando:",
+                            response
+                        )
+
 
                 except Exception as e:
 
-                    print("Error revocando link:", e)
+                    print(
+                        "Error revocando link:",
+                        e
+                    )
 
 
             await query.message.reply_text(
