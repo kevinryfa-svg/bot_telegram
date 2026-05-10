@@ -175,10 +175,7 @@ def get_group_id():
 
                 telegram_group_id = int(row[0])
 
-                print(
-                    "get_group_id REAL:",
-                    telegram_group_id
-                )
+                # DEBUG SILENCIADO
 
                 return telegram_group_id
 
@@ -190,10 +187,7 @@ def get_group_id():
         )
 
 
-    print(
-        "Usando GROUP_ID ENV:",
-        GROUP_ID
-    )
+    # DEBUG SILENCIADO
 
     return int(GROUP_ID)
     
