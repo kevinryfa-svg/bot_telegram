@@ -321,6 +321,70 @@ async def debug_columns(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# DEBUG GROUPS
+# =========================
+
+async def debug_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       name,
+                       telegram_group_id
+
+                FROM groups
+
+                ORDER BY id ASC
+
+            """)
+
+            rows = cur.fetchall()
+
+
+        if not rows:
+
+            await update.message.reply_text(
+                "No hay grupos."
+            )
+
+            return
+
+
+        texto = "📦 GROUPS DB\n\n"
+
+
+        for row in rows:
+
+            texto += (
+
+                f"ID interno: {row[0]}\n"
+
+                f"Nombre: {row[1]}\n"
+
+                f"Telegram ID: {row[2]}\n\n"
+
+            )
+
+
+        await update.message.reply_text(texto)
+
+    except Exception as e:
+
+        print("Error debug groups:", e)
+
+        await update.message.reply_text(
+            f"Error: {e}"
+        )
+
+
+# =========================
 # FIX DB - AÑADIR group_id
 # =========================
 
@@ -7597,6 +7661,10 @@ def main():
 
     telegram_app.add_handler(
         CommandHandler("fixdb", fixdb_group_column)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("debuggroups", debug_groups)
     )
 
     telegram_app.add_handler(
