@@ -157,25 +157,44 @@ def get_group_id():
             cur.execute("""
 
                 SELECT telegram_group_id
+
                 FROM groups
+
                 WHERE telegram_group_id IS NOT NULL
-                ORDER BY id DESC
+
+                ORDER BY telegram_group_id DESC
+
                 LIMIT 1
 
             """)
 
             row = cur.fetchone()
 
-            if row:
+            if row and row[0]:
 
-                return row[0]
+                telegram_group_id = int(row[0])
+
+                print(
+                    "get_group_id REAL:",
+                    telegram_group_id
+                )
+
+                return telegram_group_id
 
     except Exception as e:
 
-        print("Error obteniendo group_id:", e)
+        print(
+            "Error obteniendo telegram_group_id:",
+            e
+        )
 
 
-    return GROUP_ID
+    print(
+        "Usando GROUP_ID ENV:",
+        GROUP_ID
+    )
+
+    return int(GROUP_ID)
     
 
 # =========================
