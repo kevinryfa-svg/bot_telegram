@@ -145,6 +145,52 @@ def generate_code():
 
 
 # =========================
+# REVOCAR LINK SEGURO
+# =========================
+
+def revoke_link(chat_id, link):
+
+    try:
+
+        response = requests.post(
+
+            f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
+
+            json={
+                "chat_id": chat_id,
+                "invite_link": link
+            }
+
+        ).json()
+
+
+        # =========================
+        # IGNORAR EXPIRED
+        # =========================
+
+        if not response.get("ok"):
+
+            description = response.get(
+                "description",
+                ""
+            )
+
+            if description != "Bad Request: INVITE_HASH_EXPIRED":
+
+                print(
+                    "Error real revocando:",
+                    response
+                )
+
+    except Exception as e:
+
+        print(
+            "Error revoke_link:",
+            e
+        )
+
+
+# =========================
 # OBTENER GROUP_ID DINÁMICO
 # =========================
 
@@ -1901,16 +1947,22 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
             try:
 
-                requests.post(
-
-                    f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
-
-                    json={
-                        "chat_id": get_group_id(),
-                        "invite_link": old_link
-                    }
-
+                revoke_link(
+                    get_group_id(),
+                    old_link
                 )
+
+                cur.execute("""
+
+                    UPDATE invite_links
+
+                    SET is_active=FALSE,
+                        revoked_at=NOW()
+
+                    WHERE invite_link=%s
+
+                """, (old_link,))
+
             except Exception as e:
 
                 print("Error revocando link:", e)
@@ -2827,31 +2879,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-                            # =========================
-                            # GUARDAR LINK NUEVO
-                            # =========================
 
-                            cur.execute("""
-
-                                INSERT INTO invite_links
-                                (user_id, group_id, invite_link)
-
-                                VALUES (%s, %s, %s)
-
-                            """, (
-
-                                owner_id,
-                                telegram_group_id,
-                                new_link
-
-                            ))
-
-                            conn.commit()
-
-
-                            # =========================
-                            # AVISO USUARIO + LINK
-                            # =========================
 
                             # =========================
                             # CREAR LINK NUEVO
@@ -4162,28 +4190,10 @@ def check_expirations():
 
                             try:
 
-                                response = requests.post(
-
-                                    f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
-
-                                    json={
-
-                                        "chat_id": telegram_group_id,
-
-                                        "invite_link": link
-
-                                    }
-
+                                revoke_link(
+                                    telegram_group_id,
+                                    link
                                 )
-
-                                print(
-
-                                    "Respuesta revokeChatInviteLink:",
-
-                                    response.json()
-
-                                )
-
 
                                 # =========================
                                 # MARCAR LINK COMO INACTIVO
@@ -7300,39 +7310,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     telegram_group_id = group_row[0]
 
 
-                    response = requests.post(
-
-                        f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
-
-                        json={
-                            "chat_id": telegram_group_id,
-                            "invite_link": link
-                        }
-
-                    ).json()
-
-
-                    print(
-                        "Respuesta revoke:",
-                        response
+                    revoke_link(
+                        telegram_group_id,
+                        link
                     )
 
-
-                    if response.get("ok"):
-
-                        total += 1
-
-                    else:
-
-                        if (
-                            response.get("description")
-                            != "Bad Request: INVITE_HASH_EXPIRED"
-                        ):
-
-                            print(
-                                "Error real revocando:",
-                                response
-                            )
+                    total += 1
 
 
                 except Exception as e:
