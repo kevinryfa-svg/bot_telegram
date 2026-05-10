@@ -7252,10 +7252,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     else:
 
-                        print(
-                            "Error real revocando:",
-                            response
-                        )
+                        if (
+                            response.get("description")
+                            != "Bad Request: INVITE_HASH_EXPIRED"
+                        ):
+
+                            print(
+                                "Error real revocando:",
+                                response
+                            )
 
 
                 except Exception as e:
