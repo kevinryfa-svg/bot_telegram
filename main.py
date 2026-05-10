@@ -7331,12 +7331,45 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 try:
 
+                    # =========================
+                    # OBTENER TELEGRAM_GROUP_ID REAL
+                    # =========================
+
+                    with conn.cursor() as cur2:
+
+                        cur2.execute("""
+
+                            SELECT telegram_group_id
+
+                            FROM groups
+
+                            WHERE id=(
+
+                                SELECT group_id
+                                FROM users
+                                WHERE user_id=%s
+                                LIMIT 1
+
+                            )
+
+                        """, (user_id,))
+
+                        group_row = cur2.fetchone()
+
+
+                    if not group_row:
+                        continue
+
+
+                    telegram_group_id = group_row[0]
+
+
                     invite_link = requests.post(
 
                         f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
 
                         json={
-                            "chat_id": get_group_id(),
+                            "chat_id": telegram_group_id,
                             "member_limit": 1
                         }
 
