@@ -7694,15 +7694,8 @@ def main():
         )
     )
 
-    telegram_app.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.NEW_CHAT_MEMBERS,
-            detect_user_join
-        )
-   )
-
     # =========================
-    # DETECTAR BOT Y USUARIOS NUEVOS
+    # DETECTAR BOT AÑADIDO
     # =========================
 
     telegram_app.add_handler(
@@ -7713,10 +7706,14 @@ def main():
         group=0
     )
 
+    # =========================
+    # CONTROL PRINCIPAL ENTRADAS USUARIOS
+    # =========================
+
     telegram_app.add_handler(
         MessageHandler(
             filters.StatusUpdate.NEW_CHAT_MEMBERS,
-            check_new_member
+            detect_user_join
         ),
         group=1
     )
