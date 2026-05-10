@@ -2375,6 +2375,28 @@ def stripe_webhook():
             telegram_group_id = row[0]
 
 
+        # =========================
+        # CALCULAR EXPIRACIÓN REAL
+        # =========================
+
+        max_expire = int(time.time()) + 180
+
+        if expiration is None:
+
+            expire_timestamp = max_expire
+
+        else:
+
+            subscription_expire = int(
+                expiration.timestamp()
+            )
+
+            expire_timestamp = min(
+                max_expire,
+                subscription_expire
+            )
+
+
         invite_link = requests.post(
 
             f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
@@ -2382,7 +2404,7 @@ def stripe_webhook():
             json={
                 "chat_id": telegram_group_id,
                 "member_limit": 1,
-                "expire_date": int(time.time()) + 180
+                "expire_date": expire_timestamp
             }
 
         ).json()
@@ -2885,6 +2907,49 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             # CREAR LINK NUEVO
                             # =========================
 
+                            # =========================
+                            # OBTENER EXPIRACIÓN OWNER
+                            # =========================
+
+                            cur.execute("""
+
+                                SELECT expiration
+                                FROM users
+                                WHERE user_id=%s
+
+                            """, (owner_id,))
+
+                            owner_row = cur.fetchone()
+
+                            owner_expiration = None
+
+                            if owner_row:
+
+                                owner_expiration = owner_row[0]
+
+
+                            # =========================
+                            # CALCULAR EXPIRACIÓN REAL
+                            # =========================
+
+                            max_expire = int(time.time()) + 180
+
+                            if owner_expiration is None:
+
+                                expire_timestamp = max_expire
+
+                            else:
+
+                                subscription_expire = int(
+                                    owner_expiration.timestamp()
+                                )
+
+                                expire_timestamp = min(
+                                    max_expire,
+                                    subscription_expire
+                                )
+
+
                             invite_link = requests.post(
 
                                 f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
@@ -2892,7 +2957,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 json={
                                     "chat_id": telegram_group_id,
                                     "member_limit": 1,
-                                    "expire_date": int(time.time()) + 180
+                                    "expire_date": expire_timestamp
                                 }
 
                             ).json()
@@ -3257,7 +3322,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 json={
                                     "chat_id": telegram_group_id,
                                     "member_limit": 1,
-                                    "expire_date": int(time.time()) + 180
+                                    "expire_date": int(time.time()) + 60
                                 }
 
                             ).json()
@@ -5021,6 +5086,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         # =========================
+        # CALCULAR EXPIRACIÓN REAL
+        # =========================
+
+        max_expire = int(time.time()) + 180
+
+        if expiration is None:
+
+            expire_timestamp = max_expire
+
+        else:
+
+            subscription_expire = int(
+                expiration.timestamp()
+            )
+
+            expire_timestamp = min(
+                max_expire,
+                subscription_expire
+            )
+
+
+        # =========================
         # CREAR LINK NUEVO
         # =========================
 
@@ -5031,7 +5118,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             json={
                 "chat_id": telegram_group_id,
                 "member_limit": 1,
-                "expire_date": int(time.time()) + 180
+                "expire_date": expire_timestamp
             }
 
         ).json()
@@ -5393,6 +5480,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         # =========================
+        # CALCULAR EXPIRACIÓN REAL
+        # =========================
+
+        max_expire = int(time.time()) + 180
+
+        if expiration is None:
+
+            expire_timestamp = max_expire
+
+        else:
+
+            subscription_expire = int(
+                expiration.timestamp()
+            )
+
+            expire_timestamp = min(
+                max_expire,
+                subscription_expire
+            )
+
+
+        # =========================
         # CREAR LINK NUEVO TEMPORAL
         # =========================
 
@@ -5403,7 +5512,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             json={
                 "chat_id": get_group_id(),
                 "member_limit": 1,
-                "expire_date": int(time.time()) + 300
+                "expire_date": expire_timestamp
             }
 
         ).json()
@@ -7537,7 +7646,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         json={
                             "chat_id": telegram_group_id,
                             "member_limit": 1,
-                            "expire_date": int(time.time()) + 180
+                            "expire_date": int(time.time()) + 60
                         }
 
                     ).json()
