@@ -161,6 +161,7 @@ def get_group_id():
                 FROM groups
 
                 WHERE telegram_group_id IS NOT NULL
+                AND telegram_group_id != 0
 
                 ORDER BY telegram_group_id DESC
 
