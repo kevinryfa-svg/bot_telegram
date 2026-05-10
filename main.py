@@ -2329,7 +2329,8 @@ def stripe_webhook():
 
             json={
                 "chat_id": telegram_group_id,
-                "member_limit": 1
+                "member_limit": 1,
+                "expire_date": int(time.time()) + 180
             }
 
         ).json()
@@ -2862,7 +2863,8 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 json={
                                     "chat_id": telegram_group_id,
-                                    "member_limit": 1
+                                    "member_limit": 1,
+                                    "expire_date": int(time.time()) + 180
                                 }
 
                             ).json()
@@ -3226,7 +3228,8 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 json={
                                     "chat_id": telegram_group_id,
-                                    "member_limit": 1
+                                    "member_limit": 1,
+                                    "expire_date": int(time.time()) + 180
                                 }
 
                             ).json()
@@ -5199,43 +5202,112 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             link_row = cur.fetchone()
 
 
-        if link_row:
+        # =========================
+        # REVOCAR LINKS ANTIGUOS
+        # =========================
 
-            link = link_row[0]
+        with conn.cursor() as cur:
 
-        else:
+            cur.execute("""
 
-            invite_link = requests.post(
+                SELECT invite_link
+                FROM invite_links
+                WHERE user_id=%s
+                AND group_id=%s
 
-                f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+            """, (
 
-                json={
-                    "chat_id": get_group_id(),
-                    "member_limit": 1
-                }
+                user_id,
+                get_group_id()
 
-            ).json()
+            ))
 
-            link = invite_link["result"]["invite_link"]
+            old_links = cur.fetchall()
 
-            with conn.cursor() as cur:
 
-                cur.execute("""
+        for (old_link,) in old_links:
 
-                    INSERT INTO invite_links
-                    (user_id, group_id, invite_link)
+            try:
 
-                    VALUES (%s, %s, %s)
+                requests.post(
 
-                """, (
+                    f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
 
-                    user_id,
-                    get_group_id(),
-                    link
+                    json={
+                        "chat_id": get_group_id(),
+                        "invite_link": old_link
+                    }
 
-                ))
+                )
 
-                conn.commit()
+            except Exception as e:
+
+                print(
+                    "Error revocando link:",
+                    e
+                )
+
+
+        # =========================
+        # BORRAR LINKS ANTIGUOS
+        # =========================
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                DELETE FROM invite_links
+                WHERE user_id=%s
+                AND group_id=%s
+
+            """, (
+
+                user_id,
+                get_group_id()
+
+            ))
+
+            conn.commit()
+
+
+        # =========================
+        # CREAR LINK NUEVO TEMPORAL
+        # =========================
+
+        invite_link = requests.post(
+
+            f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
+
+            json={
+                "chat_id": get_group_id(),
+                "member_limit": 1,
+                "expire_date": int(time.time()) + 300
+            }
+
+        ).json()
+
+
+        link = invite_link["result"]["invite_link"]
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO invite_links
+                (user_id, group_id, invite_link)
+
+                VALUES (%s, %s, %s)
+
+            """, (
+
+                user_id,
+                get_group_id(),
+                link
+
+            ))
+
+            conn.commit()
 
 
         await query.message.reply_text(
@@ -7369,7 +7441,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         json={
                             "chat_id": telegram_group_id,
-                            "member_limit": 1
+                            "member_limit": 1,
+                            "expire_date": int(time.time()) + 180
                         }
 
                     ).json()
