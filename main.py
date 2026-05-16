@@ -4328,32 +4328,10 @@ def check_expirations():
 
                         try:
 
-                            requests.post(
-
-                                f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                                json={
-
-                                    "chat_id": telegram_group_id,
-
-                                    "user_id": user_id
-
-                                }
-
-                            )
-
-                            requests.post(
-
-                                f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                                json={
-
-                                    "chat_id": telegram_group_id,
-
-                                    "user_id": user_id
-
-                                }
-
+                            kick_chat_member(
+                                TOKEN,
+                                telegram_group_id,
+                                user_id
                             )
 
                         except Exception as e:
@@ -5761,33 +5739,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 telegram_group_id = row[0]
 
 
-                requests.post(
-
-                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                    json={
-
-                        "chat_id": telegram_group_id,
-
-                        "user_id": user_id
-
-                    }
-
-                )
-
-
-                requests.post(
-
-                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                    json={
-
-                        "chat_id": telegram_group_id,
-
-                        "user_id": user_id
-
-                    }
-
+                kick_chat_member(
+                    TOKEN,
+                    telegram_group_id,
+                    user_id
                 )
 
 
