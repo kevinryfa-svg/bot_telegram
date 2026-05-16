@@ -4944,6 +4944,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
+    user_id = query.from_user.id
+
+
+    # =========================
+    # RBAC — BLOQUEAR CALLBACKS ADMIN
+    # =========================
+
+    admin_prefixes = (
+
+        "menu_",
+        "admin_",
+        "edit_group",
+        "view_group_plans",
+        "add_group_plan",
+        "edit_plan_",
+        "delete_group",
+        "delete_plan_",
+        "save_preview",
+        "cancel_preview",
+        "skip_preview",
+        "allow_user_",
+        "deny_user_",
+        "gen_"
+
+    )
+
+
+    if data.startswith(admin_prefixes):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para usar esta acción."
+            )
+
+            return
+
 
     # =========================
     # MIS SUSCRIPCIONES ACTIVAS
