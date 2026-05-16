@@ -6,6 +6,10 @@ from ai_service import (
     build_system_prompt_for_scope
 )
 
+from help_catalog import (
+    HELP_SECTION_CONTENT
+)
+
 
 # =========================
 # AI HANDLER — HELPERS
@@ -89,6 +93,31 @@ async def send_ai_answer(update: Update, text):
         )
 
 
+def build_ai_manual_context():
+
+    lines = [
+        "MANUAL OFICIAL DEL BOT:",
+        "",
+        "Regla obligatoria:",
+        "Solo se pueden mencionar comandos que aparezcan en este manual.",
+        "Si un comando no aparece aquí, no debe inventarse.",
+        ""
+    ]
+
+
+    for section_key, section_data in HELP_SECTION_CONTENT.items():
+
+        title = section_data.get("title", {}).get("es", section_key)
+        body = section_data.get("body", {}).get("es", "")
+
+        lines.append(f"SECCIÓN: {title}")
+        lines.append(str(body))
+        lines.append("")
+
+
+    return "\n".join(lines)
+
+
 # =========================
 # AI HANDLER — /ia
 # =========================
@@ -124,7 +153,8 @@ async def ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ok, answer = generate_ai_response(
         user_text,
-        system_prompt=system_prompt
+        system_prompt=system_prompt,
+        context_text=build_ai_manual_context()
     )
 
 
@@ -179,7 +209,8 @@ async def asistente_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ok, answer = generate_ai_response(
         user_text,
-        system_prompt=system_prompt
+        system_prompt=system_prompt,
+        context_text=build_ai_manual_context()
     )
 
 
