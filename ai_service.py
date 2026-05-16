@@ -162,7 +162,8 @@ def generate_ai_response(user_text, system_prompt=None, context_text=None):
 
         print(
             "Error generando respuesta IA:",
-            e
+            type(e).__name__,
+            str(e)
         )
 
         return (
