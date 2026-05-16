@@ -5321,29 +5321,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # CREAR LINK NUEVO
         # =========================
 
-        invite_link = requests.post(
-
-            f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-
-            json={
-                "chat_id": telegram_group_id,
-                "member_limit": 1,
-                "expire_date": expire_timestamp
-            }
-
-        ).json()
+        expire_seconds = max(
+            60,
+            expire_timestamp - int(time.time())
+        )
 
 
-        if "result" not in invite_link:
+        link = create_telegram_invite_link(
+            TOKEN,
+            telegram_group_id,
+            expire_seconds=expire_seconds,
+            member_limit=1
+        )
+
+
+        if not link:
 
             await query.message.reply_text(
                 "❌ Error creando acceso."
             )
 
             return
-
-
-        link = invite_link["result"]["invite_link"]
 
 
         # =========================
@@ -5710,20 +5708,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # CREAR LINK NUEVO TEMPORAL
         # =========================
 
-        invite_link = requests.post(
-
-            f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-
-            json={
-                "chat_id": get_group_id(),
-                "member_limit": 1,
-                "expire_date": expire_timestamp
-            }
-
-        ).json()
+        expire_seconds = max(
+            60,
+            expire_timestamp - int(time.time())
+        )
 
 
-        link = invite_link["result"]["invite_link"]
+        link = create_telegram_invite_link(
+            TOKEN,
+            get_group_id(),
+            expire_seconds=expire_seconds,
+            member_limit=1
+        )
+
+
+        if not link:
+
+            await query.message.reply_text(
+                "❌ Error creando acceso."
+            )
+
+            return
 
 
         with conn.cursor() as cur:
@@ -7844,20 +7849,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     telegram_group_id = group_row[0]
 
 
-                    invite_link = requests.post(
-
-                        f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-
-                        json={
-                            "chat_id": telegram_group_id,
-                            "member_limit": 1,
-                            "expire_date": int(time.time()) + 60
-                        }
-
-                    ).json()
+                    link = create_telegram_invite_link(
+                        TOKEN,
+                        telegram_group_id,
+                        expire_seconds=60,
+                        member_limit=1
+                    )
 
 
-                    link = invite_link["result"]["invite_link"]
+                    if not link:
+
+                        print(
+                            "Error creando link para usuario:",
+                            user_id
+                        )
+
+                        continue
 
 
                     with conn.cursor() as cur:
