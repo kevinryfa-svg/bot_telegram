@@ -809,26 +809,10 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 
-        requests.post(
-
-            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-            json={
-                "chat_id": get_group_id(),
-                "user_id": user_id
-            }
-
-        )
-
-        requests.post(
-
-            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-            json={
-                "chat_id": get_group_id(),
-                "user_id": user_id
-            }
-
+        kick_chat_member(
+            TOKEN,
+            get_group_id(),
+            user_id
         )
 
         await update.message.reply_text(
@@ -923,15 +907,10 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 conn.commit()
 
 
-            requests.post(
-
-                f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                json={
-                    "chat_id": get_group_id(),
-                    "user_id": user_id
-                }
-
+            ban_chat_member(
+                TOKEN,
+                get_group_id(),
+                user_id
             )
 
 
@@ -1046,15 +1025,10 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # permitir volver a entrar
 
-                requests.post(
-
-                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                    json={
-                        "chat_id": get_group_id(),
-                        "user_id": user_id
-                    }
-
+                unban_chat_member(
+                    TOKEN,
+                    get_group_id(),
+                    user_id
                 )
 
 
@@ -2748,15 +2722,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     print("Usuario baneado detectado:", user_id)
 
-                    requests.post(
-
-                        f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                        json={
-                            "chat_id": telegram_group_id,
-                            "user_id": user_id
-                        }
-
+                    ban_chat_member(
+                        TOKEN,
+                        telegram_group_id,
+                        user_id
                     )
 
                     return
@@ -2788,26 +2757,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     # expulsar intruso
 
-                    requests.post(
-
-                        f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                        json={
-                            "chat_id": telegram_group_id,
-                            "user_id": user_id
-                        }
-
-                    )
-
-                    requests.post(
-
-                        f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                        json={
-                            "chat_id": telegram_group_id,
-                            "user_id": user_id
-                        }
-
+                    kick_chat_member(
+                        TOKEN,
+                        telegram_group_id,
+                        user_id
                     )
 
 
@@ -2889,26 +2842,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 print("Intruso detectado por fallback:", user_id)
 
-                                requests.post(
-
-                                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                                    json={
-                                        "chat_id": telegram_group_id,
-                                        "user_id": user_id
-                                    }
-
-                                )
-
-                                requests.post(
-
-                                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                                    json={
-                                        "chat_id": telegram_group_id,
-                                        "user_id": user_id
-                                    }
-
+                                kick_chat_member(
+                                    TOKEN,
+                                    telegram_group_id,
+                                    user_id
                                 )
 
                             owner = (owner_id,)
@@ -3264,26 +3201,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         print("Intruso sin link asignado:", user_id)
 
-                        requests.post(
-
-                            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                            json={
-                                "chat_id": telegram_group_id,
-                                "user_id": user_id
-                            }
-
-                        )
-
-                        requests.post(
-
-                            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                            json={
-                                "chat_id": telegram_group_id,
-                                "user_id": user_id
-                            }
-
+                        kick_chat_member(
+                            TOKEN,
+                            telegram_group_id,
+                            user_id
                         )
 
                         # =========================
@@ -3618,26 +3539,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 print("Intruso usando link ajeno:", user_id)
 
-                                requests.post(
-
-                                    f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                                    json={
-                                        "chat_id": telegram_group_id,
-                                        "user_id": user_id
-                                    }
-
-                                )
-
-                                requests.post(
-
-                                    f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                                    json={
-                                        "chat_id": telegram_group_id,
-                                        "user_id": user_id
-                                    }
-
+                                kick_chat_member(
+                                    TOKEN,
+                                    telegram_group_id,
+                                    user_id
                                 )
 
                                 return
@@ -3662,26 +3567,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ))
 
 
-                        requests.post(
-
-                            f"https://api.telegram.org/bot{TOKEN}/banChatMember",
-
-                            json={
-                                "chat_id": telegram_group_id,
-                                "user_id": user_id
-                            }
-
-                        )
-
-                        requests.post(
-
-                            f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                            json={
-                                "chat_id": telegram_group_id,
-                                "user_id": user_id
-                            }
-
+                        kick_chat_member(
+                            TOKEN,
+                            telegram_group_id,
+                            user_id
                         )
 
                     else:
@@ -4299,32 +4188,13 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
 
-                    requests.post(
+                    kick_chat_member(
 
-                        f"https://api.telegram.org/bot{TOKEN}/banChatMember",
+                        TOKEN,
 
-                        json={
+                        telegram_group_id,
 
-                            "chat_id": telegram_group_id,
-
-                            "user_id": user_id
-
-                        }
-
-                    )
-
-
-                    requests.post(
-
-                        f"https://api.telegram.org/bot{TOKEN}/unbanChatMember",
-
-                        json={
-
-                            "chat_id": telegram_group_id,
-
-                            "user_id": user_id
-
-                        }
+                        user_id
 
                     )
 
