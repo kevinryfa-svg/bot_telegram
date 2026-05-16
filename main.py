@@ -3130,28 +3130,24 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 )
 
 
-                            invite_link = requests.post(
-
-                                f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-
-                                json={
-                                    "chat_id": telegram_group_id,
-                                    "member_limit": 1,
-                                    "expire_date": expire_timestamp
-                                }
-
-                            ).json()
+                            expire_seconds = max(
+                                60,
+                                expire_timestamp - int(time.time())
+                            )
 
 
-                            if "result" in invite_link:
+                            new_link = create_telegram_invite_link(
+                                TOKEN,
+                                telegram_group_id,
+                                expire_seconds=expire_seconds,
+                                member_limit=1
+                            )
 
-                                new_link = invite_link["result"]["invite_link"]
 
-                            else:
+                            if not new_link:
 
                                 print(
-                                    "Error creando nuevo link:",
-                                    invite_link
+                                    "Error creando nuevo link"
                                 )
 
                                 return
@@ -3490,21 +3486,14 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             # CREAR LINK NUEVO
                             # =========================
 
-                            invite_link = requests.post(
+                            new_link = create_telegram_invite_link(
+                                TOKEN,
+                                telegram_group_id,
+                                expire_seconds=60,
+                                member_limit=1
+                            )
 
-                                f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-
-                                json={
-                                    "chat_id": telegram_group_id,
-                                    "member_limit": 1,
-                                    "expire_date": int(time.time()) + 60
-                                }
-
-                            ).json()
-
-                            if "result" in invite_link:
-
-                                new_link = invite_link["result"]["invite_link"]
+                            if new_link:
 
                                 # =========================
                                 # GUARDAR LINK NUEVO
