@@ -55,6 +55,10 @@ from audit_log_service import (
     create_audit_log
 )
 
+from code_service import (
+    generate_code
+)
+
 from formatters import (
     format_tiempo_restante
 )
@@ -111,21 +115,6 @@ def run_flask():
     app.run(
         host="0.0.0.0",
         port=port
-    )
-
-
-# =========================
-# GENERAR CÓDIGO
-# =========================
-
-def generate_code():
-
-    return ''.join(
-        random.choices(
-            string.ascii_uppercase +
-            string.digits,
-            k=20
-        )
     )
 
 
