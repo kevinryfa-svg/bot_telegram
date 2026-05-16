@@ -129,12 +129,10 @@ async def ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not user_text:
 
-        await reply_ai(
+        await activate_ai_help_context(
             update,
-            "🤖 Uso de IA:\n\n"
-            "/ia escribe aquí tu pregunta\n\n"
-            "Ejemplo:\n"
-            "/ia redacta un mensaje profesional para avisar de una renovación"
+            context,
+            help_context="general"
         )
 
         return
