@@ -3,9 +3,37 @@ from db import conn
 
 # =========================
 # AUDIT LOG — CREATE LOG
+# Uses existing logs table from db.py.
 # =========================
 
 def create_audit_log(action, admin_user_id=None, target_user_id=None, group_id=None, details=None):
+
+    detail_parts = []
+
+
+    if admin_user_id is not None:
+
+        detail_parts.append(
+            f"admin_user_id={admin_user_id}"
+        )
+
+
+    if target_user_id is not None:
+
+        detail_parts.append(
+            f"target_user_id={target_user_id}"
+        )
+
+
+    if details:
+
+        detail_parts.append(
+            str(details)
+        )
+
+
+    details_text = " | ".join(detail_parts)
+
 
     try:
 
@@ -13,18 +41,17 @@ def create_audit_log(action, admin_user_id=None, target_user_id=None, group_id=N
 
             cur.execute("""
 
-                INSERT INTO audit_logs
-                (action, admin_user_id, target_user_id, group_id, details)
+                INSERT INTO logs
+                (user_id, group_id, action, details)
 
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s)
 
             """, (
 
-                action,
-                admin_user_id,
                 target_user_id,
                 group_id,
-                details
+                action,
+                details_text
 
             ))
 
@@ -46,6 +73,7 @@ def create_audit_log(action, admin_user_id=None, target_user_id=None, group_id=N
 
 # =========================
 # AUDIT LOG — LIST RECENT LOGS
+# Uses existing logs table from db.py.
 # =========================
 
 def list_recent_audit_logs(limit=50, group_id=None):
@@ -60,12 +88,11 @@ def list_recent_audit_logs(limit=50, group_id=None):
 
                     SELECT created_at,
                            action,
-                           admin_user_id,
-                           target_user_id,
+                           user_id,
                            group_id,
                            details
 
-                    FROM audit_logs
+                    FROM logs
 
                     ORDER BY created_at DESC
 
@@ -79,12 +106,11 @@ def list_recent_audit_logs(limit=50, group_id=None):
 
                     SELECT created_at,
                            action,
-                           admin_user_id,
-                           target_user_id,
+                           user_id,
                            group_id,
                            details
 
-                    FROM audit_logs
+                    FROM logs
 
                     WHERE group_id=%s
 
