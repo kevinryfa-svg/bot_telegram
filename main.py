@@ -73,6 +73,7 @@ from expiration_worker import check_expirations
 from group_registration_handler import detect_bot_added
 from user_join_handler import detect_user_join
 from stripe_handler import stripe_webhook
+from web_server import run_flask_app
 
 
 # =========================
@@ -110,12 +111,7 @@ def home():
 
 def run_flask():
 
-    port = int(os.environ.get("PORT", 8000))
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    run_flask_app(app)
 
 
 # =========================
