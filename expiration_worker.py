@@ -1,5 +1,4 @@
 import time
-import requests
 
 from datetime import datetime
 from functools import partial
@@ -7,6 +6,7 @@ from functools import partial
 from bot_config import TOKEN, ADMIN_ID
 from db import conn
 from invite_link_service import revoke_telegram_invite_link
+from notification_service import send_telegram_message
 from telegram_group_actions import kick_chat_member
 
 
@@ -212,24 +212,12 @@ def check_expirations():
                         # AVISAR ADMIN
                         # =========================
 
-                        requests.post(
-
-                            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-
-                            json={
-
-                                "chat_id": ADMIN_ID,
-
-                                "text":
-
-                                f"⛔ Usuario expirado eliminado\n\n"
-
-                                f"User ID: {user_id}\n"
-
-                                f"Grupo ID: {group_id}"
-
-                            }
-
+                        send_telegram_message(
+                            TOKEN,
+                            ADMIN_ID,
+                            f"⛔ Usuario expirado eliminado\n\n"
+                            f"User ID: {user_id}\n"
+                            f"Grupo ID: {group_id}"
                         )
 
 
