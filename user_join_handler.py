@@ -1,5 +1,3 @@
-import os
-
 from datetime import datetime
 
 from telegram import (
@@ -10,13 +8,10 @@ from telegram import (
 
 from telegram.ext import ContextTypes
 
+from bot_config import TOKEN, ADMIN_ID
 from db import conn
-
+from message_templates import unauthorized_access_detected_text
 from telegram_group_actions import kick_chat_member
-
-
-TOKEN = os.environ.get("TOKEN")
-ADMIN_ID = 8761243211
 
 
 # =========================
@@ -154,19 +149,11 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             chat_id=ADMIN_ID,
 
-                            text=
-
-                            "🚨 ACCESO NO AUTORIZADO DETECTADO\n\n"
-
-                            f"Usuario: {first_name}\n"
-
-                            f"Username: @{username}\n"
-
-                            f"ID: {user_id}\n\n"
-
-                            "Ha entrado con un link no registrado.\n\n"
-
-                            "¿Deseas permitirlo o expulsarlo?",
+                            text=unauthorized_access_detected_text(
+                                first_name,
+                                username,
+                                user_id
+                            ),
 
                             reply_markup=
                             InlineKeyboardMarkup(keyboard)
