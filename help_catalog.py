@@ -113,6 +113,49 @@ HELP_SECTIONS_BY_ROLE = {
 
 HELP_SECTION_CONTENT = {
 
+    "SECTION_GROUPS": {
+        "title": {
+            "es": "👥 Gestión de grupos",
+            "en": "👥 Group management"
+        },
+        "body": {
+            "es": (
+                "Gestión de grupos dentro del bot:\n\n"
+                "Para añadir un grupo al bot:\n"
+                "1. Añade el bot al grupo de Telegram.\n"
+                "2. Dale permisos de administrador si el bot debe gestionar accesos, expulsiones, baneos o links.\n"
+                "3. El bot detectará el grupo y podrá registrarlo en el sistema.\n"
+                "4. Desde el panel de administración podrás gestionar ese grupo si tienes permisos suficientes.\n\n"
+                "Permisos recomendados para el bot en el grupo:\n"
+                "- Crear enlaces de invitación.\n"
+                "- Banear usuarios.\n"
+                "- Expulsar usuarios.\n"
+                "- Eliminar mensajes si se usa moderación.\n"
+                "- Ver miembros o eventos del grupo cuando Telegram lo permita.\n\n"
+                "Como propietario o super admin, puedes gestionar grupos, planes, usuarios, pagos, accesos y administradores según los permisos configurados.\n\n"
+                "Importante:\n"
+                "La IA solo debe explicar funciones documentadas del bot. Si una acción todavía no está disponible en botones o comandos, debe indicarlo claramente."
+            ),
+            "en": (
+                "Group management inside the bot:\n\n"
+                "To add a group to the bot:\n"
+                "1. Add the bot to the Telegram group.\n"
+                "2. Give it admin permissions if the bot must manage access, kicks, bans or invite links.\n"
+                "3. The bot will detect the group and can register it in the system.\n"
+                "4. From the admin panel you can manage that group if you have enough permissions.\n\n"
+                "Recommended bot permissions in the group:\n"
+                "- Create invite links.\n"
+                "- Ban users.\n"
+                "- Kick users.\n"
+                "- Delete messages if moderation is enabled.\n"
+                "- View members or group events when Telegram allows it.\n\n"
+                "As owner or super admin, you can manage groups, plans, users, payments, access and admins depending on configured permissions.\n\n"
+                "Important:\n"
+                "The AI must only explain documented bot features. If an action is not yet available through buttons or commands, it must say so clearly."
+            )
+        }
+    },
+
     SECTION_START: {
         "title": {
             "es": "Primeros pasos",

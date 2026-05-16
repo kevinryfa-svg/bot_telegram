@@ -183,12 +183,10 @@ async def asistente_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not user_text:
 
-        await reply_ai(
+        await activate_ai_help_context(
             update,
-            "🤖 Asistente IA:\n\n"
-            "/asistente escribe aquí lo que necesitas\n\n"
-            "Ejemplo:\n"
-            "/asistente ayúdame a responder a un usuario que no puede entrar al grupo"
+            context,
+            help_context="general"
         )
 
         return
