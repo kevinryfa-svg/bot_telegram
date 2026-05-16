@@ -28,6 +28,7 @@ from telegram.ext import (
 from datetime import datetime, timedelta
 
 from invite_link_service import (
+    create_telegram_invite_link,
     create_fresh_user_group_link,
     revoke_and_delete_user_group_links,
     revoke_telegram_invite_link
@@ -1082,19 +1083,21 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     # crear link nuevo
 
-                    invite_link = requests.post(
-
-                        f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-
-                        json={
-                            "chat_id": get_group_id(),
-                            "member_limit": 1
-                        }
-
-                    ).json()
+                    link = create_telegram_invite_link(
+                        TOKEN,
+                        get_group_id(),
+                        expire_seconds=180,
+                        member_limit=1
+                    )
 
 
-                    link = invite_link["result"]["invite_link"]
+                    if not link:
+
+                        await update.message.reply_text(
+                            "❌ Error creando link nuevo."
+                        )
+
+                        return
 
 
                     # guardar link
