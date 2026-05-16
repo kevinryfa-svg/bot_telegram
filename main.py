@@ -2171,19 +2171,21 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
         conn.commit()
 
 
-    invite_link = requests.post(
-
-        f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-
-        json={
-            "chat_id": get_group_id(),
-            "member_limit": 1
-        }
-
-    ).json()
+    link = create_telegram_invite_link(
+        TOKEN,
+        get_group_id(),
+        expire_seconds=180,
+        member_limit=1
+    )
 
 
-    link = invite_link["result"]["invite_link"]
+    if not link:
+
+        await update.message.reply_text(
+            "❌ Error creando link de acceso."
+        )
+
+        return
 
 
     try:
@@ -2582,30 +2584,28 @@ def stripe_webhook():
             )
 
 
-        invite_link = requests.post(
-
-            f"https://api.telegram.org/bot{TOKEN}/createChatInviteLink",
-
-            json={
-                "chat_id": telegram_group_id,
-                "member_limit": 1,
-                "expire_date": expire_timestamp
-            }
-
-        ).json()
+        expire_seconds = max(
+            60,
+            expire_timestamp - int(time.time())
+        )
 
 
-        print("Respuesta createChatInviteLink:", invite_link)
+        link = create_telegram_invite_link(
+            TOKEN,
+            telegram_group_id,
+            expire_seconds=expire_seconds,
+            member_limit=1
+        )
 
 
-        if "result" not in invite_link:
+        print("Respuesta createChatInviteLink:", link)
 
-            print("ERROR creando invite link:", invite_link)
+
+        if not link:
+
+            print("ERROR creando invite link")
 
             return "OK"
-
-
-        link = invite_link["result"]["invite_link"]
 
 
         # =========================
