@@ -1,6 +1,24 @@
+import random
+import string
+
 from datetime import datetime, timedelta
 
 from db import conn
+
+
+# =========================
+# CODE SERVICE — GENERATE CODE
+# =========================
+
+def generate_code():
+
+    return ''.join(
+        random.choices(
+            string.ascii_uppercase +
+            string.digits,
+            k=20
+        )
+    )
 
 
 # =========================
