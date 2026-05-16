@@ -1,20 +1,14 @@
-import os
 import time
 import stripe
-import requests
 
 from flask import request
 
 from datetime import datetime, timedelta
 
+from bot_config import TOKEN, ADMIN_ID, STRIPE_WEBHOOK_SECRET
 from db import conn
-
 from invite_link_service import create_telegram_invite_link
-
-
-TOKEN = os.environ.get("TOKEN")
-ADMIN_ID = 8761243211
-WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+from notification_service import send_telegram_message
 
 
 # =========================
@@ -31,7 +25,7 @@ def stripe_webhook():
         event = stripe.Webhook.construct_event(
             payload,
             sig_header,
-            WEBHOOK_SECRET
+            STRIPE_WEBHOOK_SECRET
         )
 
     except Exception as e:
@@ -355,15 +349,10 @@ def stripe_webhook():
         # ENVIAR LINK AL USUARIO
         # =========================
 
-        requests.post(
-
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-
-            json={
-                "chat_id": user_id,
-                "text": f"🔗 Tu acceso VIP:\n{link}"
-            }
-
+        send_telegram_message(
+            TOKEN,
+            user_id,
+            f"🔗 Tu acceso VIP:\n{link}"
         )
 
 
@@ -371,18 +360,12 @@ def stripe_webhook():
         # AVISAR AL ADMIN
         # =========================
 
-        requests.post(
-
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-
-            json={
-                "chat_id": ADMIN_ID,
-                "text":
-                f"💳 Nuevo pago recibido\n\n"
-                f"Usuario: {user_id}\n"
-                f"Plan: {plan_name}"
-            }
-
+        send_telegram_message(
+            TOKEN,
+            ADMIN_ID,
+            f"💳 Nuevo pago recibido\n\n"
+            f"Usuario: {user_id}\n"
+            f"Plan: {plan_name}"
         )
 
 
