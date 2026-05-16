@@ -14,7 +14,7 @@ def get_user_warnings(user_id, group_id):
             cur.execute("""
 
                 SELECT warnings
-                FROM user_warnings
+                FROM link_warnings
                 WHERE user_id=%s
                 AND group_id=%s
 
@@ -53,36 +53,31 @@ def get_user_warnings(user_id, group_id):
 
 def add_user_warning(user_id, group_id):
 
-    current = get_user_warnings(
-        user_id,
-        group_id
-    )
-
-    new_total = current + 1
-
-
     try:
 
         with conn.cursor() as cur:
 
             cur.execute("""
 
-                INSERT INTO user_warnings
+                INSERT INTO link_warnings
                 (user_id, group_id, warnings)
 
-                VALUES (%s, %s, %s)
+                VALUES (%s, %s, 1)
 
                 ON CONFLICT (user_id, group_id)
                 DO UPDATE SET
-                    warnings=EXCLUDED.warnings
+                    warnings=link_warnings.warnings + 1
+
+                RETURNING warnings
 
             """, (
 
                 user_id,
-                group_id,
-                new_total
+                group_id
 
             ))
+
+            new_total = cur.fetchone()[0]
 
             conn.commit()
 
@@ -97,7 +92,10 @@ def add_user_warning(user_id, group_id):
             e
         )
 
-        return current
+        return get_user_warnings(
+            user_id,
+            group_id
+        )
 
 
 # =========================
@@ -112,9 +110,13 @@ def reset_user_warnings(user_id, group_id):
 
             cur.execute("""
 
-                DELETE FROM user_warnings
-                WHERE user_id=%s
-                AND group_id=%s
+                INSERT INTO link_warnings
+                (user_id, group_id, warnings)
+
+                VALUES (%s, %s, 0)
+
+                ON CONFLICT (user_id, group_id)
+                DO UPDATE SET warnings=0
 
             """, (
 
@@ -123,11 +125,9 @@ def reset_user_warnings(user_id, group_id):
 
             ))
 
-            affected = cur.rowcount
-
             conn.commit()
 
-            return affected > 0
+            return True
 
     except Exception as e:
 
@@ -156,7 +156,7 @@ def list_group_warnings(group_id):
                 SELECT user_id,
                        warnings
 
-                FROM user_warnings
+                FROM link_warnings
 
                 WHERE group_id=%s
 
