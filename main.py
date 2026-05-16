@@ -72,6 +72,10 @@ from admin_view_handlers import (
 from expiration_worker import check_expirations
 from group_registration_handler import detect_bot_added
 from user_join_handler import detect_user_join
+from ai_handler import (
+    ia_command,
+    asistente_command
+)
 from code_flow_handler import receive_code
 from stripe_handler import stripe_webhook
 from web_server import run_flask_app
@@ -5803,6 +5807,14 @@ def main():
 
     telegram_app.add_handler(
         CommandHandler("admin", admin_panel)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("ia", ia_command)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("asistente", asistente_command)
     )
 
     telegram_app.add_handler(

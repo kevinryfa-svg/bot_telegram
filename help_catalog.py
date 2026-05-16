@@ -207,12 +207,28 @@ HELP_SECTION_CONTENT = {
         },
         "body": {
             "es": (
-                "La IA podrá ayudar a redactar mensajes, responder dudas, crear normas, "
-                "analizar actividad y asistir a administradores o dueños de grupo según el plan."
+                "Comandos de IA disponibles:\n\n"
+                "👤 Usuario suscrito:\n"
+                "/ia pregunta — permite hacer una consulta rápida a la IA.\n"
+                "/asistente petición — permite pedir ayuda redactando textos o resolviendo dudas.\n\n"
+                "👑 Admin o dueño de grupo:\n"
+                "/ia puede ayudar a redactar avisos, normas, respuestas a usuarios y mensajes del grupo.\n"
+                "/asistente puede ayudar con soporte, incidencias, explicaciones y organización.\n\n"
+                "🛡 Super admin:\n"
+                "Los mismos comandos sirven como base para asistencia general del sistema. "
+                "Más adelante se ampliarán con contexto de grupos, usuarios, pagos y permisos."
             ),
             "en": (
-                "AI can help write messages, answer questions, create rules, "
-                "analyze activity and assist admins or group owners depending on the plan."
+                "Available AI commands:\n\n"
+                "👤 Subscribed user:\n"
+                "/ia question — ask the AI a quick question.\n"
+                "/asistente request — get help writing text or solving doubts.\n\n"
+                "👑 Group admin or owner:\n"
+                "/ia can help write announcements, rules, user replies and group messages.\n"
+                "/asistente can help with support, incidents, explanations and organization.\n\n"
+                "🛡 Super admin:\n"
+                "The same commands are the base for general system assistance. "
+                "Later they will be expanded with group, user, payment and permission context."
             )
         }
     },
