@@ -2,6 +2,48 @@ from db import conn
 
 
 # =========================
+# GROUP SERVICE — GET LATEST TELEGRAM GROUP ID
+# =========================
+
+def get_latest_telegram_group_id(fallback_group_id=0):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT telegram_group_id
+
+                FROM groups
+
+                WHERE telegram_group_id IS NOT NULL
+                AND telegram_group_id != 0
+
+                ORDER BY telegram_group_id DESC
+
+                LIMIT 1
+
+            """)
+
+            row = cur.fetchone()
+
+            if row and row[0]:
+
+                return int(row[0])
+
+    except Exception as e:
+
+        print(
+            "Error obteniendo telegram_group_id:",
+            e
+        )
+
+
+    return int(fallback_group_id)
+
+
+# =========================
 # GROUP SERVICE — GET BY INTERNAL ID
 # =========================
 
