@@ -228,3 +228,107 @@ async def asistente_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update,
         answer
     )
+
+
+# =========================
+# AI HANDLER — CONTEXT MODE
+# =========================
+
+def get_ai_context_label(context):
+
+    value = context.user_data.get("ai_help_context")
+
+    labels = {
+        "general": "Ayuda general del bot",
+        "plans": "Gestión de planes",
+        "users": "Gestión de usuarios",
+        "payments": "Pagos y suscripciones",
+        "groups": "Gestión de grupos",
+        "admin": "Panel de administración",
+        "access": "Accesos y links"
+    }
+
+    return labels.get(
+        value,
+        "Ayuda general del bot"
+    )
+
+
+async def activate_ai_help_context(update: Update, context: ContextTypes.DEFAULT_TYPE, help_context="general"):
+
+    context.user_data["ai_chat_mode"] = True
+    context.user_data["ai_help_context"] = help_context
+
+    label = get_ai_context_label(context)
+
+    await reply_ai(
+        update,
+        "🤖 Ayuda IA activada.\n\n"
+        f"Contexto: {label}\n\n"
+        "Ahora puedes escribirme directamente sin usar /ia.\n"
+        "Para salir, escribe /salir."
+    )
+
+
+async def salir_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    context.user_data["ai_chat_mode"] = False
+    context.user_data.pop("ai_help_context", None)
+
+    await reply_ai(
+        update,
+        "✅ Modo IA desactivado."
+    )
+
+
+async def handle_ai_context_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user_text = get_effective_text(update).strip()
+
+    if not user_text:
+
+        return
+
+
+    label = get_ai_context_label(context)
+
+    await reply_ai(
+        update,
+        "🤖 Pensando..."
+    )
+
+
+    system_prompt = build_system_prompt_for_scope(
+        "default"
+    )
+
+
+    context_text = (
+        build_ai_manual_context()
+        + "\n\n"
+        + f"CONTEXTO ACTUAL DEL USUARIO: {label}\n"
+        + "Responde únicamente dentro de este contexto y del manual oficial."
+    )
+
+
+    ok, answer = generate_ai_response(
+        user_text,
+        system_prompt=system_prompt,
+        context_text=context_text
+    )
+
+
+    if not ok:
+
+        await reply_ai(
+            update,
+            answer
+        )
+
+        return
+
+
+    await send_ai_answer(
+        update,
+        answer
+    )

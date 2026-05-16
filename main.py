@@ -74,7 +74,9 @@ from group_registration_handler import detect_bot_added
 from user_join_handler import detect_user_join
 from ai_handler import (
     ia_command,
-    asistente_command
+    asistente_command,
+    salir_command,
+    handle_ai_context_text
 )
 from code_flow_handler import receive_code
 from admin_input_handler import receive_admin_inputs
@@ -581,6 +583,10 @@ async def handle_text(update, context):
 
     if context.user_data.get("waiting_code"):
         await receive_admin_inputs(update, context)
+        return
+
+    if context.user_data.get("ai_chat_mode"):
+        await handle_ai_context_text(update, context)
         return
 
     await receive_code(update, context)
@@ -5156,6 +5162,10 @@ def main():
 
     telegram_app.add_handler(
         CommandHandler("asistente", asistente_command)
+    )
+
+    telegram_app.add_handler(
+        CommandHandler("salir", salir_command)
     )
 
     telegram_app.add_handler(
