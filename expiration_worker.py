@@ -1,18 +1,14 @@
-import os
 import time
 import requests
 
 from datetime import datetime
 from functools import partial
 
+from bot_config import TOKEN, ADMIN_ID
 from db import conn
 from invite_link_service import revoke_telegram_invite_link
 from telegram_group_actions import kick_chat_member
 
-
-TOKEN = os.environ.get("TOKEN")
-
-ADMIN_ID = 8761243211
 
 revoke_link = partial(revoke_telegram_invite_link, TOKEN)
 
