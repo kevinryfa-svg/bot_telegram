@@ -1,4 +1,17 @@
-from rbac import has_permission
+from bot_config import ADMIN_ID
+from rbac import has_permission, is_super_admin
+
+
+# =========================
+# ADMIN COMMAND SERVICE — SUPER ADMIN CHECK
+# =========================
+
+def is_admin_user(user_id):
+
+    return is_super_admin(
+        user_id,
+        ADMIN_ID
+    )
 
 
 # =========================
@@ -10,8 +23,37 @@ def require_permission(user_id, group_id, permission):
     return has_permission(
         user_id,
         group_id,
-        permission
+        permission,
+        ADMIN_ID
     )
+
+
+async def deny_if_missing_permission(update, user_id, group_id, permission):
+
+    if require_permission(
+        user_id,
+        group_id,
+        permission
+    ):
+
+        return False
+
+
+    message = update.message
+
+    if not message and update.callback_query:
+
+        message = update.callback_query.message
+
+
+    if message:
+
+        await message.reply_text(
+            permission_denied_text(permission)
+        )
+
+
+    return True
 
 
 # =========================
