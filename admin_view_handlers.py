@@ -2,9 +2,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from db import conn
-
-
-ADMIN_ID = 8761243211
+from bot_config import ADMIN_ID
 
 
 # =========================
