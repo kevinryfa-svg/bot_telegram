@@ -11,14 +11,27 @@ from ai_service import (
 # AI HANDLER — HELPERS
 # =========================
 
+def get_effective_text(update: Update):
+
+    message = update.effective_message
+
+    if not message or not message.text:
+
+        return ""
+
+    return message.text
+
+
 def extract_command_text(update: Update):
 
-    if not update.message or not update.message.text:
+    text = get_effective_text(update)
+
+    if not text:
 
         return ""
 
 
-    parts = update.message.text.split(
+    parts = text.split(
         maxsplit=1
     )
 
@@ -31,11 +44,24 @@ def extract_command_text(update: Update):
     return parts[1].strip()
 
 
+async def reply_ai(update: Update, text):
+
+    message = update.effective_message
+
+    if not message:
+
+        return
+
+
+    await message.reply_text(text)
+
+
 async def send_ai_answer(update: Update, text):
 
     if not text:
 
-        await update.message.reply_text(
+        await reply_ai(
+            update,
             "❌ No se recibió respuesta de la IA."
         )
 
@@ -47,13 +73,18 @@ async def send_ai_answer(update: Update, text):
 
     if len(text) <= max_length:
 
-        await update.message.reply_text(text)
+        await reply_ai(
+            update,
+            text
+        )
+
         return
 
 
     for i in range(0, len(text), max_length):
 
-        await update.message.reply_text(
+        await reply_ai(
+            update,
             text[i:i + max_length]
         )
 
@@ -69,7 +100,8 @@ async def ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not user_text:
 
-        await update.message.reply_text(
+        await reply_ai(
+            update,
             "🤖 Uso de IA:\n\n"
             "/ia escribe aquí tu pregunta\n\n"
             "Ejemplo:\n"
@@ -79,7 +111,8 @@ async def ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    await update.message.reply_text(
+    await reply_ai(
+        update,
         "🤖 Pensando..."
     )
 
@@ -97,7 +130,11 @@ async def ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not ok:
 
-        await update.message.reply_text(answer)
+        await reply_ai(
+            update,
+            answer
+        )
+
         return
 
 
@@ -118,7 +155,8 @@ async def asistente_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not user_text:
 
-        await update.message.reply_text(
+        await reply_ai(
+            update,
             "🤖 Asistente IA:\n\n"
             "/asistente escribe aquí lo que necesitas\n\n"
             "Ejemplo:\n"
@@ -128,7 +166,8 @@ async def asistente_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    await update.message.reply_text(
+    await reply_ai(
+        update,
         "🤖 Preparando respuesta..."
     )
 
@@ -146,7 +185,11 @@ async def asistente_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not ok:
 
-        await update.message.reply_text(answer)
+        await reply_ai(
+            update,
+            answer
+        )
+
         return
 
 
