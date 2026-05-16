@@ -52,6 +52,7 @@ def get_active_plan_by_price(price_id, group_id):
 
 # =========================
 # PAYMENT SERVICE — CALCULATE EXPIRATION
+# duration_days currently stores minutes for test plans when value < 1440.
 # =========================
 
 def calculate_expiration_from_duration(duration_days):
@@ -80,7 +81,7 @@ def calculate_expiration_from_duration(duration_days):
 # PAYMENT SERVICE — SAVE PAYMENT
 # =========================
 
-def save_payment(user_id, plan_name, group_id=None, amount=None, currency=None, stripe_session_id=None):
+def save_payment(user_id, plan_name, group_id=None, amount=None, currency=None, stripe_payment_id=None, status="paid"):
 
     try:
 
@@ -89,18 +90,19 @@ def save_payment(user_id, plan_name, group_id=None, amount=None, currency=None, 
             cur.execute("""
 
                 INSERT INTO payments
-                (user_id, plan, group_id, amount, currency, stripe_session_id)
+                (user_id, group_id, stripe_payment_id, amount, currency, status, plan)
 
-                VALUES (%s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
 
             """, (
 
                 user_id,
-                plan_name,
                 group_id,
+                stripe_payment_id,
                 amount,
                 currency,
-                stripe_session_id
+                status,
+                plan_name
 
             ))
 
@@ -139,11 +141,12 @@ def list_recent_payments(limit=50, group_id=None):
                            group_id,
                            amount,
                            currency,
-                           created_at
+                           status,
+                           payment_date
 
                     FROM payments
 
-                    ORDER BY created_at DESC
+                    ORDER BY payment_date DESC
 
                     LIMIT %s
 
@@ -158,13 +161,14 @@ def list_recent_payments(limit=50, group_id=None):
                            group_id,
                            amount,
                            currency,
-                           created_at
+                           status,
+                           payment_date
 
                     FROM payments
 
                     WHERE group_id=%s
 
-                    ORDER BY created_at DESC
+                    ORDER BY payment_date DESC
 
                     LIMIT %s
 
