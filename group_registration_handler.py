@@ -1,16 +1,11 @@
-import os
 import asyncio
 import requests
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from bot_config import TOKEN, ADMIN_ID
 from db import conn
-
-
-TOKEN = os.environ.get("TOKEN")
-
-ADMIN_ID = 8761243211
 
 
 # =========================
