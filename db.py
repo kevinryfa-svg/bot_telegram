@@ -144,7 +144,7 @@ def create_tables():
 
 
         # =========================
-        # TABLA ADMINS
+        # TABLA ADMINS / RBAC
         # =========================
 
         cur.execute("""
@@ -157,19 +157,49 @@ def create_tables():
 
             group_id INTEGER,
 
+            role TEXT DEFAULT 'MODERATOR',
+
             is_super_admin BOOLEAN DEFAULT FALSE,
 
             can_manage_users BOOLEAN DEFAULT FALSE,
+
+            can_kick_users BOOLEAN DEFAULT FALSE,
+
+            can_ban_users BOOLEAN DEFAULT FALSE,
+
+            can_unban_users BOOLEAN DEFAULT FALSE,
+
+            can_warn_users BOOLEAN DEFAULT FALSE,
+
+            can_reset_warnings BOOLEAN DEFAULT FALSE,
+
+            can_resend_links BOOLEAN DEFAULT FALSE,
+
+            can_recover_access BOOLEAN DEFAULT FALSE,
 
             can_manage_codes BOOLEAN DEFAULT FALSE,
 
             can_manage_groups BOOLEAN DEFAULT FALSE,
 
+            can_manage_plans BOOLEAN DEFAULT FALSE,
+
             can_manage_payments BOOLEAN DEFAULT FALSE,
+
+            can_manage_admins BOOLEAN DEFAULT FALSE,
+
+            can_view_users BOOLEAN DEFAULT FALSE,
+
+            can_view_payments BOOLEAN DEFAULT FALSE,
 
             can_view_stats BOOLEAN DEFAULT FALSE,
 
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            can_view_logs BOOLEAN DEFAULT FALSE,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (user_id, group_id)
 
         );
 
@@ -490,6 +520,143 @@ def create_tables():
 
         except Exception:
             pass
+
+
+        # =========================
+        # MIGRACIÓN ADMINS / RBAC
+        # =========================
+
+        admin_columns = [
+
+            ("role", "TEXT DEFAULT 'MODERATOR'"),
+            ("can_kick_users", "BOOLEAN DEFAULT FALSE"),
+            ("can_ban_users", "BOOLEAN DEFAULT FALSE"),
+            ("can_unban_users", "BOOLEAN DEFAULT FALSE"),
+            ("can_warn_users", "BOOLEAN DEFAULT FALSE"),
+            ("can_reset_warnings", "BOOLEAN DEFAULT FALSE"),
+            ("can_resend_links", "BOOLEAN DEFAULT FALSE"),
+            ("can_recover_access", "BOOLEAN DEFAULT FALSE"),
+            ("can_manage_plans", "BOOLEAN DEFAULT FALSE"),
+            ("can_manage_admins", "BOOLEAN DEFAULT FALSE"),
+            ("can_view_users", "BOOLEAN DEFAULT FALSE"),
+            ("can_view_payments", "BOOLEAN DEFAULT FALSE"),
+            ("can_view_logs", "BOOLEAN DEFAULT FALSE"),
+            ("is_active", "BOOLEAN DEFAULT TRUE")
+
+        ]
+
+
+        for column_name, column_type in admin_columns:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE admins
+
+                    ADD COLUMN {column_name} {column_type}
+
+                """)
+
+                print(f"Columna añadida en admins: {column_name}")
+
+            except Exception:
+
+                print(f"Columna ya existe en admins: {column_name}")
+
+
+        # =========================
+        # ASEGURAR SUPER ADMIN GLOBAL
+        # =========================
+
+        try:
+
+            cur.execute("""
+
+                INSERT INTO admins
+                (
+                    user_id,
+                    group_id,
+                    role,
+                    is_super_admin,
+                    can_manage_users,
+                    can_kick_users,
+                    can_ban_users,
+                    can_unban_users,
+                    can_warn_users,
+                    can_reset_warnings,
+                    can_resend_links,
+                    can_recover_access,
+                    can_manage_codes,
+                    can_manage_groups,
+                    can_manage_plans,
+                    can_manage_payments,
+                    can_manage_admins,
+                    can_view_users,
+                    can_view_payments,
+                    can_view_stats,
+                    can_view_logs,
+                    is_active
+                )
+
+                VALUES
+                (
+                    8761243211,
+                    0,
+                    'SUPER_ADMIN',
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE,
+                    TRUE
+                )
+
+                ON CONFLICT (user_id, group_id)
+                DO UPDATE SET
+
+                    role='SUPER_ADMIN',
+                    is_super_admin=TRUE,
+                    can_manage_users=TRUE,
+                    can_kick_users=TRUE,
+                    can_ban_users=TRUE,
+                    can_unban_users=TRUE,
+                    can_warn_users=TRUE,
+                    can_reset_warnings=TRUE,
+                    can_resend_links=TRUE,
+                    can_recover_access=TRUE,
+                    can_manage_codes=TRUE,
+                    can_manage_groups=TRUE,
+                    can_manage_plans=TRUE,
+                    can_manage_payments=TRUE,
+                    can_manage_admins=TRUE,
+                    can_view_users=TRUE,
+                    can_view_payments=TRUE,
+                    can_view_stats=TRUE,
+                    can_view_logs=TRUE,
+                    is_active=TRUE
+
+            """)
+
+        except Exception as e:
+
+            print(
+                "Error asegurando super admin:",
+                e
+            )
 
 
         # =========================
