@@ -55,60 +55,9 @@ from audit_log_service import (
     create_audit_log
 )
 
-
-# =========================
-# FORMATEAR TIEMPO RESTANTE
-# =========================
-
-def format_tiempo_restante(expiration):
-
-    if expiration is None:
-
-        return "♾️ Permanente"
-
-    tiempo_restante = expiration - datetime.now()
-
-    total_segundos = int(
-        tiempo_restante.total_seconds()
-    )
-
-    if total_segundos <= 0:
-
-        return "Expirado"
-
-    dias = total_segundos // 86400
-
-    horas = (
-
-        total_segundos % 86400
-
-    ) // 3600
-
-    minutos = (
-
-        total_segundos % 3600
-
-    ) // 60
-
-
-    # Protección contra mostrar 0m cuando aún quedan segundos
-
-    if dias == 0 and horas == 0 and minutos == 0:
-
-        minutos = 1
-
-
-    # Mostrar SIEMPRE días, horas y minutos
-
-    return (
-
-        f"{dias}d "
-
-        f"{horas}h "
-
-        f"{minutos}m"
-
-    )
+from formatters import (
+    format_tiempo_restante
+)
 
 
 from db import conn, create_tables
