@@ -179,35 +179,11 @@ def revoke_link(chat_id, link):
 
     try:
 
-        response = requests.post(
-
-            f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
-
-            json={
-                "chat_id": chat_id,
-                "invite_link": link
-            }
-
-        ).json()
-
-
-        # =========================
-        # IGNORAR EXPIRED
-        # =========================
-
-        if not response.get("ok"):
-
-            description = response.get(
-                "description",
-                ""
-            )
-
-            if description != "Bad Request: INVITE_HASH_EXPIRED":
-
-                print(
-                    "Error real revocando:",
-                    response
-                )
+        revoke_telegram_invite_link(
+            TOKEN,
+            chat_id,
+            link
+        )
 
     except Exception as e:
 
