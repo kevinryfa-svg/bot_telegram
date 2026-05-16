@@ -2976,15 +2976,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                                 try:
 
-                                    requests.post(
-
-                                        f"https://api.telegram.org/bot{TOKEN}/revokeChatInviteLink",
-
-                                        json={
-                                            "chat_id": telegram_group_id,
-                                            "invite_link": link
-                                        }
-
+                                    revoke_telegram_invite_link(
+                                        TOKEN,
+                                        telegram_group_id,
+                                        link
                                     )
 
                                 except Exception as e:
