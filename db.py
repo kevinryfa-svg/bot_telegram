@@ -566,6 +566,29 @@ def create_tables():
 
 
         # =========================
+        # ASEGURAR UNIQUE admins(user_id, group_id)
+        # =========================
+
+        try:
+
+            cur.execute("""
+
+                CREATE UNIQUE INDEX IF NOT EXISTS admins_user_group_unique
+                ON admins (user_id, group_id)
+
+            """)
+
+            print("Índice único admins(user_id, group_id) asegurado")
+
+        except Exception as e:
+
+            print(
+                "Error asegurando índice único admins:",
+                e
+            )
+
+
+        # =========================
         # ASEGURAR SUPER ADMIN GLOBAL
         # =========================
 
