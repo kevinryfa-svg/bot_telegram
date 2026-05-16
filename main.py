@@ -74,6 +74,9 @@ from group_registration_handler import detect_bot_added
 from user_join_handler import detect_user_join
 from stripe_handler import stripe_webhook
 from web_server import run_flask_app
+from group_service import (
+    get_latest_telegram_group_id
+)
 
 
 # =========================
@@ -142,46 +145,9 @@ def revoke_link(chat_id, link):
 
 def get_group_id():
 
-    try:
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT telegram_group_id
-
-                FROM groups
-
-                WHERE telegram_group_id IS NOT NULL
-                AND telegram_group_id != 0
-
-                ORDER BY telegram_group_id DESC
-
-                LIMIT 1
-
-            """)
-
-            row = cur.fetchone()
-
-            if row and row[0]:
-
-                telegram_group_id = int(row[0])
-
-                # DEBUG SILENCIADO
-
-                return telegram_group_id
-
-    except Exception as e:
-
-        print(
-            "Error obteniendo telegram_group_id:",
-            e
-        )
-
-
-    # DEBUG SILENCIADO
-
-    return int(GROUP_ID)
+    return get_latest_telegram_group_id(
+        GROUP_ID
+    )
 
 
 # =========================
