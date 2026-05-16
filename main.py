@@ -4896,8 +4896,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if update.effective_user.id != ADMIN_ID:
+    user_id = update.effective_user.id
+
+
+    if not is_super_admin(user_id):
+
+        await update.message.reply_text(
+            "⛔ No tienes permisos para acceder al panel."
+        )
+
         return
+
 
     keyboard = [
 
