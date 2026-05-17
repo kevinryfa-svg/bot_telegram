@@ -90,6 +90,28 @@ async def delete_query_message_safely(query):
         pass
 
 
+def build_recover_navigation_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "⬅️ Volver al inicio",
+            callback_data="public_back_start"
+        )],
+        [InlineKeyboardButton(
+            "🔎 Ver comunidades",
+            callback_data="start_explore_groups"
+        )]
+    ])
+
+
+async def reply_with_recover_navigation(query, text):
+
+    await query.message.reply_text(
+        text,
+        reply_markup=build_recover_navigation_keyboard()
+    )
+
+
 ADMIN_PERMISSION_COLUMNS = [
     "can_manage_users",
     "can_kick_users",
@@ -3766,16 +3788,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
-                    SELECT DISTINCT il.group_id, g.name
+                    SELECT DISTINCT g.telegram_group_id, g.name
 
-                    FROM invite_links il
+                    FROM users u
 
                     JOIN groups g
-                    ON il.group_id = g.telegram_group_id
+                    ON u.group_id = g.id
 
-                    WHERE il.user_id=%s
+                    WHERE u.user_id=%s
+                    AND COALESCE(u.subscription_active, FALSE)=TRUE
+                    AND (
+                        u.expiration IS NULL
+                        OR u.expiration > NOW()
+                    )
+                    AND g.is_active=TRUE
+                    AND g.telegram_group_id != 0
 
-                    AND il.is_active=TRUE
+                    ORDER BY g.name ASC
 
                 """, (user_id,))
 
@@ -3794,14 +3823,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not rows:
 
-            await query.message.reply_text(
-                "⚠️ No tienes suscripciones activas.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "💬 Ayuda sobre este menú",
-                        callback_data=CALLBACK_SUBSCRIPTIONS_HELP
-                    )]
-                ])
+            await reply_with_recover_navigation(
+                query,
+                "⚠️ No tienes suscripciones activas."
             )
 
             return
@@ -3958,6 +3982,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     WHERE user_id=%s
                     AND group_id=%s
+                    AND COALESCE(subscription_active, FALSE)=TRUE
+                    AND (
+                        expiration IS NULL
+                        OR expiration > NOW()
+                    )
+
+                    LIMIT 1
 
                 """, (
 
@@ -3971,8 +4002,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if not user_row:
 
-                    await query.message.reply_text(
-                        "❌ No tienes suscripción activa."
+                    await reply_with_recover_navigation(
+                        query,
+                        "No tienes una suscripción activa para este grupo."
                     )
 
                     return
@@ -4644,30 +4676,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 SELECT expiration
                 FROM users
                 WHERE user_id=%s
+                AND group_id=%s
+                AND COALESCE(subscription_active, FALSE)=TRUE
+                AND (
+                    expiration IS NULL
+                    OR expiration > NOW()
+                )
 
-            """, (user_id,))
+                LIMIT 1
+
+            """, (user_id, get_group_id()))
 
             row = cur.fetchone()
 
         if not row:
 
-            await query.message.reply_text(
-                "❌ No tienes acceso activo."
+            await reply_with_recover_navigation(
+                query,
+                "No tienes una suscripción activa para este grupo."
             )
 
             return
 
 
         expiration = row[0]
-
-        if expiration and datetime.now() > expiration:
-
-            await query.message.reply_text(
-                "⛔ Tu suscripción ha expirado."
-            )
-
-            return
-
 
         with conn.cursor() as cur:
 
