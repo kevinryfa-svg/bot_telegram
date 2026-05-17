@@ -13,10 +13,10 @@ from rbac_helpers import (
 
 
 APPROVED_COMMERCIAL_STATUSES = (
-    "approved",
     "trial_active",
-    "awaiting_payment_setup",
-    "awaiting_payment",
+    "awaiting_creator_setup",
+    "setup_in_progress",
+    "setup_ready",
     "active"
 )
 
