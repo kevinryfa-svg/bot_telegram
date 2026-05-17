@@ -167,6 +167,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
                 FROM users
 
                 WHERE user_id=%s
+                AND COALESCE(subscription_active, FALSE)=TRUE
                 AND (
                     expiration IS NULL
                     OR expiration > %s
@@ -329,10 +330,15 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
                 ON u.group_id = g.id
 
                 WHERE u.user_id=%s
+                AND COALESCE(u.subscription_active, FALSE)=TRUE
+                AND (
+                    u.expiration IS NULL
+                    OR u.expiration > %s
+                )
 
                 ORDER BY g.name ASC
 
-            """, (user_id,))
+            """, (user_id, datetime.now()))
 
             subs = cur.fetchall()
 
