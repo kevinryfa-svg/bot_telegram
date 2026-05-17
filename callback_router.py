@@ -61,7 +61,10 @@ from rbac_helpers import (
 )
 from start_handler import start, send_start_menu
 from telegram_group_actions import kick_chat_member
-from ui_menu_helpers import make_button
+from ui_menu_helpers import (
+    make_button,
+    send_clean_message
+)
 
 
 TOKEN = os.environ.get("TOKEN")
@@ -74,6 +77,11 @@ get_group_id = None
 async def delete_query_message_safely(query):
 
     try:
+
+        if int(query.message.chat_id) < 0:
+
+            return
+
 
         await query.message.delete()
 
@@ -2547,9 +2555,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await delete_query_message_safely(query)
 
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=COMMERCIAL_MENU_TEXT_ES,
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            COMMERCIAL_MENU_TEXT_ES,
             reply_markup=InlineKeyboardMarkup(
                 build_commercial_menu_keyboard()
             )
@@ -2581,7 +2590,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             print("Error cargando explorar comunidades:", e)
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "❌ Error cargando comunidades disponibles."
             )
 
@@ -2590,7 +2601,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not groups:
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "Todavía no hay comunidades disponibles. "
                 "Puedes contactar con soporte o volver más tarde."
             )
@@ -2625,7 +2638,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ])
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "Debajo aparecen las comunidades privadas disponibles. "
             "Selecciona una para ver sus planes.",
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -2636,7 +2651,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "start_no_groups":
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "Todavía no hay comunidades disponibles. "
             "Puedes contactar con soporte o volver más tarde."
         )
@@ -2648,7 +2665,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await delete_query_message_safely(query)
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
 
             COMMERCIAL_MENU_TEXT_ES,
 
@@ -2687,7 +2706,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ]
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "🛟 Soporte\n\n"
             "Escribe tu mensaje y se lo enviaremos a un administrador.",
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -2752,7 +2773,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ]
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "📌 Publicar mi comunidad en este bot\n\n"
             "Esta opción es para creadores que quieren empezar rápido sin crear un bot propio.\n\n"
             "Tu comunidad aparecerá dentro de nuestro bot principal. "
@@ -2781,7 +2804,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["commercial_form_step"] = 1
         context.user_data["commercial_form_data"] = {}
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "Indica el nombre de la comunidad."
         )
 
@@ -2792,7 +2817,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         plans = fetch_active_commercial_plans(PRODUCT_SHARED_BOT_SPACE)
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "💳 Activar directamente sin prueba\n\n"
             "Elige la duración comercial para publicar tu comunidad sin prueba.\n\n"
             "Si el plan no tiene pago automático configurado, un administrador debe añadir el price_id de Stripe.",
@@ -2876,7 +2903,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ]
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "🤖 Crear mi bot personalizado\n\n"
             "Esta opción es para quien quiere una experiencia más profesional con su propio bot de Telegram.\n\n"
             "El cliente crea su bot en BotFather y configura su información, marca, textos, grupos y planes. "
@@ -2905,7 +2934,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["commercial_form_step"] = 1
         context.user_data["commercial_form_data"] = {}
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "Indica el nombre del proyecto o comunidad."
         )
 
@@ -2943,7 +2974,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ]
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "📩 Solicitud recibida\n\n"
             "Un administrador revisará la solicitud y podrá ayudarte con la mejor opción según lo que necesites.",
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -3044,7 +3077,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not has_any_admin_permission(user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ No tienes permisos de gestión."
             )
 
@@ -3056,14 +3091,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not keyboard:
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ No tienes permisos de gestión."
             )
 
             return
 
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
 
             "🔐 PANEL ADMIN",
 
@@ -3108,7 +3147,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         tickets = fetch_recent_support_tickets()
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             build_support_tickets_text(tickets),
             reply_markup=InlineKeyboardMarkup(
                 build_support_tickets_keyboard(tickets)
@@ -4415,7 +4456,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if not group_row:
 
-                    await query.message.reply_text(
+                    await send_clean_message(
+            context,
+            query.message.chat_id,
                         "❌ Comunidad no encontrada o no disponible."
                     )
 
@@ -4447,7 +4490,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             print("Error cargando planes:", e)
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "❌ Error cargando planes."
             )
 
@@ -4456,7 +4501,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if is_free_group:
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "Esta comunidad es gratuita, pero el acceso está protegido por el bot.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(
@@ -4479,7 +4526,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not plans:
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⚠️ Este grupo no tiene planes disponibles."
             )
 
@@ -4552,7 +4601,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
 
             "Selecciona un plan:",
 
@@ -4822,7 +4873,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")])
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
 
             "👥 GESTIÓN USUARIOS",
 
@@ -5002,7 +5055,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")])
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
 
             "🎟️ GESTIÓN ACCESOS",
 
@@ -5046,7 +5101,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ])
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
 
             "📦 GESTIÓN GRUPOS",
 
@@ -5225,7 +5282,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")])
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
 
             "💳 GESTIÓN PAGOS",
 
@@ -5269,7 +5328,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")
         ])
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
 
             "📊 GESTIÓN NEGOCIO",
 
@@ -5307,7 +5368,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ]
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
 
             "📜 LOGS SISTEMA",
 
@@ -5334,13 +5397,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not keyboard:
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ No tienes permisos de gestión."
             )
 
             return
 
-        await query.message.reply_text(
+        await send_clean_message(
+
+            context,
+
+            query.message.chat_id,
 
             "🔐 PANEL ADMIN",
 
@@ -7827,7 +7896,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
@@ -7835,7 +7906,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         _assigned, group_id = assign_owner_for_commercial_request(request_row)
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             build_creator_setup_panel_text(group_id),
             reply_markup=InlineKeyboardMarkup(
                 build_creator_setup_keyboard(
@@ -7855,7 +7928,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
@@ -7864,7 +7939,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         start_creator_setup_state(context, request_id, "group")
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "📡 Grupo o canal\n\n"
             "Antes de enviar el ID:\n\n"
             "1. Añade este bot a tu grupo o canal.\n"
@@ -7885,7 +7962,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
@@ -7894,7 +7973,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         start_creator_setup_state(context, request_id, "texts")
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "📝 Textos y descripción\n\n"
             "Paso 1: escribe el nombre público de tu comunidad."
         )
@@ -7909,7 +7990,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
@@ -7918,7 +8001,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if request_row.get("payment_mode") == "free":
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "💳 Cobros / Stripe propio\n\n"
                 "No aplica para comunidad gratuita. Puedes configurar grupo/canal y textos sin Stripe ni price_id.",
                 reply_markup=InlineKeyboardMarkup([
@@ -7934,7 +8019,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         start_creator_setup_state(context, request_id, "stripe")
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "💳 Cobros / Stripe propio\n\n"
             "Envía tu STRIPE_SECRET_KEY.\n\n"
             "No se mostrará completa después de guardarla. "
@@ -7954,14 +8041,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
             return
 
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "💰 Planes de acceso\n\n"
             "No aplica para comunidad gratuita.\n\n"
             "Puedes configurar grupo/canal y textos. No se pedirá Stripe ni price_id mientras el modo sea gratuito.",
@@ -7983,7 +8074,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
@@ -7992,7 +8085,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if request_row.get("payment_mode") == "free":
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "💰 Planes de acceso\n\n"
                 "No aplica para comunidad gratuita.\n\n"
                 "No se pedirá Stripe ni price_id en este modo.",
@@ -8012,7 +8107,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not group_id:
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "💰 Planes de acceso\n\n"
                 "Pendiente de crear/publicar grupo.\n\n"
                 "La tabla actual de planes necesita un groups.id real. "
@@ -8030,7 +8127,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         plan_count = get_creator_plan_count(group_id)
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "💰 Planes de acceso\n\n"
             f"Planes activos configurados: {plan_count}\n\n"
             "El price_id debe pertenecer al Stripe propio del creador. "
@@ -8057,7 +8156,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
@@ -8069,7 +8170,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not group_id:
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⚠️ No se puede crear un plan todavía.\n\n"
                 "Falta un groups.id real asociado a tu solicitud.",
                 reply_markup=InlineKeyboardMarkup(
@@ -8085,7 +8188,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         start_creator_setup_state(context, request_id, "plan")
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "💰 Crear plan de acceso\n\n"
             "Paso 1: escribe el nombre del plan."
         )
@@ -8100,14 +8205,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
             return
 
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "👁 Visibilidad pública\n\n"
             f"Ubicación elegida: {format_public_visibility(request_row.get('requested_public_visibility'))}\n\n"
             "La visibilidad la define el propietario principal al aprobar la prueba.",
@@ -8129,14 +8238,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
             return
 
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             build_creator_setup_summary(request_row),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
@@ -8156,14 +8269,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not commercial_request_belongs_to_user(request_row, user_id):
 
-            await query.message.reply_text(
+            await send_clean_message(
+            context,
+            query.message.chat_id,
                 "⛔ Esta solicitud no pertenece a tu usuario."
             )
 
             return
 
 
-        await query.message.reply_text(
+        await send_clean_message(
+            context,
+            query.message.chat_id,
             "🧭 Tutorial paso a paso\n\n"
             "1. Crea o entra en tu cuenta de Stripe.\n"
             "2. En Stripe, busca las claves de desarrollador para copiar STRIPE_SECRET_KEY.\n"

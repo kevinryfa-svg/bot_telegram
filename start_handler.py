@@ -19,6 +19,7 @@ from formatters import (
     format_tiempo_restante
 )
 from rbac_helpers import is_super_admin
+from ui_menu_helpers import send_clean_message
 
 
 # =========================
@@ -389,22 +390,14 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     )
 
 
-    if chat_id:
-
-        await context.bot.send_message(
-
-            chat_id=chat_id,
-
-            text=mensaje,
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
-        )
-
-        return
+    target_chat_id = chat_id or message.chat_id
 
 
-    await message.reply_text(
+    await send_clean_message(
+
+        context,
+
+        target_chat_id,
 
         mensaje,
 
