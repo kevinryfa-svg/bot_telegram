@@ -942,9 +942,9 @@ def get_creator_plan_count(group_id):
         return cur.fetchone()[0]
 
 
-def build_creator_setup_keyboard(request_id):
+def build_creator_setup_keyboard(request_id, payment_mode=None):
 
-    return [
+    keyboard = [
 
         [InlineKeyboardButton(
             "📡 Grupo o canal",
@@ -954,17 +954,54 @@ def build_creator_setup_keyboard(request_id):
         [InlineKeyboardButton(
             "📝 Textos y descripción",
             callback_data=f"creator_setup_texts_{request_id}"
-        )],
+        )]
 
-        [InlineKeyboardButton(
-            "💳 Cobros / Stripe propio",
-            callback_data=f"creator_setup_stripe_{request_id}"
-        )],
+    ]
 
-        [InlineKeyboardButton(
-            "💰 Planes de acceso",
-            callback_data=f"creator_setup_plans_{request_id}"
-        )],
+
+    if payment_mode == "paid":
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "💳 Cobros / Stripe propio",
+                callback_data=f"creator_setup_stripe_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "💰 Planes de acceso",
+                callback_data=f"creator_setup_plans_{request_id}"
+            )
+        ])
+
+    elif payment_mode == "free":
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "💰 Planes de acceso",
+                callback_data=f"creator_setup_plans_not_applicable_{request_id}"
+            )
+        ])
+
+    else:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "💳 Cobros / Stripe propio",
+                callback_data=f"creator_setup_stripe_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "💰 Planes de acceso",
+                callback_data=f"creator_setup_plans_{request_id}"
+            )
+        ])
+
+
+    keyboard.extend([
 
         [InlineKeyboardButton(
             "👁 Visibilidad pública",
@@ -991,7 +1028,9 @@ def build_creator_setup_keyboard(request_id):
             callback_data="public_back_start"
         )]
 
-    ]
+    ])
+
+    return keyboard
 
 
 def build_creator_setup_panel_text(group_id=None):
@@ -1182,6 +1221,37 @@ def build_commercial_plan_keyboard(request_id, plans):
         InlineKeyboardButton(
             "💬 Ayuda",
             callback_data=CALLBACK_COMMERCIAL_HELP
+        )
+    ])
+
+    return keyboard
+
+
+def build_direct_activation_plan_keyboard(plans):
+
+    keyboard = []
+
+
+    for plan in plans:
+
+        plan_id = plan.get("id")
+        label = (
+            f"{plan.get('name') or '-'} — "
+            f"{format_commercial_plan_price(plan)}"
+        )
+
+        keyboard.append([
+            InlineKeyboardButton(
+                label,
+                callback_data=f"commercial_direct_plan_{plan_id}"
+            )
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=CALLBACK_SHARED_BOT_SPACE
         )
     ])
 
@@ -1921,6 +1991,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )],
 
             [InlineKeyboardButton(
+                "💳 Activar directamente sin prueba",
+                callback_data="commercial_direct_activate"
+            )],
+
+            [InlineKeyboardButton(
                 "📩 Hablar con un asesor",
                 callback_data=CALLBACK_COMMERCIAL_CONTACT
             )],
@@ -1968,6 +2043,66 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "Indica el nombre de la comunidad."
+        )
+
+        return
+
+
+    if data == "commercial_direct_activate":
+
+        plans = fetch_active_commercial_plans(PRODUCT_SHARED_BOT_SPACE)
+
+        await query.message.reply_text(
+            "💳 Activar directamente sin prueba\n\n"
+            "Elige la duración comercial para publicar tu comunidad sin prueba.\n\n"
+            "Si el plan no tiene pago automático configurado, un administrador debe añadir el price_id de Stripe.",
+            reply_markup=InlineKeyboardMarkup(
+                build_direct_activation_plan_keyboard(plans)
+            )
+        )
+
+        return
+
+
+    if data.startswith("commercial_direct_plan_"):
+
+        plan_id = extract_commercial_request_id(
+            data,
+            "commercial_direct_plan_"
+        )
+        plan = fetch_commercial_plan(plan_id)
+
+
+        if not plan:
+
+            await query.message.reply_text(
+                "❌ Plan comercial no encontrado."
+            )
+
+            return
+
+
+        if not plan.get("stripe_price_id"):
+
+            await query.message.reply_text(
+                "Este plan todavía no tiene pago automático configurado. Un administrador debe añadir el price_id de Stripe."
+            )
+
+            await notify_commercial_admin(
+                context,
+                (
+                    "💳 Activación directa solicitada\n\n"
+                    f"Usuario: {user_id}\n"
+                    f"Plan: {plan.get('name') or '-'}\n"
+                    "Falta stripe_price_id."
+                )
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "El pago automático comercial todavía está pendiente de conectar."
         )
 
         return
@@ -6533,7 +6668,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             build_creator_setup_panel_text(group_id),
             reply_markup=InlineKeyboardMarkup(
-                build_creator_setup_keyboard(request_id)
+                build_creator_setup_keyboard(
+                    request_id,
+                    request_row.get("payment_mode")
+                )
             )
         )
 
@@ -6558,8 +6696,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "📡 Grupo o canal\n\n"
-            "Envía el telegram_group_id del grupo/canal si ya existe en el bot, "
-            "o pega el link/identificador para dejarlo pendiente de verificación."
+            "Antes de enviar el ID:\n\n"
+            "1. Añade este bot a tu grupo o canal.\n"
+            "2. Dale permisos de administrador para gestionar enlaces, usuarios y mensajes de acceso.\n"
+            "3. El bot debe detectar el grupo al entrar y guardarlo como registrado.\n"
+            "4. El ID del grupo suele empezar por -100.\n"
+            "5. Puedes obtenerlo desde herramientas de Telegram para ver el ID del chat, reenviando un mensaje a un bot de ID o copiándolo desde la configuración técnica si ya lo tienes.\n\n"
+            "Cuando el bot esté añadido y sea administrador, envía aquí el telegram_group_id o el link/identificador para dejarlo pendiente de verificación."
         )
 
         return
@@ -6603,6 +6746,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if request_row.get("payment_mode") == "free":
+
+            await query.message.reply_text(
+                "💳 Cobros / Stripe propio\n\n"
+                "No aplica para comunidad gratuita. Puedes configurar grupo/canal y textos sin Stripe ni price_id.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "⬅️ Volver",
+                        callback_data=f"configure_community_{request_id}"
+                    )]
+                ])
+            )
+
+            return
+
+
         start_creator_setup_state(context, request_id, "stripe")
 
         await query.message.reply_text(
@@ -6610,6 +6769,38 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Envía tu STRIPE_SECRET_KEY.\n\n"
             "No se mostrará completa después de guardarla. "
             "El checkout real con Stripe del creador todavía no se conecta en esta fase."
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_plans_not_applicable_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "creator_setup_plans_not_applicable_"
+        )
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "💰 Planes de acceso\n\n"
+            "No aplica para comunidad gratuita.\n\n"
+            "Puedes configurar grupo/canal y textos. No se pedirá Stripe ni price_id mientras el modo sea gratuito.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data=f"configure_community_{request_id}"
+                )]
+            ])
         )
 
         return
@@ -6629,6 +6820,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if request_row.get("payment_mode") == "free":
+
+            await query.message.reply_text(
+                "💰 Planes de acceso\n\n"
+                "No aplica para comunidad gratuita.\n\n"
+                "No se pedirá Stripe ni price_id en este modo.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "⬅️ Volver",
+                        callback_data=f"configure_community_{request_id}"
+                    )]
+                ])
+            )
+
+            return
+
+
         _assigned, group_id = assign_owner_for_commercial_request(request_row)
 
 
@@ -6640,7 +6848,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "La tabla actual de planes necesita un groups.id real. "
                 "No existe una estructura segura de planes pendientes por solicitud, así que primero hay que vincular el grupo/canal.",
                 reply_markup=InlineKeyboardMarkup(
-                    build_creator_setup_keyboard(request_id)
+                    build_creator_setup_keyboard(
+                        request_id,
+                        request_row.get("payment_mode")
+                    )
                 )
             )
 
@@ -6692,7 +6903,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ No se puede crear un plan todavía.\n\n"
                 "Falta un groups.id real asociado a tu solicitud.",
                 reply_markup=InlineKeyboardMarkup(
-                    build_creator_setup_keyboard(request_id)
+                    build_creator_setup_keyboard(
+                        request_id,
+                        request_row.get("payment_mode")
+                    )
                 )
             )
 

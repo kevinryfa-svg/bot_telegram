@@ -122,6 +122,11 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
 
             existing = cur.fetchone()
 
+            # Los grupos añadidos por usuarios no autorizados se conservan
+            # solo como pendientes de revisión; no se publican ni asignan owner.
+            is_authorized = added_by == ADMIN_ID
+
+
             if existing:
 
                 print("Grupo ya existe en DB — no se duplica.")
@@ -133,14 +138,25 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
                 cur.execute("""
 
                     INSERT INTO groups
-                    (name, telegram_group_id)
+                    (
+                        name,
+                        telegram_group_id,
+                        public_visibility,
+                        bot_is_admin,
+                        is_active,
+                        added_by
+                    )
 
-                    VALUES (%s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s)
 
                 """, (
 
                     group_name,
-                    group_id
+                    group_id,
+                    "hidden",
+                    True,
+                    is_authorized,
+                    added_by
 
                 ))
 
@@ -159,15 +175,19 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
 
                 chat_id=ADMIN_ID,
 
-                text=
-
-                "✅ NUEVO GRUPO DETECTADO\n\n"
-
-                f"Nombre: {group_name}\n"
-
-                f"ID: {group_id}\n\n"
-
-                "Grupo registrado correctamente."
+                text=(
+                    "✅ NUEVO GRUPO DETECTADO\n\n"
+                    f"Nombre: {group_name}\n"
+                    f"ID: {group_id}\n\n"
+                    +
+                    (
+                    "Grupo registrado correctamente."
+                    if is_authorized
+                    else
+                    "Grupo dejado como no activo/no publicado porque fue añadido por un usuario no autorizado. "
+                    "Pendiente de revisión manual."
+                    )
+                )
 
             )
 
@@ -257,7 +277,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         f"Usuario: {added_by}\n\n"
 
-                        "El grupo será registrado igualmente."
+                        "El grupo quedará como no activo/no publicado y no se asignará owner."
 
                     )
 
