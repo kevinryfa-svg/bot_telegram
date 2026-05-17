@@ -1,0 +1,92 @@
+import stripe
+
+from flask import request, jsonify
+
+from db import conn
+
+
+def register_checkout_routes(app):
+
+    # =========================
+    # STRIPE CHECKOUT
+    # =========================
+
+    @app.route("/create-checkout-session", methods=["POST"])
+    def create_checkout_session():
+
+        data = request.json
+
+        telegram_id = data["telegram_id"]
+        plan = data["plan"]
+        group_id = data.get("group_id")
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT price_id
+
+                    FROM plans
+
+                    WHERE price_id=%s
+                    AND group_id=%s
+                    AND is_active=TRUE
+
+                """, (
+
+                    plan,
+                    group_id
+
+                ))
+
+                row = cur.fetchone()
+
+            if not row:
+
+                return jsonify({"error": "Plan inválido"}), 400
+
+            price_id = row[0]
+
+        except Exception as e:
+
+            print("Error obteniendo price_id:", e)
+
+            return jsonify({"error": "Error interno"}), 500
+
+
+        try:
+
+            session = stripe.checkout.Session.create(
+
+                payment_method_types=["card"],
+
+                line_items=[{
+                    "price": price_id,
+                    "quantity": 1,
+                }],
+
+                mode="payment",
+
+                success_url="https://t.me/TheStarVipBOT",
+                cancel_url="https://t.me/TheStarVipBOT",
+
+                metadata={
+                    "telegram_id": str(telegram_id),
+                    "group_id": str(group_id),
+                    "price_id": price_id
+                }
+
+            )
+
+        except Exception as e:
+
+            print("Error creando sesión Stripe:", e)
+
+            return jsonify({"error": "Error creando sesión"}), 500
+
+
+        return jsonify({
+            "url": session.url
+        })

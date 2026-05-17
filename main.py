@@ -5,7 +5,7 @@ import requests
 import time
 import asyncio
 
-from flask import Flask, request, jsonify
+from flask import Flask
 
 from telegram import (
     Bot,
@@ -92,6 +92,7 @@ from admin_panel_handler import admin_panel
 from code_flow_handler import receive_code
 from admin_input_handler import receive_admin_inputs
 from stripe_handler import stripe_webhook
+from checkout_routes import register_checkout_routes
 from web_server import run_flask_app
 from group_service import (
     get_latest_telegram_group_id
@@ -116,6 +117,8 @@ bot = Bot(token=TOKEN)
 telegram_app = ApplicationBuilder().token(TOKEN).build()
 
 app = Flask(__name__)
+
+register_checkout_routes(app)
 
 
 # =========================
@@ -253,91 +256,6 @@ async def handle_text(update, context):
         return
 
     await receive_code(update, context)
-
-
-# =========================
-# STRIPE CHECKOUT
-# =========================
-
-@app.route("/create-checkout-session", methods=["POST"])
-def create_checkout_session():
-
-    data = request.json
-
-    telegram_id = data["telegram_id"]
-    plan = data["plan"]
-    group_id = data.get("group_id")
-
-    try:
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT price_id
-
-                FROM plans
-
-                WHERE price_id=%s
-                AND group_id=%s
-                AND is_active=TRUE
-
-            """, (
-
-                plan,
-                group_id
-
-            ))
-
-            row = cur.fetchone()
-
-        if not row:
-
-            return jsonify({"error": "Plan inválido"}), 400
-
-        price_id = row[0]
-
-    except Exception as e:
-
-        print("Error obteniendo price_id:", e)
-
-        return jsonify({"error": "Error interno"}), 500
-
-
-    try:
-
-        session = stripe.checkout.Session.create(
-
-            payment_method_types=["card"],
-
-            line_items=[{
-                "price": price_id,
-                "quantity": 1,
-            }],
-
-            mode="payment",
-
-            success_url="https://t.me/TheStarVipBOT",
-            cancel_url="https://t.me/TheStarVipBOT",
-
-            metadata={
-                "telegram_id": str(telegram_id),
-                "group_id": str(group_id),
-                "price_id": price_id
-            }
-
-        )
-
-    except Exception as e:
-
-        print("Error creando sesión Stripe:", e)
-
-        return jsonify({"error": "Error creando sesión"}), 500
-
-
-    return jsonify({
-        "url": session.url
-    })
 
 
 # =========================
