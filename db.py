@@ -548,6 +548,41 @@ def create_tables():
 
 
         # =========================
+        # TABLA COBROS DEL CREADOR
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS group_payment_settings (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER,
+
+            commercial_request_id INTEGER UNIQUE,
+
+            owner_user_id BIGINT,
+
+            stripe_mode TEXT DEFAULT 'owner_stripe',
+
+            owner_stripe_secret_key TEXT,
+
+            owner_stripe_webhook_secret TEXT,
+
+            owner_stripe_publishable_key TEXT,
+
+            is_configured BOOLEAN DEFAULT FALSE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # GRUPO DEFAULT
         # =========================
 
@@ -661,7 +696,9 @@ def create_tables():
             ("selected_commercial_plan_id", "INTEGER"),
             ("commercial_subscription_status", "TEXT DEFAULT 'pending'"),
             ("commercial_subscription_until", "TIMESTAMP"),
-            ("requested_public_visibility", "TEXT DEFAULT 'hidden'")
+            ("requested_public_visibility", "TEXT DEFAULT 'hidden'"),
+            ("creator_setup_status", "TEXT DEFAULT 'awaiting_creator_setup'"),
+            ("creator_preview_text", "TEXT")
 
         ]
 

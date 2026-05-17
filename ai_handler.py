@@ -264,6 +264,7 @@ def get_ai_context_label(context):
         "subscriptions": "Suscripciones",
         "group_plans": "Planes de grupo",
         "support": "Soporte",
+        "creator_setup": "Configuración de comunidad y Stripe",
         "admin_users": "Gestión de usuarios",
         "admin_groups": "Gestión de grupos",
         "admin_payments": "Gestión de pagos",
@@ -342,7 +343,7 @@ async def handle_ai_context_text(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 
-    if help_context == "commercial":
+    if help_context in ("commercial", "creator_setup"):
 
         context_text += (
             "\n\n"
