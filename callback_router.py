@@ -18,6 +18,7 @@ from admin_permission_map import (
 )
 from ai_handler import activate_ai_help_context
 from code_admin_handler import crear_codigo_callback
+from bot_config import ADMIN_ID
 from commercial_catalog import (
     COMMERCIAL_MENU_TEXT_ES,
     COMMERCIAL_PRODUCTS,
@@ -55,7 +56,6 @@ from telegram_group_actions import kick_chat_member
 
 TOKEN = os.environ.get("TOKEN")
 SERVER_URL = os.environ.get("SERVER_URL")
-ADMIN_ID = 8761243211
 
 revoke_link = None
 get_group_id = None
