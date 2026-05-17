@@ -1150,6 +1150,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
+    print("DEBUG CALLBACK DATA:", data)
+    
     user_id = query.from_user.id
 
 
