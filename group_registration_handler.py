@@ -180,6 +180,47 @@ async def safe_send(context, chat_id, text):
         return False
 
 
+async def leave_chat_safely(context, telegram_group_id):
+
+    try:
+
+        left_group = await context.bot.leave_chat(telegram_group_id)
+
+
+        if left_group is False:
+
+            raise RuntimeError("Telegram devolvió False en leave_chat")
+
+
+        print("Bot salió del grupo por validación comercial.")
+
+        return True
+
+    except Exception as e:
+
+        print("Error saliendo del grupo con context.bot.leave_chat:", e)
+
+
+    try:
+
+        response = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/leaveChat",
+            params={"chat_id": telegram_group_id},
+            timeout=10
+        ).json()
+
+        print("Respuesta fallback leaveChat:", response)
+
+        return response.get("ok") is True
+
+    except Exception as e:
+
+        print("Error saliendo del grupo con fallback leaveChat:", e)
+
+
+    return False
+
+
 async def reject_group_registration(
     context,
     group_id,
@@ -215,15 +256,19 @@ async def reject_group_registration(
     )
 
 
-    try:
+    left_group = await leave_chat_safely(
+        context,
+        group_id
+    )
 
-        await context.bot.leave_chat(group_id)
 
-        print("Bot salió del grupo por validación comercial.")
+    if not left_group:
 
-    except Exception as e:
-
-        print("Error saliendo del grupo:", e)
+        await safe_send(
+            context,
+            ADMIN_ID,
+            "⚠️ No se pudo confirmar la salida automática del bot del grupo."
+        )
 
 
 def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_row):
