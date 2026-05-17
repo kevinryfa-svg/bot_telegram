@@ -551,7 +551,9 @@ COMMERCIAL_REQUEST_FIELDS = [
     "selected_commercial_plan_id",
     "commercial_subscription_status",
     "commercial_subscription_until",
-    "requested_public_visibility"
+    "requested_public_visibility",
+    "creator_setup_status",
+    "creator_preview_text"
 
 ]
 
@@ -760,13 +762,347 @@ def format_commercial_plan_price(plan):
     return f"{amount / 100:.2f} {currency}"
 
 
+def resolve_commercial_request_group(request_row):
+
+    if not request_row:
+
+        return None
+
+
+    approved_group_id = request_row.get("approved_group_id")
+    approved_telegram_group_id = request_row.get("approved_telegram_group_id")
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            if approved_group_id:
+
+                cur.execute("""
+
+                    SELECT id,
+                           telegram_group_id
+                    FROM groups
+                    WHERE id=%s
+                    LIMIT 1
+
+                """, (approved_group_id,))
+
+                row = cur.fetchone()
+
+
+                if row:
+
+                    return row
+
+
+            if approved_telegram_group_id:
+
+                cur.execute("""
+
+                    SELECT id,
+                           telegram_group_id
+                    FROM groups
+                    WHERE telegram_group_id=%s
+                    LIMIT 1
+
+                """, (approved_telegram_group_id,))
+
+                row = cur.fetchone()
+
+
+                if row:
+
+                    return row
+
+    except Exception as e:
+
+        print("Error resolviendo grupo comercial:", e)
+
+
+    return None
+
+
+def assign_owner_for_commercial_request(request_row):
+
+    group_row = resolve_commercial_request_group(request_row)
+
+
+    if not group_row:
+
+        return False, None
+
+
+    group_id, telegram_group_id = group_row
+    owner_user_id = request_row.get("user_id")
+
+
+    if not owner_user_id:
+
+        return False, group_id
+
+
+    assigned = assign_group_owner_permissions(
+        owner_user_id,
+        group_id
+    )
+
+
+    if assigned:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE commercial_requests
+                SET approved_group_id=%s,
+                    approved_telegram_group_id=%s,
+                    updated_at=NOW()
+                WHERE id=%s
+
+            """, (
+                group_id,
+                telegram_group_id,
+                request_row.get("id")
+            ))
+
+            cur.execute("""
+
+                UPDATE group_payment_settings
+                SET group_id=%s,
+                    updated_at=NOW()
+                WHERE commercial_request_id=%s
+
+            """, (
+                group_id,
+                request_row.get("id")
+            ))
+
+
+        public_visibility = request_row.get("requested_public_visibility")
+
+
+        if public_visibility:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE groups
+                    SET public_visibility=%s
+                    WHERE id=%s
+
+                """, (
+                    public_visibility,
+                    group_id
+                ))
+
+
+    return assigned, group_id
+
+
+def get_group_payment_settings(request_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT is_configured,
+                   owner_stripe_secret_key,
+                   owner_stripe_webhook_secret,
+                   owner_stripe_publishable_key
+            FROM group_payment_settings
+            WHERE commercial_request_id=%s
+            LIMIT 1
+
+        """, (request_id,))
+
+        return cur.fetchone()
+
+
+def get_creator_plan_count(group_id):
+
+    if not group_id:
+
+        return 0
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT COUNT(*)
+            FROM plans
+            WHERE group_id=%s
+            AND is_active=TRUE
+
+        """, (group_id,))
+
+        return cur.fetchone()[0]
+
+
+def build_creator_setup_keyboard(request_id):
+
+    return [
+
+        [InlineKeyboardButton(
+            "📡 Grupo o canal",
+            callback_data=f"creator_setup_group_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📝 Textos y descripción",
+            callback_data=f"creator_setup_texts_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💳 Cobros / Stripe propio",
+            callback_data=f"creator_setup_stripe_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💰 Planes de acceso",
+            callback_data=f"creator_setup_plans_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "👁 Visibilidad pública",
+            callback_data=f"creator_setup_visibility_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "✅ Revisar configuración",
+            callback_data=f"creator_setup_review_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🧭 Tutorial paso a paso",
+            callback_data=f"creator_setup_tutorial_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🤖 Ayuda IA de configuración",
+            callback_data=f"creator_setup_ai_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "⬅️ Volver al inicio",
+            callback_data="public_back_start"
+        )]
+
+    ]
+
+
+def build_creator_setup_panel_text(group_id=None):
+
+    text = (
+        "📦 Configuración de tu comunidad\n\n"
+        "Desde aquí puedes dejar preparada tu comunidad durante la prueba."
+    )
+
+
+    if not group_id:
+
+        text += (
+            "\n\n"
+            "Estado del grupo: pendiente de crear/publicar grupo."
+        )
+
+
+    return text
+
+
+def start_creator_setup_state(context, request_id, action):
+
+    context.user_data["creator_setup"] = True
+    context.user_data["creator_setup_request_id"] = request_id
+    context.user_data["creator_setup_action"] = action
+    context.user_data["creator_setup_step"] = 1
+    context.user_data["creator_setup_data"] = {}
+
+
+def build_creator_setup_summary(request_row):
+
+    request_id = request_row.get("id")
+    assigned, group_id = assign_owner_for_commercial_request(request_row)
+
+
+    if group_id and not assigned:
+
+        owner_status = "pendiente"
+
+    elif group_id:
+
+        owner_status = "asignado"
+
+    else:
+
+        owner_status = "pendiente"
+
+
+    payment_settings = get_group_payment_settings(request_id)
+    stripe_status = "configurado" if payment_settings and payment_settings[0] else "pendiente"
+    plan_count = get_creator_plan_count(group_id)
+    group_status = "configurado" if group_id else "pendiente"
+    texts_status = (
+        "configurado"
+        if request_row.get("community_name")
+        and request_row.get("community_description")
+        else "pendiente"
+    )
+    visibility = format_public_visibility(
+        request_row.get("requested_public_visibility")
+    )
+    setup_ready = (
+        group_status == "configurado"
+        and texts_status == "configurado"
+        and (
+            request_row.get("payment_mode") != "paid"
+            or (
+                stripe_status == "configurado"
+                and plan_count > 0
+            )
+        )
+    )
+    setup_status = "setup_ready" if setup_ready else "setup_in_progress"
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE commercial_requests
+            SET creator_setup_status=%s,
+                updated_at=NOW()
+            WHERE id=%s
+
+        """, (
+            setup_status,
+            request_id
+        ))
+
+
+    return (
+        "✅ Revisar configuración\n\n"
+        f"Grupo/canal: {group_status}\n"
+        f"Textos: {texts_status}\n"
+        f"Stripe propio: {stripe_status}\n"
+        f"Planes: {plan_count}\n"
+        f"Visibilidad: {visibility}\n"
+        f"Estado owner: {owner_status}\n"
+        f"Estado setup: {setup_status}\n\n"
+        "El checkout real con Stripe del creador todavía está pendiente de conectar."
+    )
+
+
 def build_user_activation_keyboard(request_id):
 
     return [
 
         [InlineKeyboardButton(
             "📦 Configurar comunidad",
-            callback_data=f"user_commercial_activate_{request_id}"
+            callback_data=f"configure_community_{request_id}"
         )],
 
         [InlineKeyboardButton(
@@ -788,7 +1124,7 @@ def build_user_trial_payment_keyboard(request_id):
 
         [InlineKeyboardButton(
             "📦 Configurar comunidad",
-            callback_data=f"user_commercial_activate_{request_id}"
+            callback_data=f"configure_community_{request_id}"
         )],
 
         [InlineKeyboardButton(
@@ -977,6 +1313,8 @@ def build_commercial_request_detail_text(request_row):
         f"Modo pago: {request_row.get('payment_mode') or '-'}\n"
         f"Modo Stripe: {request_row.get('stripe_mode') or '-'}\n"
         f"Ubicación pública solicitada: {format_public_visibility(request_row.get('requested_public_visibility'))}\n"
+        f"Estado configuración creador: {request_row.get('creator_setup_status') or '-'}\n"
+        f"Preview creador: {request_row.get('creator_preview_text') or '-'}\n"
         f"Plan comercial: {request_row.get('selected_commercial_plan_id') or '-'}\n"
         f"Estado suscripción comercial: {request_row.get('commercial_subscription_status') or '-'}\n"
         f"Suscripción comercial hasta: {format_commercial_datetime(request_row.get('commercial_subscription_until'))}"
@@ -1121,6 +1459,7 @@ def update_commercial_request_trial_visibility(
                 trial_starts_at=COALESCE(trial_starts_at, NOW()),
                 trial_ends_at=COALESCE(trial_ends_at, NOW() + INTERVAL '1 day'),
                 requested_public_visibility=%s,
+                creator_setup_status='awaiting_creator_setup',
                 updated_at=NOW()
             WHERE id=%s
             RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
@@ -1138,53 +1477,7 @@ def update_commercial_request_trial_visibility(
         return None
 
 
-    approved_group_id = request_row.get("approved_group_id")
-    approved_telegram_group_id = request_row.get("approved_telegram_group_id")
-    owner_user_id = request_row.get("user_id")
-    group_owner_id = None
-
-
-    if approved_group_id:
-
-        group_owner_id = approved_group_id
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                UPDATE groups
-                SET public_visibility=%s
-                WHERE id=%s
-
-            """, (public_visibility, approved_group_id))
-
-    elif approved_telegram_group_id:
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                UPDATE groups
-                SET public_visibility=%s
-                WHERE telegram_group_id=%s
-                RETURNING id
-
-            """, (public_visibility, approved_telegram_group_id))
-
-            row = cur.fetchone()
-
-
-        if row:
-
-            group_owner_id = row[0]
-
-
-    if owner_user_id and group_owner_id:
-
-        assign_group_owner_permissions(
-            owner_user_id,
-            group_owner_id
-        )
+    assign_owner_for_commercial_request(request_row)
 
 
     return request_row
@@ -1244,6 +1537,7 @@ def update_commercial_request_free_group(request_id):
             SET payment_mode='free',
                 is_free_group=TRUE,
                 status='trial_active',
+                creator_setup_status='setup_in_progress',
                 updated_at=NOW()
             WHERE id=%s
             RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
@@ -1266,6 +1560,7 @@ def update_commercial_request_paid_group(request_id):
             SET payment_mode='paid',
                 is_free_group=FALSE,
                 status='awaiting_payment_setup',
+                creator_setup_status='setup_in_progress',
                 updated_at=NOW()
             WHERE id=%s
             RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
@@ -1286,6 +1581,7 @@ def update_commercial_request_stripe_mode(request_id, stripe_mode):
 
             UPDATE commercial_requests
             SET stripe_mode=%s,
+                creator_setup_status='setup_in_progress',
                 updated_at=NOW()
             WHERE id=%s
             RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
@@ -6208,9 +6504,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("user_commercial_activate_"):
+    if (
+        data.startswith("configure_community_")
+        or data.startswith("user_commercial_activate_")
+    ):
 
-        request_id = extract_commercial_request_id(data, "user_commercial_activate_")
+        if data.startswith("configure_community_"):
+
+            request_id = extract_commercial_request_id(data, "configure_community_")
+
+        else:
+
+            request_id = extract_commercial_request_id(data, "user_commercial_activate_")
+
+
         request_row = fetch_commercial_request(request_id)
 
         if not commercial_request_belongs_to_user(request_row, user_id):
@@ -6221,25 +6528,297 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
+        _assigned, group_id = assign_owner_for_commercial_request(request_row)
+
         await query.message.reply_text(
-            "📦 Configurar comunidad\n\n"
-            "Tu prueba sigue activa. Durante esta fase puedes dejar preparada la comunidad sin pagar todavía.\n\n"
-            "Revisa que tengas claro el grupo o canal, el tipo de acceso, los planes o textos que quieres mostrar y tus datos de cobro si será de pago.\n\n"
-            "Para mantener publicada tu comunidad después de la prueba, tendrás que activar una suscripción del servicio.",
+            build_creator_setup_panel_text(group_id),
+            reply_markup=InlineKeyboardMarkup(
+                build_creator_setup_keyboard(request_id)
+            )
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_group_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_group_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        start_creator_setup_state(context, request_id, "group")
+
+        await query.message.reply_text(
+            "📡 Grupo o canal\n\n"
+            "Envía el telegram_group_id del grupo/canal si ya existe en el bot, "
+            "o pega el link/identificador para dejarlo pendiente de verificación."
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_texts_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_texts_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        start_creator_setup_state(context, request_id, "texts")
+
+        await query.message.reply_text(
+            "📝 Textos y descripción\n\n"
+            "Paso 1: escribe el nombre público de tu comunidad."
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_stripe_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_stripe_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        start_creator_setup_state(context, request_id, "stripe")
+
+        await query.message.reply_text(
+            "💳 Cobros / Stripe propio\n\n"
+            "Envía tu STRIPE_SECRET_KEY.\n\n"
+            "No se mostrará completa después de guardarla. "
+            "El checkout real con Stripe del creador todavía no se conecta en esta fase."
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_plans_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_plans_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        _assigned, group_id = assign_owner_for_commercial_request(request_row)
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "💰 Planes de acceso\n\n"
+                "Pendiente de crear/publicar grupo.\n\n"
+                "La tabla actual de planes necesita un groups.id real. "
+                "No existe una estructura segura de planes pendientes por solicitud, así que primero hay que vincular el grupo/canal.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_setup_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        plan_count = get_creator_plan_count(group_id)
+
+        await query.message.reply_text(
+            "💰 Planes de acceso\n\n"
+            f"Planes activos configurados: {plan_count}\n\n"
+            "El price_id debe pertenecer al Stripe propio del creador. "
+            "No se mezcla con el Stripe global del bot.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
-                    "📩 Hablar con un asesor",
-                    callback_data=CALLBACK_COMMERCIAL_CONTACT
+                    "➕ Crear plan",
+                    callback_data=f"creator_setup_add_plan_{request_id}"
                 )],
                 [InlineKeyboardButton(
-                    "💬 Ayuda",
-                    callback_data=CALLBACK_COMMERCIAL_HELP
-                )],
-                [InlineKeyboardButton(
-                    "🏠 Inicio",
-                    callback_data="public_back_start"
+                    "⬅️ Volver",
+                    callback_data=f"configure_community_{request_id}"
                 )]
             ])
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_add_plan_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_add_plan_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        _assigned, group_id = assign_owner_for_commercial_request(request_row)
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No se puede crear un plan todavía.\n\n"
+                "Falta un groups.id real asociado a tu solicitud.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_setup_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        start_creator_setup_state(context, request_id, "plan")
+
+        await query.message.reply_text(
+            "💰 Crear plan de acceso\n\n"
+            "Paso 1: escribe el nombre del plan."
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_visibility_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_visibility_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "👁 Visibilidad pública\n\n"
+            f"Ubicación elegida: {format_public_visibility(request_row.get('requested_public_visibility'))}\n\n"
+            "La visibilidad la define el propietario principal al aprobar la prueba.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data=f"configure_community_{request_id}"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_review_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_review_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            build_creator_setup_summary(request_row),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data=f"configure_community_{request_id}"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_tutorial_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_tutorial_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🧭 Tutorial paso a paso\n\n"
+            "1. Crea o entra en tu cuenta de Stripe.\n"
+            "2. En Stripe, busca las claves de desarrollador para copiar STRIPE_SECRET_KEY.\n"
+            "3. Configura un webhook en Stripe y guarda el STRIPE_WEBHOOK_SECRET.\n"
+            "4. Crea tus productos y precios en Stripe.\n"
+            "5. Copia el price_id de cada precio y úsalo al crear planes en el bot.\n"
+            "6. Prepara tu grupo/canal de Telegram y añade el bot.\n"
+            "7. Asegúrate de que el bot tenga permisos de administrador para gestionar accesos.\n"
+            "8. Vuelve a este panel y revisa la configuración.\n\n"
+            "No inventes precios ni claves. Copia siempre los datos desde Stripe.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data=f"configure_community_{request_id}"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_ai_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_ai_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="creator_setup"
         )
 
         return

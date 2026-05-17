@@ -93,7 +93,10 @@ import callback_router as callback_router_module
 from callback_router import button, receive_support_message
 from code_flow_handler import receive_code
 from admin_input_handler import receive_admin_inputs
-from commercial_form_handler import receive_commercial_form
+from commercial_form_handler import (
+    receive_commercial_form,
+    receive_creator_setup
+)
 from stripe_handler import stripe_webhook
 from checkout_routes import register_checkout_routes
 from web_server import run_flask_app
@@ -241,6 +244,10 @@ def get_admin_groups(user_id):
     
 
 async def handle_text(update, context):
+
+    if context.user_data.get("creator_setup"):
+        await receive_creator_setup(update, context)
+        return
 
     if context.user_data.get("commercial_form"):
         await receive_commercial_form(update, context)
