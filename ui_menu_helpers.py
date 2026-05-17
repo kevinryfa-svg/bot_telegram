@@ -164,3 +164,97 @@ def make_keyboard_from_flat_specs(buttons, row_size=1):
     )
 
     return make_keyboard_from_specs(rows)
+
+def is_private_chat(chat_id):
+
+    try:
+
+        return int(chat_id) > 0
+
+    except Exception:
+
+        return True
+
+
+async def delete_message_safely(context, chat_id, message_id):
+
+    if not chat_id or not message_id:
+
+        return False
+
+
+    if not is_private_chat(chat_id):
+
+        return False
+
+
+    try:
+
+        await context.bot.delete_message(
+            chat_id=chat_id,
+            message_id=message_id
+        )
+
+        return True
+
+    except Exception:
+
+        return False
+
+
+async def delete_active_bot_message(context, chat_id):
+
+    if not is_private_chat(chat_id):
+
+        return False
+
+
+    message_id = context.user_data.get("active_bot_message_id")
+
+
+    if not message_id:
+
+        return False
+
+
+    deleted = await delete_message_safely(
+        context,
+        chat_id,
+        message_id
+    )
+
+    context.user_data.pop("active_bot_message_id", None)
+
+    return deleted
+
+
+async def send_clean_message(
+    context,
+    chat_id,
+    text,
+    reply_markup=None,
+    **kwargs
+):
+
+    if is_private_chat(chat_id):
+
+        await delete_active_bot_message(
+            context,
+            chat_id
+        )
+
+
+    message = await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+        **kwargs
+    )
+
+
+    if is_private_chat(chat_id):
+
+        context.user_data["active_bot_message_id"] = message.message_id
+
+
+    return message
