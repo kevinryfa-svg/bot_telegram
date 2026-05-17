@@ -1,11 +1,11 @@
 from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
+    Update
 )
 from telegram.ext import ContextTypes
 
+from admin_menu_catalog import build_admin_menu_button_rows
 from rbac_helpers import is_super_admin
+from ui_menu_helpers import make_keyboard_from_specs
 
 
 # =========================
@@ -26,26 +26,14 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    keyboard = [
-
-        [InlineKeyboardButton("👥 Gestión Usuarios", callback_data="menu_users")],
-
-        [InlineKeyboardButton("🎟️ Gestión Accesos", callback_data="menu_codes")],
-
-        [InlineKeyboardButton("📦 Gestión Grupos", callback_data="menu_groups")],
-
-        [InlineKeyboardButton("💳 Gestión Pagos", callback_data="menu_payments")],
-
-        [InlineKeyboardButton("📊 Gestión Negocio", callback_data="menu_business")],
-
-        [InlineKeyboardButton("📜 Logs", callback_data="menu_logs")]
-
-    ]
+    keyboard = build_admin_menu_button_rows(
+        is_super_admin=True
+    )
 
     await update.message.reply_text(
 
         "🔐 PANEL ADMIN",
 
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=make_keyboard_from_specs(keyboard)
 
     )
