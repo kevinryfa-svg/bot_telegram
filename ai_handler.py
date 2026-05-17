@@ -253,7 +253,15 @@ def get_ai_context_label(context):
         "payments": "Pagos y suscripciones",
         "groups": "Gestión de grupos",
         "admin": "Panel de administración",
-        "access": "Accesos y links"
+        "access": "Accesos y links",
+        "commercial": "Soluciones comerciales",
+        "subscriptions": "Suscripciones",
+        "group_plans": "Planes de grupo",
+        "support": "Soporte",
+        "admin_users": "Gestión de usuarios",
+        "admin_groups": "Gestión de grupos",
+        "admin_payments": "Gestión de pagos",
+        "admin_logs": "Logs"
     }
 
     return labels.get(

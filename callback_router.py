@@ -21,7 +21,21 @@ from commercial_catalog import (
     CALLBACK_SHARED_BOT_SPACE,
     CALLBACK_CUSTOM_BOT,
     CALLBACK_COMMERCIAL_CONTACT,
-    CALLBACK_COMMERCIAL_BACK
+    CALLBACK_COMMERCIAL_BACK,
+    CALLBACK_SHARED_TRIAL_START,
+    CALLBACK_CUSTOM_BOT_START,
+    CALLBACK_COMMERCIAL_HELP,
+    CALLBACK_SUBSCRIPTIONS_HELP,
+    CALLBACK_GROUP_PLANS_HELP,
+    CALLBACK_SUPPORT_HELP,
+    CALLBACK_ADMIN_USERS_HELP,
+    CALLBACK_ADMIN_GROUPS_HELP,
+    CALLBACK_ADMIN_PAYMENTS_HELP,
+    CALLBACK_ADMIN_LOGS_HELP
+)
+from commercial_form_handler import (
+    create_commercial_request,
+    notify_commercial_request
 )
 from db import conn
 from formatters import format_tiempo_restante
@@ -40,6 +54,331 @@ ADMIN_ID = 8761243211
 
 revoke_link = None
 get_group_id = None
+
+
+ADMIN_PERMISSION_COLUMNS = [
+    "can_manage_users",
+    "can_manage_codes",
+    "can_manage_groups",
+    "can_manage_payments",
+    "can_view_users",
+    "can_view_payments",
+    "can_view_stats",
+    "can_view_logs",
+    "can_resend_links"
+]
+
+
+def get_admin_permissions(user_id):
+
+    permissions = {
+        column: False
+        for column in ADMIN_PERMISSION_COLUMNS
+    }
+
+
+    if is_super_admin(user_id):
+
+        return {
+            column: True
+            for column in ADMIN_PERMISSION_COLUMNS
+        }
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(f"""
+
+                SELECT {", ".join(ADMIN_PERMISSION_COLUMNS)}
+
+                FROM admins
+
+                WHERE user_id=%s
+                AND is_active=TRUE
+
+            """, (user_id,))
+
+            rows = cur.fetchall()
+
+
+        for row in rows:
+
+            for index, column in enumerate(ADMIN_PERMISSION_COLUMNS):
+
+                permissions[column] = permissions[column] or row[index] is True
+
+    except Exception as e:
+
+        print("Error cargando permisos admin:", e)
+
+
+    return permissions
+
+
+def has_any_permission(permissions, names):
+
+    return any(
+        permissions.get(name) is True
+        for name in names
+    )
+
+
+def has_any_admin_permission(user_id):
+
+    permissions = get_admin_permissions(user_id)
+
+    return any(
+        value is True
+        for value in permissions.values()
+    )
+
+
+def can_access_admin_callback(user_id, data):
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    permissions = get_admin_permissions(user_id)
+
+
+    if data == "admin_back_main":
+
+        return any(
+            value is True
+            for value in permissions.values()
+        )
+
+
+    users_callbacks = {
+        "menu_users",
+        "admin_users",
+        "admin_search_user"
+    }
+
+    manage_users_callbacks = {
+        "admin_kick_user",
+        "admin_ban_user",
+        "admin_unban_user",
+        "admin_reset_warnings",
+        "admin_move_user"
+    }
+
+    codes_callbacks = {
+        "menu_codes",
+        "admin_create_code",
+        "admin_codes",
+        "admin_delete_code"
+    }
+
+    groups_callbacks = {
+        "menu_groups",
+        "admin_add_group",
+        "admin_edit_group",
+        "admin_view_groups",
+        "cancel_create_group",
+        "view_group_plans",
+        "add_group_plan",
+        "edit_group_plan_select",
+        "delete_group_plan_select"
+    }
+
+    payments_callbacks = {
+        "menu_payments",
+        "admin_view_payments",
+        "admin_search_payment"
+    }
+
+    manage_payments_callbacks = {
+        "admin_resend_access",
+        "admin_cancel_subscription"
+    }
+
+    stats_callbacks = {
+        "menu_business",
+        "admin_stats",
+        "admin_income",
+        "admin_active_users"
+    }
+
+    logs_callbacks = {
+        "menu_logs",
+        "admin_logs",
+        "admin_logs_users",
+        "admin_logs_payments",
+        "admin_logs_security"
+    }
+
+
+    if data in users_callbacks:
+
+        return has_any_permission(
+            permissions,
+            ["can_view_users", "can_manage_users"]
+        )
+
+
+    if data in manage_users_callbacks:
+
+        return has_any_permission(
+            permissions,
+            ["can_manage_users"]
+        )
+
+
+    if data in codes_callbacks or data.startswith("gen_"):
+
+        return has_any_permission(
+            permissions,
+            ["can_manage_codes"]
+        )
+
+
+    if (
+        data in groups_callbacks
+        or data.startswith("edit_group")
+        or data.startswith("edit_plan_")
+        or data.startswith("delete_group")
+        or data.startswith("delete_plan_")
+        or data.startswith("save_preview")
+        or data.startswith("cancel_preview")
+        or data.startswith("skip_preview")
+    ):
+
+        return has_any_permission(
+            permissions,
+            ["can_manage_groups"]
+        )
+
+
+    if data in payments_callbacks:
+
+        return has_any_permission(
+            permissions,
+            ["can_view_payments", "can_manage_payments"]
+        )
+
+
+    if data in manage_payments_callbacks:
+
+        return has_any_permission(
+            permissions,
+            ["can_manage_payments"]
+        )
+
+
+    if data in stats_callbacks:
+
+        return has_any_permission(
+            permissions,
+            ["can_view_stats"]
+        )
+
+
+    if data in logs_callbacks:
+
+        return has_any_permission(
+            permissions,
+            ["can_view_logs"]
+        )
+
+
+    if data.startswith("allow_user_") or data.startswith("deny_user_"):
+
+        return has_any_permission(
+            permissions,
+            ["can_manage_users"]
+        )
+
+
+    return False
+
+
+def build_commercial_menu_keyboard():
+
+    return [
+
+        [InlineKeyboardButton(
+            COMMERCIAL_PRODUCTS[PRODUCT_SHARED_BOT_SPACE]["title_es"],
+            callback_data=CALLBACK_SHARED_BOT_SPACE
+        )],
+
+        [InlineKeyboardButton(
+            COMMERCIAL_PRODUCTS[PRODUCT_CUSTOM_BOT]["title_es"],
+            callback_data=CALLBACK_CUSTOM_BOT
+        )],
+
+        [InlineKeyboardButton(
+            "📩 Hablar con un asesor",
+            callback_data=CALLBACK_COMMERCIAL_CONTACT
+        )],
+
+        [InlineKeyboardButton(
+            "💬 Ayuda sobre este menú",
+            callback_data=CALLBACK_COMMERCIAL_HELP
+        )],
+
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=CALLBACK_COMMERCIAL_BACK
+        )]
+
+    ]
+
+
+def build_admin_panel_keyboard(user_id):
+
+    permissions = get_admin_permissions(user_id)
+
+    keyboard = []
+
+
+    if has_any_permission(permissions, ["can_view_users", "can_manage_users"]):
+
+        keyboard.append([
+            InlineKeyboardButton("👥 Usuarios", callback_data="menu_users")
+        ])
+
+
+    if has_any_permission(permissions, ["can_manage_codes"]):
+
+        keyboard.append([
+            InlineKeyboardButton("🎟️ Accesos", callback_data="menu_codes")
+        ])
+
+
+    if has_any_permission(permissions, ["can_manage_groups"]):
+
+        keyboard.append([
+            InlineKeyboardButton("📦 Grupos", callback_data="menu_groups")
+        ])
+
+
+    if has_any_permission(permissions, ["can_view_payments", "can_manage_payments"]):
+
+        keyboard.append([
+            InlineKeyboardButton("💳 Pagos", callback_data="menu_payments")
+        ])
+
+
+    if has_any_permission(permissions, ["can_view_stats"]):
+
+        keyboard.append([
+            InlineKeyboardButton("📊 Estadísticas", callback_data="menu_business")
+        ])
+
+
+    if has_any_permission(permissions, ["can_view_logs"]):
+
+        keyboard.append([
+            InlineKeyboardButton("📜 Logs", callback_data="menu_logs")
+        ])
+
+
+    return keyboard
 
 
 # =========================
@@ -78,35 +417,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "public_monetize_community":
 
-        keyboard = [
-
-            [InlineKeyboardButton(
-                COMMERCIAL_PRODUCTS[PRODUCT_SHARED_BOT_SPACE]["title_es"],
-                callback_data=CALLBACK_SHARED_BOT_SPACE
-            )],
-
-            [InlineKeyboardButton(
-                COMMERCIAL_PRODUCTS[PRODUCT_CUSTOM_BOT]["title_es"],
-                callback_data=CALLBACK_CUSTOM_BOT
-            )],
-
-            [InlineKeyboardButton(
-                "📩 Hablar con un asesor",
-                callback_data=CALLBACK_COMMERCIAL_CONTACT
-            )],
-
-            [InlineKeyboardButton(
-                "⬅️ Volver",
-                callback_data=CALLBACK_COMMERCIAL_BACK
-            )]
-
-        ]
-
         await query.message.reply_text(
 
             COMMERCIAL_MENU_TEXT_ES,
 
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_menu_keyboard()
+            )
 
         )
 
@@ -115,9 +432,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "public_support":
 
+        keyboard = [
+
+            [InlineKeyboardButton(
+                "💬 Ayuda sobre este menú",
+                callback_data=CALLBACK_SUPPORT_HELP
+            )]
+
+        ]
+
         await query.message.reply_text(
             "🛟 Soporte\n\n"
-            "Puedes escribir tu incidencia y un administrador podrá ayudarte."
+            "Puedes escribir tu incidencia y un administrador podrá ayudarte.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
@@ -138,8 +465,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
 
             [InlineKeyboardButton(
-                "📩 Quiero probar 1 día",
+                "🎁 Solicitar prueba de 1 día",
+                callback_data=CALLBACK_SHARED_TRIAL_START
+            )],
+
+            [InlineKeyboardButton(
+                "📩 Hablar con un asesor",
                 callback_data=CALLBACK_COMMERCIAL_CONTACT
+            )],
+
+            [InlineKeyboardButton(
+                "💬 Ayuda sobre este menú",
+                callback_data=CALLBACK_COMMERCIAL_HELP
             )],
 
             [InlineKeyboardButton(
@@ -171,13 +508,37 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "commercial_shared_trial_start":
+
+        context.user_data["commercial_form"] = True
+        context.user_data["commercial_form_type"] = "shared_trial"
+        context.user_data["commercial_form_step"] = 1
+        context.user_data["commercial_form_data"] = {}
+
+        await query.message.reply_text(
+            "Indica el nombre de la comunidad."
+        )
+
+        return
+
+
     if data == "commercial_custom_bot":
 
         keyboard = [
 
             [InlineKeyboardButton(
-                "📩 Quiero configurar mi bot",
+                "🤖 Configurar mi bot personalizado",
+                callback_data=CALLBACK_CUSTOM_BOT_START
+            )],
+
+            [InlineKeyboardButton(
+                "📩 Hablar con un asesor",
                 callback_data=CALLBACK_COMMERCIAL_CONTACT
+            )],
+
+            [InlineKeyboardButton(
+                "💬 Ayuda sobre este menú",
+                callback_data=CALLBACK_COMMERCIAL_HELP
             )],
 
             [InlineKeyboardButton(
@@ -209,7 +570,39 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "commercial_custom_bot_start":
+
+        context.user_data["commercial_form"] = True
+        context.user_data["commercial_form_type"] = "custom_bot"
+        context.user_data["commercial_form_step"] = 1
+        context.user_data["commercial_form_data"] = {}
+
+        await query.message.reply_text(
+            "Indica el nombre del proyecto o comunidad."
+        )
+
+        return
+
+
     if data == "commercial_contact":
+
+        request_id = create_commercial_request(
+            query.from_user,
+            "support_contact",
+            {
+                "contact_text": "Solicitud comercial desde botón Hablar con un asesor."
+            }
+        )
+
+        await notify_commercial_request(
+            context,
+            request_id,
+            "support_contact",
+            query.from_user,
+            {
+                "contact_text": "Solicitud comercial desde botón Hablar con un asesor."
+            }
+        )
 
         keyboard = [
 
@@ -222,12 +615,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "📩 Solicitud recibida\n\n"
-            "Hemos registrado tu interés.\n\n"
-            "Un administrador revisará tu solicitud y podrá ayudarte con la mejor opción según lo que necesites:\n\n"
-            "• publicar tu comunidad dentro de nuestro bot;\n"
-            "• crear un bot personalizado con tu marca;\n"
-            "• resolver dudas sobre pagos, accesos o configuración.\n\n"
-            "Más adelante añadiremos un formulario completo para recoger automáticamente todos los datos del proyecto.",
+            "Un administrador revisará la solicitud y podrá ayudarte con la mejor opción según lo que necesites.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -236,12 +624,137 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "commercial_back":
 
-        try:
-            await query.message.delete()
-        except:
-            pass
+        await query.message.reply_text(
 
-        await start(update, context)
+            COMMERCIAL_MENU_TEXT_ES,
+
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_menu_keyboard()
+            )
+
+        )
+
+        return
+
+
+    if data == "commercial_help":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="commercial"
+        )
+
+        return
+
+
+    if data == "subscriptions_help":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="subscriptions"
+        )
+
+        return
+
+
+    if data == "group_plans_help":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="group_plans"
+        )
+
+        return
+
+
+    if data == "support_help":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="support"
+        )
+
+        return
+
+
+    if data == "admin_users_help":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="admin_users"
+        )
+
+        return
+
+
+    if data == "admin_groups_help":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="admin_groups"
+        )
+
+        return
+
+
+    if data == "admin_payments_help":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="admin_payments"
+        )
+
+        return
+
+
+    if data == "admin_logs_help":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="admin_logs"
+        )
+
+        return
+
+
+    if data == "public_admin_panel":
+
+        if not has_any_admin_permission(user_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos de gestión."
+            )
+
+            return
+
+
+        keyboard = build_admin_panel_keyboard(user_id)
+
+
+        if not keyboard:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos de gestión."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+
+            "🔐 PANEL ADMIN",
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
 
         return
 
@@ -272,7 +785,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith(admin_prefixes):
 
-        if not is_super_admin(user_id):
+        if not can_access_admin_callback(user_id, data):
 
             await query.message.reply_text(
                 "⛔ No tienes permisos para usar esta acción."
@@ -334,7 +847,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not rows:
 
             await query.message.reply_text(
-                "⚠️ No tienes suscripciones activas."
+                "⚠️ No tienes suscripciones activas.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "💬 Ayuda sobre este menú",
+                        callback_data=CALLBACK_SUBSCRIPTIONS_HELP
+                    )]
+                ])
             )
 
             return
@@ -356,6 +875,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
             ])
+
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                "💬 Ayuda sobre este menú",
+
+                callback_data=CALLBACK_SUBSCRIPTIONS_HELP
+
+            )
+
+        ])
 
 
         keyboard.append([
@@ -698,6 +1230,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 InlineKeyboardButton(
 
+                    "💬 Ayuda sobre este menú",
+
+                    callback_data=CALLBACK_SUBSCRIPTIONS_HELP
+
+                )
+
+            ],
+
+            [
+
+                InlineKeyboardButton(
+
                     "⬅️ Volver",
 
                     callback_data="mis_subs"
@@ -837,6 +1381,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🎟️ Usar código",
 
                 callback_data="codigo"
+
+            )
+
+        ])
+
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                "💬 Ayuda sobre este menú",
+
+                callback_data=CALLBACK_GROUP_PLANS_HELP
 
             )
 
@@ -1095,25 +1652,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-        keyboard = [
+        permissions = get_admin_permissions(user_id)
 
-            [InlineKeyboardButton("📋 Ver usuarios", callback_data="admin_users")],
+        keyboard = []
 
-            [InlineKeyboardButton("🔍 Buscar usuario", callback_data="admin_search_user")],
 
-            [InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")],
+        if has_any_permission(permissions, ["can_view_users", "can_manage_users"]):
 
-            [InlineKeyboardButton("⛔ Banear usuario", callback_data="admin_ban_user")],
+            keyboard.append([InlineKeyboardButton("📋 Ver usuarios", callback_data="admin_users")])
 
-            [InlineKeyboardButton("♻️ Desbanear usuario", callback_data="admin_unban_user")],
+            keyboard.append([InlineKeyboardButton("🔍 Buscar usuario", callback_data="admin_search_user")])
 
-            [InlineKeyboardButton("🔄 Reset warnings", callback_data="admin_reset_warnings")],
 
-            [InlineKeyboardButton("🔀 Mover usuario grupo", callback_data="admin_move_user")],
+        if has_any_permission(permissions, ["can_manage_users"]):
 
-            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+            keyboard.append([InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")])
 
-        ]
+            keyboard.append([InlineKeyboardButton("⛔ Banear usuario", callback_data="admin_ban_user")])
+
+            keyboard.append([InlineKeyboardButton("♻️ Desbanear usuario", callback_data="admin_unban_user")])
+
+            keyboard.append([InlineKeyboardButton("🔄 Reset warnings", callback_data="admin_reset_warnings")])
+
+            keyboard.append([InlineKeyboardButton("🔀 Mover usuario grupo", callback_data="admin_move_user")])
+
+
+        keyboard.append([InlineKeyboardButton("💬 Ayuda sobre este menú", callback_data=CALLBACK_ADMIN_USERS_HELP)])
+
+        keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")])
 
         await query.message.reply_text(
 
@@ -1258,13 +1824,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("❌ Eliminar código", callback_data="admin_delete_code")],
 
-            [InlineKeyboardButton("🔄 Revocar links", callback_data="admin_revoke_links")],
-
-            [InlineKeyboardButton("📩 Reenviar links", callback_data="admin_resend_links")],
-
-            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
-
         ]
+
+
+        if is_super_admin(user_id):
+
+            keyboard.append([InlineKeyboardButton("🔄 Revocar links", callback_data="admin_revoke_links")])
+
+            keyboard.append([InlineKeyboardButton("📩 Reenviar links", callback_data="admin_resend_links")])
+
+
+        keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")])
 
         await query.message.reply_text(
 
@@ -1295,6 +1865,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("✏️ Editar grupo", callback_data="admin_edit_group")],
 
             [InlineKeyboardButton("📋 Ver grupos", callback_data="admin_view_groups")],
+
+            [InlineKeyboardButton("💬 Ayuda sobre este menú", callback_data=CALLBACK_ADMIN_GROUPS_HELP)],
 
             [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
 
@@ -1457,19 +2029,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-        keyboard = [
+        permissions = get_admin_permissions(user_id)
 
-            [InlineKeyboardButton("📋 Ver pagos", callback_data="admin_view_payments")],
+        keyboard = []
 
-            [InlineKeyboardButton("🔍 Buscar pago", callback_data="admin_search_payment")],
 
-            [InlineKeyboardButton("📩 Reenviar acceso", callback_data="admin_resend_access")],
+        if has_any_permission(permissions, ["can_view_payments", "can_manage_payments"]):
 
-            [InlineKeyboardButton("❌ Cancelar suscripción", callback_data="admin_cancel_subscription")],
+            keyboard.append([InlineKeyboardButton("📋 Ver pagos", callback_data="admin_view_payments")])
 
-            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+            keyboard.append([InlineKeyboardButton("🔍 Buscar pago", callback_data="admin_search_payment")])
 
-        ]
+
+        if has_any_permission(permissions, ["can_manage_payments"]):
+
+            keyboard.append([InlineKeyboardButton("📩 Reenviar acceso", callback_data="admin_resend_access")])
+
+            keyboard.append([InlineKeyboardButton("❌ Cancelar suscripción", callback_data="admin_cancel_subscription")])
+
+
+        keyboard.append([InlineKeyboardButton("💬 Ayuda sobre este menú", callback_data=CALLBACK_ADMIN_PAYMENTS_HELP)])
+
+        keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")])
 
         await query.message.reply_text(
 
@@ -1499,13 +2080,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("👥 Usuarios activos", callback_data="admin_active_users")],
 
-            [InlineKeyboardButton("💰 Ingresos", callback_data="admin_income")],
-
-            [InlineKeyboardButton("🔄 Revocar todos links", callback_data="admin_revoke_links")],
-
-            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+            [InlineKeyboardButton("💰 Ingresos", callback_data="admin_income")]
 
         ]
+
+
+        if is_super_admin(user_id):
+
+            keyboard.append([
+                InlineKeyboardButton("🔄 Revocar todos links", callback_data="admin_revoke_links")
+            ])
+
+
+        keyboard.append([
+            InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")
+        ])
 
         await query.message.reply_text(
 
@@ -1539,6 +2128,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("🔐 Logs seguridad", callback_data="admin_logs_security")],
 
+            [InlineKeyboardButton("💬 Ayuda sobre este menú", callback_data=CALLBACK_ADMIN_LOGS_HELP)],
+
             [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
 
         ]
@@ -1565,21 +2156,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-        keyboard = [
+        keyboard = build_admin_panel_keyboard(user_id)
 
-            [InlineKeyboardButton("👥 Gestión Usuarios", callback_data="menu_users")],
 
-            [InlineKeyboardButton("🎟️ Gestión Accesos", callback_data="menu_codes")],
+        if not keyboard:
 
-            [InlineKeyboardButton("📦 Gestión Grupos", callback_data="menu_groups")],
+            await query.message.reply_text(
+                "⛔ No tienes permisos de gestión."
+            )
 
-            [InlineKeyboardButton("💳 Gestión Pagos", callback_data="menu_payments")],
-
-            [InlineKeyboardButton("📊 Gestión Negocio", callback_data="menu_business")],
-
-            [InlineKeyboardButton("📜 Logs", callback_data="menu_logs")]
-
-        ]
+            return
 
         await query.message.reply_text(
 
@@ -2664,9 +3250,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         print("DEBUG: admin_users pulsado")
 
-        if query.from_user.id != ADMIN_ID:
-            return
-
         try:
 
             with conn.cursor() as cur:
@@ -2738,9 +3321,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_codes":
 
-        if query.from_user.id != ADMIN_ID:
-            return
-
         with conn.cursor() as cur:
 
             cur.execute("""
@@ -2803,10 +3383,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # =========================
 
     if data == "admin_create_code":
-
-        if query.from_user.id != ADMIN_ID:
-            return
-
 
         keyboard = [
 
@@ -2911,9 +3487,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_stats":
 
-        if query.from_user.id != ADMIN_ID:
-            return
-
         try:
 
             with conn.cursor() as cur:
@@ -2995,7 +3568,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_revoke_links":
 
-        if query.from_user.id != ADMIN_ID:
+        if not is_super_admin(query.from_user.id):
             return
 
         try:
@@ -3081,7 +3654,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_resend_links":
 
-        if query.from_user.id != ADMIN_ID:
+        if not is_super_admin(query.from_user.id):
             return
 
         try:
