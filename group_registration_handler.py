@@ -36,7 +36,9 @@ def get_approved_creator_request(user_id, telegram_group_id):
                    approved_group_id,
                    approved_telegram_group_id,
                    requested_public_visibility,
-                   COALESCE(max_groups_allowed, 1)
+                   COALESCE(max_groups_allowed, 1),
+                   COALESCE(is_free_group, FALSE),
+                   payment_mode
             FROM commercial_requests
             WHERE user_id=%s
             AND request_type='shared_trial'
@@ -70,7 +72,8 @@ def get_approved_creator_request(user_id, telegram_group_id):
         "approved_group_id": row[1],
         "approved_telegram_group_id": row[2],
         "requested_public_visibility": row[3],
-        "max_groups_allowed": row[4] or 1
+        "max_groups_allowed": row[4] or 1,
+        "is_free_group": row[5] is True or row[6] == "free"
     }
 
 
@@ -285,15 +288,17 @@ def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_ro
                 name,
                 telegram_group_id,
                 public_visibility,
+                is_free_group,
                 bot_is_admin,
                 is_active,
                 added_by
             )
-            VALUES (%s, %s, %s, TRUE, TRUE, %s)
+            VALUES (%s, %s, %s, %s, TRUE, TRUE, %s)
             ON CONFLICT (telegram_group_id)
             DO UPDATE SET
                 name=EXCLUDED.name,
                 public_visibility=EXCLUDED.public_visibility,
+                is_free_group=EXCLUDED.is_free_group,
                 bot_is_admin=TRUE,
                 is_active=TRUE,
                 added_by=EXCLUDED.added_by
@@ -303,6 +308,7 @@ def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_ro
             group_name,
             telegram_group_id,
             public_visibility,
+            request_row.get("is_free_group") is True,
             added_by
         ))
 

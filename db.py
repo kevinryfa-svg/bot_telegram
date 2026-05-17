@@ -70,6 +70,8 @@ def create_tables():
 
             public_visibility TEXT DEFAULT 'start_home',
 
+            is_free_group BOOLEAN DEFAULT FALSE,
+
             bot_is_admin BOOLEAN DEFAULT FALSE,
 
             is_active BOOLEAN DEFAULT TRUE,
@@ -678,6 +680,7 @@ def create_tables():
 
         group_columns = [
 
+            ("is_free_group", "BOOLEAN DEFAULT FALSE"),
             ("bot_is_admin", "BOOLEAN DEFAULT FALSE"),
             ("is_active", "BOOLEAN DEFAULT TRUE"),
             ("added_by", "BIGINT")

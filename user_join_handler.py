@@ -84,12 +84,13 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                 # =========================
-                # VERIFICAR SUSCRIPCIÓN
+                # VERIFICAR SUSCRIPCIÓN Y LINK DEL BOT
                 # =========================
 
                 cur.execute("""
 
-                    SELECT expiration
+                    SELECT expiration,
+                           subscription_active
 
                     FROM users
 
@@ -106,41 +107,68 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_row = cur.fetchone()
 
 
+                invite_link_used = None
+
+
+                try:
+
+                    if update.message.invite_link:
+
+                        invite_link_used = update.message.invite_link.invite_link
+
+                except Exception:
+
+                    invite_link_used = None
+
+
+                cur.execute("""
+
+                    SELECT invite_link
+                    FROM invite_links
+                    WHERE user_id=%s
+                    AND group_id IN (%s, %s)
+                    AND is_active=TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+
+                """, (
+                    user_id,
+                    group_id,
+                    telegram_group_id
+                ))
+
+                invite_row = cur.fetchone()
+
+
+                link_is_valid = invite_row is not None
+
+
+                if invite_link_used and invite_row:
+
+                    link_is_valid = invite_link_used == invite_row[0]
+
+
                 # =========================
-                # SI NO EXISTE → LINK NO REGISTRADO
+                # SI NO EXISTE O NO TIENE LINK VÁLIDO → EXPULSAR
                 # =========================
 
-                if not user_row:
+                if not user_row or not user_row[1] or not link_is_valid:
 
                     print(
-                        "Usuario sin suscripción:",
+                        "Usuario sin acceso válido:",
                         user_id
                     )
 
 
-                    keyboard = [
+                    kick_chat_member(
 
-                        [
+                        TOKEN,
 
-                            InlineKeyboardButton(
-                                "✅ ACEPTAR",
-                                callback_data=
-                                f"allow_user_{user_id}_{group_id}"
-                            )
+                        telegram_group_id,
 
-                        ],
+                        user_id
 
-                        [
-
-                            InlineKeyboardButton(
-                                "❌ EXPULSAR",
-                                callback_data=
-                                f"deny_user_{user_id}_{group_id}"
-                            )
-
-                        ]
-
-                    ]
+                    )
 
 
                     try:
@@ -153,10 +181,7 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 first_name,
                                 username,
                                 user_id
-                            ),
-
-                            reply_markup=
-                            InlineKeyboardMarkup(keyboard)
+                            )
 
                         )
 
@@ -172,6 +197,18 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                 expiration = user_row[0]
+
+
+                if invite_row:
+
+                    cur.execute("""
+
+                        UPDATE invite_links
+                        SET is_active=FALSE,
+                            revoked_at=NOW()
+                        WHERE invite_link=%s
+
+                    """, (invite_row[0],))
 
 
                 # =========================

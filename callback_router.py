@@ -891,11 +891,31 @@ def assign_owner_for_commercial_request(request_row):
                 cur.execute("""
 
                     UPDATE groups
-                    SET public_visibility=%s
+                    SET public_visibility=%s,
+                        is_free_group=%s
                     WHERE id=%s
 
                 """, (
                     public_visibility,
+                    request_row.get("is_free_group") is True
+                    or request_row.get("payment_mode") == "free",
+                    group_id
+                ))
+
+
+        else:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE groups
+                    SET is_free_group=%s
+                    WHERE id=%s
+
+                """, (
+                    request_row.get("is_free_group") is True
+                    or request_row.get("payment_mode") == "free",
                     group_id
                 ))
 
@@ -1716,6 +1736,19 @@ def update_commercial_request_free_group(request_id):
 
         row = cur.fetchone()
 
+        request_row = row_to_commercial_request(row)
+
+
+        if request_row and request_row.get("approved_group_id"):
+
+            cur.execute("""
+
+                UPDATE groups
+                SET is_free_group=TRUE
+                WHERE id=%s
+
+            """, (request_row.get("approved_group_id"),))
+
 
     return row_to_commercial_request(row)
 
@@ -1738,6 +1771,19 @@ def update_commercial_request_paid_group(request_id):
         """, (request_id,))
 
         row = cur.fetchone()
+
+        request_row = row_to_commercial_request(row)
+
+
+        if request_row and request_row.get("approved_group_id"):
+
+            cur.execute("""
+
+                UPDATE groups
+                SET is_free_group=FALSE
+                WHERE id=%s
+
+            """, (request_row.get("approved_group_id"),))
 
 
     return row_to_commercial_request(row)
@@ -4140,6 +4186,191 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("free_access_"):
+
+        try:
+
+            await query.message.delete()
+
+        except Exception:
+
+            pass
+
+
+        try:
+
+            group_id = int(data.replace("free_access_", "", 1))
+
+        except Exception:
+
+            await query.message.reply_text(
+                "❌ Comunidad no válida."
+            )
+
+            return
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT name,
+                           telegram_group_id
+                    FROM groups
+                    WHERE id=%s
+                    AND is_active=TRUE
+                    AND COALESCE(is_free_group, FALSE)=TRUE
+                    LIMIT 1
+
+                """, (group_id,))
+
+                group_row = cur.fetchone()
+
+
+                if not group_row:
+
+                    await query.message.reply_text(
+                        "❌ Comunidad gratuita no encontrada o no disponible."
+                    )
+
+                    return
+
+
+                group_name, telegram_group_id = group_row
+
+                cur.execute("""
+
+                    SELECT invite_link
+                    FROM invite_links
+                    WHERE user_id=%s
+                    AND group_id IN (%s, %s)
+                    AND is_active=TRUE
+
+                """, (
+                    user_id,
+                    group_id,
+                    telegram_group_id
+                ))
+
+                old_links = cur.fetchall()
+
+
+            for (old_link,) in old_links:
+
+                try:
+
+                    revoke_telegram_invite_link(
+                        TOKEN,
+                        telegram_group_id,
+                        old_link
+                    )
+
+                except Exception as e:
+
+                    print("Error revocando link gratuito anterior:", e)
+
+
+            link = create_telegram_invite_link(
+                TOKEN,
+                telegram_group_id,
+                expire_seconds=180,
+                member_limit=1
+            )
+
+
+            if not link:
+
+                await query.message.reply_text(
+                    "❌ Error creando acceso."
+                )
+
+                return
+
+
+            username = query.from_user.username
+            first_name = query.from_user.first_name
+
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    DELETE FROM invite_links
+                    WHERE user_id=%s
+                    AND group_id IN (%s, %s)
+
+                """, (
+                    user_id,
+                    group_id,
+                    telegram_group_id
+                ))
+
+                cur.execute("""
+
+                    INSERT INTO invite_links
+                    (user_id, group_id, invite_link, is_active)
+                    VALUES (%s, %s, %s, TRUE)
+
+                """, (
+                    user_id,
+                    telegram_group_id,
+                    link
+                ))
+
+                cur.execute("""
+
+                    INSERT INTO users
+                    (
+                        user_id,
+                        group_id,
+                        username,
+                        first_name,
+                        expiration,
+                        subscription_active,
+                        last_invite_link
+                    )
+                    VALUES (%s, %s, %s, %s, NULL, TRUE, %s)
+                    ON CONFLICT (user_id, group_id)
+                    DO UPDATE SET
+                        username=EXCLUDED.username,
+                        first_name=EXCLUDED.first_name,
+                        expiration=NULL,
+                        subscription_active=TRUE,
+                        last_invite_link=EXCLUDED.last_invite_link
+
+                """, (
+                    user_id,
+                    group_id,
+                    username,
+                    first_name,
+                    link
+                ))
+
+                conn.commit()
+
+        except Exception as e:
+
+            print("Error concediendo acceso gratuito:", e)
+
+            await query.message.reply_text(
+                "❌ Error creando acceso gratuito."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "✅ Acceso gratuito concedido.\n\n"
+            "Este enlace es personal y de un solo uso.\n"
+            "No lo compartas.\n\n"
+            f"{link}"
+        )
+
+        return
+
+
     # =========================
     # ENTRAR A GRUPO
     # =========================
@@ -4172,6 +4403,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
+                    SELECT COALESCE(is_free_group, FALSE)
+                    FROM groups
+                    WHERE id=%s
+                    AND is_active=TRUE
+
+                """, (group_id,))
+
+                group_row = cur.fetchone()
+
+
+                if not group_row:
+
+                    await query.message.reply_text(
+                        "❌ Comunidad no encontrada o no disponible."
+                    )
+
+                    return
+
+
+                is_free_group = group_row[0] is True
+
+
+                cur.execute("""
+
                     SELECT name,
                            price_id,
                            amount,
@@ -4194,6 +4449,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "❌ Error cargando planes."
+            )
+
+            return
+
+
+        if is_free_group:
+
+            await query.message.reply_text(
+                "Esta comunidad es gratuita, pero el acceso está protegido por el bot.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "🔓 Entrar gratis",
+                        callback_data=f"free_access_{group_id}"
+                    )],
+                    [InlineKeyboardButton(
+                        "💬 Ayuda sobre este menú",
+                        callback_data=CALLBACK_GROUP_PLANS_HELP
+                    )],
+                    [InlineKeyboardButton(
+                        "⬅️ Volver",
+                        callback_data="back_groups"
+                    )]
+                ])
             )
 
             return
