@@ -624,6 +624,31 @@ def create_tables():
             pass
 
 
+        group_columns = [
+
+            ("bot_is_admin", "BOOLEAN DEFAULT FALSE"),
+            ("is_active", "BOOLEAN DEFAULT TRUE"),
+            ("added_by", "BIGINT")
+
+        ]
+
+
+        for column_name, column_type in group_columns:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE groups
+                    ADD COLUMN {column_name} {column_type}
+
+                """)
+
+            except Exception:
+
+                pass
+
+
         try:
 
             cur.execute("""
@@ -729,6 +754,7 @@ def create_tables():
         base_commercial_plans = [
 
             ("shared_bot_space", "1 mes", 30),
+            ("shared_bot_space", "3 meses", 90),
             ("shared_bot_space", "6 meses", 180),
             ("shared_bot_space", "1 año", 365)
 

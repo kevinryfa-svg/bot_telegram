@@ -200,7 +200,9 @@ def find_group_by_telegram_id(text):
         cur.execute("""
 
             SELECT id,
-                   telegram_group_id
+                   telegram_group_id,
+                   is_active,
+                   COALESCE(public_visibility, 'hidden')
             FROM groups
             WHERE telegram_group_id=%s
             LIMIT 1
@@ -208,6 +210,39 @@ def find_group_by_telegram_id(text):
         """, (telegram_group_id,))
 
         return cur.fetchone()
+
+
+def max_groups_allowed(_user_id):
+
+    return 1
+
+
+def creator_group_count(user_id, exclude_request_id=None):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT COUNT(DISTINCT approved_group_id)
+            FROM commercial_requests
+            WHERE user_id=%s
+            AND approved_group_id IS NOT NULL
+            AND (%s IS NULL OR id != %s)
+
+        """, (
+            user_id,
+            exclude_request_id,
+            exclude_request_id
+        ))
+
+        return cur.fetchone()[0] or 0
+
+
+def creator_reached_group_limit(user_id, request_id):
+
+    allowed = max_groups_allowed(user_id)
+
+    return creator_group_count(user_id, request_id) >= allowed
 
 
 def get_request_group_id(request_row):
@@ -309,11 +344,56 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         group_row = find_group_by_telegram_id(text)
 
-        with conn.cursor() as cur:
+        if group_row:
 
-            if group_row:
+            group_id, telegram_group_id, is_active, _public_visibility = group_row
 
-                group_id, telegram_group_id = group_row
+
+            if not is_active:
+
+                with conn.cursor() as cur:
+
+                    cur.execute("""
+
+                        UPDATE commercial_requests
+                        SET telegram_group_link=%s,
+                            creator_setup_status='setup_in_progress',
+                            updated_at=NOW()
+                        WHERE id=%s
+
+                    """, (
+                        text,
+                        request_id
+                    ))
+
+                clear_creator_setup(context)
+
+                await update.message.reply_text(
+                    "📡 Grupo/canal guardado como pendiente de verificación.\n\n"
+                    "El grupo existe en el sistema, pero está no activo/no publicado. "
+                    "Esto ocurre cuando el bot fue añadido por un usuario no autorizado o falta revisión manual.\n\n"
+                    "Para resolverlo, el propietario principal debe revisar el grupo, activarlo y asociarlo a esta solicitud.",
+                    reply_markup=get_back_to_setup_keyboard(request_id)
+                )
+
+                return
+
+
+            if creator_reached_group_limit(
+                request_row["user_id"],
+                request_id
+            ):
+
+                clear_creator_setup(context)
+
+                await update.message.reply_text(
+                    "Has alcanzado el máximo de comunidades permitidas para tu plan actual.",
+                    reply_markup=get_back_to_setup_keyboard(request_id)
+                )
+
+                return
+
+            with conn.cursor() as cur:
 
                 cur.execute("""
 
@@ -366,7 +446,9 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
                     group_id
                 )
 
-            else:
+        else:
+
+            with conn.cursor() as cur:
 
                 cur.execute("""
 
@@ -398,7 +480,12 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         await update.message.reply_text(
             "📡 Grupo/canal guardado como pendiente de verificación.\n\n"
-            "Todavía no se pudo asociar con un grupo real registrado en el bot. "
+            "Está pendiente porque todavía no se pudo asociar con un grupo real registrado y activo en el bot.\n\n"
+            "Qué falta:\n"
+            "1. Añade el bot al grupo/canal.\n"
+            "2. Dale permisos de administrador.\n"
+            "3. Asegúrate de que el grupo quede detectado por el bot.\n"
+            "4. Vuelve a introducir el ID cuando esté registrado.\n\n"
             "Cuando el grupo exista en el sistema, se podrá activar el panel de gestión.",
             reply_markup=get_back_to_setup_keyboard(request_id)
         )
