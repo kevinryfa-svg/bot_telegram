@@ -908,11 +908,29 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await update.message.reply_text(
 
-                "✅ Grupo y planes creados correctamente."
+                "✅ Grupo y planes creados correctamente.",
+
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "⬅️ Volver al panel",
+                        callback_data="admin_back_main"
+                    )],
+                    [InlineKeyboardButton(
+                        "📦 Gestión Grupos",
+                        callback_data="menu_groups"
+                    )]
+                ])
 
             )
 
 
             context.user_data["creating_group"] = False
+            context.user_data.pop("new_group_data", None)
+            context.user_data.pop("group_step", None)
+            context.user_data.pop("current_plan", None)
+            context.user_data.pop("current_plan_name", None)
+            context.user_data.pop("current_price_id", None)
+            context.user_data.pop("current_duration", None)
+            context.user_data.pop("current_amount", None)
 
             return
