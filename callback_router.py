@@ -16,6 +16,7 @@ from admin_permission_map import (
     get_required_permissions_for_callback,
     is_admin_callback
 )
+from admin_menu_catalog import build_admin_menu_button_rows
 from ai_handler import activate_ai_help_context
 from code_admin_handler import crear_codigo_callback
 from bot_config import ADMIN_ID
@@ -54,6 +55,7 @@ from invite_link_service import (
 from rbac_helpers import is_super_admin, has_any_permission_any_group
 from start_handler import start
 from telegram_group_actions import kick_chat_member
+from ui_menu_helpers import make_button
 
 
 TOKEN = os.environ.get("TOKEN")
@@ -340,62 +342,21 @@ def build_admin_panel_keyboard(user_id):
 
     permissions = get_admin_permissions(user_id)
 
-    keyboard = []
+    button_rows = build_admin_menu_button_rows(
+        permissions=permissions,
+        is_super_admin=is_super_admin(user_id)
+    )
 
-
-    if is_super_admin(user_id):
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "📩 Solicitudes comerciales",
-                callback_data="admin_commercial_requests"
+    return [
+        [
+            make_button(
+                button["text"],
+                button["callback_data"]
             )
-        ])
-
-
-    if has_any_permission(permissions, ["can_view_users", "can_manage_users"]):
-
-        keyboard.append([
-            InlineKeyboardButton("👥 Usuarios", callback_data="menu_users")
-        ])
-
-
-    if has_any_permission(permissions, ["can_manage_codes"]):
-
-        keyboard.append([
-            InlineKeyboardButton("🎟️ Accesos", callback_data="menu_codes")
-        ])
-
-
-    if has_any_permission(permissions, ["can_manage_groups"]):
-
-        keyboard.append([
-            InlineKeyboardButton("📦 Grupos", callback_data="menu_groups")
-        ])
-
-
-    if has_any_permission(permissions, ["can_view_payments", "can_manage_payments"]):
-
-        keyboard.append([
-            InlineKeyboardButton("💳 Pagos", callback_data="menu_payments")
-        ])
-
-
-    if has_any_permission(permissions, ["can_view_stats"]):
-
-        keyboard.append([
-            InlineKeyboardButton("📊 Estadísticas", callback_data="menu_business")
-        ])
-
-
-    if has_any_permission(permissions, ["can_view_logs"]):
-
-        keyboard.append([
-            InlineKeyboardButton("📜 Logs", callback_data="menu_logs")
-        ])
-
-
-    return keyboard
+            for button in row
+        ]
+        for row in button_rows
+    ]
 
 
 COMMERCIAL_REQUEST_FIELDS = [
