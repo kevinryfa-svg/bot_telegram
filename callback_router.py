@@ -28,6 +28,8 @@ from commercial_catalog import (
     CALLBACK_CUSTOM_BOT,
     CALLBACK_COMMERCIAL_CONTACT,
     CALLBACK_COMMERCIAL_BACK,
+    CALLBACK_COMMERCIAL_BACK_START,
+    CALLBACK_COMMERCIAL_BACK_SOLUTIONS,
     CALLBACK_SHARED_TRIAL_START,
     CALLBACK_CUSTOM_BOT_START,
     CALLBACK_COMMERCIAL_HELP,
@@ -328,7 +330,7 @@ def build_commercial_menu_keyboard():
 
         [InlineKeyboardButton(
             "⬅️ Volver",
-            callback_data=CALLBACK_COMMERCIAL_BACK
+            callback_data=CALLBACK_COMMERCIAL_BACK_START
         )]
 
     ]
@@ -423,7 +425,25 @@ COMMERCIAL_REQUEST_FIELDS = [
     "is_free_group",
     "approved_group_id",
     "approved_telegram_group_id",
-    "approved_bot_username"
+    "approved_bot_username",
+    "selected_commercial_plan_id",
+    "commercial_subscription_status",
+    "commercial_subscription_until"
+
+]
+
+
+COMMERCIAL_PLAN_FIELDS = [
+
+    "id",
+    "product_type",
+    "name",
+    "duration_days",
+    "amount",
+    "currency",
+    "stripe_price_id",
+    "is_active",
+    "created_at"
 
 ]
 
@@ -436,6 +456,16 @@ def row_to_commercial_request(row):
 
 
     return dict(zip(COMMERCIAL_REQUEST_FIELDS, row))
+
+
+def row_to_commercial_plan(row):
+
+    if not row:
+
+        return None
+
+
+    return dict(zip(COMMERCIAL_PLAN_FIELDS, row))
 
 
 def format_commercial_request_type(request_type):
@@ -516,6 +546,165 @@ def fetch_commercial_request(request_id):
 
 
     return row_to_commercial_request(row)
+
+
+def fetch_active_commercial_plans(product_type):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(COMMERCIAL_PLAN_FIELDS)}
+            FROM commercial_plans
+            WHERE product_type=%s
+            AND is_active=TRUE
+            ORDER BY duration_days ASC
+
+        """, (product_type,))
+
+        rows = cur.fetchall()
+
+
+    return [
+        row_to_commercial_plan(row)
+        for row in rows
+    ]
+
+
+def fetch_commercial_plan(plan_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(COMMERCIAL_PLAN_FIELDS)}
+            FROM commercial_plans
+            WHERE id=%s
+            AND is_active=TRUE
+
+            LIMIT 1
+
+        """, (plan_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_plan(row)
+
+
+def commercial_request_belongs_to_user(request_row, user_id):
+
+    if not request_row:
+
+        return False
+
+
+    return int(request_row.get("user_id") or 0) == int(user_id)
+
+
+def format_commercial_plan_price(plan):
+
+    if plan.get("amount") is None:
+
+        return "pendiente de precio"
+
+
+    currency = plan.get("currency") or "EUR"
+    amount = plan.get("amount")
+
+    return f"{amount / 100:.2f} {currency}"
+
+
+def build_user_activation_keyboard(request_id):
+
+    return [
+
+        [InlineKeyboardButton(
+            "📅 Activar mi comunidad",
+            callback_data=f"user_commercial_activate_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💬 Ayuda",
+            callback_data=CALLBACK_COMMERCIAL_HELP
+        )]
+
+    ]
+
+
+def build_user_trial_payment_keyboard(request_id):
+
+    return [
+
+        [InlineKeyboardButton(
+            "🏦 Usar mi propio Stripe",
+            callback_data=f"user_trial_setup_owner_stripe_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💼 Usar Stripe de la plataforma",
+            callback_data=f"user_trial_setup_platform_stripe_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💬 Ayuda",
+            callback_data=CALLBACK_COMMERCIAL_HELP
+        )]
+
+    ]
+
+
+def build_user_trial_choice_keyboard(request_id):
+
+    return [
+
+        [InlineKeyboardButton(
+            "🆓 Mi grupo será gratuito",
+            callback_data=f"user_trial_setup_free_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💳 Mi grupo será de pago",
+            callback_data=f"user_trial_setup_paid_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💬 Ayuda",
+            callback_data=CALLBACK_COMMERCIAL_HELP
+        )]
+
+    ]
+
+
+def build_commercial_plan_keyboard(request_id, plans):
+
+    keyboard = []
+
+
+    for plan in plans:
+
+        plan_id = plan.get("id")
+        label = (
+            f"{plan.get('name') or '-'} — "
+            f"{format_commercial_plan_price(plan)}"
+        )
+
+        keyboard.append([
+            InlineKeyboardButton(
+                label,
+                callback_data=f"user_commercial_plan_{request_id}_{plan_id}"
+            )
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "💬 Ayuda",
+            callback_data=CALLBACK_COMMERCIAL_HELP
+        )
+    ])
+
+    return keyboard
 
 
 def build_commercial_requests_text(requests):
@@ -614,7 +803,10 @@ def build_commercial_request_detail_text(request_row):
         f"Inicio prueba: {format_commercial_datetime(request_row.get('trial_starts_at'))}\n"
         f"Fin prueba: {format_commercial_datetime(request_row.get('trial_ends_at'))}\n"
         f"Modo pago: {request_row.get('payment_mode') or '-'}\n"
-        f"Modo Stripe: {request_row.get('stripe_mode') or '-'}"
+        f"Modo Stripe: {request_row.get('stripe_mode') or '-'}\n"
+        f"Plan comercial: {request_row.get('selected_commercial_plan_id') or '-'}\n"
+        f"Estado suscripción comercial: {request_row.get('commercial_subscription_status') or '-'}\n"
+        f"Suscripción comercial hasta: {format_commercial_datetime(request_row.get('commercial_subscription_until'))}"
     )
 
 
@@ -788,7 +980,129 @@ def update_commercial_request_rejected(request_id, reviewer_id):
     return row_to_commercial_request(row)
 
 
-async def notify_commercial_request_user(context, request_row, text):
+def update_commercial_request_free_group(request_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET payment_mode='free',
+                is_free_group=TRUE,
+                status='trial_active',
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (request_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def update_commercial_request_paid_group(request_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET payment_mode='paid',
+                is_free_group=FALSE,
+                status='awaiting_payment_setup',
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (request_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def update_commercial_request_stripe_mode(request_id, stripe_mode):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET stripe_mode=%s,
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (stripe_mode, request_id))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def update_commercial_request_plan(request_id, plan_id, subscription_status):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET selected_commercial_plan_id=%s,
+                commercial_subscription_status=%s,
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (
+            plan_id,
+            subscription_status,
+            request_id
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def extract_commercial_plan_selection(data):
+
+    try:
+
+        payload = data.replace("user_commercial_plan_", "", 1)
+        request_id, plan_id = payload.split("_", 1)
+
+        return int(request_id), int(plan_id)
+
+    except Exception:
+
+        return None, None
+
+
+async def notify_commercial_admin(context, text, reply_markup=None):
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=text,
+            reply_markup=reply_markup
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Error avisando admin comercial:", e)
+
+        return False
+
+
+async def notify_commercial_request_user(context, request_row, text, reply_markup=None):
 
     user_id = request_row.get("user_id") if request_row else None
 
@@ -802,7 +1116,8 @@ async def notify_commercial_request_user(context, request_row, text):
 
         await context.bot.send_message(
             chat_id=user_id,
-            text=text
+            text=text,
+            reply_markup=reply_markup
         )
 
         return True
@@ -826,6 +1141,39 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     user_id = query.from_user.id
+
+
+    if data == CALLBACK_COMMERCIAL_BACK_START:
+
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        await start(update, context)
+
+        return
+
+
+    if data in (
+        CALLBACK_COMMERCIAL_BACK_SOLUTIONS,
+        CALLBACK_COMMERCIAL_BACK
+    ):
+
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=COMMERCIAL_MENU_TEXT_ES,
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_menu_keyboard()
+            )
+        )
+
+        return
 
 
     if data == "start_explore_groups":
@@ -914,7 +1262,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton(
                 "⬅️ Volver",
-                callback_data=CALLBACK_COMMERCIAL_BACK
+                callback_data=CALLBACK_COMMERCIAL_BACK_SOLUTIONS
             )]
 
         ]
@@ -976,7 +1324,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton(
                 "⬅️ Volver",
-                callback_data=CALLBACK_COMMERCIAL_BACK
+                callback_data=CALLBACK_COMMERCIAL_BACK_SOLUTIONS
             )]
 
         ]
@@ -1041,7 +1389,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton(
                 "⬅️ Volver",
-                callback_data=CALLBACK_COMMERCIAL_BACK
+                callback_data=CALLBACK_COMMERCIAL_BACK_SOLUTIONS
             )]
 
         ]
@@ -1050,21 +1398,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📩 Solicitud recibida\n\n"
             "Un administrador revisará la solicitud y podrá ayudarte con la mejor opción según lo que necesites.",
             reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-        return
-
-
-    if data == "commercial_back":
-
-        await query.message.reply_text(
-
-            COMMERCIAL_MENU_TEXT_ES,
-
-            reply_markup=InlineKeyboardMarkup(
-                build_commercial_menu_keyboard()
-            )
-
         )
 
         return
@@ -1291,11 +1624,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             request_row,
             "✅ Tu prueba de 1 día ha sido aprobada.\n\n"
-            "Ahora falta configurar:\n"
-            "• grupo/canal\n"
-            "• modo gratuito o pago\n"
-            "• Stripe si será de pago\n\n"
-            "Te contactaremos para completar la activación."
+            "Ahora elige cómo quieres configurar tu comunidad:\n\n"
+            "🆓 Grupo gratuito:\n"
+            "Tus usuarios podrán entrar sin pagar, pero el acceso seguirá protegido por el bot.\n\n"
+            "💳 Grupo de pago:\n"
+            "Tus usuarios deberán pagar para acceder.",
+            reply_markup=InlineKeyboardMarkup(
+                build_user_trial_choice_keyboard(request_id)
+            )
         )
 
         await query.message.reply_text(
