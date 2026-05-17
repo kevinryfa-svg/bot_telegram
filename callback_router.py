@@ -11,7 +11,18 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
+from ai_handler import activate_ai_help_context
 from code_admin_handler import crear_codigo_callback
+from commercial_catalog import (
+    COMMERCIAL_MENU_TEXT_ES,
+    COMMERCIAL_PRODUCTS,
+    PRODUCT_SHARED_BOT_SPACE,
+    PRODUCT_CUSTOM_BOT,
+    CALLBACK_SHARED_BOT_SPACE,
+    CALLBACK_CUSTOM_BOT,
+    CALLBACK_COMMERCIAL_CONTACT,
+    CALLBACK_COMMERCIAL_BACK
+)
 from db import conn
 from formatters import format_tiempo_restante
 from invite_link_service import (
@@ -43,6 +54,127 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     user_id = query.from_user.id
+
+
+    if data == "start_explore_groups":
+
+        await query.message.reply_text(
+            "Debajo aparecen las comunidades privadas disponibles. "
+            "Selecciona una para ver sus planes."
+        )
+
+        return
+
+
+    if data == "start_no_groups":
+
+        await query.message.reply_text(
+            "Todavía no hay comunidades disponibles. "
+            "Puedes contactar con soporte o volver más tarde."
+        )
+
+        return
+
+
+    if data == "public_monetize_community":
+
+        keyboard = [
+
+            [InlineKeyboardButton(
+                COMMERCIAL_PRODUCTS[PRODUCT_SHARED_BOT_SPACE]["title_es"],
+                callback_data=CALLBACK_SHARED_BOT_SPACE
+            )],
+
+            [InlineKeyboardButton(
+                COMMERCIAL_PRODUCTS[PRODUCT_CUSTOM_BOT]["title_es"],
+                callback_data=CALLBACK_CUSTOM_BOT
+            )],
+
+            [InlineKeyboardButton(
+                "📩 Hablar con un asesor",
+                callback_data=CALLBACK_COMMERCIAL_CONTACT
+            )],
+
+            [InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data=CALLBACK_COMMERCIAL_BACK
+            )]
+
+        ]
+
+        await query.message.reply_text(
+
+            COMMERCIAL_MENU_TEXT_ES,
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
+
+
+    if data == "public_support":
+
+        await query.message.reply_text(
+            "🛟 Soporte\n\n"
+            "Puedes escribir tu incidencia y un administrador podrá ayudarte."
+        )
+
+        return
+
+
+    if data == "public_ai_help":
+
+        await activate_ai_help_context(
+            update,
+            context
+        )
+
+        return
+
+
+    if data == "commercial_shared_bot_space":
+
+        await query.message.reply_text(
+            "📌 Publicar comunidad dentro del bot compartido.\n\n"
+            "Los usuarios compran acceso desde este bot.\n"
+            "Es una opción rápida para empezar.\n"
+            "Si caduca, tienes 15 días de gracia."
+        )
+
+        return
+
+
+    if data == "commercial_custom_bot":
+
+        await query.message.reply_text(
+            "🤖 Bot personalizado\n\n"
+            "Usas tu propio bot de Telegram/BotFather.\n"
+            "Tu comunidad tiene marca propia.\n"
+            "El sistema se gestiona por detrás.\n"
+            "Si caduca, tienes 15 días de gracia."
+        )
+
+        return
+
+
+    if data == "commercial_contact":
+
+        await query.message.reply_text(
+            "📩 Solicitud recibida\n\n"
+            "Un administrador revisará la solicitud."
+        )
+
+        return
+
+
+    if data == "commercial_back":
+
+        await query.message.reply_text(
+            "Usa /start para volver al menú principal."
+        )
+
+        return
 
 
     # =========================
