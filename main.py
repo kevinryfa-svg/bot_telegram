@@ -88,6 +88,7 @@ from code_admin_handler import (
     generar_codigo,
     crear_codigo_callback
 )
+from admin_panel_handler import admin_panel
 from code_flow_handler import receive_code
 from admin_input_handler import receive_admin_inputs
 from stripe_handler import stripe_webhook
@@ -1360,49 +1361,6 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
 
             print("Error verificando miembro:", e)
-
-# =========================
-# PANEL ADMIN PRINCIPAL
-# =========================
-
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user_id = update.effective_user.id
-
-
-    if not is_super_admin(user_id):
-
-        await update.message.reply_text(
-            "⛔ No tienes permisos para acceder al panel."
-        )
-
-        return
-
-
-    keyboard = [
-
-        [InlineKeyboardButton("👥 Gestión Usuarios", callback_data="menu_users")],
-
-        [InlineKeyboardButton("🎟️ Gestión Accesos", callback_data="menu_codes")],
-
-        [InlineKeyboardButton("📦 Gestión Grupos", callback_data="menu_groups")],
-
-        [InlineKeyboardButton("💳 Gestión Pagos", callback_data="menu_payments")],
-
-        [InlineKeyboardButton("📊 Gestión Negocio", callback_data="menu_business")],
-
-        [InlineKeyboardButton("📜 Logs", callback_data="menu_logs")]
-
-    ]
-
-    await update.message.reply_text(
-
-        "🔐 PANEL ADMIN",
-
-        reply_markup=InlineKeyboardMarkup(keyboard)
-
-    )
-
 
 # =========================
 # BOTONES
