@@ -135,11 +135,37 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "commercial_shared_bot_space":
 
+        keyboard = [
+
+            [InlineKeyboardButton(
+                "📩 Quiero probar 1 día",
+                callback_data=CALLBACK_COMMERCIAL_CONTACT
+            )],
+
+            [InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data=CALLBACK_COMMERCIAL_BACK
+            )]
+
+        ]
+
         await query.message.reply_text(
-            "📌 Publicar comunidad dentro del bot compartido.\n\n"
-            "Los usuarios compran acceso desde este bot.\n"
-            "Es una opción rápida para empezar.\n"
-            "Si caduca, tienes 15 días de gracia."
+            "📌 Publicar mi comunidad en este bot\n\n"
+            "Esta opción es para creadores que quieren empezar rápido sin crear un bot propio.\n\n"
+            "Tu comunidad aparecerá dentro de nuestro bot principal. "
+            "Los usuarios podrán verla, elegir un plan y comprar acceso desde aquí.\n\n"
+            "✅ Incluye:\n"
+            "• Publicación de tu comunidad dentro del bot.\n"
+            "• Planes de acceso configurables.\n"
+            "• Pagos y accesos automatizados.\n"
+            "• Links seguros para entrar al grupo.\n"
+            "• Gestión básica desde el sistema.\n\n"
+            "🎁 Prueba inicial:\n"
+            "Puedes probar esta opción durante 1 día para publicar tu comunidad y comprobar cómo funciona.\n\n"
+            "Después de la prueba, si quieres continuar, tendrás que activar una suscripción.\n\n"
+            "Si una suscripción activa se detiene o no se renueva, la comunidad podrá dejar de mostrarse para nuevas compras. "
+            "Aun así, guardaremos la configuración durante 15 días para que puedas reactivarla sin tener que empezar desde cero.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
@@ -147,12 +173,37 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "commercial_custom_bot":
 
+        keyboard = [
+
+            [InlineKeyboardButton(
+                "📩 Quiero configurar mi bot",
+                callback_data=CALLBACK_COMMERCIAL_CONTACT
+            )],
+
+            [InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data=CALLBACK_COMMERCIAL_BACK
+            )]
+
+        ]
+
         await query.message.reply_text(
-            "🤖 Bot personalizado\n\n"
-            "Usas tu propio bot de Telegram/BotFather.\n"
-            "Tu comunidad tiene marca propia.\n"
-            "El sistema se gestiona por detrás.\n"
-            "Si caduca, tienes 15 días de gracia."
+            "🤖 Crear mi bot personalizado\n\n"
+            "Esta opción es para quien quiere una experiencia más profesional con su propio bot de Telegram.\n\n"
+            "El cliente crea su bot en BotFather y configura su información, marca, textos, grupos y planes. "
+            "Después de completar la configuración, realiza el pago y el sistema se activa.\n\n"
+            "✅ Incluye:\n"
+            "• Bot propio con nombre y marca del cliente.\n"
+            "• Configuración de comunidades, grupos y planes.\n"
+            "• Pagos y accesos automatizados.\n"
+            "• Gestión de usuarios, links y permisos.\n"
+            "• Posibilidad de usar IA y soporte dentro del sistema.\n\n"
+            "⚠️ Importante:\n"
+            "El bot personalizado no tiene prueba gratuita. "
+            "Primero se prepara la configuración completa y, una vez pagado, el bot empieza a funcionar.\n\n"
+            "Si la suscripción se detiene o no se renueva, el bot podrá quedar bloqueado o desactivado. "
+            "Guardaremos la configuración durante 15 días para que puedas reactivar el servicio sin perder lo preparado.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
@@ -160,9 +211,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "commercial_contact":
 
+        keyboard = [
+
+            [InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data=CALLBACK_COMMERCIAL_BACK
+            )]
+
+        ]
+
         await query.message.reply_text(
             "📩 Solicitud recibida\n\n"
-            "Un administrador revisará la solicitud."
+            "Hemos registrado tu interés.\n\n"
+            "Un administrador revisará tu solicitud y podrá ayudarte con la mejor opción según lo que necesites:\n\n"
+            "• publicar tu comunidad dentro de nuestro bot;\n"
+            "• crear un bot personalizado con tu marca;\n"
+            "• resolver dudas sobre pagos, accesos o configuración.\n\n"
+            "Más adelante añadiremos un formulario completo para recoger automáticamente todos los datos del proyecto.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
@@ -170,9 +236,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "commercial_back":
 
-        await query.message.reply_text(
-            "Usa /start para volver al menú principal."
-        )
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        await start(update, context)
 
         return
 

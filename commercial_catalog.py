@@ -58,7 +58,7 @@ COMMERCIAL_PRODUCTS = {
             "Los usuarios podrán descubrirla, ver sus planes y comprar acceso desde este mismo bot. "
             "Es la opción más rápida para empezar con menos configuración. "
             "Si la suscripción del cliente caduca, la comunidad puede quedar desactivada o no visible. "
-            "La configuración se conserva durante 15 días de gracia para poder reactivar."
+            "Puedes probar esta opción durante 1 día. Si después decides continuar, activas una suscripción. Si más adelante la suscripción se detiene, guardaremos la configuración durante 15 días para que puedas reactivar sin empezar desde cero."
         )
     },
     PRODUCT_CUSTOM_BOT: {
@@ -68,7 +68,7 @@ COMMERCIAL_PRODUCTS = {
             "El cliente usa su propio bot de Telegram con marca, nombre y experiencia propia. "
             "El sistema gestiona accesos, suscripciones, pagos, links, usuarios, soporte, permisos e IA. "
             "Si la suscripción caduca, el bot personalizado puede quedar bloqueado o desactivado. "
-            "La configuración se conserva durante 15 días de gracia para poder reanudar el servicio."
+            "Esta opción no tiene prueba gratuita. Primero se configura el bot completo y, después del pago, se activa. Si más adelante la suscripción se detiene, guardaremos la configuración durante 15 días para que puedas reanudar el servicio sin perder lo preparado."
         )
     }
 }
@@ -115,7 +115,7 @@ def build_commercial_ai_context():
         "Hay dos productos comerciales:\n"
         "1. Espacio en bot compartido: el cliente publica su comunidad dentro del bot principal.\n"
         "2. Bot personalizado: el cliente usa su propio bot con marca propia.\n\n"
-        "Ambos productos tienen 15 días de gracia después de caducar.\n"
+        "En el producto de comunidad compartida hay 1 día de prueba. En el bot personalizado no hay prueba gratuita: primero se configura y después del pago se activa. Si una suscripción se detiene, la configuración se guarda durante 15 días antes de archivarse.\n"
         "La IA no debe inventar precios, enlaces de pago, teléfonos ni comandos.\n"
         "El panel de gestión solo debe presentarse a usuarios con permisos reales."
     )
