@@ -432,11 +432,27 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
                     cur.execute("""
 
                         UPDATE groups
-                        SET public_visibility=%s
+                        SET public_visibility=%s,
+                            is_free_group=%s
                         WHERE id=%s
 
                     """, (
                         public_visibility,
+                        request_row.get("payment_mode") == "free",
+                        group_id
+                    ))
+
+
+                if not public_visibility:
+
+                    cur.execute("""
+
+                        UPDATE groups
+                        SET is_free_group=%s
+                        WHERE id=%s
+
+                    """, (
+                        request_row.get("payment_mode") == "free",
                         group_id
                     ))
 
