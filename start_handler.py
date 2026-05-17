@@ -7,6 +7,12 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
+from commercial_catalog import (
+    PUBLIC_START_TEXT_ES,
+    CALLBACK_MONETIZE_COMMUNITY,
+    CALLBACK_SUPPORT,
+    CALLBACK_AI_HELP
+)
 from db import conn
 from formatters import (
     format_tiempo_restante
@@ -14,7 +20,7 @@ from formatters import (
 
 
 # =========================
-# START BOT — MENÚ GRUPOS
+# START BOT — MENÚ COMERCIAL
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,38 +55,60 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         print("Error cargando grupos:", e)
 
-        await update.message.reply_text(
-            "❌ Error cargando grupos."
-        )
+        message = update.message or update.callback_query.message
 
-        return
-
-
-    if not groups:
-
-        await update.message.reply_text(
-            "⚠️ No hay grupos disponibles todavía."
+        await message.reply_text(
+            "❌ Error cargando comunidades disponibles."
         )
 
         return
 
 
     # =========================
-    # CREAR BOTONES DE GRUPOS
+    # CREAR BOTONES PRINCIPALES
     # =========================
 
     keyboard = []
 
 
-    for group_id, group_name in groups:
+    if groups:
 
         keyboard.append([
 
             InlineKeyboardButton(
 
-                group_name,
+                "🔥 Explorar comunidades privadas",
 
-                callback_data=f"group_{group_id}"
+                callback_data="start_explore_groups"
+
+            )
+
+        ])
+
+
+        for group_id, group_name in groups:
+
+            keyboard.append([
+
+                InlineKeyboardButton(
+
+                    group_name,
+
+                    callback_data=f"group_{group_id}"
+
+                )
+
+            ])
+
+    else:
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                "🔥 Comunidades privadas próximamente",
+
+                callback_data="start_no_groups"
 
             )
 
@@ -88,8 +116,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
-    # NUEVO — BOTÓN MIS SUSCRIPCIONES
+    # BOTÓN MIS SUSCRIPCIONES
     # =========================
+
+    has_subscriptions = False
 
     try:
 
@@ -97,98 +127,96 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             cur.execute("""
 
-                SELECT DISTINCT group_id
+                SELECT 1
 
-                FROM invite_links
+                FROM users
 
                 WHERE user_id=%s
-
-            """, (user_id,))
-
-            user_groups = cur.fetchall()
-
-
-        if user_groups:
-
-            keyboard.append([
-
-                InlineKeyboardButton(
-
-                    "🔐 Ver mis suscripciones activas",
-
-                    callback_data="mis_subs"
-
+                AND (
+                    expiration IS NULL
+                    OR expiration > %s
                 )
 
-            ])
+                LIMIT 1
+
+            """, (user_id, datetime.now()))
+
+            has_subscriptions = cur.fetchone() is not None
 
     except Exception as e:
 
         print("Error verificando suscripciones:", e)
 
 
+    if has_subscriptions:
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                "🎟 Gestionar mi acceso",
+
+                callback_data="mis_subs"
+
+            )
+
+        ])
+
+    else:
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+
+                "🎟 Ya tengo acceso / recuperar enlace",
+
+                callback_data="mis_subs"
+
+            )
+
+        ])
+
+
     # =========================
-    # COMPROBAR SUSCRIPCIONES ACTIVAS
+    # BOTONES COMERCIALES PÚBLICOS
     # =========================
 
-    suscripciones_texto = ""
+    keyboard.append([
 
-    try:
+        InlineKeyboardButton(
 
-        with conn.cursor() as cur:
+            "🚀 Soluciones para mi comunidad",
 
-            cur.execute("""
+            callback_data=CALLBACK_MONETIZE_COMMUNITY
 
-                SELECT DISTINCT g.name, u.expiration
-
-                FROM invite_links il
-
-                JOIN groups g
-                ON il.group_id = g.telegram_group_id
-
-                LEFT JOIN users u
-                ON il.user_id = u.user_id
-
-                WHERE il.user_id=%s
-
-            """, (user_id,))
-
-            rows = cur.fetchall()
-
-
-        if rows:
-
-            for group_name, expiration in rows:
-
-                if expiration:
-
-                    tiempo_texto = format_tiempo_restante(
-                        expiration
-                    )
-
-                else:
-
-                    tiempo_texto = "♾️ Permanente"
-
-
-                suscripciones_texto += (
-
-                    f"⏳ Tu suscripción actual al grupo {group_name}:\n"
-
-                    f"{tiempo_texto}\n\n"
-
-                )
-
-    except Exception as e:
-
-        print(
-            "Error verificando suscripciones:",
-            e
         )
 
+    ])
+
+
+    keyboard.append([
+
+        InlineKeyboardButton(
+
+            "🛟 Soporte",
+
+            callback_data=CALLBACK_SUPPORT
+
+        ),
+
+        InlineKeyboardButton(
+
+            "💬 Ayuda IA",
+
+            callback_data=CALLBACK_AI_HELP
+
+        )
+
+    ])
+
 
     # =========================
-    # MENSAJE BIENVENIDA
+    # COMPROBAR SUSCRIPCIONES ACTIVAS
     # =========================
 
     suscripciones_texto = ""
@@ -214,26 +242,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             subs = cur.fetchall()
 
-            if subs:
 
-                for group_name, expiration in subs:
+        if subs:
 
-                    # FILTRAR EN PYTHON (no en SQL)
+            for group_name, expiration in subs:
 
-                    if expiration is None or expiration > datetime.now():
+                if expiration is None or expiration > datetime.now():
 
-                        tiempo_texto = format_tiempo_restante(
-                            expiration
-                        )
+                    tiempo_texto = format_tiempo_restante(
+                        expiration
+                    )
 
-                        suscripciones_texto += (
+                    suscripciones_texto += (
 
-                            f"⏳ Tu suscripción actual al grupo "
-                            f"({group_name}):\n"
+                        f"⏳ Tu acceso actual a "
+                        f"{group_name}:\n"
 
-                            f"{tiempo_texto}\n\n"
+                        f"{tiempo_texto}\n\n"
 
-                        )
+                    )
 
     except Exception as e:
 
@@ -243,33 +270,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+    # =========================
+    # MENSAJE BIENVENIDA
+    # =========================
+
     if suscripciones_texto:
 
         mensaje = (
 
-            "👋 Bienvenido\n\n"
+            f"{PUBLIC_START_TEXT_ES}\n\n"
 
             f"{suscripciones_texto}"
-
-            "A continuación puedes ver los grupos disponibles para suscribirte.\n\n"
-
-            "Selecciona uno para ver sus planes."
 
         )
 
     else:
 
-        mensaje = (
-
-            "👋 Bienvenido\n\n"
-
-            "Nos alegra que estés aquí.\n\n"
-
-            "A continuación puedes ver los grupos disponibles para suscribirte.\n\n"
-
-            "Selecciona uno para ver sus planes."
-
-        )
+        mensaje = PUBLIC_START_TEXT_ES
 
 
     message = update.message or update.callback_query.message
