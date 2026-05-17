@@ -475,6 +475,28 @@ def create_tables():
 
             contact_text TEXT,
 
+            reviewed_by BIGINT,
+
+            reviewed_at TIMESTAMP,
+
+            admin_notes TEXT,
+
+            trial_starts_at TIMESTAMP,
+
+            trial_ends_at TIMESTAMP,
+
+            payment_mode TEXT DEFAULT 'pending',
+
+            stripe_mode TEXT DEFAULT 'pending',
+
+            is_free_group BOOLEAN DEFAULT FALSE,
+
+            approved_group_id INTEGER,
+
+            approved_telegram_group_id BIGINT,
+
+            approved_bot_username TEXT,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -563,6 +585,46 @@ def create_tables():
 
         except Exception:
             pass
+
+
+        # =========================
+        # MIGRACIÓN SOLICITUDES COMERCIALES
+        # =========================
+
+        commercial_request_columns = [
+
+            ("reviewed_by", "BIGINT"),
+            ("reviewed_at", "TIMESTAMP"),
+            ("admin_notes", "TEXT"),
+            ("trial_starts_at", "TIMESTAMP"),
+            ("trial_ends_at", "TIMESTAMP"),
+            ("payment_mode", "TEXT DEFAULT 'pending'"),
+            ("stripe_mode", "TEXT DEFAULT 'pending'"),
+            ("is_free_group", "BOOLEAN DEFAULT FALSE"),
+            ("approved_group_id", "INTEGER"),
+            ("approved_telegram_group_id", "BIGINT"),
+            ("approved_bot_username", "TEXT")
+
+        ]
+
+
+        for column_name, column_type in commercial_request_columns:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE commercial_requests
+
+                    ADD COLUMN {column_name} {column_type}
+
+                """)
+
+                print(f"Columna añadida en commercial_requests: {column_name}")
+
+            except Exception:
+
+                print(f"Columna ya existe en commercial_requests: {column_name}")
 
 
         # =========================

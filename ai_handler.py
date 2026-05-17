@@ -14,6 +14,12 @@ from ai_role_context import (
     build_ai_user_context_text
 )
 
+from commercial_catalog import (
+    build_commercial_ai_context
+)
+
+from start_handler import start
+
 
 # =========================
 # AI HANDLER — HELPERS
@@ -293,8 +299,10 @@ async def salir_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await reply_ai(
         update,
-        "✅ Modo IA desactivado."
+        "Has salido de la ayuda IA."
     )
+
+    await start(update, context)
 
 
 async def handle_ai_context_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -307,6 +315,7 @@ async def handle_ai_context_text(update: Update, context: ContextTypes.DEFAULT_T
 
 
     label = get_ai_context_label(context)
+    help_context = context.user_data.get("ai_help_context")
 
     await reply_ai(
         update,
@@ -331,6 +340,14 @@ async def handle_ai_context_text(update: Update, context: ContextTypes.DEFAULT_T
         + f"CONTEXTO ACTUAL DEL USUARIO: {label}\n"
         + "Responde únicamente dentro de este contexto, el rol real del usuario y el manual oficial."
     )
+
+
+    if help_context == "commercial":
+
+        context_text += (
+            "\n\n"
+            + build_commercial_ai_context()
+        )
 
 
     ok, answer = generate_ai_response(

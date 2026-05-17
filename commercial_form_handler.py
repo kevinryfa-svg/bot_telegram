@@ -1,4 +1,8 @@
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.ext import ContextTypes
 
 from bot_config import ADMIN_ID
@@ -85,9 +89,24 @@ async def notify_commercial_request(context, request_id, request_type, user, for
 
     )
 
+    keyboard = [
+
+        [InlineKeyboardButton(
+            "🔎 Revisar solicitud #" + str(request_id),
+            callback_data=f"admin_commercial_review_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📩 Ver solicitudes comerciales",
+            callback_data="admin_commercial_requests"
+        )]
+
+    ]
+
     await context.bot.send_message(
         chat_id=ADMIN_ID,
-        text=text
+        text=text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 

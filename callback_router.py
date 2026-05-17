@@ -341,6 +341,16 @@ def build_admin_panel_keyboard(user_id):
     keyboard = []
 
 
+    if is_super_admin(user_id):
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "📩 Solicitudes comerciales",
+                callback_data="admin_commercial_requests"
+            )
+        ])
+
+
     if has_any_permission(permissions, ["can_view_users", "can_manage_users"]):
 
         keyboard.append([
@@ -384,6 +394,424 @@ def build_admin_panel_keyboard(user_id):
 
 
     return keyboard
+
+
+COMMERCIAL_REQUEST_FIELDS = [
+
+    "id",
+    "user_id",
+    "username",
+    "first_name",
+    "request_type",
+    "status",
+    "community_name",
+    "community_description",
+    "telegram_group_link",
+    "bot_name",
+    "bot_username",
+    "project_description",
+    "contact_text",
+    "created_at",
+    "updated_at",
+    "reviewed_by",
+    "reviewed_at",
+    "admin_notes",
+    "trial_starts_at",
+    "trial_ends_at",
+    "payment_mode",
+    "stripe_mode",
+    "is_free_group",
+    "approved_group_id",
+    "approved_telegram_group_id",
+    "approved_bot_username"
+
+]
+
+
+def row_to_commercial_request(row):
+
+    if not row:
+
+        return None
+
+
+    return dict(zip(COMMERCIAL_REQUEST_FIELDS, row))
+
+
+def format_commercial_request_type(request_type):
+
+    labels = {
+        "shared_trial": "prueba comunidad compartida",
+        "custom_bot": "bot personalizado",
+        "support_contact": "contacto comercial"
+    }
+
+    return labels.get(request_type, request_type or "-")
+
+
+def format_commercial_datetime(value):
+
+    if not value:
+
+        return "-"
+
+
+    try:
+
+        return value.strftime("%Y-%m-%d %H:%M")
+
+    except Exception:
+
+        return str(value)
+
+
+def get_commercial_request_title(request_row):
+
+    return (
+        request_row.get("community_name")
+        or request_row.get("bot_name")
+        or request_row.get("project_description")
+        or "-"
+    )
+
+
+def fetch_pending_commercial_requests():
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+            FROM commercial_requests
+            WHERE status='pending'
+            ORDER BY created_at ASC
+            LIMIT 10
+
+        """)
+
+        rows = cur.fetchall()
+
+
+    return [
+        row_to_commercial_request(row)
+        for row in rows
+    ]
+
+
+def fetch_commercial_request(request_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+            FROM commercial_requests
+            WHERE id=%s
+
+            LIMIT 1
+
+        """, (request_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def build_commercial_requests_text(requests):
+
+    if not requests:
+
+        return (
+            "📩 Solicitudes comerciales\n\n"
+            "No hay solicitudes pendientes."
+        )
+
+
+    lines = [
+        "📩 Solicitudes comerciales pendientes"
+    ]
+
+
+    for request_row in requests:
+
+        username = request_row.get("username") or "-"
+
+        if username != "-" and not username.startswith("@"):
+
+            username = f"@{username}"
+
+
+        lines.append(
+            "\n"
+            f"ID: {request_row.get('id')}\n"
+            f"Tipo: {format_commercial_request_type(request_row.get('request_type'))}\n"
+            f"Usuario: {request_row.get('user_id') or '-'}\n"
+            f"Username: {username}\n"
+            f"Nombre: {get_commercial_request_title(request_row)}\n"
+            f"Contacto: {request_row.get('contact_text') or '-'}\n"
+            f"Fecha: {format_commercial_datetime(request_row.get('created_at'))}"
+        )
+
+
+    return "\n".join(lines)
+
+
+def build_commercial_requests_keyboard(requests):
+
+    keyboard = []
+
+
+    for request_row in requests:
+
+        request_id = request_row.get("id")
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"✅ Revisar #{request_id}",
+                callback_data=f"admin_commercial_review_{request_id}"
+            )
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_back_main"
+        )
+    ])
+
+    return keyboard
+
+
+def build_commercial_request_detail_text(request_row):
+
+    username = request_row.get("username") or "-"
+
+    if username != "-" and not username.startswith("@"):
+
+        username = f"@{username}"
+
+
+    return (
+        "📩 Solicitud comercial\n\n"
+        f"ID: {request_row.get('id')}\n"
+        f"Estado: {request_row.get('status') or '-'}\n"
+        f"Tipo: {format_commercial_request_type(request_row.get('request_type'))}\n"
+        f"Usuario: {request_row.get('user_id') or '-'}\n"
+        f"Username: {username}\n"
+        f"Nombre Telegram: {request_row.get('first_name') or '-'}\n\n"
+        f"Comunidad/proyecto: {request_row.get('community_name') or '-'}\n"
+        f"Descripción comunidad: {request_row.get('community_description') or '-'}\n"
+        f"Link grupo/canal: {request_row.get('telegram_group_link') or '-'}\n"
+        f"Nombre bot: {request_row.get('bot_name') or '-'}\n"
+        f"Username bot: {request_row.get('bot_username') or '-'}\n"
+        f"Descripción proyecto: {request_row.get('project_description') or '-'}\n"
+        f"Contacto: {request_row.get('contact_text') or '-'}\n\n"
+        f"Creada: {format_commercial_datetime(request_row.get('created_at'))}\n"
+        f"Revisada por: {request_row.get('reviewed_by') or '-'}\n"
+        f"Revisada: {format_commercial_datetime(request_row.get('reviewed_at'))}\n"
+        f"Inicio prueba: {format_commercial_datetime(request_row.get('trial_starts_at'))}\n"
+        f"Fin prueba: {format_commercial_datetime(request_row.get('trial_ends_at'))}\n"
+        f"Modo pago: {request_row.get('payment_mode') or '-'}\n"
+        f"Modo Stripe: {request_row.get('stripe_mode') or '-'}"
+    )
+
+
+def build_commercial_review_keyboard(request_row):
+
+    request_id = request_row.get("id")
+    request_type = request_row.get("request_type")
+    keyboard = []
+
+
+    if request_type == "shared_trial":
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "✅ Aprobar prueba 1 día",
+                callback_data=f"admin_commercial_approve_trial_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "❌ Rechazar",
+                callback_data=f"admin_commercial_reject_{request_id}"
+            )
+        ])
+
+    elif request_type == "custom_bot":
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "✅ Aprobar configuración",
+                callback_data=f"admin_commercial_approve_custom_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "❌ Rechazar",
+                callback_data=f"admin_commercial_reject_{request_id}"
+            )
+        ])
+
+    else:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "❌ Rechazar",
+                callback_data=f"admin_commercial_reject_{request_id}"
+            )
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_commercial_requests"
+        )
+    ])
+
+    return keyboard
+
+
+def build_commercial_setup_keyboard(request_id):
+
+    return [
+
+        [InlineKeyboardButton(
+            "🆓 Grupo gratuito",
+            callback_data=f"commercial_setup_free_group_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💳 Grupo de pago",
+            callback_data=f"commercial_setup_paid_group_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🏦 Stripe del dueño",
+            callback_data=f"commercial_setup_owner_stripe_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💼 Stripe plataforma",
+            callback_data=f"commercial_setup_platform_stripe_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_commercial_requests"
+        )]
+
+    ]
+
+
+def extract_commercial_request_id(data, prefix):
+
+    try:
+
+        return int(data.replace(prefix, "", 1))
+
+    except Exception:
+
+        return None
+
+
+def update_commercial_request_trial_approved(request_id, reviewer_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET status='trial_active',
+                reviewed_by=%s,
+                reviewed_at=NOW(),
+                trial_starts_at=NOW(),
+                trial_ends_at=NOW() + INTERVAL '1 day',
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (reviewer_id, request_id))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def update_commercial_request_custom_approved(request_id, reviewer_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET status='awaiting_payment',
+                reviewed_by=%s,
+                reviewed_at=NOW(),
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (reviewer_id, request_id))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def update_commercial_request_rejected(request_id, reviewer_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET status='rejected',
+                reviewed_by=%s,
+                reviewed_at=NOW(),
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (reviewer_id, request_id))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+async def notify_commercial_request_user(context, request_row, text):
+
+    user_id = request_row.get("user_id") if request_row else None
+
+
+    if not user_id:
+
+        return False
+
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=text
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Error avisando solicitud comercial:", e)
+
+        return False
 
 
 # =========================
@@ -792,6 +1220,259 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             return
+
+
+    if data == "admin_commercial_requests":
+
+        requests = fetch_pending_commercial_requests()
+
+        await query.message.reply_text(
+            build_commercial_requests_text(requests),
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_requests_keyboard(requests)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_review_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_review_"
+        )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            build_commercial_request_detail_text(request_row),
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_review_keyboard(request_row)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_approve_trial_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_approve_trial_"
+        )
+
+        request_row = update_commercial_request_trial_approved(
+            request_id,
+            user_id
+        )
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await notify_commercial_request_user(
+            context,
+            request_row,
+            "✅ Tu prueba de 1 día ha sido aprobada.\n\n"
+            "Ahora falta configurar:\n"
+            "• grupo/canal\n"
+            "• modo gratuito o pago\n"
+            "• Stripe si será de pago\n\n"
+            "Te contactaremos para completar la activación."
+        )
+
+        await query.message.reply_text(
+            "✅ Prueba de 1 día aprobada.\n\n"
+            "La solicitud queda preparada para configurar grupo/canal, "
+            "modo gratuito o pago y Stripe si será de pago.",
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_setup_keyboard(request_id)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_approve_custom_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_approve_custom_"
+        )
+
+        request_row = update_commercial_request_custom_approved(
+            request_id,
+            user_id
+        )
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await notify_commercial_request_user(
+            context,
+            request_row,
+            "✅ Tu solicitud de bot personalizado ha sido aprobada. "
+            "El siguiente paso será completar configuración y pago para activar el servicio."
+        )
+
+        await query.message.reply_text(
+            "✅ Configuración aprobada.\n\n"
+            "La solicitud queda en espera de configuración y pago.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data="admin_commercial_requests"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_reject_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_reject_"
+        )
+
+        request_row = update_commercial_request_rejected(
+            request_id,
+            user_id
+        )
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await notify_commercial_request_user(
+            context,
+            request_row,
+            "❌ Tu solicitud no ha sido aprobada por ahora.\n\n"
+            "Puedes volver a intentarlo más adelante o contactar con soporte si necesitas revisar la propuesta."
+        )
+
+        await query.message.reply_text(
+            "❌ Solicitud comercial rechazada.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data="admin_commercial_requests"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("commercial_setup_free_group_"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🆓 Grupo gratuito\n\n"
+            "Este modo permitirá que la comunidad siga pasando por los filtros del bot aunque no cobre acceso. "
+            "La configuración completa del grupo se hará en la siguiente fase."
+        )
+
+        return
+
+
+    if data.startswith("commercial_setup_paid_group_"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "💳 Grupo de pago\n\n"
+            "Este modo necesita Stripe o un modo de cobro configurado antes de activar ventas. "
+            "La configuración completa del cobro se hará en la siguiente fase."
+        )
+
+        return
+
+
+    if data.startswith("commercial_setup_owner_stripe_"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🏦 Stripe del dueño\n\n"
+            "El dueño usará su propia cuenta de Stripe para cobrar. "
+            "La conexión y validación de credenciales queda preparada para una fase posterior."
+        )
+
+        return
+
+
+    if data.startswith("commercial_setup_platform_stripe_"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "💼 Stripe plataforma\n\n"
+            "El cobro se realizará desde la plataforma. "
+            "La configuración completa de reparto o gestión de pagos queda preparada para una fase posterior."
+        )
+
+        return
 
 
     # =========================
