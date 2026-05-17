@@ -68,6 +68,8 @@ def create_tables():
 
             stripe_secret_key TEXT,
 
+            public_visibility TEXT DEFAULT 'start_home',
+
             bot_is_admin BOOLEAN DEFAULT FALSE,
 
             is_active BOOLEAN DEFAULT TRUE,
@@ -503,6 +505,8 @@ def create_tables():
 
             commercial_subscription_until TIMESTAMP,
 
+            requested_public_visibility TEXT DEFAULT 'hidden',
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -576,6 +580,19 @@ def create_tables():
 
             cur.execute("""
 
+                ALTER TABLE groups
+                ADD COLUMN public_visibility TEXT DEFAULT 'start_home'
+
+            """)
+
+        except Exception:
+            pass
+
+
+        try:
+
+            cur.execute("""
+
                 ALTER TABLE users
                 ADD COLUMN group_id INTEGER DEFAULT 1
 
@@ -643,7 +660,8 @@ def create_tables():
             ("approved_bot_username", "TEXT"),
             ("selected_commercial_plan_id", "INTEGER"),
             ("commercial_subscription_status", "TEXT DEFAULT 'pending'"),
-            ("commercial_subscription_until", "TIMESTAMP")
+            ("commercial_subscription_until", "TIMESTAMP"),
+            ("requested_public_visibility", "TEXT DEFAULT 'hidden'")
 
         ]
 

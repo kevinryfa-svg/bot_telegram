@@ -400,7 +400,8 @@ COMMERCIAL_REQUEST_FIELDS = [
     "approved_bot_username",
     "selected_commercial_plan_id",
     "commercial_subscription_status",
-    "commercial_subscription_until"
+    "commercial_subscription_until",
+    "requested_public_visibility"
 
 ]
 
@@ -418,6 +419,17 @@ COMMERCIAL_PLAN_FIELDS = [
     "created_at"
 
 ]
+
+
+LEGACY_USER_PLATFORM_STRIPE_CALLBACK_PREFIX = (
+    "user_trial_setup_"
+    "platform_stripe_"
+)
+
+LEGACY_ADMIN_PLATFORM_STRIPE_CALLBACK_PREFIX = (
+    "commercial_setup_"
+    "platform_stripe_"
+)
 
 
 def row_to_commercial_request(row):
@@ -449,6 +461,17 @@ def format_commercial_request_type(request_type):
     }
 
     return labels.get(request_type, request_type or "-")
+
+
+def format_public_visibility(public_visibility):
+
+    labels = {
+        "start_home": "inicio",
+        "explore_only": "explorar",
+        "hidden": "oculta/borrador"
+    }
+
+    return labels.get(public_visibility, public_visibility or "-")
 
 
 def format_commercial_datetime(value):
@@ -592,7 +615,7 @@ def build_user_activation_keyboard(request_id):
     return [
 
         [InlineKeyboardButton(
-            "📅 Activar mi comunidad",
+            "📦 Configurar comunidad",
             callback_data=f"user_commercial_activate_{request_id}"
         )],
 
@@ -609,13 +632,13 @@ def build_user_trial_payment_keyboard(request_id):
     return [
 
         [InlineKeyboardButton(
-            "🏦 Usar mi propio Stripe",
+            "🏦 Configurar mi propio Stripe/cobro",
             callback_data=f"user_trial_setup_owner_stripe_{request_id}"
         )],
 
         [InlineKeyboardButton(
-            "💼 Usar Stripe de la plataforma",
-            callback_data=f"user_trial_setup_platform_stripe_{request_id}"
+            "📦 Configurar comunidad",
+            callback_data=f"user_commercial_activate_{request_id}"
         )],
 
         [InlineKeyboardButton(
@@ -631,12 +654,12 @@ def build_user_trial_choice_keyboard(request_id):
     return [
 
         [InlineKeyboardButton(
-            "🆓 Mi grupo será gratuito",
+            "🆓 Mi comunidad será gratuita",
             callback_data=f"user_trial_setup_free_{request_id}"
         )],
 
         [InlineKeyboardButton(
-            "💳 Mi grupo será de pago",
+            "💳 Mi comunidad será de pago",
             callback_data=f"user_trial_setup_paid_{request_id}"
         )],
 
@@ -677,6 +700,33 @@ def build_commercial_plan_keyboard(request_id, plans):
     ])
 
     return keyboard
+
+
+def build_admin_trial_visibility_keyboard(request_id):
+
+    return [
+
+        [InlineKeyboardButton(
+            "🏠 Publicar en inicio",
+            callback_data=f"admin_trial_visibility_start_home_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🔎 Publicar en explorar",
+            callback_data=f"admin_trial_visibility_explore_only_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🙈 Dejar oculta/borrador",
+            callback_data=f"admin_trial_visibility_hidden_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=f"admin_commercial_review_{request_id}"
+        )]
+
+    ]
 
 
 def build_commercial_requests_text(requests):
@@ -776,6 +826,7 @@ def build_commercial_request_detail_text(request_row):
         f"Fin prueba: {format_commercial_datetime(request_row.get('trial_ends_at'))}\n"
         f"Modo pago: {request_row.get('payment_mode') or '-'}\n"
         f"Modo Stripe: {request_row.get('stripe_mode') or '-'}\n"
+        f"Ubicación pública solicitada: {format_public_visibility(request_row.get('requested_public_visibility'))}\n"
         f"Plan comercial: {request_row.get('selected_commercial_plan_id') or '-'}\n"
         f"Estado suscripción comercial: {request_row.get('commercial_subscription_status') or '-'}\n"
         f"Suscripción comercial hasta: {format_commercial_datetime(request_row.get('commercial_subscription_until'))}"
@@ -861,11 +912,6 @@ def build_commercial_setup_keyboard(request_id):
         )],
 
         [InlineKeyboardButton(
-            "💼 Stripe plataforma",
-            callback_data=f"commercial_setup_platform_stripe_{request_id}"
-        )],
-
-        [InlineKeyboardButton(
             "⬅️ Volver",
             callback_data="admin_commercial_requests"
         )]
@@ -906,6 +952,72 @@ def update_commercial_request_trial_approved(request_id, reviewer_id):
 
 
     return row_to_commercial_request(row)
+
+
+def update_commercial_request_trial_visibility(
+    request_id,
+    reviewer_id,
+    public_visibility
+):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET status='trial_active',
+                reviewed_by=%s,
+                reviewed_at=NOW(),
+                trial_starts_at=COALESCE(trial_starts_at, NOW()),
+                trial_ends_at=COALESCE(trial_ends_at, NOW() + INTERVAL '1 day'),
+                requested_public_visibility=%s,
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (reviewer_id, public_visibility, request_id))
+
+        row = cur.fetchone()
+
+
+    request_row = row_to_commercial_request(row)
+
+
+    if not request_row:
+
+        return None
+
+
+    approved_group_id = request_row.get("approved_group_id")
+    approved_telegram_group_id = request_row.get("approved_telegram_group_id")
+
+
+    if approved_group_id:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET public_visibility=%s
+                WHERE id=%s
+
+            """, (public_visibility, approved_group_id))
+
+    elif approved_telegram_group_id:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET public_visibility=%s
+                WHERE telegram_group_id=%s
+
+            """, (public_visibility, approved_telegram_group_id))
+
+
+    return request_row
 
 
 def update_commercial_request_custom_approved(request_id, reviewer_id):
@@ -1193,9 +1305,75 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "start_explore_groups":
 
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT id, name
+                    FROM groups
+                    WHERE is_active=TRUE
+                    AND telegram_group_id != 0
+                    AND COALESCE(public_visibility, 'start_home')='explore_only'
+                    ORDER BY id ASC
+
+                """)
+
+                groups = cur.fetchall()
+
+        except Exception as e:
+
+            print("Error cargando explorar comunidades:", e)
+
+            await query.message.reply_text(
+                "❌ Error cargando comunidades disponibles."
+            )
+
+            return
+
+
+        if not groups:
+
+            await query.message.reply_text(
+                "Todavía no hay comunidades disponibles. "
+                "Puedes contactar con soporte o volver más tarde."
+            )
+
+            return
+
+
+        keyboard = []
+
+
+        for group_id, group_name in groups:
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    group_name,
+                    callback_data=f"group_{group_id}"
+                )
+            ])
+
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "💬 Ayuda sobre este menú",
+                callback_data=CALLBACK_GROUP_PLANS_HELP
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data="public_back_start"
+            )
+        ])
+
         await query.message.reply_text(
             "Debajo aparecen las comunidades privadas disponibles. "
-            "Selecciona una para ver sus planes."
+            "Selecciona una para ver sus planes.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
@@ -1299,11 +1477,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📌 Publicar mi comunidad en este bot\n\n"
             "Esta opción es para creadores que quieren empezar rápido sin crear un bot propio.\n\n"
             "Tu comunidad aparecerá dentro de nuestro bot principal. "
-            "Los usuarios podrán verla, elegir un plan y comprar acceso desde aquí.\n\n"
+            "Los usuarios podrán verla y consultar sus condiciones de acceso desde aquí.\n\n"
             "✅ Incluye:\n"
             "• Publicación de tu comunidad dentro del bot.\n"
-            "• Planes de acceso configurables.\n"
-            "• Pagos y accesos automatizados.\n"
+            "• Planes o condiciones de acceso configurables.\n"
+            "• Accesos protegidos por el sistema.\n"
             "• Links seguros para entrar al grupo.\n"
             "• Gestión básica desde el sistema.\n\n"
             "🎁 Prueba inicial:\n"
@@ -1637,9 +1815,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "admin_commercial_approve_trial_"
         )
 
-        request_row = update_commercial_request_trial_approved(
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "✅ Aprobar prueba de comunidad\n\n"
+            "Elige dónde quieres colocar esta comunidad inicialmente:\n\n"
+            "🏠 Inicio: aparecerá directamente en /start.\n"
+            "🔎 Explorar: aparecerá dentro de Explorar comunidades privadas.\n"
+            "🙈 Oculta/Borrador: no aparecerá públicamente todavía.",
+            reply_markup=InlineKeyboardMarkup(
+                build_admin_trial_visibility_keyboard(request_id)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_trial_visibility_start_home_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_trial_visibility_start_home_"
+        )
+
+        request_row = update_commercial_request_trial_visibility(
             request_id,
-            user_id
+            user_id,
+            "start_home"
         )
 
 
@@ -1656,11 +1868,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             request_row,
             "✅ Tu prueba de 1 día ha sido aprobada.\n\n"
-            "Ahora elige cómo quieres configurar tu comunidad:\n\n"
-            "🆓 Grupo gratuito:\n"
+            "Ahora termina la configuración de tu comunidad.\n\n"
+            "Primero elige cómo será el acceso para tus usuarios:\n\n"
+            "🆓 Comunidad gratuita:\n"
             "Tus usuarios podrán entrar sin pagar, pero el acceso seguirá protegido por el bot.\n\n"
-            "💳 Grupo de pago:\n"
-            "Tus usuarios deberán pagar para acceder.",
+            "💳 Comunidad de pago:\n"
+            "Tus usuarios pagarán directamente a través de tus propios cobros/Stripe.",
             reply_markup=InlineKeyboardMarkup(
                 build_user_trial_choice_keyboard(request_id)
             )
@@ -1668,11 +1881,120 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "✅ Prueba de 1 día aprobada.\n\n"
-            "La solicitud queda preparada para configurar grupo/canal, "
-            "modo gratuito o pago y Stripe si será de pago.",
-            reply_markup=InlineKeyboardMarkup(
-                build_commercial_setup_keyboard(request_id)
+            f"Ubicación inicial: {format_public_visibility('start_home')}.\n"
+            "El creador ya recibió el flujo para terminar la configuración.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data="admin_commercial_requests"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_trial_visibility_explore_only_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_trial_visibility_explore_only_"
+        )
+
+        request_row = update_commercial_request_trial_visibility(
+            request_id,
+            user_id,
+            "explore_only"
+        )
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
             )
+
+            return
+
+
+        await notify_commercial_request_user(
+            context,
+            request_row,
+            "✅ Tu prueba de 1 día ha sido aprobada.\n\n"
+            "Ahora termina la configuración de tu comunidad.\n\n"
+            "Primero elige cómo será el acceso para tus usuarios:\n\n"
+            "🆓 Comunidad gratuita:\n"
+            "Tus usuarios podrán entrar sin pagar, pero el acceso seguirá protegido por el bot.\n\n"
+            "💳 Comunidad de pago:\n"
+            "Tus usuarios pagarán directamente a través de tus propios cobros/Stripe.",
+            reply_markup=InlineKeyboardMarkup(
+                build_user_trial_choice_keyboard(request_id)
+            )
+        )
+
+        await query.message.reply_text(
+            "✅ Prueba de 1 día aprobada.\n\n"
+            f"Ubicación inicial: {format_public_visibility('explore_only')}.\n"
+            "El creador ya recibió el flujo para terminar la configuración.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data="admin_commercial_requests"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_trial_visibility_hidden_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_trial_visibility_hidden_"
+        )
+
+        request_row = update_commercial_request_trial_visibility(
+            request_id,
+            user_id,
+            "hidden"
+        )
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await notify_commercial_request_user(
+            context,
+            request_row,
+            "✅ Tu prueba de 1 día ha sido aprobada.\n\n"
+            "Ahora termina la configuración de tu comunidad.\n\n"
+            "Primero elige cómo será el acceso para tus usuarios:\n\n"
+            "🆓 Comunidad gratuita:\n"
+            "Tus usuarios podrán entrar sin pagar, pero el acceso seguirá protegido por el bot.\n\n"
+            "💳 Comunidad de pago:\n"
+            "Tus usuarios pagarán directamente a través de tus propios cobros/Stripe.",
+            reply_markup=InlineKeyboardMarkup(
+                build_user_trial_choice_keyboard(request_id)
+            )
+        )
+
+        await query.message.reply_text(
+            "✅ Prueba de 1 día aprobada.\n\n"
+            f"Ubicación inicial: {format_public_visibility('hidden')}.\n"
+            "El creador ya recibió el flujo para terminar la configuración.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data="admin_commercial_requests"
+                )]
+            ])
         )
 
         return
@@ -1823,7 +2145,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("commercial_setup_platform_stripe_"):
+    if data.startswith(LEGACY_ADMIN_PLATFORM_STRIPE_CALLBACK_PREFIX):
 
         if not is_super_admin(user_id):
 
@@ -1835,9 +2157,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await query.message.reply_text(
-            "💼 Stripe plataforma\n\n"
-            "El cobro se realizará desde la plataforma. "
-            "La configuración completa de reparto o gestión de pagos queda preparada para una fase posterior."
+            "Esta opción ya no está disponible.\n\n"
+            "Si la comunidad será de pago, el creador debe configurar su propia cuenta o sistema de cobro."
         )
 
         return
@@ -4938,6 +5259,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "🆓 Perfecto. Tu comunidad será gratis para los usuarios, pero el acceso seguirá protegido por el bot.\n\n"
+            "Ahora puedes continuar la configuración de tu comunidad.\n\n"
             "Para mantener publicada tu comunidad después de la prueba, tendrás que activar una suscripción del servicio.",
             reply_markup=InlineKeyboardMarkup(build_user_activation_keyboard(request_id))
         )
@@ -4978,7 +5300,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "💳 Perfecto. Tu comunidad será de pago.\n\n"
-            "Ahora elige cómo quieres gestionar los cobros:",
+            "Los pagos de tus usuarios deben ir a tu propia cuenta o sistema de cobro. "
+            "Nosotros no recibiremos el dinero de tu comunidad.\n\n"
+            "El siguiente paso será configurar tus planes y tus datos de cobro.",
             reply_markup=InlineKeyboardMarkup(build_user_trial_payment_keyboard(request_id))
         )
 
@@ -5016,16 +5340,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         await query.message.reply_text(
-            "Perfecto. Has elegido usar tu propio Stripe. El siguiente paso será configurar tus datos de cobro. Para mantener publicada tu comunidad después de la prueba, tendrás que activar una suscripción del servicio.",
+            "Perfecto. Has elegido configurar tu propio Stripe o sistema de cobro.\n\n"
+            "El siguiente paso será dejar preparados tus planes, textos y datos de acceso.\n\n"
+            "Para mantener publicada tu comunidad después de la prueba, tendrás que activar una suscripción del servicio.",
             reply_markup=InlineKeyboardMarkup(build_user_activation_keyboard(request_id))
         )
 
         return
 
 
-    if data.startswith("user_trial_setup_platform_stripe_"):
+    if data.startswith(LEGACY_USER_PLATFORM_STRIPE_CALLBACK_PREFIX):
 
-        request_id = extract_commercial_request_id(data, "user_trial_setup_platform_stripe_")
+        request_id = extract_commercial_request_id(
+            data,
+            LEGACY_USER_PLATFORM_STRIPE_CALLBACK_PREFIX
+        )
         request_row = fetch_commercial_request(request_id)
 
         if not commercial_request_belongs_to_user(request_row, user_id):
@@ -5036,26 +5365,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
-        update_commercial_request_stripe_mode(request_id, "platform_stripe")
-
-        await notify_commercial_admin(
-            context,
-            (
-                "💼 Stripe plataforma seleccionado\n\n"
-                f"Solicitud #{request_id}\n"
-                f"Usuario: {user_id}"
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    f"🔎 Revisar solicitud #{request_id}",
-                    callback_data=f"admin_commercial_review_{request_id}"
-                )]
-            ])
-        )
-
         await query.message.reply_text(
-            "Perfecto. Has elegido cobrar desde la plataforma. El administrador revisará las condiciones. Para mantener publicada tu comunidad después de la prueba, tendrás que activar una suscripción del servicio.",
-            reply_markup=InlineKeyboardMarkup(build_user_activation_keyboard(request_id))
+            "Esta opción ya no está disponible.\n\n"
+            "Si tu comunidad será de pago, los cobros deben ir a tu propia cuenta o sistema de cobro.",
+            reply_markup=InlineKeyboardMarkup(build_user_trial_payment_keyboard(request_id))
         )
 
         return
@@ -5074,27 +5387,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
-        plans = fetch_active_commercial_plans(PRODUCT_SHARED_BOT_SPACE)
-
-        if not plans:
-
-            await query.message.reply_text(
-                "Todavía no hay planes comerciales activos configurados.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(
-                        "💬 Ayuda",
-                        callback_data=CALLBACK_COMMERCIAL_HELP
-                    )
-                ]])
-            )
-
-            return
-
         await query.message.reply_text(
-            "Elige el plan para mantener activa tu comunidad después de la prueba:",
-            reply_markup=InlineKeyboardMarkup(
-                build_commercial_plan_keyboard(request_id, plans)
-            )
+            "📦 Configurar comunidad\n\n"
+            "Tu prueba sigue activa. Durante esta fase puedes dejar preparada la comunidad sin pagar todavía.\n\n"
+            "Revisa que tengas claro el grupo o canal, el tipo de acceso, los planes o textos que quieres mostrar y tus datos de cobro si será de pago.\n\n"
+            "Para mantener publicada tu comunidad después de la prueba, tendrás que activar una suscripción del servicio.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "📩 Hablar con un asesor",
+                    callback_data=CALLBACK_COMMERCIAL_CONTACT
+                )],
+                [InlineKeyboardButton(
+                    "💬 Ayuda",
+                    callback_data=CALLBACK_COMMERCIAL_HELP
+                )],
+                [InlineKeyboardButton(
+                    "🏠 Inicio",
+                    callback_data="public_back_start"
+                )]
+            ])
         )
 
         return
