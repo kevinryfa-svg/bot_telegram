@@ -507,6 +507,8 @@ def create_tables():
 
             requested_public_visibility TEXT DEFAULT 'hidden',
 
+            max_groups_allowed INTEGER DEFAULT 1,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -723,7 +725,8 @@ def create_tables():
             ("commercial_subscription_until", "TIMESTAMP"),
             ("requested_public_visibility", "TEXT DEFAULT 'hidden'"),
             ("creator_setup_status", "TEXT DEFAULT 'awaiting_creator_setup'"),
-            ("creator_preview_text", "TEXT")
+            ("creator_preview_text", "TEXT"),
+            ("max_groups_allowed", "INTEGER DEFAULT 1")
 
         ]
 
