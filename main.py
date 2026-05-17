@@ -90,7 +90,7 @@ from code_admin_handler import (
 )
 from admin_panel_handler import admin_panel
 import callback_router as callback_router_module
-from callback_router import button
+from callback_router import button, receive_support_message
 from code_flow_handler import receive_code
 from admin_input_handler import receive_admin_inputs
 from commercial_form_handler import receive_commercial_form
@@ -264,6 +264,10 @@ async def handle_text(update, context):
 
     if context.user_data.get("ai_chat_mode"):
         await handle_ai_context_text(update, context)
+        return
+
+    if context.user_data.get("support_mode"):
+        await receive_support_message(update, context)
         return
 
     await receive_code(update, context)

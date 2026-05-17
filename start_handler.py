@@ -25,7 +25,7 @@ from rbac_helpers import is_super_admin
 # START BOT — MENÚ COMERCIAL
 # =========================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id=None):
 
     user_id = update.effective_user.id
 
@@ -57,11 +57,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         print("Error cargando grupos:", e)
 
-        message = update.message or update.callback_query.message
-
-        await message.reply_text(
-            "❌ Error cargando comunidades disponibles."
+        message = update.message or (
+            update.callback_query.message
+            if update.callback_query
+            else None
         )
+
+        if chat_id:
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="❌ Error cargando comunidades disponibles."
+            )
+
+        elif message:
+
+            await message.reply_text(
+                "❌ Error cargando comunidades disponibles."
+            )
 
         return
 
@@ -350,7 +363,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mensaje = PUBLIC_START_TEXT_ES
 
 
-    message = update.message or update.callback_query.message
+    message = update.message or (
+        update.callback_query.message
+        if update.callback_query
+        else None
+    )
+
+
+    if chat_id:
+
+        await context.bot.send_message(
+
+            chat_id=chat_id,
+
+            text=mensaje,
+
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+        return
 
 
     await message.reply_text(
@@ -360,3 +392,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
 
     )
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await send_start_menu(update, context)

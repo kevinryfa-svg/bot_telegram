@@ -53,7 +53,7 @@ from invite_link_service import (
     revoke_telegram_invite_link
 )
 from rbac_helpers import is_super_admin, has_any_permission_any_group
-from start_handler import start
+from start_handler import start, send_start_menu
 from telegram_group_actions import kick_chat_member
 from ui_menu_helpers import make_button
 
@@ -63,6 +63,17 @@ SERVER_URL = os.environ.get("SERVER_URL")
 
 revoke_link = None
 get_group_id = None
+
+
+async def delete_query_message_safely(query):
+
+    try:
+
+        await query.message.delete()
+
+    except Exception:
+
+        pass
 
 
 ADMIN_PERMISSION_COLUMNS = [
@@ -1087,7 +1098,45 @@ async def notify_commercial_request_user(context, request_row, text, reply_marku
 
         print("Error avisando solicitud comercial:", e)
 
-        return False
+    return False
+
+
+async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message or not update.message.text:
+
+        return
+
+
+    user = update.effective_user
+    text = update.message.text.strip()
+    username = user.username if user and user.username else "sin username"
+    first_name = user.first_name if user and user.first_name else "sin nombre"
+    user_id = user.id if user else "desconocido"
+
+
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            "🛟 Nuevo mensaje de soporte\n\n"
+            f"Usuario: {user_id}\n"
+            f"Username: @{username}\n"
+            f"Nombre: {first_name}\n\n"
+            f"Mensaje:\n{text}"
+        )
+    )
+
+    context.user_data["support_mode"] = False
+
+    await update.message.reply_text(
+        "✅ Mensaje enviado a soporte. Un administrador lo revisará.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "⬅️ Volver al inicio",
+                callback_data="public_back_start"
+            )]
+        ])
+    )
 
 
 # =========================
@@ -1104,14 +1153,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
 
-    if data == CALLBACK_COMMERCIAL_BACK_START:
+    if data in (
+        "public_back_start",
+        CALLBACK_COMMERCIAL_BACK_START
+    ):
 
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
+        context.user_data["support_mode"] = False
 
-        await start(update, context)
+        await delete_query_message_safely(query)
+
+        await send_start_menu(
+            update,
+            context,
+            chat_id=query.message.chat_id
+        )
 
         return
 
@@ -1121,10 +1176,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         CALLBACK_COMMERCIAL_BACK
     ):
 
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
+        await delete_query_message_safely(query)
 
         await context.bot.send_message(
             chat_id=query.message.chat_id,
@@ -1159,6 +1211,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "public_monetize_community":
 
+        await delete_query_message_safely(query)
+
         await query.message.reply_text(
 
             COMMERCIAL_MENU_TEXT_ES,
@@ -1174,7 +1228,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "public_support":
 
+        context.user_data["support_mode"] = True
+
+        await delete_query_message_safely(query)
+
         keyboard = [
+
+            [InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data="public_back_start"
+            )],
 
             [InlineKeyboardButton(
                 "💬 Ayuda sobre este menú",
@@ -1185,7 +1248,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "🛟 Soporte\n\n"
-            "Puedes escribir tu incidencia y un administrador podrá ayudarte.",
+            "Escribe tu mensaje y se lo enviaremos a un administrador.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -1203,6 +1266,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data == "commercial_shared_bot_space":
+
+        await delete_query_message_safely(query)
 
         keyboard = [
 
@@ -1266,6 +1331,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "commercial_custom_bot":
 
+        await delete_query_message_safely(query)
+
         keyboard = [
 
             [InlineKeyboardButton(
@@ -1327,6 +1394,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data == "commercial_contact":
+
+        await delete_query_message_safely(query)
 
         request_id = create_commercial_request(
             query.from_user,

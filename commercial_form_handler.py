@@ -138,17 +138,33 @@ async def finish_commercial_form(update, context, request_type, form_data):
 
     clear_commercial_form(context)
 
+    keyboard = [
+
+        [InlineKeyboardButton(
+            "⬅️ Volver al inicio",
+            callback_data="public_back_start"
+        )],
+
+        [InlineKeyboardButton(
+            "🚀 Soluciones para mi comunidad",
+            callback_data="public_monetize_community"
+        )]
+
+    ]
+
     if request_type == "shared_trial":
 
         await update.message.reply_text(
-            "✅ Solicitud enviada. Revisaremos tu comunidad y te contactaremos para activar la prueba de 1 día."
+            "✅ Solicitud enviada. Revisaremos tu comunidad y te contactaremos para activar la prueba de 1 día.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
 
 
     await update.message.reply_text(
-        "✅ Solicitud enviada. Revisaremos la configuración y te indicaremos el siguiente paso. El bot personalizado no tiene prueba gratuita; se configura primero y se activa tras el pago."
+        "✅ Solicitud enviada. Revisaremos la configuración y te indicaremos el siguiente paso. El bot personalizado no tiene prueba gratuita; se configura primero y se activa tras el pago.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
