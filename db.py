@@ -442,6 +442,49 @@ def create_tables():
 
 
         # =========================
+        # TABLA SOLICITUDES COMERCIALES
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS commercial_requests (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            username TEXT,
+
+            first_name TEXT,
+
+            request_type TEXT,
+
+            status TEXT DEFAULT 'pending',
+
+            community_name TEXT,
+
+            community_description TEXT,
+
+            telegram_group_link TEXT,
+
+            bot_name TEXT,
+
+            bot_username TEXT,
+
+            project_description TEXT,
+
+            contact_text TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # GRUPO DEFAULT
         # =========================
 

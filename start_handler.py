@@ -11,12 +11,14 @@ from commercial_catalog import (
     PUBLIC_START_TEXT_ES,
     CALLBACK_MONETIZE_COMMUNITY,
     CALLBACK_SUPPORT,
-    CALLBACK_AI_HELP
+    CALLBACK_AI_HELP,
+    CALLBACK_ADMIN_PANEL
 )
 from db import conn
 from formatters import (
     format_tiempo_restante
 )
+from rbac_helpers import is_super_admin
 
 
 # =========================
@@ -206,13 +208,72 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         InlineKeyboardButton(
 
-            "💬 Ayuda IA",
+            "💬 Ayuda sobre este menú",
 
             callback_data=CALLBACK_AI_HELP
 
         )
 
     ])
+
+
+    # =========================
+    # PANEL SEGÚN JERARQUÍA REAL
+    # =========================
+
+    try:
+
+        if is_super_admin(user_id):
+
+            keyboard.append([
+
+                InlineKeyboardButton(
+
+                    "⚙️ Panel global",
+
+                    callback_data=CALLBACK_ADMIN_PANEL
+
+                )
+
+            ])
+
+        else:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT 1
+
+                    FROM admins
+
+                    WHERE user_id=%s
+                    AND is_active=TRUE
+
+                    LIMIT 1
+
+                """, (user_id,))
+
+                admin_row = cur.fetchone()
+
+
+            if admin_row:
+
+                keyboard.append([
+
+                    InlineKeyboardButton(
+
+                        "⚙️ Mi panel de gestión",
+
+                        callback_data=CALLBACK_ADMIN_PANEL
+
+                    )
+
+                ])
+
+    except Exception as e:
+
+        print("Error verificando panel admin:", e)
 
 
     # =========================

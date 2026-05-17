@@ -29,6 +29,17 @@ CALLBACK_SHARED_BOT_SPACE = "commercial_shared_bot_space"
 CALLBACK_CUSTOM_BOT = "commercial_custom_bot"
 CALLBACK_COMMERCIAL_CONTACT = "commercial_contact"
 CALLBACK_COMMERCIAL_BACK = "commercial_back"
+CALLBACK_SHARED_TRIAL_START = "commercial_shared_trial_start"
+CALLBACK_CUSTOM_BOT_START = "commercial_custom_bot_start"
+CALLBACK_COMMERCIAL_HELP = "commercial_help"
+
+CALLBACK_SUBSCRIPTIONS_HELP = "subscriptions_help"
+CALLBACK_GROUP_PLANS_HELP = "group_plans_help"
+CALLBACK_SUPPORT_HELP = "support_help"
+CALLBACK_ADMIN_USERS_HELP = "admin_users_help"
+CALLBACK_ADMIN_GROUPS_HELP = "admin_groups_help"
+CALLBACK_ADMIN_PAYMENTS_HELP = "admin_payments_help"
+CALLBACK_ADMIN_LOGS_HELP = "admin_logs_help"
 
 
 # =========================
