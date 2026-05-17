@@ -70,6 +70,8 @@ ADMIN_CALLBACK_PREFIX_PERMISSION_MAP = (
 
     ("allow_user_", ("can_manage_users",)),
     ("deny_user_", ("can_manage_users",)),
+    ("admin_commercial_", (SUPER_ADMIN_ONLY,)),
+    ("admin_trial_visibility_", (SUPER_ADMIN_ONLY,)),
     ("edit_group", ("can_manage_groups", "can_manage_plans")),
     ("edit_plan_", ("can_manage_groups", "can_manage_plans")),
     ("delete_group", (SUPER_ADMIN_ONLY,)),

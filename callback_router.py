@@ -553,7 +553,8 @@ COMMERCIAL_REQUEST_FIELDS = [
     "commercial_subscription_until",
     "requested_public_visibility",
     "creator_setup_status",
-    "creator_preview_text"
+    "creator_preview_text",
+    "max_groups_allowed"
 
 ]
 
@@ -1385,6 +1386,7 @@ def build_commercial_request_detail_text(request_row):
         f"Ubicación pública solicitada: {format_public_visibility(request_row.get('requested_public_visibility'))}\n"
         f"Estado configuración creador: {request_row.get('creator_setup_status') or '-'}\n"
         f"Preview creador: {request_row.get('creator_preview_text') or '-'}\n"
+        f"Cupo máximo grupos: {request_row.get('max_groups_allowed') or 1}\n"
         f"Plan comercial: {request_row.get('selected_commercial_plan_id') or '-'}\n"
         f"Estado suscripción comercial: {request_row.get('commercial_subscription_status') or '-'}\n"
         f"Suscripción comercial hasta: {format_commercial_datetime(request_row.get('commercial_subscription_until'))}"
@@ -1442,12 +1444,62 @@ def build_commercial_review_keyboard(request_row):
 
     keyboard.append([
         InlineKeyboardButton(
+            "🔢 Cupo de grupos",
+            callback_data=f"admin_commercial_group_limit_{request_id}"
+        )
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
             "⬅️ Volver",
             callback_data="admin_commercial_requests"
         )
     ])
 
     return keyboard
+
+
+def build_commercial_group_limit_text(request_row):
+
+    return (
+        "🔢 Cupo de grupos\n\n"
+        f"Solicitud: #{request_row.get('id')}\n"
+        f"Creador: {request_row.get('user_id') or '-'}\n"
+        f"Cupo actual: {request_row.get('max_groups_allowed') or 1}\n\n"
+        "Elige el máximo de comunidades que este creador puede añadir."
+    )
+
+
+def build_commercial_group_limit_keyboard(request_id):
+
+    return [
+
+        [InlineKeyboardButton(
+            "1 grupo",
+            callback_data=f"admin_commercial_set_group_limit_{request_id}_1"
+        )],
+
+        [InlineKeyboardButton(
+            "2 grupos",
+            callback_data=f"admin_commercial_set_group_limit_{request_id}_2"
+        )],
+
+        [InlineKeyboardButton(
+            "5 grupos",
+            callback_data=f"admin_commercial_set_group_limit_{request_id}_5"
+        )],
+
+        [InlineKeyboardButton(
+            "10 grupos",
+            callback_data=f"admin_commercial_set_group_limit_{request_id}_10"
+        )],
+
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=f"admin_commercial_review_{request_id}"
+        )]
+
+    ]
 
 
 def build_commercial_setup_keyboard(request_id):
@@ -1486,6 +1538,54 @@ def extract_commercial_request_id(data, prefix):
     except Exception:
 
         return None
+
+
+def extract_commercial_group_limit_selection(data):
+
+    prefix = "admin_commercial_set_group_limit_"
+
+
+    try:
+
+        raw_value = data.replace(prefix, "", 1)
+        request_id_text, limit_text = raw_value.rsplit("_", 1)
+        request_id = int(request_id_text)
+        limit = int(limit_text)
+
+    except Exception:
+
+        return None, None
+
+
+    if limit not in (1, 2, 5, 10):
+
+        return None, None
+
+
+    return request_id, limit
+
+
+def update_commercial_request_group_limit(request_id, max_groups_allowed):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET max_groups_allowed=%s,
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (
+            max_groups_allowed,
+            request_id
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
 
 
 def update_commercial_request_trial_approved(request_id, reviewer_id):
@@ -2373,6 +2473,83 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(
                 build_commercial_requests_keyboard(requests)
             )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_group_limit_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_group_limit_"
+        )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            build_commercial_group_limit_text(request_row),
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_group_limit_keyboard(request_id)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_set_group_limit_"):
+
+        request_id, max_groups_allowed = extract_commercial_group_limit_selection(
+            data
+        )
+
+
+        if not request_id or not max_groups_allowed:
+
+            await query.message.reply_text(
+                "❌ Cupo de grupos no válido."
+            )
+
+            return
+
+
+        request_row = update_commercial_request_group_limit(
+            request_id,
+            max_groups_allowed
+        )
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            f"✅ Cupo actualizado a {max_groups_allowed} grupo(s).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🔎 Volver a solicitud",
+                    callback_data=f"admin_commercial_review_{request_id}"
+                )],
+                [InlineKeyboardButton(
+                    "🔢 Cambiar cupo",
+                    callback_data=f"admin_commercial_group_limit_{request_id}"
+                )]
+            ])
         )
 
         return
