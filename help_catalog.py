@@ -113,6 +113,35 @@ HELP_SECTIONS_BY_ROLE = {
 
 HELP_SECTION_CONTENT = {
 
+    "SECTION_SALES_SUPPORT": {
+        "title": {
+            "es": "💼 Contratación, soporte y contacto",
+            "en": "💼 Sales, support and contact"
+        },
+        "body": {
+            "es": (
+                "Esta sección es para usuarios públicos o interesados en contratar el bot.\n\n"
+                "El usuario puede preguntar cómo suscribirse a un grupo, cómo contactar con un administrador, "
+                "cómo alquilar el bot para su propio grupo o cómo conseguir un bot similar.\n\n"
+                "La IA puede orientar al usuario, explicar que debe usar el menú principal o soporte disponible, "
+                "y recomendar contactar con el administrador del bot.\n\n"
+                "Si no existe un comando o botón documentado para abrir directamente un menú de compra, "
+                "la IA debe decirlo claramente y sugerir usar /start o las opciones visibles del bot.\n\n"
+                "La IA no debe inventar precios, planes, enlaces de pago, teléfonos, correos ni comandos no documentados."
+            ),
+            "en": (
+                "This section is for public users or people interested in hiring the bot.\n\n"
+                "The user may ask how to subscribe to a group, how to contact an administrator, "
+                "how to rent the bot for their own group or how to get a similar bot.\n\n"
+                "The AI may guide the user, explain that they should use the main menu or available support, "
+                "and recommend contacting the bot administrator.\n\n"
+                "If there is no documented command or button to directly open a purchase menu, "
+                "the AI must say so clearly and suggest using /start or the visible bot options.\n\n"
+                "The AI must not invent prices, plans, payment links, phone numbers, emails or undocumented commands."
+            )
+        }
+    },
+
     "SECTION_GROUPS": {
         "title": {
             "es": "👥 Gestión de grupos",
