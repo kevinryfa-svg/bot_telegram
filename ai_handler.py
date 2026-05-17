@@ -10,6 +10,10 @@ from help_catalog import (
     HELP_SECTION_CONTENT
 )
 
+from ai_role_context import (
+    build_ai_user_context_text
+)
+
 
 # =========================
 # AI HANDLER — HELPERS
@@ -149,10 +153,14 @@ async def ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+    user_context = build_ai_user_context_text(
+        update.effective_user.id
+    )
+
     ok, answer = generate_ai_response(
         user_text,
         system_prompt=system_prompt,
-        context_text=build_ai_manual_context()
+        context_text=build_ai_manual_context() + "\n\n" + user_context
     )
 
 
@@ -203,10 +211,14 @@ async def asistente_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+    user_context = build_ai_user_context_text(
+        update.effective_user.id
+    )
+
     ok, answer = generate_ai_response(
         user_text,
         system_prompt=system_prompt,
-        context_text=build_ai_manual_context()
+        context_text=build_ai_manual_context() + "\n\n" + user_context
     )
 
 
@@ -299,11 +311,17 @@ async def handle_ai_context_text(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 
+    user_context = build_ai_user_context_text(
+        update.effective_user.id
+    )
+
     context_text = (
         build_ai_manual_context()
         + "\n\n"
+        + user_context
+        + "\n\n"
         + f"CONTEXTO ACTUAL DEL USUARIO: {label}\n"
-        + "Responde únicamente dentro de este contexto y del manual oficial."
+        + "Responde únicamente dentro de este contexto, el rol real del usuario y el manual oficial."
     )
 
 
