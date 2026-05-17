@@ -14,6 +14,7 @@ ADMIN_MENU_PAYMENTS = "payments"
 ADMIN_MENU_BUSINESS = "business"
 ADMIN_MENU_LOGS = "logs"
 ADMIN_MENU_COMMERCIAL = "commercial"
+ADMIN_MENU_SUPPORT = "support"
 
 
 ADMIN_MENU_SECTIONS = [
@@ -69,6 +70,14 @@ ADMIN_MENU_SECTIONS = [
         ]
     },
     {
+        "key": ADMIN_MENU_SUPPORT,
+        "text": "🛟 Soporte",
+        "callback_data": "admin_support_tickets",
+        "permissions_any": [
+            "super_admin_only"
+        ]
+    },
+    {
         "key": ADMIN_MENU_COMMERCIAL,
         "text": "📩 Solicitudes comerciales",
         "callback_data": "admin_commercial_requests",
@@ -90,7 +99,8 @@ ADMIN_HELP_CONTEXT_BY_CALLBACK = {
     "menu_payments": "admin_payments",
     "menu_business": "admin_business",
     "menu_logs": "admin_logs",
-    "admin_commercial_requests": "commercial_admin"
+    "admin_commercial_requests": "commercial_admin",
+    "admin_support_tickets": "support_admin"
 }
 
 

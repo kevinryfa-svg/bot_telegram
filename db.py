@@ -444,6 +444,56 @@ def create_tables():
 
 
         # =========================
+        # TABLAS SOPORTE INTERNO
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS support_tickets (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT NOT NULL,
+
+            username TEXT,
+
+            first_name TEXT,
+
+            status TEXT DEFAULT 'open',
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS support_messages (
+
+            id SERIAL PRIMARY KEY,
+
+            ticket_id INTEGER,
+
+            sender_type TEXT,
+
+            sender_id BIGINT,
+
+            message_text TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA SOLICITUDES COMERCIALES
         # =========================
 
