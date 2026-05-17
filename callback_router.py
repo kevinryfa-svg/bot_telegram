@@ -770,6 +770,11 @@ def build_user_activation_keyboard(request_id):
         )],
 
         [InlineKeyboardButton(
+            "Pendiente de crear/publicar grupo",
+            callback_data=f"user_commercial_pending_group_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
             "💬 Ayuda",
             callback_data=CALLBACK_COMMERCIAL_HELP
         )]
@@ -850,6 +855,161 @@ def build_commercial_plan_keyboard(request_id, plans):
     ])
 
     return keyboard
+
+
+def build_pending_group_publish_keyboard(request_id):
+
+    return [
+
+        [InlineKeyboardButton(
+            "Pendiente de crear/publicar grupo",
+            callback_data=f"user_commercial_pending_group_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📩 Hablar con un asesor",
+            callback_data=CALLBACK_COMMERCIAL_CONTACT
+        )],
+
+        [InlineKeyboardButton(
+            "💬 Ayuda",
+            callback_data=CALLBACK_COMMERCIAL_HELP
+        )],
+
+        [InlineKeyboardButton(
+            "🏠 Inicio",
+            callback_data="public_back_start"
+        )]
+
+    ]
+
+
+def resolve_commercial_request_group(request_row):
+
+    if not request_row:
+
+        return None
+
+
+    approved_group_id = request_row.get("approved_group_id")
+    approved_telegram_group_id = request_row.get("approved_telegram_group_id")
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            if approved_group_id:
+
+                cur.execute("""
+
+                    SELECT id,
+                           telegram_group_id
+                    FROM groups
+                    WHERE id=%s
+                    LIMIT 1
+
+                """, (approved_group_id,))
+
+                row = cur.fetchone()
+
+
+                if row:
+
+                    return row
+
+
+            if approved_telegram_group_id:
+
+                cur.execute("""
+
+                    SELECT id,
+                           telegram_group_id
+                    FROM groups
+                    WHERE telegram_group_id=%s
+                    LIMIT 1
+
+                """, (approved_telegram_group_id,))
+
+                row = cur.fetchone()
+
+
+                if row:
+
+                    return row
+
+    except Exception as e:
+
+        print("Error resolviendo grupo comercial:", e)
+
+
+    return None
+
+
+def assign_owner_for_commercial_request(request_row):
+
+    group_row = resolve_commercial_request_group(request_row)
+
+
+    if not group_row:
+
+        return False, None
+
+
+    group_id, telegram_group_id = group_row
+    owner_user_id = request_row.get("user_id")
+
+
+    if not owner_user_id:
+
+        return False, group_id
+
+
+    assigned = assign_group_owner_permissions(
+        owner_user_id,
+        group_id
+    )
+
+
+    if assigned:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE commercial_requests
+                SET approved_group_id=%s,
+                    approved_telegram_group_id=%s,
+                    updated_at=NOW()
+                WHERE id=%s
+
+            """, (
+                group_id,
+                telegram_group_id,
+                request_row.get("id")
+            ))
+
+
+        public_visibility = request_row.get("requested_public_visibility")
+
+
+        if public_visibility:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE groups
+                    SET public_visibility=%s
+                    WHERE id=%s
+
+                """, (
+                    public_visibility,
+                    group_id
+                ))
+
+
+    return assigned, group_id
 
 
 def build_admin_trial_visibility_keyboard(request_id):
@@ -1138,53 +1298,7 @@ def update_commercial_request_trial_visibility(
         return None
 
 
-    approved_group_id = request_row.get("approved_group_id")
-    approved_telegram_group_id = request_row.get("approved_telegram_group_id")
-    owner_user_id = request_row.get("user_id")
-    group_owner_id = None
-
-
-    if approved_group_id:
-
-        group_owner_id = approved_group_id
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                UPDATE groups
-                SET public_visibility=%s
-                WHERE id=%s
-
-            """, (public_visibility, approved_group_id))
-
-    elif approved_telegram_group_id:
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                UPDATE groups
-                SET public_visibility=%s
-                WHERE telegram_group_id=%s
-                RETURNING id
-
-            """, (public_visibility, approved_telegram_group_id))
-
-            row = cur.fetchone()
-
-
-        if row:
-
-            group_owner_id = row[0]
-
-
-    if owner_user_id and group_owner_id:
-
-        assign_group_owner_permissions(
-            owner_user_id,
-            group_owner_id
-        )
+    assign_owner_for_commercial_request(request_row)
 
 
     return request_row
@@ -6221,6 +6335,60 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
+        assigned, group_id = assign_owner_for_commercial_request(request_row)
+
+
+        if assigned:
+
+            await query.message.reply_text(
+                "✅ Comunidad vinculada correctamente.\n\n"
+                "Tu panel de gestión ya está disponible. Desde ahí podrás gestionar tu comunidad según los permisos del grupo.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "⚙️ Abrir panel de gestión",
+                        callback_data="public_admin_panel"
+                    )],
+                    [InlineKeyboardButton(
+                        "🏠 Inicio",
+                        callback_data="public_back_start"
+                    )]
+                ])
+            )
+
+            return
+
+
+        if not group_id:
+
+            await notify_commercial_admin(
+                context,
+                (
+                    "⚠️ Comunidad pendiente de crear/publicar grupo\n\n"
+                    f"Solicitud #{request_id}\n"
+                    f"Usuario: {user_id}\n\n"
+                    "La solicitud está aprobada, pero todavía no existe un grupo vinculado en groups. "
+                    "Falta crear/publicar el grupo o asociar approved_group_id / approved_telegram_group_id."
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        f"🔎 Revisar solicitud #{request_id}",
+                        callback_data=f"admin_commercial_review_{request_id}"
+                    )]
+                ])
+            )
+
+            await query.message.reply_text(
+                "📦 Configurar comunidad\n\n"
+                "Pendiente de crear/publicar grupo.\n\n"
+                "Tu solicitud está aprobada, pero todavía falta vincular un grupo o canal real en el sistema. "
+                "Cuando el grupo exista y quede asociado a tu solicitud, se activará tu panel de gestión automáticamente.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_pending_group_publish_keyboard(request_id)
+                )
+            )
+
+            return
+
         await query.message.reply_text(
             "📦 Configurar comunidad\n\n"
             "Tu prueba sigue activa. Durante esta fase puedes dejar preparada la comunidad sin pagar todavía.\n\n"
@@ -6240,6 +6408,68 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     callback_data="public_back_start"
                 )]
             ])
+        )
+
+        return
+
+
+    if data.startswith("user_commercial_pending_group_"):
+
+        request_id = extract_commercial_request_id(data, "user_commercial_pending_group_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        assigned, group_id = assign_owner_for_commercial_request(request_row)
+
+
+        if assigned:
+
+            await query.message.reply_text(
+                "✅ Comunidad vinculada correctamente.\n\n"
+                "Tu panel de gestión ya está disponible.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "⚙️ Abrir panel de gestión",
+                        callback_data="public_admin_panel"
+                    )],
+                    [InlineKeyboardButton(
+                        "🏠 Inicio",
+                        callback_data="public_back_start"
+                    )]
+                ])
+            )
+
+            return
+
+
+        if group_id:
+
+            await query.message.reply_text(
+                "⚠️ El grupo existe, pero no se pudieron activar tus permisos de gestión. "
+                "Un administrador debe revisar la asignación de propietario.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_pending_group_publish_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "Pendiente de crear/publicar grupo.\n\n"
+            "Falta que el propietario principal cree o publique el grupo real y lo asocie a esta solicitud. "
+            "Hasta que exista ese vínculo, el bot no puede activar permisos GROUP_OWNER ni mostrar el panel de gestión.",
+            reply_markup=InlineKeyboardMarkup(
+                build_pending_group_publish_keyboard(request_id)
+            )
         )
 
         return
