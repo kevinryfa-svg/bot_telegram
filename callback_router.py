@@ -4905,6 +4905,274 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("user_trial_setup_free_"):
+
+        request_id = extract_commercial_request_id(data, "user_trial_setup_free_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+        update_commercial_request_free_group(request_id)
+
+        await notify_commercial_admin(
+            context,
+            (
+                "🆓 Configuración comercial elegida\n\n"
+                f"Solicitud #{request_id}\n"
+                f"Usuario: {user_id}\n"
+                "Modo: grupo gratuito"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"🔎 Revisar solicitud #{request_id}",
+                    callback_data=f"admin_commercial_review_{request_id}"
+                )]
+            ])
+        )
+
+        await query.message.reply_text(
+            "🆓 Perfecto. Tu comunidad será gratis para los usuarios, pero el acceso seguirá protegido por el bot.\n\n"
+            "Para mantener publicada tu comunidad después de la prueba, tendrás que activar una suscripción del servicio.",
+            reply_markup=InlineKeyboardMarkup(build_user_activation_keyboard(request_id))
+        )
+
+        return
+
+
+    if data.startswith("user_trial_setup_paid_"):
+
+        request_id = extract_commercial_request_id(data, "user_trial_setup_paid_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+        update_commercial_request_paid_group(request_id)
+
+        await notify_commercial_admin(
+            context,
+            (
+                "💳 Configuración comercial elegida\n\n"
+                f"Solicitud #{request_id}\n"
+                f"Usuario: {user_id}\n"
+                "Modo: grupo de pago"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"🔎 Revisar solicitud #{request_id}",
+                    callback_data=f"admin_commercial_review_{request_id}"
+                )]
+            ])
+        )
+
+        await query.message.reply_text(
+            "💳 Perfecto. Tu comunidad será de pago.\n\n"
+            "Ahora elige cómo quieres gestionar los cobros:",
+            reply_markup=InlineKeyboardMarkup(build_user_trial_payment_keyboard(request_id))
+        )
+
+        return
+
+
+    if data.startswith("user_trial_setup_owner_stripe_"):
+
+        request_id = extract_commercial_request_id(data, "user_trial_setup_owner_stripe_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+        update_commercial_request_stripe_mode(request_id, "owner_stripe")
+
+        await notify_commercial_admin(
+            context,
+            (
+                "🏦 Stripe propio seleccionado\n\n"
+                f"Solicitud #{request_id}\n"
+                f"Usuario: {user_id}"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"🔎 Revisar solicitud #{request_id}",
+                    callback_data=f"admin_commercial_review_{request_id}"
+                )]
+            ])
+        )
+
+        await query.message.reply_text(
+            "Perfecto. Has elegido usar tu propio Stripe. El siguiente paso será configurar tus datos de cobro. Para mantener publicada tu comunidad después de la prueba, tendrás que activar una suscripción del servicio.",
+            reply_markup=InlineKeyboardMarkup(build_user_activation_keyboard(request_id))
+        )
+
+        return
+
+
+    if data.startswith("user_trial_setup_platform_stripe_"):
+
+        request_id = extract_commercial_request_id(data, "user_trial_setup_platform_stripe_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+        update_commercial_request_stripe_mode(request_id, "platform_stripe")
+
+        await notify_commercial_admin(
+            context,
+            (
+                "💼 Stripe plataforma seleccionado\n\n"
+                f"Solicitud #{request_id}\n"
+                f"Usuario: {user_id}"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"🔎 Revisar solicitud #{request_id}",
+                    callback_data=f"admin_commercial_review_{request_id}"
+                )]
+            ])
+        )
+
+        await query.message.reply_text(
+            "Perfecto. Has elegido cobrar desde la plataforma. El administrador revisará las condiciones. Para mantener publicada tu comunidad después de la prueba, tendrás que activar una suscripción del servicio.",
+            reply_markup=InlineKeyboardMarkup(build_user_activation_keyboard(request_id))
+        )
+
+        return
+
+
+    if data.startswith("user_commercial_activate_"):
+
+        request_id = extract_commercial_request_id(data, "user_commercial_activate_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+        plans = fetch_active_commercial_plans(PRODUCT_SHARED_BOT_SPACE)
+
+        if not plans:
+
+            await query.message.reply_text(
+                "Todavía no hay planes comerciales activos configurados.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "💬 Ayuda",
+                        callback_data=CALLBACK_COMMERCIAL_HELP
+                    )
+                ]])
+            )
+
+            return
+
+        await query.message.reply_text(
+            "Elige el plan para mantener activa tu comunidad después de la prueba:",
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_plan_keyboard(request_id, plans)
+            )
+        )
+
+        return
+
+
+    if data.startswith("user_commercial_plan_"):
+
+        request_id, plan_id = extract_commercial_plan_selection(data)
+        request_row = fetch_commercial_request(request_id)
+        plan = fetch_commercial_plan(plan_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+        if not plan:
+
+            await query.message.reply_text(
+                "❌ Plan comercial no encontrado."
+            )
+
+            return
+
+        update_commercial_request_plan(request_id, plan_id, "pending")
+
+        if not plan.get("stripe_price_id"):
+
+            await notify_commercial_admin(
+                context,
+                (
+                    "📅 Plan comercial seleccionado\n\n"
+                    f"Solicitud #{request_id}\n"
+                    f"Usuario: {user_id}\n"
+                    f"Plan: {plan.get('name') or '-'}\n"
+                    "Falta stripe_price_id."
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        f"🔎 Revisar solicitud #{request_id}",
+                        callback_data=f"admin_commercial_review_{request_id}"
+                    )]
+                ])
+            )
+
+            await query.message.reply_text(
+                "Este plan todavía no tiene pago automático configurado. Un administrador debe añadir el price_id de Stripe."
+            )
+
+            return
+
+        await notify_commercial_admin(
+            context,
+            (
+                "📅 Plan comercial seleccionado\n\n"
+                f"Solicitud #{request_id}\n"
+                f"Usuario: {user_id}\n"
+                f"Plan: {plan.get('name') or '-'}\n"
+                "El pago automático comercial todavía está pendiente de conectar."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"🔎 Revisar solicitud #{request_id}",
+                    callback_data=f"admin_commercial_review_{request_id}"
+                )]
+            ])
+        )
+
+        await query.message.reply_text(
+            "El pago automático comercial todavía está pendiente de conectar."
+        )
+
+        return
+
+
     # =========================
     # PAGOS STRIPE
     # =========================
