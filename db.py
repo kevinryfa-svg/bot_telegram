@@ -497,9 +497,46 @@ def create_tables():
 
             approved_bot_username TEXT,
 
+            selected_commercial_plan_id INTEGER,
+
+            commercial_subscription_status TEXT DEFAULT 'pending',
+
+            commercial_subscription_until TIMESTAMP,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
+        # TABLA PLANES COMERCIALES
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS commercial_plans (
+
+            id SERIAL PRIMARY KEY,
+
+            product_type TEXT,
+
+            name TEXT,
+
+            duration_days INTEGER,
+
+            amount INTEGER,
+
+            currency TEXT DEFAULT 'EUR',
+
+            stripe_price_id TEXT,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
         );
 
@@ -603,7 +640,10 @@ def create_tables():
             ("is_free_group", "BOOLEAN DEFAULT FALSE"),
             ("approved_group_id", "INTEGER"),
             ("approved_telegram_group_id", "BIGINT"),
-            ("approved_bot_username", "TEXT")
+            ("approved_bot_username", "TEXT"),
+            ("selected_commercial_plan_id", "INTEGER"),
+            ("commercial_subscription_status", "TEXT DEFAULT 'pending'"),
+            ("commercial_subscription_until", "TIMESTAMP")
 
         ]
 
@@ -625,6 +665,58 @@ def create_tables():
             except Exception:
 
                 print(f"Columna ya existe en commercial_requests: {column_name}")
+
+
+        # =========================
+        # PLANES BASE COMERCIALES
+        # =========================
+
+        base_commercial_plans = [
+
+            ("shared_bot_space", "1 mes", 30),
+            ("shared_bot_space", "6 meses", 180),
+            ("shared_bot_space", "1 año", 365)
+
+        ]
+
+
+        for product_type, name, duration_days in base_commercial_plans:
+
+            try:
+
+                cur.execute("""
+
+                    INSERT INTO commercial_plans (
+                        product_type,
+                        name,
+                        duration_days,
+                        amount,
+                        stripe_price_id
+                    )
+                    SELECT %s, %s, %s, NULL, NULL
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM commercial_plans
+                        WHERE product_type=%s
+                        AND name=%s
+                    )
+
+                """, (
+
+                    product_type,
+                    name,
+                    duration_days,
+                    product_type,
+                    name
+
+                ))
+
+            except Exception as e:
+
+                print(
+                    "Error asegurando plan comercial base:",
+                    e
+                )
 
 
         # =========================
