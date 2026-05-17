@@ -1,8 +1,6 @@
 import os
 import stripe
 import threading
-import random
-import string
 import requests
 import time
 import asyncio
@@ -55,10 +53,6 @@ from audit_log_service import (
     create_audit_log
 )
 
-from code_service import (
-    generate_code
-)
-
 from formatters import (
     format_tiempo_restante
 )
@@ -90,6 +84,10 @@ from ai_handler import (
     handle_ai_context_text
 )
 from start_handler import start
+from code_admin_handler import (
+    generar_codigo,
+    crear_codigo_callback
+)
 from code_flow_handler import receive_code
 from admin_input_handler import receive_admin_inputs
 from stripe_handler import stripe_webhook
@@ -230,33 +228,6 @@ def get_admin_groups(user_id):
 
     return []
     
-
-# =========================
-# CREAR CÓDIGO ADMIN
-# =========================
-
-async def generar_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    keyboard = [
-
-        [InlineKeyboardButton("⏱️ 15 min", callback_data="gen_15")],
-        [InlineKeyboardButton("📅 1 día", callback_data="gen_1440")],
-        [InlineKeyboardButton("📅 7 días", callback_data="gen_10080")],
-        [InlineKeyboardButton("📅 30 días", callback_data="gen_43200")],
-        [InlineKeyboardButton("♾️ Permanente", callback_data="gen_perm")]
-
-    ]
-
-    await update.message.reply_text(
-
-        "Selecciona duración:",
-
-        reply_markup=InlineKeyboardMarkup(keyboard)
-
-    )
 
 async def handle_text(update, context):
 
