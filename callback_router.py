@@ -52,7 +52,13 @@ from invite_link_service import (
     create_telegram_invite_link,
     revoke_telegram_invite_link
 )
-from rbac_helpers import is_super_admin, has_any_permission_any_group
+from rbac_helpers import (
+    assign_group_owner_permissions,
+    get_admin_group_ids,
+    has_any_permission_any_group,
+    has_permission,
+    is_super_admin
+)
 from start_handler import start, send_start_menu
 from telegram_group_actions import kick_chat_member
 from ui_menu_helpers import make_button
@@ -78,9 +84,16 @@ async def delete_query_message_safely(query):
 
 ADMIN_PERMISSION_COLUMNS = [
     "can_manage_users",
+    "can_kick_users",
+    "can_ban_users",
+    "can_unban_users",
+    "can_warn_users",
+    "can_reset_warnings",
+    "can_manage_plans",
     "can_manage_codes",
     "can_manage_groups",
     "can_manage_payments",
+    "can_manage_admins",
     "can_view_users",
     "can_view_payments",
     "can_view_stats",
@@ -368,6 +381,143 @@ def build_admin_panel_keyboard(user_id):
         ]
         for row in button_rows
     ]
+
+
+def user_has_group_permission_any(user_id, group_id, permissions):
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    return any(
+        has_permission(user_id, group_id, permission)
+        for permission in permissions
+    )
+
+
+def fetch_admin_groups_for_permissions(user_id, permissions):
+
+    group_ids = get_admin_group_ids(user_id, permissions)
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            if group_ids is None:
+
+                cur.execute("""
+
+                    SELECT id, name, telegram_group_id
+                    FROM groups
+                    WHERE telegram_group_id != 0
+                    ORDER BY id ASC
+
+                """)
+
+            elif not group_ids:
+
+                return []
+
+            else:
+
+                cur.execute("""
+
+                    SELECT id, name, telegram_group_id
+                    FROM groups
+                    WHERE telegram_group_id != 0
+                    AND id = ANY(%s)
+                    ORDER BY id ASC
+
+                """, (group_ids,))
+
+
+            return cur.fetchall()
+
+    except Exception as e:
+
+        print("Error cargando grupos permitidos:", e)
+
+        raise
+
+
+def build_group_settings_keyboard(user_id, group_id):
+
+    keyboard = []
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_groups"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_plans", "can_manage_groups"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_admins"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")
+        ])
+
+
+    if is_super_admin(user_id):
+
+        keyboard.append([
+            InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")
+    ])
+
+    return keyboard
+
+
+def get_selected_group_for_permissions(context, user_id, permissions):
+
+    group_id = context.user_data.get("selected_group_admin")
+
+
+    if not group_id:
+
+        return None
+
+
+    if not user_has_group_permission_any(user_id, group_id, permissions):
+
+        return None
+
+
+    return group_id
 
 
 COMMERCIAL_REQUEST_FIELDS = [
@@ -990,9 +1140,13 @@ def update_commercial_request_trial_visibility(
 
     approved_group_id = request_row.get("approved_group_id")
     approved_telegram_group_id = request_row.get("approved_telegram_group_id")
+    owner_user_id = request_row.get("user_id")
+    group_owner_id = None
 
 
     if approved_group_id:
+
+        group_owner_id = approved_group_id
 
         with conn.cursor() as cur:
 
@@ -1013,8 +1167,24 @@ def update_commercial_request_trial_visibility(
                 UPDATE groups
                 SET public_visibility=%s
                 WHERE telegram_group_id=%s
+                RETURNING id
 
             """, (public_visibility, approved_telegram_group_id))
+
+            row = cur.fetchone()
+
+
+        if row:
+
+            group_owner_id = row[0]
+
+
+    if owner_user_id and group_owner_id:
+
+        assign_group_owner_permissions(
+            owner_user_id,
+            group_owner_id
+        )
 
 
     return request_row
@@ -3042,7 +3212,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             keyboard.append([InlineKeyboardButton("🔄 Reset warnings", callback_data="admin_reset_warnings")])
 
-            keyboard.append([InlineKeyboardButton("🔀 Mover usuario grupo", callback_data="admin_move_user")])
+            if is_super_admin(user_id):
+
+                keyboard.append([InlineKeyboardButton("🔀 Mover usuario grupo", callback_data="admin_move_user")])
 
 
         keyboard.append([InlineKeyboardButton("💬 Ayuda sobre este menú", callback_data=CALLBACK_ADMIN_USERS_HELP)])
@@ -3070,6 +3242,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_id = int(parts[2])
         group_id = int(parts[3])
+
+        if not user_has_group_permission_any(
+            query.from_user.id,
+            group_id,
+            ["can_manage_users"]
+        ):
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar este grupo."
+            )
+
+            return
 
         try:
 
@@ -3125,6 +3309,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_id = int(parts[2])
         group_id = int(parts[3])
+
+
+        if not user_has_group_permission_any(
+            query.from_user.id,
+            group_id,
+            ["can_manage_users"]
+        ):
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar este grupo."
+            )
+
+            return
 
 
         try:
@@ -3226,9 +3423,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-        keyboard = [
+        keyboard = []
 
-            [InlineKeyboardButton("➕ Añadir grupo", callback_data="admin_add_group")],
+
+        if is_super_admin(user_id):
+
+            keyboard.append([
+                InlineKeyboardButton("➕ Añadir grupo", callback_data="admin_add_group")
+            ])
+
+
+        keyboard.extend([
 
             [InlineKeyboardButton("✏️ Editar grupo", callback_data="admin_edit_group")],
 
@@ -3238,7 +3443,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
 
-        ]
+        ])
 
         await query.message.reply_text(
 
@@ -3261,9 +3466,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("new_group_data", None)
         context.user_data.pop("group_step", None)
 
-        keyboard = [
+        keyboard = []
 
-            [InlineKeyboardButton("➕ Añadir grupo", callback_data="admin_add_group")],
+
+        if is_super_admin(user_id):
+
+            keyboard.append([
+                InlineKeyboardButton("➕ Añadir grupo", callback_data="admin_add_group")
+            ])
+
+
+        keyboard.extend([
 
             [InlineKeyboardButton("✏️ Editar grupo", callback_data="admin_edit_group")],
 
@@ -3271,7 +3484,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
 
-        ]
+        ])
 
         await query.message.reply_text(
 
@@ -3303,19 +3516,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
-                cur.execute("""
-
-                    SELECT id, name, telegram_group_id
-
-                    FROM groups
-
-                    WHERE telegram_group_id != 0
-
-                    ORDER BY id ASC
-
-                """)
-
-                groups = cur.fetchall()
+                groups = fetch_admin_groups_for_permissions(
+                    user_id,
+                    ["can_manage_groups", "can_manage_plans"]
+                )
 
             print("DEBUG groups:", groups)
 
@@ -3599,19 +3803,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
-                cur.execute("""
+                rows = fetch_admin_groups_for_permissions(
+                    user_id,
+                    ["can_manage_groups", "can_manage_plans"]
+                )
 
-                    SELECT id, name
-
-                    FROM groups
-
-                    WHERE telegram_group_id != 0
-
-                    ORDER BY id ASC
-
-                """)
-
-                groups = cur.fetchall()
+                groups = [
+                    (group_id, name)
+                    for group_id, name, _telegram_group_id in rows
+                ]
 
         except Exception as e:
 
@@ -3690,28 +3890,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = int(data.split("_")[2])
 
 
+        if not user_has_group_permission_any(
+            user_id,
+            group_id,
+            ["can_manage_groups", "can_manage_plans"]
+        ):
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar este grupo."
+            )
+
+            return
+
+
         # Guardar grupo seleccionado
 
         context.user_data["selected_group_admin"] = group_id
 
 
-        keyboard = [
-
-            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
-
-            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
-
-            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
-
-            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
-
-            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
-
-            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
-
-            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
-
-        ]
+        keyboard = build_group_settings_keyboard(user_id, group_id)
 
 
         await query.message.reply_text(
@@ -3720,6 +3917,63 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
+        )
+
+        return
+
+
+    if data == "edit_group_back":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_manage_plans"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar este grupo."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🔧 CONFIGURACIÓN DEL GRUPO",
+            reply_markup=InlineKeyboardMarkup(
+                build_group_settings_keyboard(user_id, group_id)
+            )
+        )
+
+        return
+
+
+    if data in (
+        "edit_group_name",
+        "edit_group_stripe",
+        "edit_group_admins"
+    ):
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar este grupo."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "⚠️ Esta acción todavía no tiene un flujo seguro disponible."
         )
 
         return
@@ -3737,7 +3991,33 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar planes de este grupo."
+            )
+
+            return
+
+
+        if not user_has_group_permission_any(
+            user_id,
+            group_id,
+            ["can_manage_groups"]
+        ):
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar este grupo."
+            )
+
+            return
 
 
         # =========================
@@ -3839,26 +4119,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["editing_preview"] = False
         context.user_data.pop("new_preview_file", None)
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups"]
+        )
 
 
-        keyboard = [
+        if not group_id:
 
-            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar este grupo."
+            )
 
-            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
+            return
 
-            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
 
-            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
-
-            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
-
-            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
-
-            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
-
-        ]
+        keyboard = build_group_settings_keyboard(user_id, group_id)
 
 
         await query.message.reply_text(
@@ -3877,7 +4154,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "save_preview":
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar este grupo."
+            )
+
+            return
 
         file_id = context.user_data.get("new_preview_file")
 
@@ -3912,23 +4202,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("new_preview_file", None)
 
 
-        keyboard = [
-
-            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
-
-            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
-
-            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
-
-            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
-
-            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
-
-            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
-
-            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
-
-        ]
+        keyboard = build_group_settings_keyboard(user_id, group_id)
 
 
         await query.message.reply_text(
@@ -3950,26 +4224,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["editing_preview"] = False
         context.user_data.pop("new_preview_file", None)
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups"]
+        )
 
 
-        keyboard = [
+        if not group_id:
 
-            [InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")],
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar este grupo."
+            )
 
-            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
+            return
 
-            [InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")],
 
-            [InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")],
-
-            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
-
-            [InlineKeyboardButton("❌ Eliminar grupo", callback_data="delete_group_confirm")],
-
-            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")]
-
-        ]
+        keyboard = build_group_settings_keyboard(user_id, group_id)
 
 
         await query.message.reply_text(
@@ -3996,7 +4267,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar planes de este grupo."
+            )
+
+            return
 
 
         keyboard = [
@@ -4047,12 +4331,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "add_group_plan":
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups"]
+        )
 
         if not group_id:
 
             await query.message.reply_text(
-                "❌ No se encontró el grupo."
+                "⛔ No tienes permisos para gestionar planes de este grupo."
             )
 
             return
@@ -4090,7 +4378,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar planes de este grupo."
+            )
+
+            return
 
 
         try:
@@ -4212,7 +4513,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "edit_group_plan_select":
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar planes de este grupo."
+            )
+
+            return
 
         with conn.cursor() as cur:
 
@@ -4281,6 +4595,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "delete_group_confirm":
 
         group_id = context.user_data.get("selected_group_admin")
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
 
         if not group_id:
 
@@ -4474,7 +4796,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "delete_group_plan_select":
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar planes de este grupo."
+            )
+
+            return
 
         with conn.cursor() as cur:
 
@@ -4544,7 +4879,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         plan_id = int(data.split("_")[2])
 
-        group_id = context.user_data.get("selected_group_admin")
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar planes de este grupo."
+            )
+
+            return
 
         try:
 
@@ -4557,8 +4905,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     SET is_active=FALSE
 
                     WHERE id=%s
+                    AND group_id=%s
 
-                """, (plan_id,))
+                """, (
+                    plan_id,
+                    group_id
+                ))
 
 
                 # =========================
@@ -4622,15 +4974,52 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
-                cur.execute("""
+                group_ids = get_admin_group_ids(
+                    user_id,
+                    ["can_view_users", "can_manage_users"]
+                )
 
-                    SELECT user_id, username, first_name, expiration
-                    FROM users
-                    ORDER BY expiration DESC NULLS LAST
 
-                """)
+                if group_ids is None:
 
-                users = cur.fetchall()
+                    cur.execute("""
+
+                        SELECT u.user_id,
+                               u.username,
+                               u.first_name,
+                               u.expiration,
+                               g.name
+                        FROM users u
+                        LEFT JOIN groups g
+                        ON u.group_id = g.id
+                        ORDER BY u.expiration DESC NULLS LAST
+
+                    """)
+
+                elif not group_ids:
+
+                    users = []
+
+                else:
+
+                    cur.execute("""
+
+                        SELECT u.user_id,
+                               u.username,
+                               u.first_name,
+                               u.expiration,
+                               g.name
+                        FROM users u
+                        LEFT JOIN groups g
+                        ON u.group_id = g.id
+                        WHERE u.group_id = ANY(%s)
+                        ORDER BY u.expiration DESC NULLS LAST
+
+                    """, (group_ids,))
+
+                if group_ids is None or group_ids:
+
+                    users = cur.fetchall()
 
 
             if not users:
@@ -4645,7 +5034,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             texto = f"👥 Usuarios activos: {len(users)}\n\n"
 
 
-            for user_id, username, first_name, expiration in users:
+            for user_id, username, first_name, expiration, group_name in users:
 
                 nombre = first_name if first_name else "Sin nombre"
 
@@ -4664,6 +5053,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 texto += (
 
                     f"ID: {user_id}\n"
+                    f"Grupo: {group_name or '-'}\n"
                     f"Nombre: {nombre}\n"
                     f"Expira: {exp}\n\n"
 
@@ -4849,6 +5239,126 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data in (
+        "admin_reset_warnings",
+        "admin_resend_access",
+        "admin_cancel_subscription",
+        "admin_move_user"
+    ):
+
+        await query.message.reply_text(
+            "⚠️ Esta acción todavía no tiene un flujo seguro disponible."
+        )
+
+        return
+
+
+    if data == "admin_view_payments":
+
+        group_ids = get_admin_group_ids(
+            user_id,
+            ["can_view_payments", "can_manage_payments"]
+        )
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                if group_ids is None:
+
+                    cur.execute("""
+
+                        SELECT p.user_id,
+                               g.name,
+                               p.amount,
+                               p.currency,
+                               p.status,
+                               p.payment_date
+                        FROM payments p
+                        LEFT JOIN groups g
+                        ON p.group_id = g.id
+                        ORDER BY p.payment_date DESC
+                        LIMIT 20
+
+                    """)
+
+                elif not group_ids:
+
+                    payments = []
+
+                else:
+
+                    cur.execute("""
+
+                        SELECT p.user_id,
+                               g.name,
+                               p.amount,
+                               p.currency,
+                               p.status,
+                               p.payment_date
+                        FROM payments p
+                        LEFT JOIN groups g
+                        ON p.group_id = g.id
+                        WHERE p.group_id = ANY(%s)
+                        ORDER BY p.payment_date DESC
+                        LIMIT 20
+
+                    """, (group_ids,))
+
+
+                if group_ids is None or group_ids:
+
+                    payments = cur.fetchall()
+
+        except Exception as e:
+
+            print("Error cargando pagos admin:", e)
+
+            await query.message.reply_text(
+                "❌ Error cargando pagos."
+            )
+
+            return
+
+
+        if not payments:
+
+            await query.message.reply_text(
+                "⚠️ No hay pagos registrados."
+            )
+
+            return
+
+
+        text = "💳 Últimos pagos\n\n"
+
+
+        for payment_user_id, group_name, amount, currency, status, payment_date in payments:
+
+            text += (
+                f"Usuario: {payment_user_id}\n"
+                f"Grupo: {group_name or '-'}\n"
+                f"Importe: {amount or '-'} {currency or ''}\n"
+                f"Estado: {status or '-'}\n"
+                f"Fecha: {payment_date or '-'}\n\n"
+            )
+
+
+        await query.message.reply_text(text)
+
+        return
+
+
+    if data == "admin_search_payment":
+
+        await query.message.reply_text(
+            "🔍 La búsqueda directa de pagos todavía no está disponible. Usa el listado filtrado de pagos."
+        )
+
+        return
+
+
     # =========================
     # ESTADÍSTICAS
     # =========================
@@ -4859,14 +5369,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
+                group_ids = get_admin_group_ids(
+                    user_id,
+                    ["can_view_stats"]
+                )
+
+
+                if group_ids is None:
+
+                    group_filter = ""
+                    params = ()
+
+                elif not group_ids:
+
+                    usuarios_activos = 0
+                    usuarios_expirados = 0
+                    usuarios_permanentes = 0
+                    total_pagos = 0
+
+                    raise StopIteration
+
+                else:
+
+                    group_filter = "AND group_id = ANY(%s)"
+                    params = (group_ids,)
+
+
                 cur.execute("""
 
                     SELECT COUNT(*)
                     FROM users
-                    WHERE expiration IS NULL
-                    OR expiration > NOW()
+                    WHERE (
+                        expiration IS NULL
+                        OR expiration > NOW()
+                    )
+                    {group_filter}
 
-                """)
+                """.format(group_filter=group_filter), params)
 
                 usuarios_activos = cur.fetchone()[0]
 
@@ -4877,8 +5416,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     FROM users
                     WHERE expiration IS NOT NULL
                     AND expiration < NOW()
+                    {group_filter}
 
-                """)
+                """.format(group_filter=group_filter), params)
 
                 usuarios_expirados = cur.fetchone()[0]
 
@@ -4888,8 +5428,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     SELECT COUNT(*)
                     FROM users
                     WHERE expiration IS NULL
+                    {group_filter}
 
-                """)
+                """.format(group_filter=group_filter), params)
 
                 usuarios_permanentes = cur.fetchone()[0]
 
@@ -4898,11 +5439,33 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     SELECT COUNT(*)
                     FROM payments
+                    WHERE 1=1
+                    {group_filter}
 
-                """)
+                """.format(group_filter=group_filter), params)
 
                 total_pagos = cur.fetchone()[0]
 
+
+        except StopIteration:
+
+            texto = (
+
+                "📊 ESTADÍSTICAS\n\n"
+
+                "👥 Activos: 0\n"
+                "⛔ Expirados: 0\n"
+                "♾️ Permanentes: 0\n\n"
+
+                "💳 Pagos totales: 0"
+            )
+
+
+            await query.message.reply_text(texto)
+
+            return
+
+        try:
 
             texto = (
 
@@ -4926,6 +5489,238 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "❌ Error mostrando estadísticas"
             )
+
+        return
+
+
+    if data == "admin_active_users":
+
+        group_ids = get_admin_group_ids(user_id, ["can_view_stats"])
+
+
+        with conn.cursor() as cur:
+
+            if group_ids is None:
+
+                cur.execute("""
+
+                    SELECT g.name,
+                           COUNT(*)
+                    FROM users u
+                    LEFT JOIN groups g
+                    ON u.group_id = g.id
+                    WHERE u.expiration IS NULL
+                    OR u.expiration > NOW()
+                    GROUP BY g.name
+                    ORDER BY g.name ASC
+
+                """)
+
+            elif not group_ids:
+
+                rows = []
+
+            else:
+
+                cur.execute("""
+
+                    SELECT g.name,
+                           COUNT(*)
+                    FROM users u
+                    LEFT JOIN groups g
+                    ON u.group_id = g.id
+                    WHERE (
+                        u.expiration IS NULL
+                        OR u.expiration > NOW()
+                    )
+                    AND u.group_id = ANY(%s)
+                    GROUP BY g.name
+                    ORDER BY g.name ASC
+
+                """, (group_ids,))
+
+
+            if group_ids is None or group_ids:
+
+                rows = cur.fetchall()
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "👥 No hay usuarios activos."
+            )
+
+            return
+
+
+        text = "👥 Usuarios activos por grupo\n\n"
+
+
+        for group_name, total in rows:
+
+            text += f"{group_name or '-'}: {total}\n"
+
+
+        await query.message.reply_text(text)
+
+        return
+
+
+    if data == "admin_income":
+
+        group_ids = get_admin_group_ids(
+            user_id,
+            ["can_view_payments", "can_view_stats"]
+        )
+
+
+        with conn.cursor() as cur:
+
+            if group_ids is None:
+
+                cur.execute("""
+
+                    SELECT g.name,
+                           COALESCE(SUM(p.amount), 0),
+                           MAX(p.currency)
+                    FROM payments p
+                    LEFT JOIN groups g
+                    ON p.group_id = g.id
+                    GROUP BY g.name
+                    ORDER BY g.name ASC
+
+                """)
+
+            elif not group_ids:
+
+                rows = []
+
+            else:
+
+                cur.execute("""
+
+                    SELECT g.name,
+                           COALESCE(SUM(p.amount), 0),
+                           MAX(p.currency)
+                    FROM payments p
+                    LEFT JOIN groups g
+                    ON p.group_id = g.id
+                    WHERE p.group_id = ANY(%s)
+                    GROUP BY g.name
+                    ORDER BY g.name ASC
+
+                """, (group_ids,))
+
+
+            if group_ids is None or group_ids:
+
+                rows = cur.fetchall()
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "💰 No hay ingresos registrados."
+            )
+
+            return
+
+
+        text = "💰 Ingresos por grupo\n\n"
+
+
+        for group_name, amount, currency in rows:
+
+            text += f"{group_name or '-'}: {amount or 0} {currency or ''}\n"
+
+
+        await query.message.reply_text(text)
+
+        return
+
+
+    if data in (
+        "admin_logs",
+        "admin_logs_users",
+        "admin_logs_payments",
+        "admin_logs_security"
+    ):
+
+        group_ids = get_admin_group_ids(user_id, ["can_view_logs"])
+
+
+        with conn.cursor() as cur:
+
+            if group_ids is None:
+
+                cur.execute("""
+
+                    SELECT l.user_id,
+                           g.name,
+                           l.action,
+                           l.details,
+                           l.created_at
+                    FROM logs l
+                    LEFT JOIN groups g
+                    ON l.group_id = g.id
+                    ORDER BY l.created_at DESC
+                    LIMIT 20
+
+                """)
+
+            elif not group_ids:
+
+                rows = []
+
+            else:
+
+                cur.execute("""
+
+                    SELECT l.user_id,
+                           g.name,
+                           l.action,
+                           l.details,
+                           l.created_at
+                    FROM logs l
+                    LEFT JOIN groups g
+                    ON l.group_id = g.id
+                    WHERE l.group_id = ANY(%s)
+                    ORDER BY l.created_at DESC
+                    LIMIT 20
+
+                """, (group_ids,))
+
+
+            if group_ids is None or group_ids:
+
+                rows = cur.fetchall()
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "📜 No hay logs registrados."
+            )
+
+            return
+
+
+        text = "📜 Últimos logs\n\n"
+
+
+        for log_user_id, group_name, action, details, created_at in rows:
+
+            text += (
+                f"Usuario: {log_user_id or '-'}\n"
+                f"Grupo: {group_name or '-'}\n"
+                f"Acción: {action or '-'}\n"
+                f"Detalle: {details or '-'}\n"
+                f"Fecha: {created_at or '-'}\n\n"
+            )
+
+
+        await query.message.reply_text(text)
 
         return
 
@@ -5182,6 +5977,47 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("edit_plan_"):
 
         plan_id = int(data.split("_")[2])
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar planes de este grupo."
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT 1
+                FROM plans
+                WHERE id=%s
+                AND group_id=%s
+                LIMIT 1
+
+            """, (
+                plan_id,
+                group_id
+            ))
+
+            plan_row = cur.fetchone()
+
+
+        if not plan_row:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para editar este plan."
+            )
+
+            return
 
         context.user_data["editing_plan"] = True
         context.user_data["editing_plan_id"] = plan_id

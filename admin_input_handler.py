@@ -218,6 +218,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
             currency = text.upper()
 
             plan_id = context.user_data.get("editing_plan_id")
+            group_id = context.user_data.get("selected_group_admin")
 
             name = context.user_data.get("edit_plan_name")
 
@@ -244,6 +245,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                             currency=%s
 
                         WHERE id=%s
+                        AND group_id=%s
 
                     """, (
 
@@ -252,7 +254,8 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                         duration_days,
                         amount,
                         currency,
-                        plan_id
+                        plan_id,
+                        group_id
 
                     ))
 

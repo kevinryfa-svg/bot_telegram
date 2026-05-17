@@ -22,12 +22,51 @@ from telegram_group_actions import (
 from bot_config import TOKEN, GROUP_ID
 from formatters import format_tiempo_restante
 from group_service import get_latest_telegram_group_id
+from rbac_helpers import (
+    assign_pending_commercial_owner_for_group,
+    get_admin_group_ids,
+    is_super_admin
+)
 
 
 get_group_id = partial(
     get_latest_telegram_group_id,
     GROUP_ID
 )
+
+
+def get_scoped_admin_groups(context, user_id, permissions):
+
+    if is_super_admin(user_id):
+
+        return None
+
+
+    group_ids = get_admin_group_ids(user_id, permissions)
+    selected_group_id = context.user_data.get("selected_group_admin")
+
+
+    if selected_group_id and selected_group_id in group_ids:
+
+        group_ids = [selected_group_id]
+
+
+    if not group_ids:
+
+        return []
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id, telegram_group_id
+            FROM groups
+            WHERE id = ANY(%s)
+
+        """, (group_ids,))
+
+        return cur.fetchall()
 
 
 # =========================
@@ -71,25 +110,77 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("search_user"):
 
         user_id = update.message.text.strip()
+        admin_groups = get_scoped_admin_groups(
+            context,
+            update.effective_user.id,
+            ["can_view_users", "can_manage_users"]
+        )
+
+
+        if admin_groups == []:
+
+            await update.message.reply_text(
+                "⛔ No tienes permisos sobre grupos."
+            )
+
+            context.user_data["search_user"] = False
+
+            return
 
         with conn.cursor() as cur:
 
-            cur.execute("""
+            if admin_groups is None:
 
-                SELECT expiration
-                FROM users
-                WHERE user_id=%s
+                cur.execute("""
 
-            """, (user_id,))
+                    SELECT u.expiration,
+                           g.name
+                    FROM users u
+                    LEFT JOIN groups g
+                    ON u.group_id = g.id
+                    WHERE u.user_id=%s
 
-            row = cur.fetchone()
+                """, (user_id,))
 
-        if row:
+            else:
 
-            expiration = row[0]
+                group_ids = [
+                    group_id
+                    for group_id, _telegram_group_id in admin_groups
+                ]
+
+                cur.execute("""
+
+                    SELECT u.expiration,
+                           g.name
+                    FROM users u
+                    LEFT JOIN groups g
+                    ON u.group_id = g.id
+                    WHERE u.user_id=%s
+                    AND u.group_id = ANY(%s)
+
+                """, (
+                    user_id,
+                    group_ids
+                ))
+
+            rows = cur.fetchall()
+
+        if rows:
+
+            lines = [
+                f"👤 Usuario {user_id}"
+            ]
+
+
+            for expiration, group_name in rows:
+
+                lines.append(
+                    f"Grupo: {group_name or '-'}\nExpira: {expiration}"
+                )
 
             await update.message.reply_text(
-                f"👤 Usuario {user_id}\nExpira: {expiration}"
+                "\n\n".join(lines)
             )
 
         else:
@@ -110,6 +201,112 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("kick_user"):
 
         user_id = update.message.text.strip()
+        admin_groups = get_scoped_admin_groups(
+            context,
+            update.effective_user.id,
+            ["can_manage_users"]
+        )
+
+
+        if admin_groups == []:
+
+            await update.message.reply_text(
+                "⛔ No tienes permisos sobre grupos."
+            )
+
+            context.user_data["kick_user"] = False
+
+            return
+
+
+        if admin_groups is not None:
+
+            group_ids = [
+                group_id
+                for group_id, _telegram_group_id in admin_groups
+            ]
+
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT invite_link,
+                           group_id
+                    FROM invite_links
+                    WHERE user_id=%s
+                    AND group_id = ANY(%s)
+
+                """, (
+                    user_id,
+                    group_ids
+                ))
+
+                links = cur.fetchall()
+
+
+                for link, link_group_id in links:
+
+                    telegram_group_id = next(
+                        telegram_id
+                        for current_group_id, telegram_id in admin_groups
+                        if current_group_id == link_group_id
+                    )
+
+                    try:
+
+                        revoke_telegram_invite_link(
+                            TOKEN,
+                            telegram_group_id,
+                            link
+                        )
+
+                    except Exception as e:
+
+                        print("Error revocando link:", e)
+
+
+                cur.execute("""
+
+                    DELETE FROM invite_links
+                    WHERE user_id=%s
+                    AND group_id = ANY(%s)
+
+                """, (
+                    user_id,
+                    group_ids
+                ))
+
+                cur.execute("""
+
+                    DELETE FROM users
+                    WHERE user_id=%s
+                    AND group_id = ANY(%s)
+
+                """, (
+                    user_id,
+                    group_ids
+                ))
+
+                conn.commit()
+
+
+            for _group_id, telegram_group_id in admin_groups:
+
+                kick_chat_member(
+                    TOKEN,
+                    telegram_group_id,
+                    user_id
+                )
+
+
+            await update.message.reply_text(
+                f"🚫 Usuario expulsado:\n{user_id}"
+            )
+
+            context.user_data["kick_user"] = False
+
+            return
 
         with conn.cursor() as cur:
 
@@ -196,6 +393,125 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("ban_user"):
 
         user_id = update.message.text.strip()
+        admin_groups = get_scoped_admin_groups(
+            context,
+            update.effective_user.id,
+            ["can_manage_users"]
+        )
+
+
+        if admin_groups == []:
+
+            await update.message.reply_text(
+                "⛔ No tienes permisos sobre grupos."
+            )
+
+            context.user_data["ban_user"] = False
+
+            return
+
+
+        if admin_groups is not None:
+
+            group_ids = [
+                group_id
+                for group_id, _telegram_group_id in admin_groups
+            ]
+
+
+            try:
+
+                with conn.cursor() as cur:
+
+                    cur.execute("""
+
+                        SELECT invite_link,
+                               group_id
+                        FROM invite_links
+                        WHERE user_id=%s
+                        AND group_id = ANY(%s)
+
+                    """, (
+                        user_id,
+                        group_ids
+                    ))
+
+                    links = cur.fetchall()
+
+
+                    for link, link_group_id in links:
+
+                        telegram_group_id = next(
+                            telegram_id
+                            for current_group_id, telegram_id in admin_groups
+                            if current_group_id == link_group_id
+                        )
+
+                        try:
+
+                            revoke_telegram_invite_link(
+                                TOKEN,
+                                telegram_group_id,
+                                link
+                            )
+
+                        except Exception as e:
+
+                            print("Error revocando link:", e)
+
+
+                    cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE user_id=%s
+                        AND group_id = ANY(%s)
+
+                    """, (
+                        user_id,
+                        group_ids
+                    ))
+
+
+                    for group_id, _telegram_group_id in admin_groups:
+
+                        cur.execute("""
+
+                            INSERT INTO banned_users
+                            (user_id, group_id)
+                            VALUES (%s, %s)
+                            ON CONFLICT (user_id, group_id)
+                            DO NOTHING
+
+                        """, (
+                            user_id,
+                            group_id
+                        ))
+
+
+                    conn.commit()
+
+
+                for _group_id, telegram_group_id in admin_groups:
+
+                    ban_chat_member(
+                        TOKEN,
+                        telegram_group_id,
+                        user_id
+                    )
+
+
+                await update.message.reply_text(
+                    f"⛔ Usuario baneado permanentemente:\n{user_id}"
+                )
+
+            except Exception as e:
+
+                print("Error baneando:", e)
+
+
+            context.user_data["ban_user"] = False
+
+            return
 
         try:
 
@@ -300,6 +616,156 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("unban_user"):
 
         user_id = int(update.message.text.strip())
+        admin_groups = get_scoped_admin_groups(
+            context,
+            update.effective_user.id,
+            ["can_manage_users"]
+        )
+
+
+        if admin_groups == []:
+
+            await update.message.reply_text(
+                "⛔ No tienes permisos sobre grupos."
+            )
+
+            context.user_data["unban_user"] = False
+
+            return
+
+
+        if admin_groups is not None:
+
+            group_ids = [
+                group_id
+                for group_id, _telegram_group_id in admin_groups
+            ]
+
+
+            try:
+
+                with conn.cursor() as cur:
+
+                    cur.execute("""
+
+                        DELETE FROM banned_users
+                        WHERE user_id=%s
+                        AND group_id = ANY(%s)
+
+                    """, (
+                        user_id,
+                        group_ids
+                    ))
+
+                    cur.execute("""
+
+                        DELETE FROM link_warnings
+                        WHERE user_id=%s
+                        AND group_id = ANY(%s)
+
+                    """, (
+                        user_id,
+                        group_ids
+                    ))
+
+
+                    for group_id, _telegram_group_id in admin_groups:
+
+                        cur.execute("""
+
+                            INSERT INTO link_warnings
+                            (user_id, group_id, warnings)
+                            VALUES (%s, %s, 0)
+                            ON CONFLICT (user_id, group_id)
+                            DO UPDATE SET warnings=0
+
+                        """, (
+                            user_id,
+                            group_id
+                        ))
+
+
+                    cur.execute("""
+
+                        DELETE FROM invite_links
+                        WHERE user_id=%s
+                        AND group_id = ANY(%s)
+
+                    """, (
+                        user_id,
+                        group_ids
+                    ))
+
+                    cur.execute("""
+
+                        SELECT group_id,
+                               expiration
+                        FROM users
+                        WHERE user_id=%s
+                        AND group_id = ANY(%s)
+
+                    """, (
+                        user_id,
+                        group_ids
+                    ))
+
+                    expirations = {
+                        group_id: expiration
+                        for group_id, expiration in cur.fetchall()
+                    }
+
+
+                    for group_id, telegram_group_id in admin_groups:
+
+                        unban_chat_member(
+                            TOKEN,
+                            telegram_group_id,
+                            user_id
+                        )
+
+                        expiration = expirations.get(group_id)
+
+
+                        if expiration is None or expiration > datetime.now():
+
+                            link = create_telegram_invite_link(
+                                TOKEN,
+                                telegram_group_id,
+                                expire_seconds=180,
+                                member_limit=1
+                            )
+
+
+                            if link:
+
+                                cur.execute("""
+
+                                    INSERT INTO invite_links
+                                    (user_id, group_id, invite_link)
+                                    VALUES (%s, %s, %s)
+
+                                """, (
+                                    user_id,
+                                    group_id,
+                                    link
+                                ))
+
+
+                    conn.commit()
+
+
+                await update.message.reply_text(
+                    f"♻️ Usuario desbaneado:\n{user_id}"
+                )
+
+            except Exception as e:
+
+                print("Error desbaneando:", e)
+
+
+            context.user_data["unban_user"] = False
+
+            return
 
         try:
 
@@ -904,6 +1370,12 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         plan["currency"]
 
                     ))
+
+
+                assign_pending_commercial_owner_for_group(
+                    group_id,
+                    telegram_group_id
+                )
 
 
             await update.message.reply_text(
