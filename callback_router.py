@@ -11,6 +11,11 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
+from admin_permission_map import (
+    callback_requires_super_admin,
+    get_required_permissions_for_callback,
+    is_admin_callback
+)
 from ai_handler import activate_ai_help_context
 from code_admin_handler import crear_codigo_callback
 from commercial_catalog import (
@@ -43,7 +48,7 @@ from invite_link_service import (
     create_telegram_invite_link,
     revoke_telegram_invite_link
 )
-from rbac_helpers import is_super_admin
+from rbac_helpers import is_super_admin, has_any_permission_any_group
 from start_handler import start
 from telegram_group_actions import kick_chat_member
 
@@ -763,32 +768,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # RBAC — BLOQUEAR CALLBACKS ADMIN
     # =========================
 
-    admin_prefixes = (
+    if is_admin_callback(data):
 
-        "menu_",
-        "admin_",
-        "edit_group",
-        "view_group_plans",
-        "add_group_plan",
-        "edit_plan_",
-        "delete_group",
-        "delete_plan_",
-        "save_preview",
-        "cancel_preview",
-        "skip_preview",
-        "allow_user_",
-        "deny_user_",
-        "gen_"
+        if is_super_admin(user_id):
 
-    )
+            pass
 
-
-    if data.startswith(admin_prefixes):
-
-        if not can_access_admin_callback(user_id, data):
+        elif callback_requires_super_admin(data):
 
             await query.message.reply_text(
-                "⛔ No tienes permisos para usar esta acción."
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+        elif not has_any_permission_any_group(
+            user_id,
+            get_required_permissions_for_callback(data)
+        ):
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para usar esta sección."
             )
 
             return
