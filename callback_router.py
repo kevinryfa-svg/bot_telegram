@@ -1849,35 +1849,489 @@ async def notify_commercial_request_user(context, request_row, text, reply_marku
     return False
 
 
-async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+SUPPORT_TICKET_FIELDS = [
+    "id",
+    "user_id",
+    "username",
+    "first_name",
+    "status",
+    "created_at",
+    "updated_at",
+    "last_message_at"
+]
 
-    if not update.message or not update.message.text:
 
-        return
+def row_to_support_ticket(row):
 
+    if not row:
+
+        return None
+
+
+    return dict(zip(SUPPORT_TICKET_FIELDS, row))
+
+
+def fetch_support_ticket(ticket_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(SUPPORT_TICKET_FIELDS)}
+            FROM support_tickets
+            WHERE id=%s
+            LIMIT 1
+
+        """, (ticket_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_support_ticket(row)
+
+
+def fetch_user_support_ticket(ticket_id, user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(SUPPORT_TICKET_FIELDS)}
+            FROM support_tickets
+            WHERE id=%s
+            AND user_id=%s
+            LIMIT 1
+
+        """, (
+            ticket_id,
+            user_id
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_support_ticket(row)
+
+
+def get_or_create_support_ticket(user):
+
+    username = user.username if user and user.username else None
+    first_name = user.first_name if user and user.first_name else None
+    user_id = user.id if user else None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(SUPPORT_TICKET_FIELDS)}
+            FROM support_tickets
+            WHERE user_id=%s
+            AND status IN ('open', 'answered')
+            ORDER BY last_message_at DESC
+            LIMIT 1
+
+        """, (user_id,))
+
+        row = cur.fetchone()
+
+
+        if row:
+
+            cur.execute("""
+
+                UPDATE support_tickets
+                SET username=%s,
+                    first_name=%s,
+                    status='open',
+                    updated_at=NOW(),
+                    last_message_at=NOW()
+                WHERE id=%s
+
+            """, (
+                username,
+                first_name,
+                row[0]
+            ))
+
+            return row_to_support_ticket(row)
+
+
+        cur.execute(f"""
+
+            INSERT INTO support_tickets
+            (
+                user_id,
+                username,
+                first_name,
+                status,
+                updated_at,
+                last_message_at
+            )
+            VALUES (%s, %s, %s, 'open', NOW(), NOW())
+            RETURNING {", ".join(SUPPORT_TICKET_FIELDS)}
+
+        """, (
+            user_id,
+            username,
+            first_name
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_support_ticket(row)
+
+
+def create_support_message(ticket_id, sender_type, sender_id, message_text):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO support_messages
+            (
+                ticket_id,
+                sender_type,
+                sender_id,
+                message_text
+            )
+            VALUES (%s, %s, %s, %s)
+
+        """, (
+            ticket_id,
+            sender_type,
+            sender_id,
+            message_text
+        ))
+
+
+def update_support_ticket_status(ticket_id, status):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE support_tickets
+            SET status=%s,
+                updated_at=NOW(),
+                last_message_at=NOW()
+            WHERE id=%s
+
+        """, (
+            status,
+            ticket_id
+        ))
+
+
+def fetch_support_messages(ticket_id, limit=8):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT sender_type,
+                   sender_id,
+                   message_text,
+                   created_at
+            FROM support_messages
+            WHERE ticket_id=%s
+            ORDER BY created_at DESC
+            LIMIT %s
+
+        """, (
+            ticket_id,
+            limit
+        ))
+
+        rows = cur.fetchall()
+
+
+    return list(reversed(rows))
+
+
+def fetch_recent_support_tickets():
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(SUPPORT_TICKET_FIELDS)}
+            FROM support_tickets
+            WHERE status IN ('open', 'answered')
+            ORDER BY last_message_at DESC
+            LIMIT 20
+
+        """)
+
+        rows = cur.fetchall()
+
+
+    return [
+        row_to_support_ticket(row)
+        for row in rows
+    ]
+
+
+def format_support_username(ticket):
+
+    username = ticket.get("username") if ticket else None
+
+
+    if not username:
+
+        return "-"
+
+
+    if not username.startswith("@"):
+
+        return f"@{username}"
+
+
+    return username
+
+
+def format_support_messages(messages):
+
+    if not messages:
+
+        return "Sin mensajes todavía."
+
+
+    lines = []
+
+
+    for sender_type, sender_id, message_text, created_at in messages:
+
+        label = "Usuario" if sender_type == "user" else "Admin"
+        timestamp = format_commercial_datetime(created_at)
+        lines.append(
+            f"{label} ({sender_id}) · {timestamp}\n{message_text or '-'}"
+        )
+
+
+    return "\n\n".join(lines)
+
+
+def build_support_ticket_detail_text(ticket):
+
+    messages = fetch_support_messages(
+        ticket.get("id"),
+        limit=10
+    )
+
+    return (
+        f"🛟 Ticket #{ticket.get('id')}\n\n"
+        f"Estado: {ticket.get('status') or '-'}\n"
+        f"Usuario: {ticket.get('user_id') or '-'}\n"
+        f"Username: {format_support_username(ticket)}\n"
+        f"Nombre: {ticket.get('first_name') or '-'}\n"
+        f"Último mensaje: {format_commercial_datetime(ticket.get('last_message_at'))}\n\n"
+        f"{format_support_messages(messages)}"
+    )
+
+
+def build_support_ticket_keyboard(ticket_id):
+
+    return [
+
+        [InlineKeyboardButton(
+            "✍️ Responder",
+            callback_data=f"admin_support_reply_{ticket_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "✅ Cerrar ticket",
+            callback_data=f"admin_support_close_{ticket_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_support_tickets"
+        )]
+
+    ]
+
+
+def build_support_tickets_text(tickets):
+
+    if not tickets:
+
+        return (
+            "🛟 Soporte\n\n"
+            "No hay tickets abiertos."
+        )
+
+
+    lines = ["🛟 Tickets de soporte"]
+
+
+    for ticket in tickets:
+
+        messages = fetch_support_messages(
+            ticket.get("id"),
+            limit=1
+        )
+        last_message = messages[-1][2] if messages else "-"
+
+        lines.append(
+            "\n"
+            f"Ticket #{ticket.get('id')}\n"
+            f"Estado: {ticket.get('status') or '-'}\n"
+            f"Usuario: {ticket.get('user_id') or '-'}\n"
+            f"Username: {format_support_username(ticket)}\n"
+            f"Nombre: {ticket.get('first_name') or '-'}\n"
+            f"Último: {last_message}\n"
+            f"Fecha: {format_commercial_datetime(ticket.get('last_message_at'))}"
+        )
+
+
+    return "\n".join(lines)
+
+
+def build_support_tickets_keyboard(tickets):
+
+    keyboard = []
+
+
+    for ticket in tickets:
+
+        username = format_support_username(ticket)
+        label_name = username if username != "-" else ticket.get("first_name") or ticket.get("user_id")
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"📨 Ticket #{ticket.get('id')} - {label_name}",
+                callback_data=f"admin_support_ticket_{ticket.get('id')}"
+            )
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_back_main"
+        )
+    ])
+
+    return keyboard
+
+
+async def notify_support_admin(context, ticket, message_text):
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "🛟 Nuevo mensaje de soporte\n\n"
+                f"Usuario: {ticket.get('user_id')}\n"
+                f"Username: {format_support_username(ticket)}\n"
+                f"Ticket: #{ticket.get('id')}\n\n"
+                f"{message_text}"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "📨 Abrir ticket",
+                    callback_data=f"admin_support_ticket_{ticket.get('id')}"
+                )]
+            ])
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Error avisando soporte admin:", e)
+
+        return False
+
+
+async def handle_user_support_message(update, context, text):
 
     user = update.effective_user
-    text = update.message.text.strip()
-    username = user.username if user and user.username else "sin username"
-    first_name = user.first_name if user and user.first_name else "sin nombre"
-    user_id = user.id if user else "desconocido"
+    ticket = get_or_create_support_ticket(user)
 
+    create_support_message(
+        ticket.get("id"),
+        "user",
+        user.id,
+        text
+    )
 
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=(
-            "🛟 Nuevo mensaje de soporte\n\n"
-            f"Usuario: {user_id}\n"
-            f"Username: @{username}\n"
-            f"Nombre: {first_name}\n\n"
-            f"Mensaje:\n{text}"
-        )
+    update_support_ticket_status(
+        ticket.get("id"),
+        "open"
+    )
+
+    await notify_support_admin(
+        context,
+        ticket,
+        text
     )
 
     context.user_data["support_mode"] = False
 
     await update.message.reply_text(
-        "✅ Mensaje enviado a soporte. Un administrador lo revisará.",
+        "✅ Mensaje enviado a soporte.\n"
+        f"Tu número de ticket es #{ticket.get('id')}.\n"
+        "Un administrador te responderá por aquí.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔎 Consultar ticket",
+                callback_data="user_support_lookup_start"
+            )],
+            [InlineKeyboardButton(
+                "⬅️ Volver al inicio",
+                callback_data="public_back_start"
+            )]
+        ])
+    )
+
+
+async def handle_support_lookup_message(update, context, text):
+
+    user_id = update.effective_user.id
+
+
+    try:
+
+        ticket_id = int(text.replace("#", "").strip())
+
+    except Exception:
+
+        await update.message.reply_text(
+            "❌ Número de ticket no válido."
+        )
+
+        return
+
+
+    ticket = fetch_user_support_ticket(
+        ticket_id,
+        user_id
+    )
+
+    context.user_data["support_lookup_mode"] = False
+
+
+    if not ticket:
+
+        await update.message.reply_text(
+            "❌ Ese ticket no existe o no pertenece a tu usuario.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⬅️ Volver al inicio",
+                    callback_data="public_back_start"
+                )]
+            ])
+        )
+
+        return
+
+
+    await update.message.reply_text(
+        build_support_ticket_detail_text(ticket),
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 "⬅️ Volver al inicio",
@@ -1885,6 +2339,125 @@ async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_
             )]
         ])
     )
+
+
+async def handle_admin_support_reply(update, context, text):
+
+    admin_user = update.effective_user
+
+
+    if not is_super_admin(admin_user.id):
+
+        context.user_data.pop("replying_support_ticket", None)
+
+        await update.message.reply_text(
+            "⛔ No tienes permisos para responder soporte."
+        )
+
+        return
+
+
+    ticket_id = context.user_data.get("replying_support_ticket")
+    ticket = fetch_support_ticket(ticket_id)
+
+
+    if not ticket:
+
+        context.user_data.pop("replying_support_ticket", None)
+
+        await update.message.reply_text(
+            "❌ Ticket de soporte no encontrado."
+        )
+
+        return
+
+
+    create_support_message(
+        ticket_id,
+        "admin",
+        admin_user.id,
+        text
+    )
+
+    update_support_ticket_status(
+        ticket_id,
+        "answered"
+    )
+
+    context.user_data.pop("replying_support_ticket", None)
+
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=ticket.get("user_id"),
+            text=(
+                "🛟 Respuesta de soporte:\n\n"
+                f"{text}"
+            )
+        )
+
+    except Exception as e:
+
+        print("Error enviando respuesta soporte al usuario:", e)
+
+
+    await update.message.reply_text(
+        "✅ Respuesta enviada al usuario.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "📨 Abrir ticket",
+                callback_data=f"admin_support_ticket_{ticket_id}"
+            )],
+            [InlineKeyboardButton(
+                "🛟 Tickets abiertos",
+                callback_data="admin_support_tickets"
+            )]
+        ])
+    )
+
+
+async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message or not update.message.text:
+
+        return
+
+
+    text = update.message.text.strip()
+
+
+    if context.user_data.get("replying_support_ticket"):
+
+        await handle_admin_support_reply(
+            update,
+            context,
+            text
+        )
+
+        return
+
+
+    if context.user_data.get("support_lookup_mode"):
+
+        await handle_support_lookup_message(
+            update,
+            context,
+            text
+        )
+
+        return
+
+
+    if context.user_data.get("support_mode"):
+
+        await handle_user_support_message(
+            update,
+            context,
+            text
+        )
+
+        return
 
 
 # =========================
@@ -1907,6 +2480,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ):
 
         context.user_data["support_mode"] = False
+        context.user_data["support_lookup_mode"] = False
+        context.user_data.pop("replying_support_ticket", None)
 
         await delete_query_message_safely(query)
 
@@ -2043,10 +2618,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "public_support":
 
         context.user_data["support_mode"] = True
+        context.user_data["support_lookup_mode"] = False
 
         await delete_query_message_safely(query)
 
         keyboard = [
+
+            [InlineKeyboardButton(
+                "🔎 Consultar ticket",
+                callback_data="user_support_lookup_start"
+            )],
 
             [InlineKeyboardButton(
                 "⬅️ Volver",
@@ -2064,6 +2645,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🛟 Soporte\n\n"
             "Escribe tu mensaje y se lo enviaremos a un administrador.",
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data == "user_support_lookup_start":
+
+        context.user_data["support_mode"] = False
+        context.user_data["support_lookup_mode"] = True
+
+        await query.message.reply_text(
+            "🔎 Consultar ticket\n\n"
+            "Escribe el número de ticket que quieres consultar. Ejemplo: 12"
         )
 
         return
@@ -2462,6 +3056,127 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             return
+
+
+    if data == "admin_support_tickets":
+
+        tickets = fetch_recent_support_tickets()
+
+        await query.message.reply_text(
+            build_support_tickets_text(tickets),
+            reply_markup=InlineKeyboardMarkup(
+                build_support_tickets_keyboard(tickets)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_support_ticket_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "admin_support_ticket_"
+        )
+
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket:
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            build_support_ticket_detail_text(ticket),
+            reply_markup=InlineKeyboardMarkup(
+                build_support_ticket_keyboard(ticket_id)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_support_reply_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "admin_support_reply_"
+        )
+
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket:
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado."
+            )
+
+            return
+
+
+        context.user_data["replying_support_ticket"] = ticket_id
+
+        await query.message.reply_text(
+            f"✍️ Responder ticket #{ticket_id}\n\n"
+            "Escribe ahora la respuesta para el usuario."
+        )
+
+        return
+
+
+    if data.startswith("admin_support_close_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "admin_support_close_"
+        )
+
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket:
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado."
+            )
+
+            return
+
+
+        update_support_ticket_status(
+            ticket_id,
+            "closed"
+        )
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=ticket.get("user_id"),
+                text=f"✅ Tu ticket #{ticket_id} ha sido cerrado."
+            )
+
+        except Exception as e:
+
+            print("Error avisando cierre soporte:", e)
+
+
+        await query.message.reply_text(
+            f"✅ Ticket #{ticket_id} cerrado.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🛟 Tickets abiertos",
+                    callback_data="admin_support_tickets"
+                )]
+            ])
+        )
+
+        return
 
 
     if data == "admin_commercial_requests":

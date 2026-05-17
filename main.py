@@ -269,12 +269,16 @@ async def handle_text(update, context):
         await receive_admin_inputs(update, context)
         return
 
-    if context.user_data.get("ai_chat_mode"):
-        await handle_ai_context_text(update, context)
+    if (
+        context.user_data.get("support_mode")
+        or context.user_data.get("support_lookup_mode")
+        or context.user_data.get("replying_support_ticket")
+    ):
+        await receive_support_message(update, context)
         return
 
-    if context.user_data.get("support_mode"):
-        await receive_support_message(update, context)
+    if context.user_data.get("ai_chat_mode"):
+        await handle_ai_context_text(update, context)
         return
 
     await receive_code(update, context)
