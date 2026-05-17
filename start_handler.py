@@ -46,12 +46,29 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
                 WHERE is_active=TRUE
                 AND telegram_group_id != 0
+                AND COALESCE(public_visibility, 'start_home')='start_home'
 
                 ORDER BY id ASC
 
             """)
 
-            groups = cur.fetchall()
+            home_groups = cur.fetchall()
+
+            cur.execute("""
+
+                SELECT id, name
+
+                FROM groups
+
+                WHERE is_active=TRUE
+                AND telegram_group_id != 0
+                AND COALESCE(public_visibility, 'start_home')='explore_only'
+
+                ORDER BY id ASC
+
+            """)
+
+            explore_groups = cur.fetchall()
 
     except Exception as e:
 
@@ -86,22 +103,24 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     keyboard = []
 
 
-    if groups:
+    if home_groups or explore_groups:
 
-        keyboard.append([
+        if explore_groups:
 
-            InlineKeyboardButton(
+            keyboard.append([
 
-                "🔥 Explorar comunidades privadas",
+                InlineKeyboardButton(
 
-                callback_data="start_explore_groups"
+                    "🔥 Explorar comunidades privadas",
 
-            )
+                    callback_data="start_explore_groups"
 
-        ])
+                )
+
+            ])
 
 
-        for group_id, group_name in groups:
+        for group_id, group_name in home_groups:
 
             keyboard.append([
 
