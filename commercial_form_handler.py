@@ -161,7 +161,8 @@ def fetch_creator_request(request_id, user_id):
                    payment_mode,
                    requested_public_visibility,
                    approved_group_id,
-                   approved_telegram_group_id
+                   approved_telegram_group_id,
+                   COALESCE(max_groups_allowed, 1)
             FROM commercial_requests
             WHERE id=%s
             LIMIT 1
@@ -190,7 +191,8 @@ def fetch_creator_request(request_id, user_id):
         "payment_mode": row[2],
         "requested_public_visibility": row[3],
         "approved_group_id": row[4],
-        "approved_telegram_group_id": row[5]
+        "approved_telegram_group_id": row[5],
+        "max_groups_allowed": row[6] or 1
     }
 
 
@@ -222,7 +224,12 @@ def find_group_by_telegram_id(text):
         return cur.fetchone()
 
 
-def max_groups_allowed(_user_id):
+def max_groups_allowed(_user_id, request_row=None):
+
+    if request_row:
+
+        return request_row.get("max_groups_allowed") or 1
+
 
     return 1
 
@@ -248,9 +255,9 @@ def creator_group_count(user_id, exclude_request_id=None):
         return cur.fetchone()[0] or 0
 
 
-def creator_reached_group_limit(user_id, request_id):
+def creator_reached_group_limit(user_id, request_id, request_row=None):
 
-    allowed = max_groups_allowed(user_id)
+    allowed = max_groups_allowed(user_id, request_row)
 
     return creator_group_count(user_id, request_id) >= allowed
 
@@ -380,9 +387,14 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
                 await update.message.reply_text(
                     "📡 Grupo/canal guardado como pendiente de verificación.\n\n"
-                    "El grupo existe en el sistema, pero está no activo/no publicado. "
-                    "Esto ocurre cuando el bot fue añadido por un usuario no autorizado o falta revisión manual.\n\n"
-                    "Para resolverlo, el propietario principal debe revisar el grupo, activarlo y asociarlo a esta solicitud.",
+                    "Está pendiente porque el grupo existe, pero todavía no está activo/publicado. "
+                    "Esto puede pasar si el bot no fue añadido por el creador autorizado, si falta revisión manual o si todavía no se confirmó el cupo.\n\n"
+                    "Qué hacer ahora:\n"
+                    "1️⃣ Vuelve a 📦 Configurar comunidad.\n"
+                    "2️⃣ Comprueba que añadiste el bot como administrador.\n"
+                    "3️⃣ Espera 30 segundos para que el bot valide el grupo.\n"
+                    "4️⃣ Usa el ID que recibas por privado.\n"
+                    "5️⃣ Si sigue pendiente, contacta con soporte para revisión del propietario principal.",
                     reply_markup=get_back_to_setup_keyboard(request_id)
                 )
 
@@ -391,7 +403,8 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
             if creator_reached_group_limit(
                 request_row["user_id"],
-                request_id
+                request_id,
+                request_row
             ):
 
                 clear_creator_setup(context)
@@ -507,11 +520,12 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(
             "📡 Grupo/canal guardado como pendiente de verificación.\n\n"
             "Está pendiente porque todavía no se pudo asociar con un grupo real registrado y activo en el bot.\n\n"
-            "Qué falta:\n"
-            "1. Añade el bot al grupo/canal.\n"
-            "2. Dale permisos de administrador.\n"
-            "3. Asegúrate de que el grupo quede detectado por el bot.\n"
-            "4. Vuelve a introducir el ID cuando esté registrado.\n\n"
+            "Pasos para resolverlo:\n"
+            "1️⃣ Añade el bot al grupo/canal.\n"
+            "2️⃣ Dale permisos de administrador para gestionar enlaces, usuarios y mensajes de acceso.\n"
+            "3️⃣ Espera 30 segundos para que el bot valide autorización y cupo.\n"
+            "4️⃣ Copia el ID que el bot te enviará por privado.\n"
+            "5️⃣ Vuelve a 📦 Configurar comunidad y pega el ID aquí si hace falta.\n\n"
             "Cuando el grupo exista en el sistema, se podrá activar el panel de gestión.",
             reply_markup=get_back_to_setup_keyboard(request_id)
         )

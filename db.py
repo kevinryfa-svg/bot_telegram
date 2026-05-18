@@ -160,6 +160,36 @@ def create_tables():
 
 
         # =========================
+        # MIGRACIÓN USERS / ACCESOS
+        # =========================
+
+        user_columns = [
+
+            ("subscription_active", "BOOLEAN DEFAULT FALSE"),
+            ("last_invite_link", "TEXT")
+
+        ]
+
+
+        for column_name, column_type in user_columns:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE users
+                    ADD COLUMN {column_name} {column_type}
+
+                """)
+
+                print(f"Columna añadida en users: {column_name}")
+
+            except Exception:
+
+                print(f"Columna ya existe en users: {column_name}")
+
+
+        # =========================
         # FAVORITOS Y STATS MARKETPLACE
         # =========================
 
@@ -429,6 +459,34 @@ def create_tables():
         );
 
         """)
+
+
+        invite_link_columns = [
+
+            ("is_active", "BOOLEAN DEFAULT TRUE"),
+            ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+            ("revoked_at", "TIMESTAMP")
+
+        ]
+
+
+        for column_name, column_type in invite_link_columns:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE invite_links
+                    ADD COLUMN {column_name} {column_type}
+
+                """)
+
+                print(f"Columna añadida en invite_links: {column_name}")
+
+            except Exception:
+
+                print(f"Columna ya existe en invite_links: {column_name}")
+
 
 
         # =========================
