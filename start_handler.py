@@ -22,6 +22,101 @@ from rbac_helpers import is_super_admin
 from ui_menu_helpers import send_clean_message
 
 
+
+
+async def expire_expired_start_trials(context):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   user_id,
+                   approved_group_id,
+                   approved_telegram_group_id
+            FROM commercial_requests
+            WHERE status='trial_active'
+            AND trial_ends_at IS NOT NULL
+            AND trial_ends_at < NOW()
+            AND COALESCE(commercial_subscription_status, 'pending') NOT IN ('active', 'paid')
+            AND (
+                approved_group_id IS NOT NULL
+                OR approved_telegram_group_id IS NOT NULL
+            )
+
+        """)
+
+        rows = cur.fetchall()
+
+
+        for request_id, owner_user_id, approved_group_id, approved_telegram_group_id in rows:
+
+            cur.execute("""
+
+                UPDATE commercial_requests
+                SET status='trial_expired',
+                    requested_public_visibility='hidden',
+                    updated_at=NOW()
+                WHERE id=%s
+                AND status='trial_active'
+
+            """, (request_id,))
+
+
+            if approved_group_id:
+
+                cur.execute("""
+
+                    UPDATE groups
+                    SET public_visibility='hidden'
+                    WHERE id=%s
+
+                """, (approved_group_id,))
+
+
+            elif approved_telegram_group_id:
+
+                cur.execute("""
+
+                    UPDATE groups
+                    SET public_visibility='hidden'
+                    WHERE telegram_group_id=%s
+
+                """, (approved_telegram_group_id,))
+
+
+            try:
+
+                await context.bot.send_message(
+                    chat_id=owner_user_id,
+                    text=(
+                        "Tu prueba ha finalizado. Para volver a publicar tu comunidad, "
+                        "activa una suscripción."
+                    )
+                )
+
+            except Exception as e:
+
+                print("Error avisando fin de trial comercial:", e)
+
+
+def active_marketplace_trial_filter():
+
+    return """
+        NOT EXISTS (
+            SELECT 1
+            FROM commercial_requests cr
+            WHERE (
+                cr.approved_group_id = groups.id
+                OR cr.approved_telegram_group_id = groups.telegram_group_id
+            )
+            AND cr.status='trial_active'
+            AND cr.trial_ends_at IS NOT NULL
+            AND cr.trial_ends_at < NOW()
+            AND COALESCE(cr.commercial_subscription_status, 'pending') NOT IN ('active', 'paid')
+        )
+    """
+
 # =========================
 # START BOT — MENÚ COMERCIAL
 # =========================
@@ -29,6 +124,8 @@ from ui_menu_helpers import send_clean_message
 async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id=None):
 
     user_id = update.effective_user.id
+
+    await expire_expired_start_trials(context)
 
 
     # =========================
@@ -48,6 +145,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
                 WHERE is_active=TRUE
                 AND telegram_group_id != 0
                 AND COALESCE(public_visibility, 'start_home')='start_home'
+                AND """ + active_marketplace_trial_filter() + """
 
                 ORDER BY id ASC
 
@@ -64,6 +162,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
                 WHERE is_active=TRUE
                 AND telegram_group_id != 0
                 AND COALESCE(public_visibility, 'start_home')='explore_only'
+                AND """ + active_marketplace_trial_filter() + """
 
                 ORDER BY id ASC
 

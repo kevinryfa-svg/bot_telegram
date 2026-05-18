@@ -1,3 +1,5 @@
+import re
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -117,6 +119,7 @@ def clear_commercial_form(context):
     context.user_data.pop("commercial_form_type", None)
     context.user_data.pop("commercial_form_step", None)
     context.user_data.pop("commercial_form_data", None)
+    context.user_data.pop("commercial_form_waiting", None)
 
 
 def clear_creator_setup(context):
@@ -126,6 +129,7 @@ def clear_creator_setup(context):
     context.user_data.pop("creator_setup_action", None)
     context.user_data.pop("creator_setup_step", None)
     context.user_data.pop("creator_setup_data", None)
+    context.user_data.pop("creator_setup_waiting", None)
 
 
 def clear_marketplace_preview_media(context):
@@ -133,6 +137,127 @@ def clear_marketplace_preview_media(context):
     context.user_data.pop("marketplace_preview_media", None)
     context.user_data.pop("marketplace_preview_request_id", None)
     context.user_data.pop("marketplace_preview_media_type", None)
+
+
+def is_valid_telegram_group_id(value):
+
+    try:
+
+        group_id = int(str(value).strip())
+
+    except Exception:
+
+        return False
+
+
+    return group_id < 0
+
+
+def is_valid_price_id(value):
+
+    return re.match(r"^price_[A-Za-z0-9_]+$", value or "") is not None
+
+
+def is_valid_stripe_secret_key(value):
+
+    return re.match(r"^sk_(test|live)_[A-Za-z0-9_]+$", value or "") is not None
+
+
+def is_valid_stripe_publishable_key(value):
+
+    return re.match(r"^pk_(test|live)_[A-Za-z0-9_]+$", value or "") is not None
+
+
+def is_valid_webhook_secret(value):
+
+    return re.match(r"^whsec_[A-Za-z0-9_]+$", value or "") is not None
+
+
+def is_valid_url(value):
+
+    return re.match(r"^https?://[^\s]+\.[^\s]+$", value or "") is not None
+
+
+def is_valid_contact(value):
+
+    value = (value or "").strip()
+
+
+    if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value):
+
+        return True
+
+
+    if re.match(r"^\+?[0-9][0-9\s().-]{6,}$", value):
+
+        return True
+
+
+    if re.match(r"^@[A-Za-z0-9_]{5,32}$", value):
+
+        return True
+
+
+    if is_valid_url(value):
+
+        return True
+
+
+    return False
+
+
+def is_valid_group_reference(value):
+
+    value = (value or "").strip()
+
+
+    if value.lower() in ("no tengo", "no", "-"):
+
+        return True
+
+
+    if is_valid_telegram_group_id(value):
+
+        return True
+
+
+    if re.match(r"^@[A-Za-z0-9_]{5,32}$", value):
+
+        return True
+
+
+    if is_valid_url(value):
+
+        return True
+
+
+    return False
+
+
+def invalid_data_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "⬅️ Volver a configuración",
+            callback_data=f"configure_community_{request_id}"
+        )]
+    ])
+
+
+async def reply_invalid_data(update, request_id=None):
+
+    kwargs = {}
+
+
+    if request_id:
+
+        kwargs["reply_markup"] = invalid_data_keyboard(request_id)
+
+
+    await update.message.reply_text(
+        "⚠️ El dato no parece válido. Revisa el formato y vuelve a intentarlo.",
+        **kwargs
+    )
 
 
 def mask_secret(value):
@@ -357,7 +482,29 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
 
+    waiting_state = context.user_data.get("creator_setup_waiting")
+
+
+    if not waiting_state:
+
+        clear_creator_setup(context)
+
+        await update.message.reply_text(
+            "No estaba esperando ese dato. Usa los botones del menú para continuar.",
+            reply_markup=get_back_to_setup_keyboard(request_id)
+        )
+
+        return
+
+
     if action == "group":
+
+        if waiting_state != "creator_setup_waiting_group_id" or not is_valid_telegram_group_id(text):
+
+            await reply_invalid_data(update, request_id)
+
+            return
+
 
         group_row = find_group_by_telegram_id(text)
 
@@ -537,8 +684,16 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         if step == 1:
 
+            if waiting_state != "creator_setup_waiting_text_name" or len(text) < 3:
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
             setup_data["community_name"] = text
             context.user_data["creator_setup_step"] = 2
+            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_description"
 
             await update.message.reply_text(
                 "Describe tu comunidad en una frase clara."
@@ -549,8 +704,16 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         if step == 2:
 
+            if waiting_state != "creator_setup_waiting_description" or len(text) < 8:
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
             setup_data["community_description"] = text
             context.user_data["creator_setup_step"] = 3
+            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_preview_text"
 
             await update.message.reply_text(
                 "Escribe el texto breve que quieres usar como preview o presentación."
@@ -560,6 +723,13 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
 
         if step == 3:
+
+            if waiting_state != "creator_setup_waiting_preview_text" or len(text) < 8:
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
 
             setup_data["creator_preview_text"] = text
             group_id = get_request_group_id(request_row)
@@ -612,6 +782,13 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
     if action == "marketplace_preview_text":
 
+        if waiting_state != "creator_setup_waiting_preview_text" or len(text) < 8:
+
+            await reply_invalid_data(update, request_id)
+
+            return
+
+
         group_id = get_request_group_id(request_row)
 
         with conn.cursor() as cur:
@@ -659,6 +836,13 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
     if action == "marketplace_tags":
 
+        if waiting_state != "creator_setup_waiting_tags" or len(text) < 2:
+
+            await reply_invalid_data(update, request_id)
+
+            return
+
+
         group_id = get_request_group_id(request_row)
 
 
@@ -704,8 +888,16 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         if step == 1:
 
+            if waiting_state != "creator_setup_waiting_stripe_secret" or not is_valid_stripe_secret_key(text):
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
             setup_data["owner_stripe_secret_key"] = text
             context.user_data["creator_setup_step"] = 2
+            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_webhook_secret"
 
             await update.message.reply_text(
                 "Envía ahora el STRIPE_WEBHOOK_SECRET de tu Stripe."
@@ -716,8 +908,16 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         if step == 2:
 
+            if waiting_state != "creator_setup_waiting_webhook_secret" or not is_valid_webhook_secret(text):
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
             setup_data["owner_stripe_webhook_secret"] = text
             context.user_data["creator_setup_step"] = 3
+            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_publishable_key"
 
             await update.message.reply_text(
                 "Envía tu STRIPE_PUBLISHABLE_KEY si la tienes. Si no, escribe \"no tengo\"."
@@ -731,7 +931,21 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
             publishable_key = None
 
 
+            if waiting_state != "creator_setup_waiting_publishable_key":
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
             if text.lower() not in ("no tengo", "no", "-", "ninguna"):
+
+                if not is_valid_stripe_publishable_key(text):
+
+                    await reply_invalid_data(update, request_id)
+
+                    return
+
 
                 publishable_key = text
 
@@ -824,8 +1038,16 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         if step == 1:
 
+            if waiting_state != "creator_setup_waiting_plan_name" or len(text) < 2:
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
             setup_data["name"] = text
             context.user_data["creator_setup_step"] = 2
+            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_duration_days"
 
             await update.message.reply_text(
                 "Introduce la duración del plan en días."
@@ -836,20 +1058,33 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         if step == 2:
 
+            if waiting_state != "creator_setup_waiting_duration_days":
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
             try:
 
                 setup_data["duration_days"] = int(text)
 
             except Exception:
 
-                await update.message.reply_text(
-                    "❌ Número inválido. Introduce la duración en días."
-                )
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
+            if setup_data["duration_days"] <= 0:
+
+                await reply_invalid_data(update, request_id)
 
                 return
 
 
             context.user_data["creator_setup_step"] = 3
+            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_amount"
 
             await update.message.reply_text(
                 "Introduce el precio en céntimos. Ejemplo: 999 para 9,99."
@@ -860,20 +1095,33 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         if step == 3:
 
+            if waiting_state != "creator_setup_waiting_amount":
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
             try:
 
                 setup_data["amount"] = int(text)
 
             except Exception:
 
-                await update.message.reply_text(
-                    "❌ Precio inválido. Introduce el importe en céntimos."
-                )
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
+            if setup_data["amount"] <= 0:
+
+                await reply_invalid_data(update, request_id)
 
                 return
 
 
             context.user_data["creator_setup_step"] = 4
+            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_currency"
 
             await update.message.reply_text(
                 "Introduce la moneda. Ejemplo: EUR."
@@ -884,8 +1132,16 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
         if step == 4:
 
+            if waiting_state != "creator_setup_waiting_currency" or not re.match(r"^[A-Z]{3}$", text.upper()):
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
+
             setup_data["currency"] = text.upper()
             context.user_data["creator_setup_step"] = 5
+            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_price_id"
 
             await update.message.reply_text(
                 "Introduce el price_id de Stripe para este plan."
@@ -895,6 +1151,13 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
 
         if step == 5:
+
+            if waiting_state != "creator_setup_waiting_price_id" or not is_valid_price_id(text):
+
+                await reply_invalid_data(update, request_id)
+
+                return
+
 
             setup_data["price_id"] = text
 
@@ -1125,14 +1388,34 @@ async def receive_commercial_form(update: Update, context: ContextTypes.DEFAULT_
     form_type = context.user_data.get("commercial_form_type")
     step = context.user_data.get("commercial_form_step", 1)
     form_data = context.user_data.setdefault("commercial_form_data", {})
+    waiting_state = context.user_data.get("commercial_form_waiting")
+
+
+    if not waiting_state:
+
+        clear_commercial_form(context)
+
+        await update.message.reply_text(
+            "No estaba esperando ese dato. Usa los botones del menú para continuar."
+        )
+
+        return
 
 
     if form_type == "shared_trial":
 
         if step == 1:
 
+            if waiting_state != "creator_setup_waiting_community_name" or len(text) < 3:
+
+                await reply_invalid_data(update)
+
+                return
+
+
             form_data["community_name"] = text
             context.user_data["commercial_form_step"] = 2
+            context.user_data["commercial_form_waiting"] = "creator_setup_waiting_description"
 
             await update.message.reply_text(
                 "Describe brevemente tu comunidad."
@@ -1143,8 +1426,16 @@ async def receive_commercial_form(update: Update, context: ContextTypes.DEFAULT_
 
         if step == 2:
 
+            if waiting_state != "creator_setup_waiting_description" or len(text) < 8:
+
+                await reply_invalid_data(update)
+
+                return
+
+
             form_data["community_description"] = text
             context.user_data["commercial_form_step"] = 3
+            context.user_data["commercial_form_waiting"] = "creator_setup_waiting_group_reference"
 
             await update.message.reply_text(
                 "Envía el link o @usuario del grupo/canal si lo tienes. Si no lo tienes, escribe \"no tengo\"."
@@ -1155,8 +1446,23 @@ async def receive_commercial_form(update: Update, context: ContextTypes.DEFAULT_
 
         if step == 3:
 
+            if waiting_state != "creator_setup_waiting_group_reference":
+
+                await reply_invalid_data(update)
+
+                return
+
+
+            if not is_valid_group_reference(text):
+
+                await reply_invalid_data(update)
+
+                return
+
+
             form_data["telegram_group_link"] = text
             context.user_data["commercial_form_step"] = 4
+            context.user_data["commercial_form_waiting"] = "creator_setup_waiting_contact"
 
             await update.message.reply_text(
                 "Indica tu contacto: teléfono, email, Telegram o cómo quieres que te contacten."
@@ -1166,6 +1472,20 @@ async def receive_commercial_form(update: Update, context: ContextTypes.DEFAULT_
 
 
         if step == 4:
+
+            if waiting_state != "creator_setup_waiting_contact":
+
+                await reply_invalid_data(update)
+
+                return
+
+
+            if not is_valid_contact(text):
+
+                await reply_invalid_data(update)
+
+                return
+
 
             form_data["contact_text"] = text
 
@@ -1183,8 +1503,16 @@ async def receive_commercial_form(update: Update, context: ContextTypes.DEFAULT_
 
         if step == 1:
 
+            if waiting_state != "creator_setup_waiting_project_name" or len(text) < 3:
+
+                await reply_invalid_data(update)
+
+                return
+
+
             form_data["community_name"] = text
             context.user_data["commercial_form_step"] = 2
+            context.user_data["commercial_form_waiting"] = "creator_setup_waiting_bot_name"
 
             await update.message.reply_text(
                 "Indica el nombre deseado del bot."
@@ -1195,8 +1523,16 @@ async def receive_commercial_form(update: Update, context: ContextTypes.DEFAULT_
 
         if step == 2:
 
+            if waiting_state != "creator_setup_waiting_bot_name" or len(text) < 3:
+
+                await reply_invalid_data(update)
+
+                return
+
+
             form_data["bot_name"] = text
             context.user_data["commercial_form_step"] = 3
+            context.user_data["commercial_form_waiting"] = "creator_setup_waiting_bot_username"
 
             await update.message.reply_text(
                 "Envía el @username del bot si ya lo creaste en BotFather. Si no lo tienes, escribe \"no tengo\"."
@@ -1207,8 +1543,23 @@ async def receive_commercial_form(update: Update, context: ContextTypes.DEFAULT_
 
         if step == 3:
 
+            if waiting_state != "creator_setup_waiting_bot_username":
+
+                await reply_invalid_data(update)
+
+                return
+
+
+            if text.lower() not in ("no tengo", "no", "-") and not re.match(r"^@[A-Za-z0-9_]{5,32}$", text):
+
+                await reply_invalid_data(update)
+
+                return
+
+
             form_data["bot_username"] = text
             context.user_data["commercial_form_step"] = 4
+            context.user_data["commercial_form_waiting"] = "creator_setup_waiting_project_description"
 
             await update.message.reply_text(
                 "Describe lo que quieres vender o gestionar."
@@ -1219,8 +1570,16 @@ async def receive_commercial_form(update: Update, context: ContextTypes.DEFAULT_
 
         if step == 4:
 
+            if waiting_state != "creator_setup_waiting_project_description" or len(text) < 8:
+
+                await reply_invalid_data(update)
+
+                return
+
+
             form_data["project_description"] = text
             context.user_data["commercial_form_step"] = 5
+            context.user_data["commercial_form_waiting"] = "creator_setup_waiting_contact"
 
             await update.message.reply_text(
                 "Indica tu contacto: teléfono, email, Telegram o cómo quieres que te contacten."
@@ -1230,6 +1589,20 @@ async def receive_commercial_form(update: Update, context: ContextTypes.DEFAULT_
 
 
         if step == 5:
+
+            if waiting_state != "creator_setup_waiting_contact":
+
+                await reply_invalid_data(update)
+
+                return
+
+
+            if not is_valid_contact(text):
+
+                await reply_invalid_data(update)
+
+                return
+
 
             form_data["contact_text"] = text
 
