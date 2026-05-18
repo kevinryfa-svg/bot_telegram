@@ -58,6 +58,7 @@ from rbac_helpers import (
     assign_group_owner_permissions,
     get_admin_group_ids,
     has_any_permission_any_group,
+    has_group_permission,
     has_permission,
     is_super_admin
 )
@@ -130,6 +131,9 @@ ADMIN_PERMISSION_COLUMNS = [
     "can_view_payments",
     "can_view_stats",
     "can_view_logs",
+    "can_edit_group_texts",
+    "can_edit_marketplace_preview",
+    "can_respond_group_support",
     "can_resend_links"
 ]
 
@@ -225,10 +229,6 @@ def can_access_admin_callback(user_id, data):
     }
 
     manage_users_callbacks = {
-        "admin_kick_user",
-        "admin_ban_user",
-        "admin_unban_user",
-        "admin_reset_warnings",
         "admin_move_user"
     }
 
@@ -294,6 +294,38 @@ def can_access_admin_callback(user_id, data):
         )
 
 
+    if data == "admin_kick_user":
+
+        return has_any_permission(
+            permissions,
+            ["can_kick_users", "can_manage_users"]
+        )
+
+
+    if data == "admin_ban_user":
+
+        return has_any_permission(
+            permissions,
+            ["can_ban_users", "can_manage_users"]
+        )
+
+
+    if data == "admin_unban_user":
+
+        return has_any_permission(
+            permissions,
+            ["can_unban_users", "can_manage_users"]
+        )
+
+
+    if data == "admin_reset_warnings":
+
+        return has_any_permission(
+            permissions,
+            ["can_reset_warnings", "can_manage_users"]
+        )
+
+
     if data in codes_callbacks or data.startswith("gen_"):
 
         return has_any_permission(
@@ -351,11 +383,19 @@ def can_access_admin_callback(user_id, data):
         )
 
 
-    if data.startswith("allow_user_") or data.startswith("deny_user_"):
+    if data.startswith("allow_user_"):
 
         return has_any_permission(
             permissions,
             ["can_manage_users"]
+        )
+
+
+    if data.startswith("deny_user_"):
+
+        return has_any_permission(
+            permissions,
+            ["can_kick_users", "can_manage_users"]
         )
 
 
@@ -428,6 +468,422 @@ def user_has_group_permission_any(user_id, group_id, permissions):
     )
 
 
+GROUP_ADMIN_PERMISSION_OPTIONS = [
+    ("view_users", "Ver usuarios", "can_view_users"),
+    ("kick_users", "Expulsar usuarios", "can_kick_users"),
+    ("ban_users", "Banear usuarios", "can_ban_users"),
+    ("unban_users", "Desbanear usuarios", "can_unban_users"),
+    ("warn_users", "Dar warnings", "can_warn_users"),
+    ("manage_links", "Gestionar enlaces", "can_resend_links"),
+    ("view_stats", "Ver estadísticas", "can_view_stats"),
+    ("manage_plans", "Gestionar planes", "can_manage_plans"),
+    ("edit_texts", "Editar textos del grupo", "can_edit_group_texts"),
+    ("edit_preview", "Editar preview marketplace", "can_edit_marketplace_preview"),
+    ("support", "Responder soporte del grupo", "can_respond_group_support"),
+    ("view_logs", "Ver logs del grupo", "can_view_logs")
+]
+
+
+GROUP_ADMIN_PERMISSION_BY_KEY = {
+    key: permission
+    for key, _label, permission in GROUP_ADMIN_PERMISSION_OPTIONS
+}
+
+
+def can_manage_group_admins(user_id, group_id):
+
+    return has_group_permission(
+        user_id,
+        group_id,
+        "can_manage_admins"
+    )
+
+
+def fetch_group_admin_manageable_groups(user_id):
+
+    return fetch_admin_groups_for_permissions(
+        user_id,
+        ["can_manage_admins"]
+    )
+
+
+def format_group_admin_permission_list(selected_permissions=None):
+
+    selected_permissions = selected_permissions or {}
+    lines = []
+
+
+    for key, label, permission in GROUP_ADMIN_PERMISSION_OPTIONS:
+
+        enabled = selected_permissions.get(permission) is True
+        marker = "✅" if enabled else "▫️"
+        lines.append(f"{marker} {label}")
+
+
+    return "\n".join(lines)
+
+
+def build_group_admin_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Añadir admin", callback_data="group_admin_add")],
+        [InlineKeyboardButton("📋 Ver admins", callback_data="group_admin_view")],
+        [InlineKeyboardButton("✏️ Editar permisos", callback_data="group_admin_edit")],
+        [InlineKeyboardButton("❌ Quitar admin", callback_data="group_admin_remove")],
+        [InlineKeyboardButton("📖 Ver permisos disponibles", callback_data="group_admin_permissions_info")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+    ])
+
+
+def build_group_admin_group_select_keyboard(groups, callback_prefix, back_callback="group_admin_panel"):
+
+    keyboard = []
+
+
+    for group_id, name, _telegram_group_id in groups:
+
+        keyboard.append([InlineKeyboardButton(
+            name or f"Grupo {group_id}",
+            callback_data=f"{callback_prefix}{group_id}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=back_callback)])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def fetch_group_admins(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT user_id,
+                   role,
+                   can_view_users,
+                   can_kick_users,
+                   can_ban_users,
+                   can_unban_users,
+                   can_warn_users,
+                   can_resend_links,
+                   can_view_stats,
+                   can_manage_plans,
+                   can_edit_group_texts,
+                   can_edit_marketplace_preview,
+                   can_respond_group_support,
+                   can_view_logs,
+                   is_active
+            FROM admins
+            WHERE group_id=%s
+            AND is_super_admin=FALSE
+            ORDER BY role DESC, user_id ASC
+
+        """, (group_id,))
+
+        return cur.fetchall()
+
+
+def fetch_group_admin_permissions(group_id, target_user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT can_view_users,
+                   can_kick_users,
+                   can_ban_users,
+                   can_unban_users,
+                   can_warn_users,
+                   can_resend_links,
+                   can_view_stats,
+                   can_manage_plans,
+                   can_edit_group_texts,
+                   can_edit_marketplace_preview,
+                   can_respond_group_support,
+                   can_view_logs,
+                   role,
+                   is_active
+            FROM admins
+            WHERE group_id=%s
+            AND user_id=%s
+            AND is_super_admin=FALSE
+            LIMIT 1
+
+        """, (
+            group_id,
+            target_user_id
+        ))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return None
+
+
+    permissions = {}
+
+    for index, (_key, _label, permission) in enumerate(GROUP_ADMIN_PERMISSION_OPTIONS):
+
+        permissions[permission] = row[index] is True
+
+
+    return {
+        "permissions": permissions,
+        "role": row[12],
+        "is_active": row[13] is True
+    }
+
+
+def build_group_admin_permissions_keyboard(group_id, target_user_id, permissions, toggle_callback_prefix):
+
+    keyboard = []
+
+
+    for key, label, permission in GROUP_ADMIN_PERMISSION_OPTIONS:
+
+        enabled = permissions.get(permission) is True
+        prefix = "✅" if enabled else "▫️"
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix} {label}",
+            callback_data=f"{toggle_callback_prefix}_{group_id}_{target_user_id}_{key}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "💾 Guardar admin",
+        callback_data=f"add_group_admin_save_{group_id}"
+    )])
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data="group_admin_panel"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_group_admin_edit_permissions_keyboard(group_id, target_user_id, permissions):
+
+    keyboard = []
+
+
+    for key, label, permission in GROUP_ADMIN_PERMISSION_OPTIONS:
+
+        enabled = permissions.get(permission) is True
+        prefix = "✅" if enabled else "▫️"
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix} {label}",
+            callback_data=f"gap_t_{group_id}_{target_user_id}_{key}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data=f"group_admin_edit_group_{group_id}"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def save_group_admin_permissions(group_id, target_user_id, permissions):
+
+    columns = [
+        "user_id",
+        "group_id",
+        "role",
+        "is_super_admin",
+        "can_manage_users",
+        "can_kick_users",
+        "can_ban_users",
+        "can_unban_users",
+        "can_warn_users",
+        "can_reset_warnings",
+        "can_resend_links",
+        "can_recover_access",
+        "can_manage_codes",
+        "can_manage_groups",
+        "can_manage_plans",
+        "can_manage_payments",
+        "can_manage_admins",
+        "can_view_users",
+        "can_view_payments",
+        "can_view_stats",
+        "can_view_logs",
+        "can_edit_group_texts",
+        "can_edit_marketplace_preview",
+        "can_respond_group_support",
+        "is_active"
+    ]
+    values_by_permission = {
+        permission: permissions.get(permission) is True
+        for _key, _label, permission in GROUP_ADMIN_PERMISSION_OPTIONS
+    }
+    values = [
+        target_user_id,
+        group_id,
+        "GROUP_ADMIN",
+        False,
+        False,
+        values_by_permission.get("can_kick_users", False),
+        values_by_permission.get("can_ban_users", False),
+        values_by_permission.get("can_unban_users", False),
+        values_by_permission.get("can_warn_users", False),
+        False,
+        values_by_permission.get("can_resend_links", False),
+        False,
+        False,
+        False,
+        values_by_permission.get("can_manage_plans", False),
+        False,
+        False,
+        values_by_permission.get("can_view_users", False),
+        False,
+        values_by_permission.get("can_view_stats", False),
+        values_by_permission.get("can_view_logs", False),
+        values_by_permission.get("can_edit_group_texts", False),
+        values_by_permission.get("can_edit_marketplace_preview", False),
+        values_by_permission.get("can_respond_group_support", False),
+        True
+    ]
+    placeholders = ", ".join(["%s"] * len(columns))
+    update_columns = columns[2:]
+    update_set = ", ".join(
+        f"{column}=EXCLUDED.{column}"
+        for column in update_columns
+    )
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            INSERT INTO admins
+            ({", ".join(columns)})
+            VALUES ({placeholders})
+            ON CONFLICT (user_id, group_id)
+            DO UPDATE SET {update_set}
+
+        """, values)
+
+
+def disable_group_admin(group_id, target_user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE admins
+            SET is_active=FALSE
+            WHERE group_id=%s
+            AND user_id=%s
+            AND is_super_admin=FALSE
+            AND COALESCE(role, '') != 'GROUP_OWNER'
+            RETURNING id
+
+        """, (
+            group_id,
+            target_user_id
+        ))
+
+        return cur.fetchone() is not None
+
+
+def fetch_group_name(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT name
+            FROM groups
+            WHERE id=%s
+            LIMIT 1
+
+        """, (group_id,))
+
+        row = cur.fetchone()
+
+
+    return row[0] if row else f"Grupo {group_id}"
+
+
+def build_group_admins_text(group_id):
+
+    rows = fetch_group_admins(group_id)
+    group_name = fetch_group_name(group_id)
+
+
+    if not rows:
+
+        return f"👥 Admins de mi grupo\n\nGrupo: {group_name}\n\nNo hay admins activos."
+
+
+    lines = [
+        f"👥 Admins de mi grupo\n\nGrupo: {group_name}"
+    ]
+
+
+    for row in rows:
+
+        target_user_id = row[0]
+        role = row[1] or "GROUP_ADMIN"
+        is_active = row[-1] is True
+        permissions = {
+            permission: row[index + 2] is True
+            for index, (_key, _label, permission) in enumerate(GROUP_ADMIN_PERMISSION_OPTIONS)
+        }
+        status = "activo" if is_active else "inactivo"
+        lines.append(
+            "\n"
+            f"Usuario: {target_user_id}\n"
+            f"Rol: {role}\n"
+            f"Estado: {status}\n"
+            f"{format_group_admin_permission_list(permissions)}"
+        )
+
+
+    return "\n".join(lines)
+
+
+def build_group_admin_user_select_keyboard(group_id, callback_prefix, include_owner=False):
+
+    rows = fetch_group_admins(group_id)
+    keyboard = []
+
+
+    for row in rows:
+
+        target_user_id = row[0]
+        role = row[1] or "GROUP_ADMIN"
+        is_active = row[-1] is True
+
+
+        if not include_owner and role == "GROUP_OWNER":
+
+            continue
+
+
+        if not is_active:
+
+            continue
+
+
+        keyboard.append([InlineKeyboardButton(
+            f"{target_user_id} — {role}",
+            callback_data=f"{callback_prefix}{group_id}_{target_user_id}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data="group_admin_panel"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 def fetch_admin_groups_for_permissions(user_id, permissions):
 
     group_ids = get_admin_group_ids(user_id, permissions)
@@ -482,16 +938,30 @@ def build_group_settings_keyboard(user_id, group_id):
     if user_has_group_permission_any(
         user_id,
         group_id,
-        ["can_manage_groups"]
+        ["can_manage_groups", "can_edit_group_texts"]
     ):
 
         keyboard.append([
             InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")
         ])
 
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_groups", "can_edit_marketplace_preview"]
+    ):
+
         keyboard.append([
             InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")
         ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_groups"]
+    ):
 
         keyboard.append([
             InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")
@@ -4634,6 +5104,641 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+    if data == "group_admin_panel":
+
+        context.user_data["adding_group_admin"] = False
+        context.user_data.pop("group_admin_target_user_id", None)
+        context.user_data.pop("group_admin_target_display", None)
+        context.user_data.pop("group_admin_selected_group_id", None)
+        context.user_data.pop("group_admin_permissions", None)
+
+        groups = fetch_group_admin_manageable_groups(user_id)
+
+
+        if not groups:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "👥 Admins de mi grupo\n\nGestiona admins y permisos por comunidad.",
+            reply_markup=build_group_admin_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "group_admin_permissions_info":
+
+        text = (
+            "📖 Permisos disponibles\n\n"
+            "Estos permisos se aplican solo al group_id interno de la comunidad seleccionada.\n\n"
+            + "\n".join(
+                f"• {label}"
+                for _key, label, _permission in GROUP_ADMIN_PERMISSION_OPTIONS
+            )
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            text,
+            reply_markup=build_group_admin_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "group_admin_add":
+
+        groups = fetch_group_admin_manageable_groups(user_id)
+
+
+        if not groups:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+            )
+
+            return
+
+
+        context.user_data["adding_group_admin"] = True
+        context.user_data.pop("group_admin_target_user_id", None)
+        context.user_data.pop("group_admin_target_display", None)
+        context.user_data.pop("group_admin_permissions", None)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "➕ Añadir admin\n\nEnvía el user_id o @username del usuario si ya existe en la base de datos."
+        )
+
+        return
+
+
+    if data.startswith("add_group_admin_select_group_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "add_group_admin_select_group_"
+        )
+
+
+        if not can_manage_group_admins(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ Esta comunidad no pertenece a tu panel."
+            )
+
+            return
+
+
+        target_user_id = context.user_data.get("group_admin_target_user_id")
+
+
+        if not target_user_id:
+
+            await query.message.reply_text(
+                "❌ No hay usuario pendiente para añadir."
+            )
+
+            return
+
+
+        context.user_data["group_admin_selected_group_id"] = group_id
+        context.user_data["group_admin_permissions"] = {
+            permission: False
+            for _key, _label, permission in GROUP_ADMIN_PERMISSION_OPTIONS
+        }
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "Permisos del nuevo admin:\n\n"
+            + format_group_admin_permission_list(
+                context.user_data["group_admin_permissions"]
+            ),
+            reply_markup=build_group_admin_permissions_keyboard(
+                group_id,
+                target_user_id,
+                context.user_data["group_admin_permissions"],
+                "gga_t"
+            )
+        )
+
+        return
+
+
+    if data.startswith("gga_t_"):
+
+        payload = data.replace("gga_t_", "", 1)
+
+        try:
+
+            group_id_text, target_user_id_text, permission_key = payload.split("_", 2)
+            group_id = int(group_id_text)
+            target_user_id = int(target_user_id_text)
+
+        except Exception:
+
+            await query.message.reply_text("❌ Permiso no válido.")
+
+            return
+
+
+        permission = GROUP_ADMIN_PERMISSION_BY_KEY.get(permission_key)
+
+
+        if not permission:
+
+            await query.message.reply_text("❌ Permiso no válido.")
+
+            return
+
+
+        if not can_manage_group_admins(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ Esta comunidad no pertenece a tu panel."
+            )
+
+            return
+
+
+        if int(context.user_data.get("group_admin_target_user_id") or 0) != target_user_id:
+
+            await query.message.reply_text(
+                "❌ El usuario pendiente no coincide."
+            )
+
+            return
+
+
+        permissions = context.user_data.setdefault(
+            "group_admin_permissions",
+            {
+                current_permission: False
+                for _key, _label, current_permission in GROUP_ADMIN_PERMISSION_OPTIONS
+            }
+        )
+        permissions[permission] = not permissions.get(permission, False)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "Permisos del nuevo admin:\n\n"
+            + format_group_admin_permission_list(permissions),
+            reply_markup=build_group_admin_permissions_keyboard(
+                group_id,
+                target_user_id,
+                permissions,
+                "gga_t"
+            )
+        )
+
+        return
+
+
+    if data.startswith("add_group_admin_save_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "add_group_admin_save_"
+        )
+
+
+        if not can_manage_group_admins(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ Esta comunidad no pertenece a tu panel."
+            )
+
+            return
+
+
+        target_user_id = context.user_data.get("group_admin_target_user_id")
+        permissions = context.user_data.get("group_admin_permissions") or {}
+
+
+        if not target_user_id:
+
+            await query.message.reply_text(
+                "❌ No hay usuario pendiente para añadir."
+            )
+
+            return
+
+
+        save_group_admin_permissions(
+            group_id,
+            target_user_id,
+            permissions
+        )
+
+        context.user_data["adding_group_admin"] = False
+        context.user_data.pop("group_admin_target_user_id", None)
+        context.user_data.pop("group_admin_target_display", None)
+        context.user_data.pop("group_admin_selected_group_id", None)
+        context.user_data.pop("group_admin_permissions", None)
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=(
+                    "✅ Has sido añadido como admin de una comunidad.\n\n"
+                    f"Grupo: {fetch_group_name(group_id)}"
+                )
+            )
+
+        except Exception as e:
+
+            print("Error avisando admin de grupo:", e)
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Admin guardado correctamente.",
+            reply_markup=build_group_admin_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "group_admin_view":
+
+        groups = fetch_group_admin_manageable_groups(user_id)
+
+
+        if not groups:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+            )
+
+            return
+
+
+        if len(groups) == 1:
+
+            group_id = groups[0][0]
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_group_admins_text(group_id),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("⬅️ Volver", callback_data="group_admin_panel")
+                ]])
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📋 Ver admins\n\nSelecciona una comunidad.",
+            reply_markup=build_group_admin_group_select_keyboard(
+                groups,
+                "group_admin_view_group_"
+            )
+        )
+
+        return
+
+
+    if data.startswith("group_admin_view_group_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "group_admin_view_group_"
+        )
+
+
+        if not can_manage_group_admins(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ Esta comunidad no pertenece a tu panel."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_group_admins_text(group_id),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Volver", callback_data="group_admin_panel")
+            ]])
+        )
+
+        return
+
+
+    if data == "group_admin_edit":
+
+        groups = fetch_group_admin_manageable_groups(user_id)
+
+
+        if not groups:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+            )
+
+            return
+
+
+        if len(groups) == 1:
+
+            data = f"group_admin_edit_group_{groups[0][0]}"
+
+        else:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✏️ Editar permisos\n\nSelecciona una comunidad.",
+                reply_markup=build_group_admin_group_select_keyboard(
+                    groups,
+                    "group_admin_edit_group_"
+                )
+            )
+
+            return
+
+
+    if data.startswith("group_admin_edit_group_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "group_admin_edit_group_"
+        )
+
+
+        if not can_manage_group_admins(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ Esta comunidad no pertenece a tu panel."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✏️ Editar permisos\n\nSelecciona el admin.",
+            reply_markup=build_group_admin_user_select_keyboard(
+                group_id,
+                "edit_admin_permissions_user_"
+            )
+        )
+
+        return
+
+
+    if data.startswith("edit_admin_permissions_user_"):
+
+        payload = data.replace("edit_admin_permissions_user_", "", 1)
+
+        try:
+
+            group_id_text, target_user_id_text = payload.split("_", 1)
+            group_id = int(group_id_text)
+            target_user_id = int(target_user_id_text)
+
+        except Exception:
+
+            await query.message.reply_text("❌ Admin no válido.")
+
+            return
+
+
+        if not can_manage_group_admins(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ Esta comunidad no pertenece a tu panel."
+            )
+
+            return
+
+
+        admin_row = fetch_group_admin_permissions(group_id, target_user_id)
+
+
+        if not admin_row or admin_row.get("role") == "GROUP_OWNER":
+
+            await query.message.reply_text("❌ Admin no editable.")
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✏️ Editar permisos\n\n"
+            + format_group_admin_permission_list(admin_row["permissions"]),
+            reply_markup=build_group_admin_edit_permissions_keyboard(
+                group_id,
+                target_user_id,
+                admin_row["permissions"]
+            )
+        )
+
+        return
+
+
+    if data.startswith("gap_t_"):
+
+        payload = data.replace("gap_t_", "", 1)
+
+        try:
+
+            group_id_text, target_user_id_text, permission_key = payload.split("_", 2)
+            group_id = int(group_id_text)
+            target_user_id = int(target_user_id_text)
+
+        except Exception:
+
+            await query.message.reply_text("❌ Permiso no válido.")
+
+            return
+
+
+        permission = GROUP_ADMIN_PERMISSION_BY_KEY.get(permission_key)
+
+
+        if not permission:
+
+            await query.message.reply_text("❌ Permiso no válido.")
+
+            return
+
+
+        if not can_manage_group_admins(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ Esta comunidad no pertenece a tu panel."
+            )
+
+            return
+
+
+        admin_row = fetch_group_admin_permissions(group_id, target_user_id)
+
+
+        if not admin_row or admin_row.get("role") == "GROUP_OWNER":
+
+            await query.message.reply_text("❌ Admin no editable.")
+
+            return
+
+
+        permissions = admin_row["permissions"]
+        permissions[permission] = not permissions.get(permission, False)
+        save_group_admin_permissions(
+            group_id,
+            target_user_id,
+            permissions
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Permisos actualizados.\n\n"
+            + format_group_admin_permission_list(permissions),
+            reply_markup=build_group_admin_edit_permissions_keyboard(
+                group_id,
+                target_user_id,
+                permissions
+            )
+        )
+
+        return
+
+
+    if data == "group_admin_remove":
+
+        groups = fetch_group_admin_manageable_groups(user_id)
+
+
+        if not groups:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+            )
+
+            return
+
+
+        if len(groups) == 1:
+
+            data = f"group_admin_remove_group_{groups[0][0]}"
+
+        else:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Quitar admin\n\nSelecciona una comunidad.",
+                reply_markup=build_group_admin_group_select_keyboard(
+                    groups,
+                    "group_admin_remove_group_"
+                )
+            )
+
+            return
+
+
+    if data.startswith("group_admin_remove_group_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "group_admin_remove_group_"
+        )
+
+
+        if not can_manage_group_admins(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ Esta comunidad no pertenece a tu panel."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "❌ Quitar admin\n\nSelecciona el admin.",
+            reply_markup=build_group_admin_user_select_keyboard(
+                group_id,
+                "group_admin_remove_user_"
+            )
+        )
+
+        return
+
+
+    if data.startswith("group_admin_remove_user_"):
+
+        payload = data.replace("group_admin_remove_user_", "", 1)
+
+        try:
+
+            group_id_text, target_user_id_text = payload.split("_", 1)
+            group_id = int(group_id_text)
+            target_user_id = int(target_user_id_text)
+
+        except Exception:
+
+            await query.message.reply_text("❌ Admin no válido.")
+
+            return
+
+
+        if not can_manage_group_admins(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ Esta comunidad no pertenece a tu panel."
+            )
+
+            return
+
+
+        removed = disable_group_admin(group_id, target_user_id)
+
+
+        if not removed:
+
+            await query.message.reply_text("❌ Admin no encontrado o no editable.")
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Admin quitado correctamente.",
+            reply_markup=build_group_admin_panel_keyboard()
+        )
+
+        return
+
+
     if data == "admin_support_tickets":
 
         tickets = fetch_recent_support_tickets()
@@ -6473,19 +7578,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([InlineKeyboardButton("🔍 Buscar usuario", callback_data="admin_search_user")])
 
 
-        if has_any_permission(permissions, ["can_manage_users"]):
+        if has_any_permission(permissions, ["can_kick_users", "can_manage_users"]):
 
             keyboard.append([InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")])
 
+
+        if has_any_permission(permissions, ["can_ban_users", "can_manage_users"]):
+
             keyboard.append([InlineKeyboardButton("⛔ Banear usuario", callback_data="admin_ban_user")])
+
+
+        if has_any_permission(permissions, ["can_unban_users", "can_manage_users"]):
 
             keyboard.append([InlineKeyboardButton("♻️ Desbanear usuario", callback_data="admin_unban_user")])
 
+
+        if has_any_permission(permissions, ["can_reset_warnings", "can_manage_users"]):
+
             keyboard.append([InlineKeyboardButton("🔄 Reset warnings", callback_data="admin_reset_warnings")])
 
-            if is_super_admin(user_id):
 
-                keyboard.append([InlineKeyboardButton("🔀 Mover usuario grupo", callback_data="admin_move_user")])
+        if is_super_admin(user_id):
+
+            keyboard.append([InlineKeyboardButton("🔀 Mover usuario grupo", callback_data="admin_move_user")])
 
 
         keyboard.append([InlineKeyboardButton("💬 Ayuda sobre este menú", callback_data=CALLBACK_ADMIN_USERS_HELP)])
@@ -6519,7 +7634,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not user_has_group_permission_any(
             query.from_user.id,
             group_id,
-            ["can_manage_users"]
+            ["can_kick_users", "can_manage_users"]
         ):
 
             await query.message.reply_text(
@@ -6587,7 +7702,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not user_has_group_permission_any(
             query.from_user.id,
             group_id,
-            ["can_manage_users"]
+            ["can_kick_users", "can_manage_users"]
         ):
 
             await query.message.reply_text(
@@ -7094,7 +8209,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 rows = fetch_admin_groups_for_permissions(
                     user_id,
-                    ["can_manage_groups", "can_manage_plans"]
+                    [
+                        "can_manage_groups",
+                        "can_manage_plans",
+                        "can_edit_group_texts",
+                        "can_edit_marketplace_preview"
+                    ]
                 )
 
                 groups = [
@@ -7183,6 +8303,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id,
             group_id,
             ["can_manage_groups", "can_manage_plans"]
+            + ["can_edit_group_texts", "can_edit_marketplace_preview"]
         ):
 
             await query.message.reply_text(
@@ -7217,6 +8338,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             user_id,
             ["can_manage_groups", "can_manage_plans"]
+            + ["can_edit_group_texts", "can_edit_marketplace_preview"]
         )
 
 
@@ -7245,17 +8367,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "edit_group_admins"
     ):
 
+        required_permissions = ["can_manage_groups"]
+
+
+        if data == "edit_group_name":
+
+            required_permissions = ["can_edit_group_texts", "can_manage_groups"]
+
+
+        if data == "edit_group_admins":
+
+            required_permissions = ["can_manage_admins"]
+
         group_id = get_selected_group_for_permissions(
             context,
             user_id,
-            ["can_manage_groups"]
+            required_permissions
         )
 
 
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar este grupo."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
             )
 
             return
@@ -7283,14 +8417,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = get_selected_group_for_permissions(
             context,
             user_id,
-            ["can_manage_plans", "can_manage_groups"]
+            ["can_edit_marketplace_preview", "can_manage_groups"]
         )
 
 
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar planes de este grupo."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
             )
 
             return
@@ -7299,11 +8433,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not user_has_group_permission_any(
             user_id,
             group_id,
-            ["can_manage_groups"]
+            ["can_edit_marketplace_preview", "can_manage_groups"]
         ):
 
             await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar este grupo."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
             )
 
             return
@@ -7411,7 +8545,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = get_selected_group_for_permissions(
             context,
             user_id,
-            ["can_manage_groups"]
+            ["can_edit_marketplace_preview", "can_manage_groups"]
         )
 
 
@@ -7446,14 +8580,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = get_selected_group_for_permissions(
             context,
             user_id,
-            ["can_manage_groups"]
+            ["can_edit_marketplace_preview", "can_manage_groups"]
         )
 
 
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar este grupo."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
             )
 
             return

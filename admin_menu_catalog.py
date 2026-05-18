@@ -15,6 +15,7 @@ ADMIN_MENU_BUSINESS = "business"
 ADMIN_MENU_LOGS = "logs"
 ADMIN_MENU_COMMERCIAL = "commercial"
 ADMIN_MENU_SUPPORT = "support"
+ADMIN_MENU_GROUP_ADMINS = "group_admins"
 
 
 ADMIN_MENU_SECTIONS = [
@@ -41,7 +42,9 @@ ADMIN_MENU_SECTIONS = [
         "callback_data": "menu_groups",
         "permissions_any": [
             "can_manage_groups",
-            "can_manage_plans"
+            "can_manage_plans",
+            "can_edit_group_texts",
+            "can_edit_marketplace_preview"
         ]
     },
     {
@@ -67,6 +70,14 @@ ADMIN_MENU_SECTIONS = [
         "callback_data": "menu_logs",
         "permissions_any": [
             "can_view_logs"
+        ]
+    },
+    {
+        "key": ADMIN_MENU_GROUP_ADMINS,
+        "text": "👥 Admins de mi grupo",
+        "callback_data": "group_admin_panel",
+        "permissions_any": [
+            "can_manage_admins"
         ]
     },
     {
@@ -107,6 +118,7 @@ ADMIN_HELP_CONTEXT_BY_CALLBACK = {
     "menu_payments": "admin_payments",
     "menu_business": "admin_business",
     "menu_logs": "admin_logs",
+    "group_admin_panel": "group_admins",
     "admin_commercial_requests": "commercial_admin",
     "admin_commercial_promo_codes": "commercial_admin",
     "admin_support_tickets": "support_admin"

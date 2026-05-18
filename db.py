@@ -282,6 +282,12 @@ def create_tables():
 
             can_view_logs BOOLEAN DEFAULT FALSE,
 
+            can_edit_group_texts BOOLEAN DEFAULT FALSE,
+
+            can_edit_marketplace_preview BOOLEAN DEFAULT FALSE,
+
+            can_respond_group_support BOOLEAN DEFAULT FALSE,
+
             is_active BOOLEAN DEFAULT TRUE,
 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1049,6 +1055,9 @@ def create_tables():
             ("can_view_users", "BOOLEAN DEFAULT FALSE"),
             ("can_view_payments", "BOOLEAN DEFAULT FALSE"),
             ("can_view_logs", "BOOLEAN DEFAULT FALSE"),
+            ("can_edit_group_texts", "BOOLEAN DEFAULT FALSE"),
+            ("can_edit_marketplace_preview", "BOOLEAN DEFAULT FALSE"),
+            ("can_respond_group_support", "BOOLEAN DEFAULT FALSE"),
             ("is_active", "BOOLEAN DEFAULT TRUE")
 
         ]

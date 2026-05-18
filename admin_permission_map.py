@@ -19,10 +19,10 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_search_user": ("can_view_users", "can_manage_users"),
     "admin_users_help": ("can_view_users", "can_manage_users"),
 
-    "admin_kick_user": ("can_manage_users",),
-    "admin_ban_user": ("can_manage_users",),
-    "admin_unban_user": ("can_manage_users",),
-    "admin_reset_warnings": ("can_manage_users",),
+    "admin_kick_user": ("can_kick_users", "can_manage_users"),
+    "admin_ban_user": ("can_ban_users", "can_manage_users"),
+    "admin_unban_user": ("can_unban_users", "can_manage_users"),
+    "admin_reset_warnings": ("can_reset_warnings", "can_manage_users"),
     "admin_move_user": (SUPER_ADMIN_ONLY,),
 
     "menu_codes": ("can_manage_codes",),
@@ -30,11 +30,31 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_codes": ("can_manage_codes",),
     "admin_delete_code": ("can_manage_codes",),
 
-    "menu_groups": ("can_manage_groups", "can_manage_plans"),
+    "menu_groups": (
+        "can_manage_groups",
+        "can_manage_plans",
+        "can_edit_group_texts",
+        "can_edit_marketplace_preview"
+    ),
     "admin_add_group": (SUPER_ADMIN_ONLY,),
-    "admin_edit_group": ("can_manage_groups", "can_manage_plans"),
-    "admin_view_groups": ("can_manage_groups", "can_manage_plans"),
-    "admin_groups_help": ("can_manage_groups", "can_manage_plans"),
+    "admin_edit_group": (
+        "can_manage_groups",
+        "can_manage_plans",
+        "can_edit_group_texts",
+        "can_edit_marketplace_preview"
+    ),
+    "admin_view_groups": (
+        "can_manage_groups",
+        "can_manage_plans",
+        "can_edit_group_texts",
+        "can_edit_marketplace_preview"
+    ),
+    "admin_groups_help": (
+        "can_manage_groups",
+        "can_manage_plans",
+        "can_edit_group_texts",
+        "can_edit_marketplace_preview"
+    ),
     "cancel_create_group": (SUPER_ADMIN_ONLY,),
     "view_group_plans": ("can_manage_groups", "can_manage_plans"),
     "add_group_plan": ("can_manage_groups", "can_manage_plans"),
@@ -60,6 +80,8 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_logs_security": ("can_view_logs",),
     "admin_logs_help": ("can_view_logs",),
 
+    "group_admin_panel": ("can_manage_admins",),
+
     "admin_revoke_links": (SUPER_ADMIN_ONLY,),
     "admin_resend_links": (SUPER_ADMIN_ONLY,)
 
@@ -69,17 +91,25 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
 ADMIN_CALLBACK_PREFIX_PERMISSION_MAP = (
 
     ("allow_user_", ("can_manage_users",)),
-    ("deny_user_", ("can_manage_users",)),
+    ("deny_user_", ("can_kick_users", "can_manage_users")),
     ("admin_support_", (SUPER_ADMIN_ONLY,)),
     ("admin_commercial_", (SUPER_ADMIN_ONLY,)),
     ("admin_trial_visibility_", (SUPER_ADMIN_ONLY,)),
-    ("edit_group", ("can_manage_groups", "can_manage_plans")),
+    ("group_admin_", ("can_manage_admins",)),
+    ("add_group_admin_", ("can_manage_admins",)),
+    ("edit_admin_permissions_", ("can_manage_admins",)),
+    ("edit_group", (
+        "can_manage_groups",
+        "can_manage_plans",
+        "can_edit_group_texts",
+        "can_edit_marketplace_preview"
+    )),
     ("edit_plan_", ("can_manage_groups", "can_manage_plans")),
     ("delete_group", (SUPER_ADMIN_ONLY,)),
     ("delete_plan_", ("can_manage_groups", "can_manage_plans")),
-    ("save_preview", ("can_manage_groups",)),
-    ("cancel_preview", ("can_manage_groups",)),
-    ("skip_preview", ("can_manage_groups",)),
+    ("save_preview", ("can_manage_groups", "can_edit_marketplace_preview")),
+    ("cancel_preview", ("can_manage_groups", "can_edit_marketplace_preview")),
+    ("skip_preview", ("can_manage_groups", "can_edit_marketplace_preview")),
     ("gen_", ("can_manage_codes",))
 
 )
@@ -89,6 +119,9 @@ ADMIN_CALLBACK_PREFIXES = (
 
     "menu_",
     "admin_",
+    "group_admin_",
+    "add_group_admin_",
+    "edit_admin_permissions_",
     "edit_group",
     "view_group_plans",
     "add_group_plan",

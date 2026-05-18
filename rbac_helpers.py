@@ -23,7 +23,10 @@ ALLOWED_PERMISSIONS = [
     "can_view_users",
     "can_view_payments",
     "can_view_stats",
-    "can_view_logs"
+    "can_view_logs",
+    "can_edit_group_texts",
+    "can_edit_marketplace_preview",
+    "can_respond_group_support"
 
 ]
 
@@ -45,7 +48,10 @@ GROUP_OWNER_PERMISSIONS = {
     "can_view_users": True,
     "can_view_payments": True,
     "can_view_stats": True,
-    "can_view_logs": True
+    "can_view_logs": True,
+    "can_edit_group_texts": True,
+    "can_edit_marketplace_preview": True,
+    "can_respond_group_support": True
 }
 
 
@@ -154,6 +160,11 @@ def has_permission(user_id, group_id, permission):
     return False
 
 
+def has_group_permission(user_id, group_id, permission):
+
+    return has_permission(user_id, group_id, permission)
+
+
 def has_any_permission_any_group(user_id, permissions):
 
     if is_super_admin(user_id):
@@ -217,6 +228,36 @@ def has_any_permission_any_group(user_id, permissions):
     return False
 
 
+def expand_group_scope_permissions(permissions):
+
+    expanded_permissions = []
+
+
+    for permission in permissions:
+
+        if permission not in expanded_permissions:
+
+            expanded_permissions.append(permission)
+
+
+        if permission == "can_manage_users":
+
+            for scoped_permission in (
+                "can_kick_users",
+                "can_ban_users",
+                "can_unban_users",
+                "can_warn_users",
+                "can_reset_warnings"
+            ):
+
+                if scoped_permission not in expanded_permissions:
+
+                    expanded_permissions.append(scoped_permission)
+
+
+    return expanded_permissions
+
+
 def get_admin_group_ids(user_id, permissions=None):
 
     if is_super_admin(user_id):
@@ -224,10 +265,14 @@ def get_admin_group_ids(user_id, permissions=None):
         return None
 
 
+    scoped_permissions = expand_group_scope_permissions(
+        permissions or ALLOWED_PERMISSIONS
+    )
+
     valid_permissions = [
 
         permission
-        for permission in (permissions or ALLOWED_PERMISSIONS)
+        for permission in scoped_permissions
         if permission in ALLOWED_PERMISSIONS
 
     ]
