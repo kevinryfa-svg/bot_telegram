@@ -84,6 +84,14 @@ ADMIN_MENU_SECTIONS = [
         "permissions_any": [
             "super_admin_only"
         ]
+    },
+    {
+        "key": "commercial_promo_codes",
+        "text": "🎟 Códigos promocionales",
+        "callback_data": "admin_commercial_promo_codes",
+        "permissions_any": [
+            "super_admin_only"
+        ]
     }
 ]
 
@@ -100,6 +108,7 @@ ADMIN_HELP_CONTEXT_BY_CALLBACK = {
     "menu_business": "admin_business",
     "menu_logs": "admin_logs",
     "admin_commercial_requests": "commercial_admin",
+    "admin_commercial_promo_codes": "commercial_admin",
     "admin_support_tickets": "support_admin"
 }
 

@@ -436,6 +436,271 @@ def get_request_group_id(request_row):
     return None
 
 
+def format_promo_until(value):
+
+    if not value:
+
+        return "-"
+
+
+    try:
+
+        return value.strftime("%Y-%m-%d %H:%M")
+
+    except Exception:
+
+        return str(value)
+
+
+def normalize_commercial_promo_code(text):
+
+    return (text or "").strip().upper().replace(" ", "")
+
+
+def fetch_commercial_promo_code(code):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   code,
+                   duration_days,
+                   max_uses,
+                   uses_count,
+                   is_active
+            FROM commercial_promo_codes
+            WHERE UPPER(code)=UPPER(%s)
+            LIMIT 1
+
+        """, (code,))
+
+        return cur.fetchone()
+
+
+def commercial_promo_code_available(row):
+
+    if not row:
+
+        return False
+
+
+    _code_id, _code, _duration_days, max_uses, uses_count, is_active = row
+
+    return is_active is True and (uses_count or 0) < (max_uses or 1)
+
+
+def consume_commercial_promo_code(code_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE commercial_promo_codes
+            SET uses_count=uses_count + 1,
+                is_active=CASE
+                    WHEN uses_count + 1 >= max_uses THEN FALSE
+                    ELSE is_active
+                END,
+                updated_at=NOW()
+            WHERE id=%s
+            AND is_active=TRUE
+            AND uses_count < max_uses
+            RETURNING id
+
+        """, (code_id,))
+
+        return cur.fetchone() is not None
+
+
+def activate_request_with_commercial_promo(request_row, promo_row, code):
+
+    code_id, saved_code, duration_days, _max_uses, _uses_count, _is_active = promo_row
+    request_id = request_row.get("id")
+    user_id = request_row.get("user_id")
+    group_id = get_request_group_id(request_row)
+    public_visibility = request_row.get("requested_public_visibility")
+
+
+    if not public_visibility or public_visibility == "hidden":
+
+        public_visibility = "explore_only"
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE commercial_requests
+            SET status='active',
+                commercial_subscription_status='active',
+                commercial_subscription_until=NOW() + (%s * INTERVAL '1 day'),
+                requested_public_visibility=%s,
+                creator_setup_status=CASE
+                    WHEN %s IS NULL THEN creator_setup_status
+                    ELSE 'setup_ready'
+                END,
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING commercial_subscription_until
+
+        """, (
+            duration_days,
+            public_visibility,
+            group_id,
+            request_id
+        ))
+
+        until_row = cur.fetchone()
+        commercial_subscription_until = until_row[0] if until_row else None
+
+
+        if group_id:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET is_active=TRUE,
+                    public_visibility=%s
+                WHERE id=%s
+
+            """, (
+                public_visibility,
+                group_id
+            ))
+
+
+        cur.execute("""
+
+            INSERT INTO commercial_promo_code_redemptions
+            (
+                promo_code_id,
+                code,
+                user_id,
+                commercial_request_id,
+                group_id,
+                duration_days
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+
+        """, (
+            code_id,
+            saved_code or code,
+            user_id,
+            request_id,
+            group_id,
+            duration_days
+        ))
+
+
+    if group_id:
+
+        assign_group_owner_permissions(user_id, group_id)
+
+
+    return group_id, duration_days, commercial_subscription_until
+
+
+async def redeem_commercial_promo_code(update, context, request_row, raw_code):
+
+    code = normalize_commercial_promo_code(raw_code)
+    promo_row = fetch_commercial_promo_code(code)
+    request_id = request_row.get("id")
+
+
+    if not commercial_promo_code_available(promo_row):
+
+        clear_creator_setup(context)
+
+        await update.message.reply_text(
+            "❌ Código promocional no válido, caducado o ya usado.",
+            reply_markup=get_back_to_setup_keyboard(request_id)
+        )
+
+        return
+
+
+    if creator_reached_group_limit(
+        request_row.get("user_id"),
+        request_id,
+        request_row
+    ):
+
+        clear_creator_setup(context)
+
+        await update.message.reply_text(
+            "Has alcanzado el máximo de comunidades permitidas para tu plan actual.",
+            reply_markup=get_back_to_setup_keyboard(request_id)
+        )
+
+        return
+
+
+    if not consume_commercial_promo_code(promo_row[0]):
+
+        clear_creator_setup(context)
+
+        await update.message.reply_text(
+            "❌ Código promocional no válido, caducado o ya usado.",
+            reply_markup=get_back_to_setup_keyboard(request_id)
+        )
+
+        return
+
+
+    group_id, duration_days, until = activate_request_with_commercial_promo(
+        request_row,
+        promo_row,
+        code
+    )
+
+    clear_creator_setup(context)
+
+    if group_id:
+
+        user_text = (
+            "✅ Código promocional aplicado.\n\n"
+            "Tu comunidad queda activada/publicada sin checkout durante "
+            f"{duration_days} días.\n"
+            f"Válido hasta: {format_promo_until(until)}"
+        )
+
+    else:
+
+        user_text = (
+            "✅ Código promocional aplicado.\n\n"
+            "Tu periodo comercial queda activado sin checkout durante "
+            f"{duration_days} días.\n"
+            f"Válido hasta: {format_promo_until(until)}\n\n"
+            "Aún falta vincular un grupo/canal para publicarlo en el marketplace."
+        )
+
+
+    await update.message.reply_text(
+        user_text,
+        reply_markup=get_back_to_setup_keyboard(request_id)
+    )
+
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            "🎟 Código promocional canjeado\n\n"
+            f"Código: {code}\n"
+            f"Solicitud: #{request_id}\n"
+            f"Usuario: {request_row.get('user_id')}\n"
+            f"Grupo interno: {group_id or '-'}\n"
+            f"Duración: {duration_days} días\n"
+            f"Válido hasta: {format_promo_until(until)}"
+        ),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "👁 Ver estado",
+                callback_data=f"admin_commercial_review_{request_id}"
+            )]
+        ])
+    )
+
+
 def get_back_to_setup_keyboard(request_id):
 
     return InlineKeyboardMarkup([
@@ -492,6 +757,18 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(
             "No estaba esperando ese dato. Usa los botones del menú para continuar.",
             reply_markup=get_back_to_setup_keyboard(request_id)
+        )
+
+        return
+
+
+    if action == "promo_code":
+
+        await redeem_commercial_promo_code(
+            update,
+            context,
+            request_row,
+            text
         )
 
         return
