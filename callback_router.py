@@ -1,5 +1,7 @@
 import os
 import requests
+import secrets
+import string
 import time
 
 from datetime import datetime
@@ -2064,6 +2066,11 @@ def build_creator_setup_keyboard(request_id, payment_mode=None):
         )],
 
         [InlineKeyboardButton(
+            "🎟 Tengo un código promocional",
+            callback_data=f"creator_promo_code_start_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
             "🧭 Tutorial paso a paso",
             callback_data=f"creator_setup_tutorial_{request_id}"
         )],
@@ -2117,7 +2124,8 @@ def start_creator_setup_state(context, request_id, action):
         "marketplace_preview_text": "creator_setup_waiting_preview_text",
         "marketplace_tags": "creator_setup_waiting_tags",
         "stripe": "creator_setup_waiting_stripe_secret",
-        "plan": "creator_setup_waiting_plan_name"
+        "plan": "creator_setup_waiting_plan_name",
+        "promo_code": "creator_setup_waiting_promo_code"
     }
 
     context.user_data["creator_setup"] = True
@@ -2209,6 +2217,11 @@ def build_user_activation_keyboard(request_id):
         [InlineKeyboardButton(
             "📦 Configurar comunidad",
             callback_data=f"configure_community_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🎟 Tengo un código promocional",
+            callback_data=f"creator_promo_code_start_{request_id}"
         )],
 
         [InlineKeyboardButton(
@@ -2566,6 +2579,213 @@ def build_commercial_group_limit_keyboard(request_id):
         )]
 
     ]
+
+
+COMMERCIAL_PROMO_DURATIONS = {
+    "15d": (15, "15 días"),
+    "1m": (30, "1 mes"),
+    "3m": (90, "3 meses"),
+    "1y": (365, "1 año")
+}
+
+
+def generate_commercial_promo_code():
+
+    alphabet = string.ascii_uppercase + string.digits
+    suffix = "".join(
+        secrets.choice(alphabet)
+        for _ in range(8)
+    )
+
+    return f"OWNER-{suffix}"
+
+
+def create_commercial_promo_code(duration_days, created_by):
+
+    for _ in range(5):
+
+        code = generate_commercial_promo_code()
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    INSERT INTO commercial_promo_codes
+                    (
+                        code,
+                        duration_days,
+                        max_uses,
+                        uses_count,
+                        is_active,
+                        created_by,
+                        updated_at
+                    )
+                    VALUES (%s, %s, 1, 0, TRUE, %s, NOW())
+                    RETURNING id, code, duration_days
+
+                """, (
+                    code,
+                    duration_days,
+                    created_by
+                ))
+
+                return cur.fetchone()
+
+        except Exception as e:
+
+            print("Error creando código promocional comercial:", e)
+
+
+    return None
+
+
+def fetch_active_commercial_promo_codes():
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   code,
+                   duration_days,
+                   max_uses,
+                   uses_count,
+                   created_by,
+                   created_at
+            FROM commercial_promo_codes
+            WHERE is_active=TRUE
+            AND uses_count < max_uses
+            ORDER BY created_at DESC
+            LIMIT 20
+
+        """)
+
+        return cur.fetchall()
+
+
+def deactivate_commercial_promo_code(code_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE commercial_promo_codes
+            SET is_active=FALSE,
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING code
+
+        """, (code_id,))
+
+        row = cur.fetchone()
+
+    return row[0] if row else None
+
+
+def format_commercial_promo_duration(days):
+
+    if days == 15:
+
+        return "15 días"
+
+    if days == 30:
+
+        return "1 mes"
+
+    if days == 90:
+
+        return "3 meses"
+
+    if days == 365:
+
+        return "1 año"
+
+    return f"{days} días"
+
+
+def build_commercial_promo_codes_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "Crear código 15 días",
+            callback_data="admin_commercial_promo_create_15d"
+        )],
+        [InlineKeyboardButton(
+            "Crear código 1 mes",
+            callback_data="admin_commercial_promo_create_1m"
+        )],
+        [InlineKeyboardButton(
+            "Crear código 3 meses",
+            callback_data="admin_commercial_promo_create_3m"
+        )],
+        [InlineKeyboardButton(
+            "Crear código 1 año",
+            callback_data="admin_commercial_promo_create_1y"
+        )],
+        [InlineKeyboardButton(
+            "Ver códigos activos",
+            callback_data="admin_commercial_promo_active"
+        )],
+        [InlineKeyboardButton(
+            "Desactivar código",
+            callback_data="admin_commercial_promo_deactivate_menu"
+        )],
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_back_main"
+        )]
+    ])
+
+
+def build_commercial_promo_active_text(rows):
+
+    if not rows:
+
+        return "🎟 Códigos promocionales\n\nNo hay códigos activos."
+
+
+    lines = ["🎟 Códigos promocionales activos"]
+
+
+    for row in rows:
+
+        code_id, code, duration_days, max_uses, uses_count, created_by, created_at = row
+        lines.append(
+            "\n"
+            f"ID: {code_id}\n"
+            f"Código: {code}\n"
+            f"Duración: {format_commercial_promo_duration(duration_days)}\n"
+            f"Usos: {uses_count}/{max_uses}\n"
+            f"Creado por: {created_by or '-'}\n"
+            f"Fecha: {format_commercial_datetime(created_at)}"
+        )
+
+
+    return "\n".join(lines)
+
+
+def build_commercial_promo_deactivate_keyboard(rows):
+
+    keyboard = []
+
+
+    for row in rows:
+
+        code_id, code, *_rest = row
+        keyboard.append([InlineKeyboardButton(
+            f"Desactivar {code}",
+            callback_data=f"admin_commercial_promo_deactivate_{code_id}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data="admin_commercial_promo_codes"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 def build_commercial_setup_keyboard(request_id):
@@ -4532,6 +4752,121 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     callback_data="admin_support_tickets"
                 )]
             ])
+        )
+
+        return
+
+
+    if data == "admin_commercial_promo_codes":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🎟 Códigos promocionales\n\nCrea códigos para que dueños de grupos publiquen su comunidad sin pasar por checkout durante el periodo elegido.",
+            reply_markup=build_commercial_promo_codes_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_promo_create_"):
+
+        slug = data.replace("admin_commercial_promo_create_", "", 1)
+        duration = COMMERCIAL_PROMO_DURATIONS.get(slug)
+
+
+        if not duration:
+
+            await query.message.reply_text("❌ Duración no válida.")
+
+            return
+
+
+        duration_days, duration_label = duration
+        row = create_commercial_promo_code(duration_days, user_id)
+
+
+        if not row:
+
+            await query.message.reply_text("❌ Error creando código promocional.")
+
+            return
+
+
+        _code_id, code, _duration_days = row
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Código promocional creado\n\n"
+            f"Código: {code}\n"
+            f"Duración: {duration_label}\n"
+            "Uso: 1 vez\n\n"
+            "El dueño debe usarlo desde 📦 Configurar comunidad > 🎟 Tengo un código promocional.",
+            reply_markup=build_commercial_promo_codes_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_commercial_promo_active":
+
+        rows = fetch_active_commercial_promo_codes()
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_commercial_promo_active_text(rows),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "Desactivar código",
+                    callback_data="admin_commercial_promo_deactivate_menu"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data="admin_commercial_promo_codes"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_commercial_promo_deactivate_menu":
+
+        rows = fetch_active_commercial_promo_codes()
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "❌ Desactivar código\n\nElige el código promocional que quieres desactivar.",
+            reply_markup=build_commercial_promo_deactivate_keyboard(rows)
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_promo_deactivate_"):
+
+        code_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_promo_deactivate_"
+        )
+        code = deactivate_commercial_promo_code(code_id)
+
+
+        if not code:
+
+            await query.message.reply_text("❌ Código promocional no encontrado.")
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"✅ Código desactivado: {code}",
+            reply_markup=build_commercial_promo_codes_keyboard()
         )
 
         return
@@ -9200,6 +9535,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     request_row.get("payment_mode")
                 )
             )
+        )
+
+        return
+
+
+    if data.startswith("creator_promo_code_start_"):
+
+        request_id = extract_commercial_request_id(data, "creator_promo_code_start_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        start_creator_setup_state(context, request_id, "promo_code")
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🎟 Código promocional\n\n"
+            "Envía ahora el código promocional que te dio el propietario principal."
         )
 
         return

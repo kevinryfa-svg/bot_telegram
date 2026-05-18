@@ -713,6 +713,62 @@ def create_tables():
 
 
         # =========================
+        # TABLAS CÓDIGOS PROMOCIONALES COMERCIALES
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS commercial_promo_codes (
+
+            id SERIAL PRIMARY KEY,
+
+            code TEXT UNIQUE NOT NULL,
+
+            duration_days INTEGER NOT NULL,
+
+            max_uses INTEGER DEFAULT 1,
+
+            uses_count INTEGER DEFAULT 0,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            created_by BIGINT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS commercial_promo_code_redemptions (
+
+            id SERIAL PRIMARY KEY,
+
+            promo_code_id INTEGER,
+
+            code TEXT,
+
+            user_id BIGINT,
+
+            commercial_request_id INTEGER,
+
+            group_id INTEGER,
+
+            duration_days INTEGER,
+
+            redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA COBROS DEL CREADOR
         # =========================
 
