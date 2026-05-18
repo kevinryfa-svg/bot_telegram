@@ -1190,6 +1190,38 @@ def marketplace_trial_visibility_filter():
     """
 
 
+def build_expired_trial_recovery_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+
+        [InlineKeyboardButton(
+            "🎟 Tengo un código promocional",
+            callback_data=f"creator_promo_code_start_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💳 Activar suscripción",
+            callback_data=f"expired_trial_activate_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📦 Ver configuración de mi comunidad",
+            callback_data=f"configure_community_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🗑 Eliminar comunidad definitivamente",
+            callback_data=f"expired_trial_delete_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🏠 Volver al inicio",
+            callback_data="public_back_start"
+        )]
+
+    ])
+
+
 async def expire_expired_commercial_trials(context):
 
     with conn.cursor() as cur:
@@ -1258,7 +1290,8 @@ async def expire_expired_commercial_trials(context):
                     text=(
                         "Tu prueba ha finalizado. Para volver a publicar tu comunidad, "
                         "activa una suscripción."
-                    )
+                    ),
+                    reply_markup=build_expired_trial_recovery_keyboard(request_id)
                 )
 
             except Exception as e:
@@ -1951,10 +1984,17 @@ async def send_marketplace_list(context, chat_id, user_id, filter_kind="trending
         await send_clean_message(
             context,
             chat_id,
-            f"{title}\n\nTodavía no hay comunidades disponibles en esta sección.",
-            reply_markup=InlineKeyboardMarkup(
-                build_marketplace_filter_keyboard(filter_kind)
-            )
+            "Todavía no hay comunidades publicadas.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🚀 Publicar mi comunidad",
+                    callback_data="public_monetize_community"
+                )],
+                [InlineKeyboardButton(
+                    "🏠 Inicio",
+                    callback_data="public_back_start"
+                )]
+            ])
         )
 
         return
@@ -3633,6 +3673,61 @@ def update_commercial_request_plan(request_id, plan_id, subscription_status):
     return row_to_commercial_request(row)
 
 
+def disable_commercial_request_community(request_row):
+
+    if not request_row:
+
+        return None
+
+
+    request_id = request_row.get("id")
+    approved_group_id = request_row.get("approved_group_id")
+    approved_telegram_group_id = request_row.get("approved_telegram_group_id")
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET status='disabled',
+                commercial_subscription_status='cancelled',
+                requested_public_visibility='hidden',
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (request_id,))
+
+        row = cur.fetchone()
+
+
+        if approved_group_id:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET public_visibility='hidden',
+                    is_active=FALSE
+                WHERE id=%s
+
+            """, (approved_group_id,))
+
+        elif approved_telegram_group_id:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET public_visibility='hidden',
+                    is_active=FALSE
+                WHERE telegram_group_id=%s
+
+            """, (approved_telegram_group_id,))
+
+
+    return row_to_commercial_request(row)
+
+
 def extract_commercial_plan_selection(data):
 
     try:
@@ -4613,8 +4708,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            "Todavía no hay comunidades disponibles. "
-            "Puedes contactar con soporte o volver más tarde."
+            "Todavía no hay comunidades publicadas.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🚀 Publicar mi comunidad",
+                    callback_data="public_monetize_community"
+                )],
+                [InlineKeyboardButton(
+                    "🏠 Inicio",
+                    callback_data="public_back_start"
+                )]
+            ])
         )
 
         return
@@ -10697,6 +10801,171 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             "🎟 Código promocional\n\n"
             "Envía ahora el código promocional que te dio el propietario principal."
+        )
+
+        return
+
+
+    if data.startswith("expired_trial_activate_"):
+
+        request_id = extract_commercial_request_id(data, "expired_trial_activate_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        plans = fetch_active_commercial_plans(PRODUCT_SHARED_BOT_SPACE)
+
+        if not plans:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "💳 Activar suscripción\n\nTodavía no hay planes comerciales disponibles.",
+                reply_markup=build_expired_trial_recovery_keyboard(request_id)
+            )
+
+            return
+
+
+        keyboard = build_commercial_plan_keyboard(request_id, plans)
+        keyboard.append([
+            InlineKeyboardButton(
+                "⬅️ Volver a opciones",
+                callback_data=f"expired_trial_options_{request_id}"
+            )
+        ])
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "💳 Activar suscripción\n\nElige un plan comercial para volver a publicar tu comunidad.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data.startswith("expired_trial_options_"):
+
+        request_id = extract_commercial_request_id(data, "expired_trial_options_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "Tu prueba ha finalizado. Para volver a publicar tu comunidad, activa una suscripción.",
+            reply_markup=build_expired_trial_recovery_keyboard(request_id)
+        )
+
+        return
+
+
+    if (
+        data.startswith("expired_trial_delete_")
+        and not data.startswith("expired_trial_delete_confirm_")
+    ):
+
+        request_id = extract_commercial_request_id(data, "expired_trial_delete_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🗑 Eliminar comunidad definitivamente\n\n"
+            "Esta acción ocultará y desactivará la comunidad. No se borrará físicamente por seguridad.\n\n"
+            "¿Confirmas que quieres eliminarla?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "✅ Sí, eliminar comunidad",
+                    callback_data=f"expired_trial_delete_confirm_{request_id}"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ Cancelar",
+                    callback_data=f"expired_trial_options_{request_id}"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("expired_trial_delete_confirm_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "expired_trial_delete_confirm_"
+        )
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        disable_commercial_request_community(request_row)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Comunidad desactivada.\n\nNo se ha borrado físicamente, pero queda oculta e inactiva.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "🏠 Volver al inicio",
+                    callback_data="public_back_start"
+                )
+            ]])
+        )
+
+        await notify_commercial_admin(
+            context,
+            (
+                "🗑 Comunidad desactivada por el creador\n\n"
+                f"Solicitud #{request_id}\n"
+                f"Usuario: {user_id}"
+            ),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "👁 Ver estado",
+                    callback_data=f"admin_commercial_review_{request_id}"
+                )
+            ]])
         )
 
         return
