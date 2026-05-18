@@ -21,6 +21,151 @@ APPROVED_COMMERCIAL_STATUSES = (
 )
 
 
+def sanitize_preview_caption(caption):
+
+    caption = (caption or "").strip()
+
+
+    if len(caption) > 500:
+
+        caption = caption[:497] + "..."
+
+
+    return caption
+
+
+def get_dynamic_preview_group(telegram_group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   COALESCE(preview_mode, 'manual')
+            FROM groups
+            WHERE telegram_group_id=%s
+            AND is_active=TRUE
+            AND COALESCE(preview_mode, 'manual') IN ('dynamic', 'hybrid')
+            LIMIT 1
+
+        """, (telegram_group_id,))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return None
+
+
+    return {
+        "group_id": row[0],
+        "preview_mode": row[1]
+    }
+
+
+def save_group_preview_video(
+    group_id,
+    telegram_group_id,
+    message_id,
+    video_file_id,
+    caption
+):
+
+    if not group_id or not telegram_group_id or not message_id or not video_file_id:
+
+        return False
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO group_preview_videos
+            (
+                group_id,
+                telegram_group_id,
+                message_id,
+                video_file_id,
+                caption
+            )
+            VALUES (%s, %s, %s, %s, %s)
+
+        """, (
+            group_id,
+            telegram_group_id,
+            message_id,
+            video_file_id,
+            sanitize_preview_caption(caption)
+        ))
+
+        cur.execute("""
+
+            UPDATE group_preview_videos
+            SET is_active=FALSE
+            WHERE group_id=%s
+            AND id NOT IN (
+                SELECT id
+                FROM group_preview_videos
+                WHERE group_id=%s
+                AND is_active=TRUE
+                ORDER BY created_at DESC, id DESC
+                LIMIT 10
+            )
+
+        """, (
+            group_id,
+            group_id
+        ))
+
+
+    return True
+
+
+async def capture_group_preview_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message:
+
+        return
+
+
+    if not update.message.video:
+
+        return
+
+
+    if not update.effective_chat or update.effective_chat.type == "private":
+
+        return
+
+
+    telegram_group_id = update.effective_chat.id
+    group_row = get_dynamic_preview_group(telegram_group_id)
+
+
+    if not group_row:
+
+        return
+
+
+    saved = save_group_preview_video(
+        group_row["group_id"],
+        telegram_group_id,
+        update.message.message_id,
+        update.message.video.file_id,
+        update.message.caption
+    )
+
+
+    if saved:
+
+        print(
+            "Vídeo guardado para preview dinámico:",
+            group_row["group_id"],
+            update.message.message_id
+        )
+
+
 def get_approved_creator_request(user_id, telegram_group_id):
 
     if not user_id:

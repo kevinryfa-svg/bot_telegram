@@ -1837,6 +1837,96 @@ def build_marketplace_group_keyboard(group, user_id=None):
     return InlineKeyboardMarkup(keyboard)
 
 
+def fetch_dynamic_preview_videos(group_id, limit=3):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   video_file_id,
+                   caption,
+                   created_at,
+                   message_id
+            FROM group_preview_videos
+            WHERE group_id=%s
+            AND is_active=TRUE
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+
+        """, (
+            group_id,
+            limit
+        ))
+
+        rows = cur.fetchall()
+
+
+    return [
+        {
+            "id": row[0],
+            "video_file_id": row[1],
+            "caption": row[2],
+            "created_at": row[3],
+            "message_id": row[4]
+        }
+        for row in rows
+    ]
+
+
+def deactivate_dynamic_preview_video(video_id, group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE group_preview_videos
+            SET is_active=FALSE
+            WHERE id=%s
+            AND group_id=%s
+            RETURNING id
+
+        """, (
+            video_id,
+            group_id
+        ))
+
+        return cur.fetchone() is not None
+
+
+def format_dynamic_preview_video_caption(group, video, index, total):
+
+    caption = video.get("caption") or "Vídeo publicado en la comunidad."
+
+
+    if len(caption) > 700:
+
+        caption = caption[:697] + "..."
+
+
+    return (
+        f"⚡ Preview dinámico {index}/{total}\n"
+        f"🔥 {group.get('name') or 'Comunidad privada'}\n\n"
+        f"{caption}"
+    )
+
+
+def build_dynamic_preview_access_keyboard(group, user_id=None):
+
+    group_id = group.get("id")
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "🔓 Entrar gratis" if group.get("is_free_group") else "💳 Comprar acceso",
+            callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
+        )],
+        [InlineKeyboardButton(
+            "⬅️ Volver a comunidad",
+            callback_data=f"marketplace_group_{group_id}"
+        )]
+    ])
+
+
 def format_marketplace_preview_caption(group):
 
     preview_mode = group.get("preview_mode") or "manual"
@@ -1863,8 +1953,7 @@ def format_marketplace_preview_caption(group):
             f"📂 {format_marketplace_category(group)}\n"
             f"{stats_text}\n"
             f"{format_marketplace_kind(group)}\n\n"
-            "El preview dinámico estará disponible en una fase posterior. "
-            "Por ahora puedes configurar un preview manual."
+            "⚡ Preview dinámico activo. Se mostrarán vídeos publicados en la comunidad desde que el owner lo activó."
         )
 
 
@@ -2048,6 +2137,22 @@ def build_creator_marketplace_keyboard(request_id):
             callback_data=f"creator_preview_mode_{request_id}"
         )],
         [InlineKeyboardButton(
+            "⚡ Activar preview dinámico",
+            callback_data=f"creator_dynamic_preview_enable_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "⏸ Desactivar preview dinámico",
+            callback_data=f"creator_dynamic_preview_disable_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "🎬 Ver vídeos guardados",
+            callback_data=f"creator_dynamic_preview_videos_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "🗑 Borrar vídeo del preview",
+            callback_data=f"creator_dynamic_preview_delete_{request_id}"
+        )],
+        [InlineKeyboardButton(
             "📝 Editar texto preview",
             callback_data=f"creator_preview_text_{request_id}"
         )],
@@ -2156,6 +2261,81 @@ def build_creator_marketplace_text(group_id):
         f"Categoría: {format_marketplace_category(group)}\n"
         f"Tags: {group.get('tags') or 'pendiente'}"
     )
+
+
+def set_group_preview_mode(group_id, preview_mode):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE groups
+            SET preview_mode=%s
+            WHERE id=%s
+
+        """, (
+            preview_mode,
+            group_id
+        ))
+
+
+def format_owner_dynamic_videos_text(group_id):
+
+    videos = fetch_dynamic_preview_videos(group_id, limit=10)
+
+
+    if not videos:
+
+        return (
+            "🎬 Vídeos guardados\n\n"
+            "Todavía no hay vídeos guardados. Solo se guardarán vídeos publicados en el grupo después de activar el preview dinámico."
+        )
+
+
+    lines = ["🎬 Vídeos guardados"]
+
+
+    for index, video in enumerate(videos, start=1):
+
+        caption = video.get("caption") or "sin caption"
+
+
+        if len(caption) > 80:
+
+            caption = caption[:77] + "..."
+
+
+        lines.append(
+            "\n"
+            f"{index}. ID interno: {video.get('id')}\n"
+            f"Mensaje: {video.get('message_id') or '-'}\n"
+            f"Caption: {caption}"
+        )
+
+
+    return "\n".join(lines)
+
+
+def build_dynamic_video_delete_keyboard(request_id, group_id):
+
+    videos = fetch_dynamic_preview_videos(group_id, limit=10)
+    keyboard = []
+
+
+    for index, video in enumerate(videos, start=1):
+
+        keyboard.append([InlineKeyboardButton(
+            f"🗑 Borrar vídeo {index}",
+            callback_data=f"creator_dynamic_preview_delete_video_{request_id}_{video.get('id')}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data=f"creator_setup_marketplace_{request_id}"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 def format_commercial_datetime(value):
@@ -4648,22 +4828,51 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "⚡ Preview dinámico\n\n"
-            "El preview dinámico estará disponible en una fase posterior. Por ahora puedes ver el preview manual.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "👁 Ver preview",
-                    callback_data=f"marketplace_preview_{group_id}"
-                )],
-                [InlineKeyboardButton(
-                    "⬅️ Volver a ficha",
-                    callback_data=f"marketplace_group_{group_id}"
-                )]
-            ])
-        )
+        videos = fetch_dynamic_preview_videos(group_id, limit=3)
+
+
+        if not videos:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⚡ Preview dinámico\n\n"
+                "Todavía no hay vídeos guardados para este preview. Se guardarán los próximos vídeos publicados en la comunidad.",
+                reply_markup=build_dynamic_preview_access_keyboard(
+                    group,
+                    user_id=user_id
+                )
+            )
+
+            return
+
+
+        await delete_query_message_safely(query)
+        total = len(videos)
+
+
+        for index, video in enumerate(videos, start=1):
+
+            reply_markup = (
+                build_dynamic_preview_access_keyboard(
+                    group,
+                    user_id=user_id
+                )
+                if index == total
+                else None
+            )
+
+            await context.bot.send_video(
+                chat_id=query.message.chat_id,
+                video=video.get("video_file_id"),
+                caption=format_dynamic_preview_video_caption(
+                    group,
+                    video,
+                    index,
+                    total
+                ),
+                reply_markup=reply_markup
+            )
 
         return
 
@@ -11002,6 +11211,193 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if (
+        data.startswith("creator_dynamic_preview_enable_")
+        or data.startswith("creator_dynamic_preview_disable_")
+        or data.startswith("creator_dynamic_preview_videos_")
+        or data.startswith("creator_dynamic_preview_delete_")
+    ):
+
+        if data.startswith("creator_dynamic_preview_enable_"):
+
+            request_id = extract_commercial_request_id(
+                data,
+                "creator_dynamic_preview_enable_"
+            )
+            action = "enable"
+
+        elif data.startswith("creator_dynamic_preview_disable_"):
+
+            request_id = extract_commercial_request_id(
+                data,
+                "creator_dynamic_preview_disable_"
+            )
+            action = "disable"
+
+        elif data.startswith("creator_dynamic_preview_videos_"):
+
+            request_id = extract_commercial_request_id(
+                data,
+                "creator_dynamic_preview_videos_"
+            )
+            action = "videos"
+
+        elif data.startswith("creator_dynamic_preview_delete_video_"):
+
+            payload = data.replace(
+                "creator_dynamic_preview_delete_video_",
+                "",
+                1
+            )
+
+            try:
+
+                request_id_text, video_id_text = payload.rsplit("_", 1)
+                request_id = int(request_id_text)
+                video_id = int(video_id_text)
+
+            except Exception:
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "❌ Vídeo no válido."
+                )
+
+                return
+
+            action = "delete_video"
+
+        else:
+
+            request_id = extract_commercial_request_id(
+                data,
+                "creator_dynamic_preview_delete_"
+            )
+            action = "delete"
+
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_marketplace_group_id_for_request(request_row)
+
+
+        if not group_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "👁 Preview marketplace\n\nPrimero vincula un grupo/canal real para gestionar el preview dinámico.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_marketplace_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        if action == "enable":
+
+            set_group_preview_mode(group_id, "dynamic")
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Preview dinámico activado.\n\n"
+                "A partir de ahora se guardarán los vídeos que se publiquen en el grupo mientras el bot los reciba.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_marketplace_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        if action == "disable":
+
+            set_group_preview_mode(group_id, "manual")
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Preview dinámico desactivado.\n\n"
+                "Los vídeos guardados no se borran, pero ya no se capturarán nuevos vídeos para el preview dinámico.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_marketplace_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        if action == "videos":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                format_owner_dynamic_videos_text(group_id),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "⬅️ Volver",
+                        callback_data=f"creator_setup_marketplace_{request_id}"
+                    )]
+                ])
+            )
+
+            return
+
+
+        if action == "delete":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                format_owner_dynamic_videos_text(group_id),
+                reply_markup=build_dynamic_video_delete_keyboard(
+                    request_id,
+                    group_id
+                )
+            )
+
+            return
+
+
+        if action == "delete_video":
+
+            deleted = deactivate_dynamic_preview_video(
+                video_id,
+                group_id
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                (
+                    "✅ Vídeo eliminado del preview."
+                    if deleted
+                    else "❌ Vídeo no encontrado."
+                ),
+                reply_markup=build_dynamic_video_delete_keyboard(
+                    request_id,
+                    group_id
+                )
+            )
+
+            return
+
+
+    if (
         data.startswith("creator_preview_mode_")
         and not data.startswith("creator_preview_mode_set_")
     ):
@@ -11115,8 +11511,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             message += (
                 "\n\n"
-                "El preview dinámico estará disponible en una fase posterior. "
-                "Por ahora puedes configurar un preview manual."
+                "A partir de ahora se guardarán los vídeos que se publiquen en el grupo mientras el bot los reciba."
             )
 
 

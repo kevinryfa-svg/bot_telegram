@@ -75,7 +75,10 @@ from admin_view_handlers import (
     ver_usuarios
 )
 from expiration_worker import check_expirations
-from group_registration_handler import detect_bot_added
+from group_registration_handler import (
+    capture_group_preview_video,
+    detect_bot_added
+)
 from user_join_handler import detect_user_join
 from ai_handler import (
     ia_command,
@@ -249,6 +252,7 @@ def get_admin_groups(user_id):
 async def handle_media(update, context):
 
     if update.effective_chat and update.effective_chat.type != "private":
+        await capture_group_preview_video(update, context)
         return
 
     if context.user_data.get("marketplace_preview_media"):
