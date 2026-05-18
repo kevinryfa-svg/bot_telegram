@@ -95,7 +95,8 @@ from code_flow_handler import receive_code
 from admin_input_handler import receive_admin_inputs
 from commercial_form_handler import (
     receive_commercial_form,
-    receive_creator_setup
+    receive_creator_setup,
+    receive_marketplace_preview_media
 )
 from stripe_handler import stripe_webhook
 from checkout_routes import register_checkout_routes
@@ -242,6 +243,24 @@ def get_admin_groups(user_id):
 
     return []
     
+
+
+
+async def handle_media(update, context):
+
+    if update.effective_chat and update.effective_chat.type != "private":
+        return
+
+    if context.user_data.get("marketplace_preview_media"):
+        await receive_marketplace_preview_media(update, context)
+        return
+
+    if context.user_data.get("editing_preview"):
+        await receive_admin_inputs(update, context)
+        return
+
+    return
+
 
 async def handle_text(update, context):
 
@@ -1376,6 +1395,13 @@ def main():
     # =========================
     # ⚠️ ORDEN CORRECTO HANDLERS TEXTO
     # =========================
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.PHOTO | filters.VIDEO,
+            handle_media
+        )
+    )
 
     telegram_app.add_handler(
         MessageHandler(
