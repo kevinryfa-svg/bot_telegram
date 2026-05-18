@@ -775,6 +775,35 @@ def create_tables():
 
 
         # =========================
+        # TABLA PREVIEW DINÁMICO — VÍDEOS DE GRUPO
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS group_preview_videos (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER,
+
+            telegram_group_id BIGINT,
+
+            message_id BIGINT,
+
+            video_file_id TEXT,
+
+            caption TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            is_active BOOLEAN DEFAULT TRUE
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA COBROS DEL CREADOR
         # =========================
 
