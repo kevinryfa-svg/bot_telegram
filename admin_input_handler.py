@@ -18,6 +18,23 @@ from invite_link_service import (
     create_telegram_invite_link,
     revoke_telegram_invite_link
 )
+from rbac_helpers import get_admin_group_ids
+
+
+GROUP_ADMIN_PERMISSION_OPTIONS = [
+    ("view_users", "Ver usuarios", "can_view_users"),
+    ("kick_users", "Expulsar usuarios", "can_kick_users"),
+    ("ban_users", "Banear usuarios", "can_ban_users"),
+    ("unban_users", "Desbanear usuarios", "can_unban_users"),
+    ("warn_users", "Dar warnings", "can_warn_users"),
+    ("manage_links", "Gestionar enlaces", "can_resend_links"),
+    ("view_stats", "Ver estadísticas", "can_view_stats"),
+    ("manage_plans", "Gestionar planes", "can_manage_plans"),
+    ("edit_texts", "Editar textos del grupo", "can_edit_group_texts"),
+    ("edit_preview", "Editar preview marketplace", "can_edit_marketplace_preview"),
+    ("support", "Responder soporte del grupo", "can_respond_group_support"),
+    ("view_logs", "Ver logs del grupo", "can_view_logs")
+]
 
 
 def revoke_link(chat_id, link):
@@ -38,7 +55,267 @@ def revoke_link(chat_id, link):
         )
 
 
+def lookup_group_admin_target_user(raw_text):
+
+    raw_text = (raw_text or "").strip()
+
+
+    if not raw_text:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        if raw_text.startswith("@"):
+
+            username = raw_text[1:]
+
+            cur.execute("""
+
+                SELECT user_id,
+                       username,
+                       first_name
+                FROM (
+                    SELECT user_id, username, first_name
+                    FROM users
+                    WHERE username IS NOT NULL
+                    UNION
+                    SELECT user_id, username, first_name
+                    FROM commercial_requests
+                    WHERE username IS NOT NULL
+                ) known_users
+                WHERE LOWER(username)=LOWER(%s)
+                LIMIT 1
+
+            """, (username,))
+
+        else:
+
+            try:
+
+                target_user_id = int(raw_text)
+
+            except Exception:
+
+                return None
+
+
+            cur.execute("""
+
+                SELECT user_id,
+                       username,
+                       first_name
+                FROM (
+                    SELECT user_id, username, first_name
+                    FROM users
+                    WHERE user_id=%s
+                    UNION
+                    SELECT user_id, username, first_name
+                    FROM commercial_requests
+                    WHERE user_id=%s
+                    UNION
+                    SELECT user_id, NULL AS username, NULL AS first_name
+                    FROM admins
+                    WHERE user_id=%s
+                ) known_users
+                LIMIT 1
+
+            """, (
+                target_user_id,
+                target_user_id,
+                target_user_id
+            ))
+
+
+        return cur.fetchone()
+
+
+def fetch_manageable_admin_groups(user_id):
+
+    group_ids = get_admin_group_ids(
+        user_id,
+        ["can_manage_admins"]
+    )
+
+
+    with conn.cursor() as cur:
+
+        if group_ids is None:
+
+            cur.execute("""
+
+                SELECT id,
+                       name,
+                       telegram_group_id
+                FROM groups
+                WHERE telegram_group_id != 0
+                ORDER BY id ASC
+
+            """)
+
+        elif not group_ids:
+
+            return []
+
+        else:
+
+            cur.execute("""
+
+                SELECT id,
+                       name,
+                       telegram_group_id
+                FROM groups
+                WHERE telegram_group_id != 0
+                AND id = ANY(%s)
+                ORDER BY id ASC
+
+            """, (group_ids,))
+
+
+        return cur.fetchall()
+
+
+def format_pending_group_admin_permissions(selected_permissions):
+
+    lines = []
+
+
+    for _key, label, permission in GROUP_ADMIN_PERMISSION_OPTIONS:
+
+        marker = "✅" if selected_permissions.get(permission) is True else "▫️"
+        lines.append(f"{marker} {label}")
+
+
+    return "\n".join(lines)
+
+
+def build_pending_group_admin_permissions_keyboard(group_id, target_user_id, permissions):
+
+    keyboard = []
+
+
+    for key, label, permission in GROUP_ADMIN_PERMISSION_OPTIONS:
+
+        marker = "✅" if permissions.get(permission) is True else "▫️"
+        keyboard.append([InlineKeyboardButton(
+            f"{marker} {label}",
+            callback_data=f"gga_t_{group_id}_{target_user_id}_{key}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "💾 Guardar admin",
+        callback_data=f"add_group_admin_save_{group_id}"
+    )])
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data="group_admin_panel"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_group_admin_add_group_keyboard(groups):
+
+    keyboard = []
+
+
+    for group_id, name, _telegram_group_id in groups:
+
+        keyboard.append([InlineKeyboardButton(
+            name or f"Grupo {group_id}",
+            callback_data=f"add_group_admin_select_group_{group_id}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data="group_admin_panel"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if context.user_data.get("adding_group_admin"):
+
+        text = update.message.text.strip()
+        target = lookup_group_admin_target_user(text)
+
+
+        if not target:
+
+            await update.message.reply_text(
+                "❌ Usuario no encontrado en la base de datos."
+            )
+
+            return
+
+
+        target_user_id, username, first_name = target
+
+
+        if int(target_user_id) == int(update.effective_user.id):
+
+            await update.message.reply_text(
+                "❌ No puedes añadirte a ti mismo como admin."
+            )
+
+            return
+
+
+        groups = fetch_manageable_admin_groups(update.effective_user.id)
+
+
+        if not groups:
+
+            context.user_data["adding_group_admin"] = False
+
+            await update.message.reply_text(
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+            )
+
+            return
+
+
+        context.user_data["group_admin_target_user_id"] = target_user_id
+        context.user_data["group_admin_target_display"] = (
+            f"@{username}" if username else first_name or str(target_user_id)
+        )
+
+
+        if len(groups) > 1:
+
+            await update.message.reply_text(
+                "Selecciona la comunidad donde quieres añadir este admin.",
+                reply_markup=build_group_admin_add_group_keyboard(groups)
+            )
+
+            return
+
+
+        group_id = groups[0][0]
+        context.user_data["group_admin_selected_group_id"] = group_id
+        context.user_data["group_admin_permissions"] = {
+            permission: False
+            for _key, _label, permission in GROUP_ADMIN_PERMISSION_OPTIONS
+        }
+
+        await update.message.reply_text(
+            "Permisos del nuevo admin:\n\n"
+            + format_pending_group_admin_permissions(
+                context.user_data["group_admin_permissions"]
+            ),
+            reply_markup=build_pending_group_admin_permissions_keyboard(
+                group_id,
+                target_user_id,
+                context.user_data["group_admin_permissions"]
+            )
+        )
+
+        return
 
     # =========================
     # RECIBIR PREVIEW MEDIA

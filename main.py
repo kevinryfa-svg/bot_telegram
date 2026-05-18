@@ -284,6 +284,10 @@ async def handle_text(update, context):
         await receive_admin_inputs(update, context)
         return
 
+    if context.user_data.get("adding_group_admin"):
+        await receive_admin_inputs(update, context)
+        return
+
     if context.user_data.get("waiting_code"):
         await receive_admin_inputs(update, context)
         return
