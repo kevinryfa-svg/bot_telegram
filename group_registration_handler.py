@@ -354,6 +354,28 @@ def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_ro
 
 async def register_authorized_group(group_id, group_name, added_by, context, request_row):
 
+    existing_group_id = get_existing_group(group_id)
+
+
+    if not creator_has_capacity(
+        added_by,
+        request_row["max_groups_allowed"],
+        existing_group_id
+    ):
+
+        await reject_group_registration(
+            context,
+            group_id,
+            group_name,
+            added_by,
+            "⚠️ Has superado el máximo de comunidades permitidas para tu plan actual. El bot saldrá del grupo.",
+            "⛔ Has alcanzado el máximo de comunidades permitidas. Para añadir otra comunidad necesitas ampliar tu suscripción o comprar un extra.",
+            "⚠️ Bot añadido por creador que superó su cupo de comunidades."
+        )
+
+        return
+
+
     internal_group_id = upsert_group_for_creator(
         group_name,
         group_id,

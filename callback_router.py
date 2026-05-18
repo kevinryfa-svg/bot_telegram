@@ -1925,7 +1925,13 @@ def build_creator_setup_panel_text(group_id=None):
 
         text += (
             "\n\n"
-            "Estado del grupo: pendiente de crear/publicar grupo."
+            "Estado del grupo: pendiente de crear/publicar grupo.\n\n"
+            "Pasos para resolverlo:\n"
+            "1️⃣ Añadir bot al grupo.\n"
+            "2️⃣ Dar permisos de administrador.\n"
+            "3️⃣ Esperar 30 segundos.\n"
+            "4️⃣ Copiar el ID recibido por privado.\n"
+            "5️⃣ Pegar ID aquí si hace falta."
         )
 
 
@@ -9391,13 +9397,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "📡 Grupo o canal\n\n"
-            "Antes de enviar el ID:\n\n"
-            "1. Añade este bot a tu grupo o canal.\n"
-            "2. Dale permisos de administrador para gestionar enlaces, usuarios y mensajes de acceso.\n"
-            "3. El bot debe detectar el grupo al entrar y guardarlo como registrado.\n"
-            "4. El ID del grupo suele empezar por -100.\n"
-            "5. Puedes obtenerlo desde herramientas de Telegram para ver el ID del chat, reenviando un mensaje a un bot de ID o copiándolo desde la configuración técnica si ya lo tienes.\n\n"
-            "Cuando el bot esté añadido y sea administrador, envía aquí el telegram_group_id o el link/identificador para dejarlo pendiente de verificación."
+            "Flujo recomendado:\n\n"
+            "1️⃣ Añade este bot a tu grupo o canal.\n"
+            "2️⃣ Dale permisos de administrador para gestionar enlaces, usuarios y mensajes de acceso.\n"
+            "3️⃣ Espera 30 segundos mientras el bot valida autorización y cupo.\n"
+            "4️⃣ Si todo está correcto, el bot te enviará el ID del grupo por privado. Suele empezar por -100.\n"
+            "5️⃣ Vuelve a este panel y pega el ID aquí si hace falta para completar la configuración.\n\n"
+            "Si ya recibiste el ID, envíalo ahora."
         )
 
         return
