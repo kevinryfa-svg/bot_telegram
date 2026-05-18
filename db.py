@@ -66,6 +66,18 @@ def create_tables():
 
             preview_file_id TEXT,
 
+            preview_image_file_id TEXT,
+
+            preview_video_file_id TEXT,
+
+            category TEXT,
+
+            tags TEXT,
+
+            marketplace_badge TEXT,
+
+            preview_mode TEXT DEFAULT 'manual',
+
             stripe_secret_key TEXT,
 
             public_visibility TEXT DEFAULT 'start_home',
@@ -683,7 +695,14 @@ def create_tables():
             ("is_free_group", "BOOLEAN DEFAULT FALSE"),
             ("bot_is_admin", "BOOLEAN DEFAULT FALSE"),
             ("is_active", "BOOLEAN DEFAULT TRUE"),
-            ("added_by", "BIGINT")
+            ("added_by", "BIGINT"),
+            ("preview_text", "TEXT"),
+            ("preview_image_file_id", "TEXT"),
+            ("preview_video_file_id", "TEXT"),
+            ("category", "TEXT"),
+            ("tags", "TEXT"),
+            ("marketplace_badge", "TEXT"),
+            ("preview_mode", "TEXT DEFAULT 'manual'")
 
         ]
 
@@ -695,7 +714,7 @@ def create_tables():
                 cur.execute(f"""
 
                     ALTER TABLE groups
-                    ADD COLUMN {column_name} {column_type}
+                    ADD COLUMN IF NOT EXISTS {column_name} {column_type}
 
                 """)
 

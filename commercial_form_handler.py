@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 
 from bot_config import ADMIN_ID
 from db import conn
-from rbac_helpers import assign_group_owner_permissions
+from rbac_helpers import assign_group_owner_permissions, is_super_admin
 
 
 def create_commercial_request(user, request_type, form_data=None):
@@ -128,6 +128,13 @@ def clear_creator_setup(context):
     context.user_data.pop("creator_setup_data", None)
 
 
+def clear_marketplace_preview_media(context):
+
+    context.user_data.pop("marketplace_preview_media", None)
+    context.user_data.pop("marketplace_preview_request_id", None)
+    context.user_data.pop("marketplace_preview_media_type", None)
+
+
 def mask_secret(value):
 
     if not value:
@@ -169,7 +176,10 @@ def fetch_creator_request(request_id, user_id):
         return None
 
 
-    if int(row[1] or 0) != int(user_id):
+    if (
+        int(row[1] or 0) != int(user_id)
+        and not is_super_admin(user_id)
+    ):
 
         return None
 
@@ -586,6 +596,96 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
 
+    if action == "marketplace_preview_text":
+
+        group_id = get_request_group_id(request_row)
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE commercial_requests
+                SET creator_preview_text=%s,
+                    creator_setup_status='setup_in_progress',
+                    updated_at=NOW()
+                WHERE id=%s
+
+            """, (
+                text,
+                request_id
+            ))
+
+
+            if group_id:
+
+                cur.execute("""
+
+                    UPDATE groups
+                    SET preview_text=%s
+                    WHERE id=%s
+
+                """, (
+                    text,
+                    group_id
+                ))
+
+
+            conn.commit()
+
+
+        clear_creator_setup(context)
+
+        await update.message.reply_text(
+            "✅ Texto preview guardado correctamente.",
+            reply_markup=get_back_to_setup_keyboard(request_id)
+        )
+
+        return
+
+
+    if action == "marketplace_tags":
+
+        group_id = get_request_group_id(request_row)
+
+
+        if not group_id:
+
+            clear_creator_setup(context)
+
+            await update.message.reply_text(
+                "⚠️ Primero vincula un grupo/canal real para guardar tags.",
+                reply_markup=get_back_to_setup_keyboard(request_id)
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET tags=%s
+                WHERE id=%s
+
+            """, (
+                text,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        clear_creator_setup(context)
+
+        await update.message.reply_text(
+            "✅ Tags guardados correctamente.",
+            reply_markup=get_back_to_setup_keyboard(request_id)
+        )
+
+        return
+
+
     if action == "stripe":
 
         if step == 1:
@@ -835,6 +935,117 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text(
         "⚠️ No se reconoció el paso de configuración.",
+        reply_markup=get_back_to_setup_keyboard(request_id)
+    )
+
+
+async def receive_marketplace_preview_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message:
+
+        return
+
+
+    request_id = context.user_data.get("marketplace_preview_request_id")
+    media_type = context.user_data.get("marketplace_preview_media_type")
+    request_row = fetch_creator_request(
+        request_id,
+        update.effective_user.id
+    )
+
+
+    if not request_row:
+
+        clear_marketplace_preview_media(context)
+
+        await update.message.reply_text(
+            "⛔ Esta solicitud no pertenece a tu usuario."
+        )
+
+        return
+
+
+    group_id = get_request_group_id(request_row)
+
+
+    if not group_id:
+
+        clear_marketplace_preview_media(context)
+
+        await update.message.reply_text(
+            "⚠️ Primero vincula un grupo/canal real para guardar media preview.",
+            reply_markup=get_back_to_setup_keyboard(request_id)
+        )
+
+        return
+
+
+    file_id = None
+    column_name = None
+
+
+    if media_type == "image":
+
+        if not update.message.photo:
+
+            await update.message.reply_text(
+                "❌ Debes enviar una imagen."
+            )
+
+            return
+
+
+        file_id = update.message.photo[-1].file_id
+        column_name = "preview_image_file_id"
+
+
+    elif media_type == "video":
+
+        if not update.message.video:
+
+            await update.message.reply_text(
+                "❌ Debes enviar un vídeo."
+            )
+
+            return
+
+
+        file_id = update.message.video.file_id
+        column_name = "preview_video_file_id"
+
+
+    else:
+
+        clear_marketplace_preview_media(context)
+
+        await update.message.reply_text(
+            "❌ Tipo de media no válido.",
+            reply_markup=get_back_to_setup_keyboard(request_id)
+        )
+
+        return
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE groups
+            SET {column_name}=%s
+            WHERE id=%s
+
+        """, (
+            file_id,
+            group_id
+        ))
+
+        conn.commit()
+
+
+    clear_marketplace_preview_media(context)
+
+    await update.message.reply_text(
+        "✅ Media preview guardado correctamente.",
         reply_markup=get_back_to_setup_keyboard(request_id)
     )
 

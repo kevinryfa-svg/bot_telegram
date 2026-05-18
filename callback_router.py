@@ -657,6 +657,379 @@ def format_public_visibility(public_visibility):
     return labels.get(public_visibility, public_visibility or "-")
 
 
+MARKETPLACE_CATEGORIES = [
+    ("Trading", "trading"),
+    ("Cripto", "cripto"),
+    ("IA", "ia"),
+    ("Cursos", "cursos"),
+    ("Fitness", "fitness"),
+    ("Gaming", "gaming"),
+    ("VIP", "vip"),
+    ("Otros", "otros")
+]
+
+MARKETPLACE_CATEGORY_LABELS = {
+    slug: label
+    for label, slug in MARKETPLACE_CATEGORIES
+}
+
+PREVIEW_MODE_LABELS = {
+    "private": "privado / mínimo",
+    "manual": "manual",
+    "dynamic": "dinámico",
+    "hybrid": "mixto"
+}
+
+
+def marketplace_access_text(group):
+
+    if group.get("is_free_group"):
+
+        return "🔓 Entrar gratis"
+
+
+    return "💳 Ver acceso"
+
+
+def build_marketplace_access_keyboard(group_id, is_free_group, back_callback="start_explore_groups"):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "🔓 Entrar gratis" if is_free_group else "💳 Ver acceso",
+            callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
+        )],
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=back_callback
+        )]
+    ])
+
+
+def row_to_marketplace_group(row):
+
+    if not row:
+
+        return None
+
+
+    fields = [
+        "id",
+        "name",
+        "is_free_group",
+        "preview_text",
+        "preview_image_file_id",
+        "preview_video_file_id",
+        "category",
+        "tags",
+        "marketplace_badge",
+        "preview_mode"
+    ]
+
+    return dict(zip(fields, row))
+
+
+def fetch_marketplace_group(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   name,
+                   COALESCE(is_free_group, FALSE),
+                   preview_text,
+                   preview_image_file_id,
+                   preview_video_file_id,
+                   category,
+                   tags,
+                   marketplace_badge,
+                   COALESCE(preview_mode, 'manual')
+            FROM groups
+            WHERE id=%s
+            AND is_active=TRUE
+            AND telegram_group_id != 0
+            LIMIT 1
+
+        """, (group_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_marketplace_group(row)
+
+
+def format_marketplace_kind(group):
+
+    if group.get("is_free_group"):
+
+        return "🔓 Gratis"
+
+
+    return group.get("marketplace_badge") or "💎 Premium"
+
+
+def format_marketplace_category(group):
+
+    category = group.get("category")
+
+    if not category:
+
+        return "Otros"
+
+
+    return MARKETPLACE_CATEGORY_LABELS.get(category, category)
+
+
+def format_marketplace_card(group):
+
+    preview_mode = group.get("preview_mode") or "manual"
+    text = (
+        f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+        f"📂 {format_marketplace_category(group)}\n"
+        f"{format_marketplace_kind(group)}\n"
+        "👥 Comunidad privada"
+    )
+
+
+    if preview_mode != "private":
+
+        preview_text = group.get("preview_text") or "Preview manual pendiente de configurar."
+
+        if len(preview_text) > 180:
+
+            preview_text = f"{preview_text[:177]}..."
+
+
+        text += f"\n📝 {preview_text}"
+
+
+    return text
+
+
+def format_marketplace_preview_caption(group):
+
+    preview_mode = group.get("preview_mode") or "manual"
+
+
+    if preview_mode == "private":
+
+        return (
+            f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+            f"📂 {format_marketplace_category(group)}\n"
+            f"{format_marketplace_kind(group)}\n"
+            "👥 Comunidad privada"
+        )
+
+
+    if preview_mode in ("dynamic", "hybrid"):
+
+        return (
+            f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+            f"📂 {format_marketplace_category(group)}\n"
+            f"{format_marketplace_kind(group)}\n\n"
+            "El preview dinámico estará disponible en una fase posterior. "
+            "Por ahora puedes configurar un preview manual."
+        )
+
+
+    text = (
+        f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+        f"📂 {format_marketplace_category(group)}\n"
+        f"{format_marketplace_kind(group)}\n"
+        "👥 Comunidad privada\n\n"
+        f"📝 {group.get('preview_text') or 'Preview manual pendiente de configurar.'}"
+    )
+
+
+    if group.get("tags"):
+
+        text += f"\n🏷 {group.get('tags')}"
+
+
+    return text
+
+
+async def send_marketplace_preview(context, chat_id, group):
+
+    caption = format_marketplace_preview_caption(group)
+    keyboard = build_marketplace_access_keyboard(
+        group.get("id"),
+        group.get("is_free_group"),
+        "start_explore_groups"
+    )
+    preview_mode = group.get("preview_mode") or "manual"
+
+
+    if preview_mode == "manual" and group.get("preview_video_file_id"):
+
+        await context.bot.send_video(
+            chat_id=chat_id,
+            video=group.get("preview_video_file_id"),
+            caption=caption,
+            reply_markup=keyboard
+        )
+
+        return
+
+
+    if preview_mode == "manual" and group.get("preview_image_file_id"):
+
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=group.get("preview_image_file_id"),
+            caption=caption,
+            reply_markup=keyboard
+        )
+
+        return
+
+
+    await send_clean_message(
+        context,
+        chat_id,
+        caption,
+        reply_markup=keyboard
+    )
+
+
+def can_edit_marketplace_preview(request_row, user_id):
+
+    return (
+        is_super_admin(user_id)
+        or commercial_request_belongs_to_user(request_row, user_id)
+    )
+
+
+def get_marketplace_group_id_for_request(request_row):
+
+    group_row = resolve_commercial_request_group(request_row)
+
+    if not group_row:
+
+        return None
+
+
+    return group_row[0]
+
+
+def build_creator_marketplace_keyboard(request_id):
+
+    return [
+        [InlineKeyboardButton(
+            "⚙️ Nivel de preview",
+            callback_data=f"creator_preview_mode_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "📝 Editar texto preview",
+            callback_data=f"creator_preview_text_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "🖼 Añadir imagen preview",
+            callback_data=f"creator_preview_image_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "🎬 Añadir vídeo preview",
+            callback_data=f"creator_preview_video_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "📂 Elegir categoría",
+            callback_data=f"creator_preview_category_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "🏷 Editar tags",
+            callback_data=f"creator_preview_tags_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "👁 Ver cómo quedará",
+            callback_data=f"creator_preview_show_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=f"configure_community_{request_id}"
+        )]
+    ]
+
+
+def build_preview_mode_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "🔒 Privado / mínimo",
+            callback_data=f"creator_preview_mode_set_{request_id}_private"
+        )],
+        [InlineKeyboardButton(
+            "📝 Manual",
+            callback_data=f"creator_preview_mode_set_{request_id}_manual"
+        )],
+        [InlineKeyboardButton(
+            "⚡ Dinámico",
+            callback_data=f"creator_preview_mode_set_{request_id}_dynamic"
+        )],
+        [InlineKeyboardButton(
+            "💎 Mixto",
+            callback_data=f"creator_preview_mode_set_{request_id}_hybrid"
+        )],
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=f"creator_setup_marketplace_{request_id}"
+        )]
+    ])
+
+
+def build_preview_category_keyboard(request_id):
+
+    keyboard = [
+        [InlineKeyboardButton(
+            label,
+            callback_data=f"creator_preview_category_set_{request_id}_{slug}"
+        )]
+        for label, slug in MARKETPLACE_CATEGORIES
+    ]
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data=f"creator_setup_marketplace_{request_id}"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_creator_marketplace_text(group_id):
+
+    text = (
+        "👁 Preview marketplace\n\n"
+        "Configura cómo se verá tu comunidad en Explorar comunidades privadas."
+    )
+
+
+    if not group_id:
+
+        return (
+            f"{text}\n\n"
+            "Estado: pendiente de grupo/canal vinculado.\n"
+            "Primero vincula un grupo real para guardar imagen, vídeo, categoría y tags."
+        )
+
+
+    group = fetch_marketplace_group(group_id)
+
+
+    if not group:
+
+        return f"{text}\n\nEstado: comunidad no disponible o pendiente de publicación."
+
+
+    return (
+        f"{text}\n\n"
+        f"Nivel de preview: {PREVIEW_MODE_LABELS.get(group.get('preview_mode'), group.get('preview_mode') or 'manual')}\n"
+        f"Texto preview: {'configurado' if group.get('preview_text') else 'pendiente'}\n"
+        f"Imagen preview: {'configurada' if group.get('preview_image_file_id') else 'pendiente'}\n"
+        f"Vídeo preview: {'configurado' if group.get('preview_video_file_id') else 'pendiente'}\n"
+        f"Categoría: {format_marketplace_category(group)}\n"
+        f"Tags: {group.get('tags') or 'pendiente'}"
+    )
+
+
 def format_commercial_datetime(value):
 
     if not value:
@@ -1057,6 +1430,11 @@ def build_creator_setup_keyboard(request_id, payment_mode=None):
         [InlineKeyboardButton(
             "👁 Visibilidad pública",
             callback_data=f"creator_setup_visibility_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "👁 Preview marketplace",
+            callback_data=f"creator_setup_marketplace_{request_id}"
         )],
 
         [InlineKeyboardButton(
@@ -2597,7 +2975,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
-                    SELECT id, name
+                    SELECT id,
+                           name,
+                           COALESCE(is_free_group, FALSE),
+                           preview_text,
+                           preview_image_file_id,
+                           preview_video_file_id,
+                           category,
+                           tags,
+                           marketplace_badge,
+                           COALESCE(preview_mode, 'manual')
                     FROM groups
                     WHERE is_active=TRUE
                     AND telegram_group_id != 0
@@ -2606,15 +2993,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 """)
 
-                groups = cur.fetchall()
+                groups = [
+                    row_to_marketplace_group(row)
+                    for row in cur.fetchall()
+                ]
 
         except Exception as e:
 
             print("Error cargando explorar comunidades:", e)
 
             await send_clean_message(
-            context,
-            query.message.chat_id,
+                context,
+                query.message.chat_id,
                 "❌ Error cargando comunidades disponibles."
             )
 
@@ -2624,8 +3014,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not groups:
 
             await send_clean_message(
-            context,
-            query.message.chat_id,
+                context,
+                query.message.chat_id,
                 "Todavía no hay comunidades disponibles. "
                 "Puedes contactar con soporte o volver más tarde."
             )
@@ -2633,17 +3023,26 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        text_parts = [
+            "Debajo aparecen las comunidades privadas disponibles. "
+            "Selecciona una para ver preview o acceso."
+        ]
         keyboard = []
 
 
-        for group_id, group_name in groups:
+        for group in groups:
 
-            keyboard.append([
-                InlineKeyboardButton(
-                    group_name,
-                    callback_data=f"group_{group_id}"
-                )
-            ])
+            group_id = group.get("id")
+            group_name = group.get("name") or "Comunidad privada"
+            text_parts.append(format_marketplace_card(group))
+            keyboard.append([InlineKeyboardButton(
+                f"👁 Ver preview — {group_name}",
+                callback_data=f"marketplace_preview_{group_id}"
+            )])
+            keyboard.append([InlineKeyboardButton(
+                f"{marketplace_access_text(group)} — {group_name}",
+                callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
+            )])
 
 
         keyboard.append([
@@ -2663,9 +3062,38 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            "Debajo aparecen las comunidades privadas disponibles. "
-            "Selecciona una para ver sus planes.",
+            "\n\n".join(text_parts),
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data.startswith("marketplace_preview_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "marketplace_preview_"
+        )
+        group = fetch_marketplace_group(group_id)
+
+
+        if not group:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Comunidad no encontrada o no disponible."
+            )
+
+            return
+
+
+        await delete_query_message_safely(query)
+        await send_marketplace_preview(
+            context,
+            query.message.chat_id,
+            group
         )
 
         return
@@ -7948,6 +8376,500 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     request_row.get("payment_mode")
                 )
             )
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_marketplace_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_marketplace_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_marketplace_group_id_for_request(request_row)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_creator_marketplace_text(group_id),
+            reply_markup=InlineKeyboardMarkup(
+                build_creator_marketplace_keyboard(request_id)
+            )
+        )
+
+        return
+
+
+    if (
+        data.startswith("creator_preview_mode_")
+        and not data.startswith("creator_preview_mode_set_")
+    ):
+
+        request_id = extract_commercial_request_id(data, "creator_preview_mode_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "⚙️ Nivel de preview\n\n"
+            "Elige cuánto quieres mostrar en el marketplace.",
+            reply_markup=build_preview_mode_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("creator_preview_mode_set_"):
+
+        prefix = "creator_preview_mode_set_"
+        remainder = data.replace(prefix, "", 1)
+
+        try:
+
+            request_id_text, preview_mode = remainder.rsplit("_", 1)
+            request_id = int(request_id_text)
+
+        except Exception:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Nivel de preview no válido."
+            )
+
+            return
+
+
+        if preview_mode not in PREVIEW_MODE_LABELS:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Nivel de preview no válido."
+            )
+
+            return
+
+
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_marketplace_group_id_for_request(request_row)
+
+        if not group_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "👁 Preview marketplace\n\n"
+                "Primero vincula un grupo/canal real para guardar el nivel de preview.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_marketplace_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET preview_mode=%s
+                WHERE id=%s
+
+            """, (
+                preview_mode,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        message = "✅ Nivel de preview actualizado."
+
+        if preview_mode in ("dynamic", "hybrid"):
+
+            message += (
+                "\n\n"
+                "El preview dinámico estará disponible en una fase posterior. "
+                "Por ahora puedes configurar un preview manual."
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            message,
+            reply_markup=InlineKeyboardMarkup(
+                build_creator_marketplace_keyboard(request_id)
+            )
+        )
+
+        return
+
+
+    if data.startswith("creator_preview_text_"):
+
+        request_id = extract_commercial_request_id(data, "creator_preview_text_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        start_creator_setup_state(context, request_id, "marketplace_preview_text")
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📝 Editar texto preview\n\n"
+            "Escribe el preview corto que quieres mostrar en el marketplace."
+        )
+
+        return
+
+
+    if data.startswith("creator_preview_image_"):
+
+        request_id = extract_commercial_request_id(data, "creator_preview_image_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        if not get_marketplace_group_id_for_request(request_row):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🖼 Añadir imagen preview\n\n"
+                "Primero vincula un grupo/canal real para guardar la imagen preview.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_marketplace_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        context.user_data["marketplace_preview_media"] = True
+        context.user_data["marketplace_preview_request_id"] = request_id
+        context.user_data["marketplace_preview_media_type"] = "image"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🖼 Añadir imagen preview\n\n"
+            "Envía ahora la foto que quieres usar como preview del marketplace."
+        )
+
+        return
+
+
+    if data.startswith("creator_preview_video_"):
+
+        request_id = extract_commercial_request_id(data, "creator_preview_video_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        if not get_marketplace_group_id_for_request(request_row):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🎬 Añadir vídeo preview\n\n"
+                "Primero vincula un grupo/canal real para guardar el vídeo preview.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_marketplace_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        context.user_data["marketplace_preview_media"] = True
+        context.user_data["marketplace_preview_request_id"] = request_id
+        context.user_data["marketplace_preview_media_type"] = "video"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🎬 Añadir vídeo preview\n\n"
+            "Envía ahora el vídeo corto que quieres usar como preview del marketplace."
+        )
+
+        return
+
+
+    if data.startswith("creator_preview_category_set_"):
+
+        prefix = "creator_preview_category_set_"
+        remainder = data.replace(prefix, "", 1)
+
+        try:
+
+            request_id_text, category = remainder.rsplit("_", 1)
+            request_id = int(request_id_text)
+
+        except Exception:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Categoría no válida."
+            )
+
+            return
+
+
+        if category not in MARKETPLACE_CATEGORY_LABELS:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Categoría no válida."
+            )
+
+            return
+
+
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_marketplace_group_id_for_request(request_row)
+
+        if not group_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "📂 Elegir categoría\n\n"
+                "Primero vincula un grupo/canal real para guardar la categoría.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_marketplace_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET category=%s
+                WHERE id=%s
+
+            """, (
+                category,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"✅ Categoría guardada: {MARKETPLACE_CATEGORY_LABELS.get(category)}",
+            reply_markup=InlineKeyboardMarkup(
+                build_creator_marketplace_keyboard(request_id)
+            )
+        )
+
+        return
+
+
+    if data.startswith("creator_preview_category_"):
+
+        request_id = extract_commercial_request_id(data, "creator_preview_category_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📂 Elegir categoría\n\n"
+            "Selecciona la categoría principal de tu comunidad.",
+            reply_markup=build_preview_category_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("creator_preview_tags_"):
+
+        request_id = extract_commercial_request_id(data, "creator_preview_tags_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        if not get_marketplace_group_id_for_request(request_row):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🏷 Editar tags\n\n"
+                "Primero vincula un grupo/canal real para guardar tags.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_marketplace_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        start_creator_setup_state(context, request_id, "marketplace_tags")
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🏷 Editar tags\n\n"
+            "Escribe los tags separados por comas. Ejemplo: señales, trading, vip"
+        )
+
+        return
+
+
+    if data.startswith("creator_preview_show_"):
+
+        request_id = extract_commercial_request_id(data, "creator_preview_show_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not can_edit_marketplace_preview(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_marketplace_group_id_for_request(request_row)
+
+        if not group_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "👁 Ver cómo quedará\n\n"
+                "Primero vincula un grupo/canal real para previsualizar la ficha.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_creator_marketplace_keyboard(request_id)
+                )
+            )
+
+            return
+
+
+        group = fetch_marketplace_group(group_id)
+
+        if not group:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Comunidad no encontrada o no disponible."
+            )
+
+            return
+
+
+        await send_marketplace_preview(
+            context,
+            query.message.chat_id,
+            group
         )
 
         return
