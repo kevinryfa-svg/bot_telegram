@@ -681,6 +681,25 @@ PREVIEW_MODE_LABELS = {
 }
 
 
+MARKETPLACE_FILTERS = [
+    ("🔥 Tendencias", "trending"),
+    ("⭐ Más populares", "popular"),
+    ("🆕 Nuevas", "new"),
+    ("🔓 Gratis", "free"),
+    ("💎 Premium", "premium")
+]
+
+MARKETPLACE_FILTER_LABELS = {
+    slug: label
+    for label, slug in MARKETPLACE_FILTERS
+}
+
+COMMUNITY_STATS_COLUMNS = {
+    "preview_views",
+    "access_clicks"
+}
+
+
 def marketplace_access_text(group):
 
     if group.get("is_free_group"):
@@ -691,18 +710,136 @@ def marketplace_access_text(group):
     return "💳 Ver acceso"
 
 
-def build_marketplace_access_keyboard(group_id, is_free_group, back_callback="start_explore_groups"):
+def format_marketplace_number(value):
 
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "🔓 Entrar gratis" if is_free_group else "💳 Ver acceso",
-            callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
-        )],
-        [InlineKeyboardButton(
-            "⬅️ Volver",
-            callback_data=back_callback
-        )]
-    ])
+    try:
+
+        value = int(value or 0)
+
+    except Exception:
+
+        value = 0
+
+
+    return f"{value:,}".replace(",", ".")
+
+
+def favorite_button_text(is_favorite):
+
+    if is_favorite:
+
+        return "💔 Quitar favorito"
+
+
+    return "⭐ Guardar favorito"
+
+
+def favorite_callback_data(group_id, is_favorite):
+
+    if is_favorite:
+
+        return f"unfavorite_group_{group_id}"
+
+
+    return f"favorite_group_{group_id}"
+
+
+def build_marketplace_filter_keyboard(active_filter="trending"):
+
+    keyboard = []
+
+
+    for label, slug in MARKETPLACE_FILTERS:
+
+        text = label
+
+        if slug == active_filter:
+
+            text = f"• {label}"
+
+
+        keyboard.append([InlineKeyboardButton(
+            text,
+            callback_data=f"marketplace_filter_{slug}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data="public_back_start"
+    )])
+
+    return keyboard
+
+
+def build_marketplace_access_keyboard(
+    group_id,
+    is_free_group,
+    back_callback="start_explore_groups",
+    user_id=None
+):
+
+    keyboard = []
+
+
+    if user_id:
+
+        is_favorite = is_group_favorite(user_id, group_id)
+
+        keyboard.append([InlineKeyboardButton(
+            favorite_button_text(is_favorite),
+            callback_data=favorite_callback_data(group_id, is_favorite)
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "🔓 Entrar gratis" if is_free_group else "💳 Ver acceso",
+        callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data=back_callback
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_marketplace_cards_keyboard(groups, user_id, active_filter="trending"):
+
+    keyboard = []
+
+
+    for group in groups:
+
+        group_id = group.get("id")
+        group_name = group.get("name") or "Comunidad privada"
+        is_favorite = group.get("is_favorite")
+
+        keyboard.append([InlineKeyboardButton(
+            f"👁 Preview — {group_name}",
+            callback_data=f"marketplace_preview_{group_id}"
+        )])
+        keyboard.append([
+            InlineKeyboardButton(
+                "💔 Favorito" if is_favorite else "⭐ Favorito",
+                callback_data=favorite_callback_data(group_id, is_favorite)
+            ),
+            InlineKeyboardButton(
+                marketplace_access_text(group),
+                callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
+            )
+        ])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "💬 Ayuda sobre este menú",
+        callback_data=CALLBACK_GROUP_PLANS_HELP
+    )])
+
+    keyboard.extend(build_marketplace_filter_keyboard(active_filter))
+
+    return keyboard
 
 
 def row_to_marketplace_group(row):
@@ -722,32 +859,60 @@ def row_to_marketplace_group(row):
         "category",
         "tags",
         "marketplace_badge",
-        "preview_mode"
+        "preview_mode",
+        "preview_views",
+        "access_clicks",
+        "favorites_count",
+        "member_count",
+        "created_at"
     ]
 
     return dict(zip(fields, row))
+
+
+def get_marketplace_group_select():
+
+    return """
+        SELECT g.id,
+               g.name,
+               COALESCE(g.is_free_group, FALSE),
+               g.preview_text,
+               g.preview_image_file_id,
+               g.preview_video_file_id,
+               g.category,
+               g.tags,
+               g.marketplace_badge,
+               COALESCE(g.preview_mode, 'manual'),
+               COALESCE(cs.preview_views, 0),
+               COALESCE(cs.access_clicks, 0),
+               COALESCE(cs.favorites_count, 0),
+               (
+                   SELECT COUNT(*)
+                   FROM users u
+                   WHERE u.group_id = g.id
+                   AND COALESCE(u.subscription_active, FALSE)=TRUE
+                   AND (
+                       u.expiration IS NULL
+                       OR u.expiration > NOW()
+                   )
+               ) AS member_count,
+               g.created_at
+        FROM groups g
+        LEFT JOIN community_stats cs
+        ON cs.group_id = g.id
+    """
 
 
 def fetch_marketplace_group(group_id):
 
     with conn.cursor() as cur:
 
-        cur.execute("""
+        cur.execute(f"""
 
-            SELECT id,
-                   name,
-                   COALESCE(is_free_group, FALSE),
-                   preview_text,
-                   preview_image_file_id,
-                   preview_video_file_id,
-                   category,
-                   tags,
-                   marketplace_badge,
-                   COALESCE(preview_mode, 'manual')
-            FROM groups
-            WHERE id=%s
-            AND is_active=TRUE
-            AND telegram_group_id != 0
+            {get_marketplace_group_select()}
+            WHERE g.id=%s
+            AND g.is_active=TRUE
+            AND g.telegram_group_id != 0
             LIMIT 1
 
         """, (group_id,))
@@ -756,6 +921,239 @@ def fetch_marketplace_group(group_id):
 
 
     return row_to_marketplace_group(row)
+
+
+def get_marketplace_order_clause(filter_kind):
+
+    if filter_kind == "popular":
+
+        return "ORDER BY COALESCE(cs.favorites_count, 0) DESC, COALESCE(cs.preview_views, 0) DESC, g.id DESC"
+
+
+    if filter_kind == "new":
+
+        return "ORDER BY g.created_at DESC, g.id DESC"
+
+
+    return """
+        ORDER BY (
+            COALESCE(cs.favorites_count, 0) * 3
+            + COALESCE(cs.preview_views, 0)
+            + COALESCE(cs.access_clicks, 0) * 2
+        ) DESC,
+        g.id DESC
+    """
+
+
+def fetch_marketplace_groups(filter_kind="trending", limit=8):
+
+    filters = [
+        "g.is_active=TRUE",
+        "g.telegram_group_id != 0",
+        "COALESCE(g.public_visibility, 'start_home')='explore_only'"
+    ]
+
+
+    if filter_kind == "free":
+
+        filters.append("COALESCE(g.is_free_group, FALSE)=TRUE")
+
+
+    if filter_kind == "premium":
+
+        filters.append("COALESCE(g.is_free_group, FALSE)=FALSE")
+
+
+    where_clause = " AND ".join(filters)
+    order_clause = get_marketplace_order_clause(filter_kind)
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            {get_marketplace_group_select()}
+            WHERE {where_clause}
+            {order_clause}
+            LIMIT %s
+
+        """, (limit,))
+
+        rows = cur.fetchall()
+
+
+    return [
+        row_to_marketplace_group(row)
+        for row in rows
+    ]
+
+
+def get_user_favorite_group_ids(user_id, group_ids):
+
+    if not user_id or not group_ids:
+
+        return set()
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT group_id
+            FROM community_favorites
+            WHERE user_id=%s
+            AND group_id = ANY(%s)
+
+        """, (
+            user_id,
+            group_ids
+        ))
+
+        rows = cur.fetchall()
+
+
+    return {
+        row[0]
+        for row in rows
+    }
+
+
+def is_group_favorite(user_id, group_id):
+
+    if not user_id or not group_id:
+
+        return False
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT 1
+            FROM community_favorites
+            WHERE user_id=%s
+            AND group_id=%s
+            LIMIT 1
+
+        """, (
+            user_id,
+            group_id
+        ))
+
+        return cur.fetchone() is not None
+
+
+def attach_favorite_state(groups, user_id):
+
+    group_ids = [
+        group.get("id")
+        for group in groups
+        if group.get("id")
+    ]
+    favorite_group_ids = get_user_favorite_group_ids(user_id, group_ids)
+
+
+    for group in groups:
+
+        group["is_favorite"] = group.get("id") in favorite_group_ids
+
+
+    return groups
+
+
+def ensure_community_stats(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO community_stats (group_id)
+            VALUES (%s)
+            ON CONFLICT (group_id) DO NOTHING
+
+        """, (group_id,))
+
+        conn.commit()
+
+
+def increment_community_stat(group_id, column_name):
+
+    if column_name not in COMMUNITY_STATS_COLUMNS:
+
+        return
+
+
+    if not group_id:
+
+        return
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO community_stats (group_id)
+            VALUES (%s)
+            ON CONFLICT (group_id) DO NOTHING
+
+        """, (group_id,))
+
+        cur.execute(f"""
+
+            UPDATE community_stats
+            SET {column_name}=GREATEST(COALESCE({column_name}, 0) + 1, 0),
+                updated_at=NOW()
+            WHERE group_id=%s
+
+        """, (group_id,))
+
+        conn.commit()
+
+
+def refresh_community_favorites_count(group_id):
+
+    if not group_id:
+
+        return 0
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO community_stats (group_id)
+            VALUES (%s)
+            ON CONFLICT (group_id) DO NOTHING
+
+        """, (group_id,))
+
+        cur.execute("""
+
+            UPDATE community_stats
+            SET favorites_count=(
+                    SELECT COUNT(*)
+                    FROM community_favorites
+                    WHERE group_id=%s
+                ),
+                updated_at=NOW()
+            WHERE group_id=%s
+            RETURNING favorites_count
+
+        """, (
+            group_id,
+            group_id
+        ))
+
+        row = cur.fetchone()
+        conn.commit()
+
+
+    if not row:
+
+        return 0
+
+
+    return row[0]
 
 
 def format_marketplace_kind(group):
@@ -786,8 +1184,9 @@ def format_marketplace_card(group):
     text = (
         f"🔥 {group.get('name') or 'Comunidad privada'}\n"
         f"📂 {format_marketplace_category(group)}\n"
-        f"{format_marketplace_kind(group)}\n"
-        "👥 Comunidad privada"
+        f"⭐ {format_marketplace_number(group.get('favorites_count'))} favoritos\n"
+        f"👥 {format_marketplace_number(group.get('member_count'))} miembros\n"
+        f"{format_marketplace_kind(group)}"
     )
 
 
@@ -800,7 +1199,7 @@ def format_marketplace_card(group):
             preview_text = f"{preview_text[:177]}..."
 
 
-        text += f"\n📝 {preview_text}"
+        text += f"\n\n📝 {preview_text}"
 
 
     return text
@@ -809,6 +1208,10 @@ def format_marketplace_card(group):
 def format_marketplace_preview_caption(group):
 
     preview_mode = group.get("preview_mode") or "manual"
+    stats_text = (
+        f"⭐ {format_marketplace_number(group.get('favorites_count'))} favoritos\n"
+        f"👥 {format_marketplace_number(group.get('member_count'))} miembros"
+    )
 
 
     if preview_mode == "private":
@@ -816,8 +1219,8 @@ def format_marketplace_preview_caption(group):
         return (
             f"🔥 {group.get('name') or 'Comunidad privada'}\n"
             f"📂 {format_marketplace_category(group)}\n"
-            f"{format_marketplace_kind(group)}\n"
-            "👥 Comunidad privada"
+            f"{stats_text}\n"
+            f"{format_marketplace_kind(group)}"
         )
 
 
@@ -826,6 +1229,7 @@ def format_marketplace_preview_caption(group):
         return (
             f"🔥 {group.get('name') or 'Comunidad privada'}\n"
             f"📂 {format_marketplace_category(group)}\n"
+            f"{stats_text}\n"
             f"{format_marketplace_kind(group)}\n\n"
             "El preview dinámico estará disponible en una fase posterior. "
             "Por ahora puedes configurar un preview manual."
@@ -835,8 +1239,8 @@ def format_marketplace_preview_caption(group):
     text = (
         f"🔥 {group.get('name') or 'Comunidad privada'}\n"
         f"📂 {format_marketplace_category(group)}\n"
-        f"{format_marketplace_kind(group)}\n"
-        "👥 Comunidad privada\n\n"
+        f"{stats_text}\n"
+        f"{format_marketplace_kind(group)}\n\n"
         f"📝 {group.get('preview_text') or 'Preview manual pendiente de configurar.'}"
     )
 
@@ -849,13 +1253,14 @@ def format_marketplace_preview_caption(group):
     return text
 
 
-async def send_marketplace_preview(context, chat_id, group):
+async def send_marketplace_preview(context, chat_id, group, user_id=None):
 
     caption = format_marketplace_preview_caption(group)
     keyboard = build_marketplace_access_keyboard(
         group.get("id"),
         group.get("is_free_group"),
-        "start_explore_groups"
+        "start_explore_groups",
+        user_id=user_id
     )
     preview_mode = group.get("preview_mode") or "manual"
 
@@ -889,6 +1294,52 @@ async def send_marketplace_preview(context, chat_id, group):
         chat_id,
         caption,
         reply_markup=keyboard
+    )
+
+
+async def send_marketplace_list(context, chat_id, user_id, filter_kind="trending"):
+
+    groups = attach_favorite_state(
+        fetch_marketplace_groups(filter_kind),
+        user_id
+    )
+    title = MARKETPLACE_FILTER_LABELS.get(
+        filter_kind,
+        MARKETPLACE_FILTER_LABELS.get("trending")
+    )
+
+
+    if not groups:
+
+        await send_clean_message(
+            context,
+            chat_id,
+            f"{title}\n\nTodavía no hay comunidades disponibles en esta sección.",
+            reply_markup=InlineKeyboardMarkup(
+                build_marketplace_filter_keyboard(filter_kind)
+            )
+        )
+
+        return
+
+
+    text_parts = [
+        f"{title}\n\nExplora comunidades privadas populares, nuevas y destacadas."
+    ]
+
+
+    for group in groups:
+
+        text_parts.append(format_marketplace_card(group))
+
+
+    await send_clean_message(
+        context,
+        chat_id,
+        "\n\n".join(text_parts),
+        reply_markup=InlineKeyboardMarkup(
+            build_marketplace_cards_keyboard(groups, user_id, filter_kind)
+        )
     )
 
 
@@ -2969,101 +3420,136 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "start_explore_groups":
 
-        try:
+        await send_marketplace_list(
+            context,
+            query.message.chat_id,
+            user_id,
+            "trending"
+        )
 
-            with conn.cursor() as cur:
+        return
 
-                cur.execute("""
 
-                    SELECT id,
-                           name,
-                           COALESCE(is_free_group, FALSE),
-                           preview_text,
-                           preview_image_file_id,
-                           preview_video_file_id,
-                           category,
-                           tags,
-                           marketplace_badge,
-                           COALESCE(preview_mode, 'manual')
-                    FROM groups
-                    WHERE is_active=TRUE
-                    AND telegram_group_id != 0
-                    AND COALESCE(public_visibility, 'start_home')='explore_only'
-                    ORDER BY id ASC
+    if data.startswith("marketplace_filter_"):
 
-                """)
+        filter_kind = data.replace("marketplace_filter_", "", 1)
 
-                groups = [
-                    row_to_marketplace_group(row)
-                    for row in cur.fetchall()
-                ]
 
-        except Exception as e:
+        if filter_kind not in MARKETPLACE_FILTER_LABELS:
 
-            print("Error cargando explorar comunidades:", e)
+            filter_kind = "trending"
+
+
+        await send_marketplace_list(
+            context,
+            query.message.chat_id,
+            user_id,
+            filter_kind
+        )
+
+        return
+
+
+    if data.startswith("favorite_group_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "favorite_group_"
+        )
+
+
+        if not fetch_marketplace_group(group_id):
 
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Error cargando comunidades disponibles."
+                "❌ Comunidad no encontrada o no disponible."
             )
 
             return
 
 
-        if not groups:
+        with conn.cursor() as cur:
 
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "Todavía no hay comunidades disponibles. "
-                "Puedes contactar con soporte o volver más tarde."
-            )
+            cur.execute("""
 
-            return
+                INSERT INTO community_favorites
+                (user_id, group_id)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id, group_id) DO NOTHING
 
+            """, (
+                user_id,
+                group_id
+            ))
 
-        text_parts = [
-            "Debajo aparecen las comunidades privadas disponibles. "
-            "Selecciona una para ver preview o acceso."
-        ]
-        keyboard = []
+            conn.commit()
 
 
-        for group in groups:
-
-            group_id = group.get("id")
-            group_name = group.get("name") or "Comunidad privada"
-            text_parts.append(format_marketplace_card(group))
-            keyboard.append([InlineKeyboardButton(
-                f"👁 Ver preview — {group_name}",
-                callback_data=f"marketplace_preview_{group_id}"
-            )])
-            keyboard.append([InlineKeyboardButton(
-                f"{marketplace_access_text(group)} — {group_name}",
-                callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
-            )])
-
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "💬 Ayuda sobre este menú",
-                callback_data=CALLBACK_GROUP_PLANS_HELP
-            )
-        ])
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "⬅️ Volver",
-                callback_data="public_back_start"
-            )
-        ])
+        favorites_count = refresh_community_favorites_count(group_id)
 
         await send_clean_message(
             context,
             query.message.chat_id,
-            "\n\n".join(text_parts),
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            f"⭐ Comunidad guardada en favoritos.\n\n⭐ {format_marketplace_number(favorites_count)} favoritos",
+            reply_markup=build_marketplace_access_keyboard(
+                group_id,
+                fetch_marketplace_group(group_id).get("is_free_group"),
+                "start_explore_groups",
+                user_id=user_id
+            )
+        )
+
+        return
+
+
+    if data.startswith("unfavorite_group_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "unfavorite_group_"
+        )
+
+
+        if not fetch_marketplace_group(group_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Comunidad no encontrada o no disponible."
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                DELETE FROM community_favorites
+                WHERE user_id=%s
+                AND group_id=%s
+
+            """, (
+                user_id,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        favorites_count = refresh_community_favorites_count(group_id)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"💔 Comunidad quitada de favoritos.\n\n⭐ {format_marketplace_number(favorites_count)} favoritos",
+            reply_markup=build_marketplace_access_keyboard(
+                group_id,
+                fetch_marketplace_group(group_id).get("is_free_group"),
+                "start_explore_groups",
+                user_id=user_id
+            )
         )
 
         return
@@ -3089,11 +3575,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        increment_community_stat(group_id, "preview_views")
+        group = fetch_marketplace_group(group_id)
+        group["is_favorite"] = is_group_favorite(user_id, group_id)
+
         await delete_query_message_safely(query)
         await send_marketplace_preview(
             context,
             query.message.chat_id,
-            group
+            group,
+            user_id=user_id
         )
 
         return
@@ -4741,6 +5232,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 group_name, telegram_group_id = group_row
 
+                increment_community_stat(group_id, "access_clicks")
+
                 cur.execute("""
 
                     SELECT invite_link
@@ -4927,6 +5420,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 is_free_group = group_row[0] is True
 
+                increment_community_stat(group_id, "access_clicks")
 
                 cur.execute("""
 

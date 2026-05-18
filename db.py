@@ -160,6 +160,47 @@ def create_tables():
 
 
         # =========================
+        # FAVORITOS Y STATS MARKETPLACE
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS community_favorites (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT NOT NULL,
+
+            group_id INTEGER NOT NULL,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE(user_id, group_id)
+
+        );
+
+        """)
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS community_stats (
+
+            group_id INTEGER PRIMARY KEY,
+
+            preview_views INTEGER DEFAULT 0,
+
+            access_clicks INTEGER DEFAULT 0,
+
+            favorites_count INTEGER DEFAULT 0,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA ADMINS / RBAC
         # =========================
 
