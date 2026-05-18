@@ -24,6 +24,38 @@ from ui_menu_helpers import send_clean_message
 
 
 
+def build_expired_trial_recovery_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+
+        [InlineKeyboardButton(
+            "🎟 Tengo un código promocional",
+            callback_data=f"creator_promo_code_start_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💳 Activar suscripción",
+            callback_data=f"expired_trial_activate_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📦 Ver configuración de mi comunidad",
+            callback_data=f"configure_community_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🗑 Eliminar comunidad definitivamente",
+            callback_data=f"expired_trial_delete_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🏠 Volver al inicio",
+            callback_data="public_back_start"
+        )]
+
+    ])
+
+
 async def expire_expired_start_trials(context):
 
     with conn.cursor() as cur:
@@ -92,7 +124,8 @@ async def expire_expired_start_trials(context):
                     text=(
                         "Tu prueba ha finalizado. Para volver a publicar tu comunidad, "
                         "activa una suscripción."
-                    )
+                    ),
+                    reply_markup=build_expired_trial_recovery_keyboard(request_id)
                 )
 
             except Exception as e:
@@ -203,46 +236,28 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     keyboard = []
 
 
-    if home_groups or explore_groups:
+    keyboard.append([
 
-        if explore_groups:
+        InlineKeyboardButton(
 
-            keyboard.append([
+            "🔥 Explorar comunidades privadas",
 
-                InlineKeyboardButton(
+            callback_data="start_explore_groups"
 
-                    "🔥 Explorar comunidades privadas",
+        )
 
-                    callback_data="start_explore_groups"
-
-                )
-
-            ])
+    ])
 
 
-        for group_id, group_name in home_groups:
-
-            keyboard.append([
-
-                InlineKeyboardButton(
-
-                    group_name,
-
-                    callback_data=f"group_{group_id}"
-
-                )
-
-            ])
-
-    else:
+    for group_id, group_name in home_groups:
 
         keyboard.append([
 
             InlineKeyboardButton(
 
-                "🔥 Comunidades privadas próximamente",
+                group_name,
 
-                callback_data="start_no_groups"
+                callback_data=f"group_{group_id}"
 
             )
 
