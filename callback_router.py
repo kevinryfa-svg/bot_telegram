@@ -700,6 +700,100 @@ COMMUNITY_STATS_COLUMNS = {
 }
 
 
+def marketplace_trial_visibility_filter():
+
+    return """
+        NOT EXISTS (
+            SELECT 1
+            FROM commercial_requests cr
+            WHERE (
+                cr.approved_group_id = g.id
+                OR cr.approved_telegram_group_id = g.telegram_group_id
+            )
+            AND cr.status='trial_active'
+            AND cr.trial_ends_at IS NOT NULL
+            AND cr.trial_ends_at < NOW()
+            AND COALESCE(cr.commercial_subscription_status, 'pending') NOT IN ('active', 'paid')
+        )
+    """
+
+
+async def expire_expired_commercial_trials(context):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT cr.id,
+                   cr.user_id,
+                   cr.approved_group_id,
+                   cr.approved_telegram_group_id
+            FROM commercial_requests cr
+            WHERE cr.status='trial_active'
+            AND cr.trial_ends_at IS NOT NULL
+            AND cr.trial_ends_at < NOW()
+            AND COALESCE(cr.commercial_subscription_status, 'pending') NOT IN ('active', 'paid')
+            AND (
+                cr.approved_group_id IS NOT NULL
+                OR cr.approved_telegram_group_id IS NOT NULL
+            )
+
+        """)
+
+        rows = cur.fetchall()
+
+
+        for request_id, owner_user_id, approved_group_id, approved_telegram_group_id in rows:
+
+            cur.execute("""
+
+                UPDATE commercial_requests
+                SET status='trial_expired',
+                    requested_public_visibility='hidden',
+                    updated_at=NOW()
+                WHERE id=%s
+                AND status='trial_active'
+
+            """, (request_id,))
+
+
+            if approved_group_id:
+
+                cur.execute("""
+
+                    UPDATE groups
+                    SET public_visibility='hidden'
+                    WHERE id=%s
+
+                """, (approved_group_id,))
+
+
+            elif approved_telegram_group_id:
+
+                cur.execute("""
+
+                    UPDATE groups
+                    SET public_visibility='hidden'
+                    WHERE telegram_group_id=%s
+
+                """, (approved_telegram_group_id,))
+
+
+            try:
+
+                await context.bot.send_message(
+                    chat_id=owner_user_id,
+                    text=(
+                        "Tu prueba ha finalizado. Para volver a publicar tu comunidad, "
+                        "activa una suscripción."
+                    )
+                )
+
+            except Exception as e:
+
+                print("Error avisando fin de trial comercial:", e)
+
+
 def marketplace_access_text(group):
 
     if group.get("is_free_group"):
@@ -814,22 +908,11 @@ def build_marketplace_cards_keyboard(groups, user_id, active_filter="trending"):
 
         group_id = group.get("id")
         group_name = group.get("name") or "Comunidad privada"
-        is_favorite = group.get("is_favorite")
 
         keyboard.append([InlineKeyboardButton(
-            f"👁 Preview — {group_name}",
-            callback_data=f"marketplace_preview_{group_id}"
+            f"➡️ Ver comunidad — {group_name}",
+            callback_data=f"marketplace_group_{group_id}"
         )])
-        keyboard.append([
-            InlineKeyboardButton(
-                "💔 Favorito" if is_favorite else "⭐ Favorito",
-                callback_data=favorite_callback_data(group_id, is_favorite)
-            ),
-            InlineKeyboardButton(
-                marketplace_access_text(group),
-                callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
-            )
-        ])
 
 
     keyboard.append([InlineKeyboardButton(
@@ -913,6 +996,7 @@ def fetch_marketplace_group(group_id):
             WHERE g.id=%s
             AND g.is_active=TRUE
             AND g.telegram_group_id != 0
+            AND {marketplace_trial_visibility_filter()}
             LIMIT 1
 
         """, (group_id,))
@@ -950,7 +1034,8 @@ def fetch_marketplace_groups(filter_kind="trending", limit=8):
     filters = [
         "g.is_active=TRUE",
         "g.telegram_group_id != 0",
-        "COALESCE(g.public_visibility, 'start_home')='explore_only'"
+        "COALESCE(g.public_visibility, 'start_home')='explore_only'",
+        marketplace_trial_visibility_filter()
     ]
 
 
@@ -1180,29 +1265,71 @@ def format_marketplace_category(group):
 
 def format_marketplace_card(group):
 
-    preview_mode = group.get("preview_mode") or "manual"
-    text = (
+    return (
         f"🔥 {group.get('name') or 'Comunidad privada'}\n"
         f"📂 {format_marketplace_category(group)}\n"
-        f"⭐ {format_marketplace_number(group.get('favorites_count'))} favoritos\n"
-        f"👥 {format_marketplace_number(group.get('member_count'))} miembros\n"
         f"{format_marketplace_kind(group)}"
     )
 
 
-    if preview_mode != "private":
+def format_marketplace_group_caption(group):
 
-        preview_text = group.get("preview_text") or "Preview manual pendiente de configurar."
+    return (
+        f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+        f"📂 {format_marketplace_category(group)}\n"
+        f"⭐ {format_marketplace_number(group.get('favorites_count'))} favoritos\n"
+        f"👥 {format_marketplace_number(group.get('member_count'))} miembros\n"
+        f"{format_marketplace_kind(group)}\n\n"
+        f"📝 {group.get('preview_text') or 'Preview manual pendiente de configurar.'}"
+    )
 
-        if len(preview_text) > 180:
 
-            preview_text = f"{preview_text[:177]}..."
+def build_marketplace_group_keyboard(group, user_id=None):
+
+    group_id = group.get("id")
+    is_free_group = group.get("is_free_group")
+    keyboard = []
 
 
-        text += f"\n\n📝 {preview_text}"
+    keyboard.append([InlineKeyboardButton(
+        "👁 Ver preview",
+        callback_data=f"marketplace_preview_{group_id}"
+    )])
 
 
-    return text
+    if (group.get("preview_mode") or "manual") in ("dynamic", "hybrid"):
+
+        keyboard.append([InlineKeyboardButton(
+            "⚡ Preview dinámico",
+            callback_data=f"marketplace_dynamic_preview_{group_id}"
+        )])
+
+
+    if user_id:
+
+        is_favorite = is_group_favorite(user_id, group_id)
+        keyboard.append([InlineKeyboardButton(
+            favorite_button_text(is_favorite),
+            callback_data=favorite_callback_data(group_id, is_favorite)
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "🔓 Entrar gratis" if is_free_group else "💳 Comprar acceso",
+        callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver a explorar",
+        callback_data="start_explore_groups"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "🏠 Inicio",
+        callback_data="public_back_start"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 def format_marketplace_preview_caption(group):
@@ -1253,13 +1380,51 @@ def format_marketplace_preview_caption(group):
     return text
 
 
+async def send_marketplace_group_card(context, chat_id, group, user_id=None):
+
+    caption = format_marketplace_group_caption(group)
+    keyboard = build_marketplace_group_keyboard(group, user_id=user_id)
+
+
+    if group.get("preview_video_file_id"):
+
+        await context.bot.send_video(
+            chat_id=chat_id,
+            video=group.get("preview_video_file_id"),
+            caption=caption,
+            reply_markup=keyboard
+        )
+
+        return
+
+
+    if group.get("preview_image_file_id"):
+
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=group.get("preview_image_file_id"),
+            caption=caption,
+            reply_markup=keyboard
+        )
+
+        return
+
+
+    await send_clean_message(
+        context,
+        chat_id,
+        caption,
+        reply_markup=keyboard
+    )
+
+
 async def send_marketplace_preview(context, chat_id, group, user_id=None):
 
     caption = format_marketplace_preview_caption(group)
     keyboard = build_marketplace_access_keyboard(
         group.get("id"),
         group.get("is_free_group"),
-        "start_explore_groups",
+        f"marketplace_group_{group.get('id')}",
         user_id=user_id
     )
     preview_mode = group.get("preview_mode") or "manual"
@@ -1324,7 +1489,7 @@ async def send_marketplace_list(context, chat_id, user_id, filter_kind="trending
 
 
     text_parts = [
-        f"{title}\n\nExplora comunidades privadas populares, nuevas y destacadas."
+        f"{title}\n\nElige una comunidad para abrir su ficha."
     ]
 
 
@@ -1829,6 +1994,11 @@ def build_creator_setup_keyboard(request_id, payment_mode=None):
         [InlineKeyboardButton(
             "📝 Textos y descripción",
             callback_data=f"creator_setup_texts_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "💳 Tipo de acceso",
+            callback_data=f"creator_setup_access_type_{request_id}"
         )]
 
     ]
@@ -1926,12 +2096,13 @@ def build_creator_setup_panel_text(group_id=None):
         text += (
             "\n\n"
             "Estado del grupo: pendiente de crear/publicar grupo.\n\n"
-            "Pasos para resolverlo:\n"
-            "1️⃣ Añadir bot al grupo.\n"
-            "2️⃣ Dar permisos de administrador.\n"
-            "3️⃣ Esperar 30 segundos.\n"
-            "4️⃣ Copiar el ID recibido por privado.\n"
-            "5️⃣ Pegar ID aquí si hace falta."
+            "Para vincular tu grupo:\n\n"
+            "1. Pulsa 📡 Grupo o canal.\n"
+            "2. Añade el bot a tu grupo como administrador.\n"
+            "3. Espera 30 segundos.\n"
+            "4. El bot te enviará el ID por privado.\n"
+            "5. Vuelve a 📡 Grupo o canal.\n"
+            "6. Pega ahí el ID recibido si no se vinculó automáticamente."
         )
 
 
@@ -1940,11 +2111,21 @@ def build_creator_setup_panel_text(group_id=None):
 
 def start_creator_setup_state(context, request_id, action):
 
+    waiting_states = {
+        "group": "creator_setup_waiting_group_id",
+        "texts": "creator_setup_waiting_text_name",
+        "marketplace_preview_text": "creator_setup_waiting_preview_text",
+        "marketplace_tags": "creator_setup_waiting_tags",
+        "stripe": "creator_setup_waiting_stripe_secret",
+        "plan": "creator_setup_waiting_plan_name"
+    }
+
     context.user_data["creator_setup"] = True
     context.user_data["creator_setup_request_id"] = request_id
     context.user_data["creator_setup_action"] = action
     context.user_data["creator_setup_step"] = 1
     context.user_data["creator_setup_data"] = {}
+    context.user_data["creator_setup_waiting"] = waiting_states.get(action)
 
 
 def build_creator_setup_summary(request_row):
@@ -2652,6 +2833,68 @@ def update_commercial_request_paid_group(request_id):
 
 
     return row_to_commercial_request(row)
+
+
+def update_commercial_request_access_type(request_id, payment_mode):
+
+    is_free = payment_mode == "free"
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET payment_mode=%s,
+                is_free_group=%s,
+                creator_setup_status='setup_in_progress',
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (
+            payment_mode,
+            is_free,
+            request_id
+        ))
+
+        row = cur.fetchone()
+        request_row = row_to_commercial_request(row)
+
+
+        if request_row and request_row.get("approved_group_id"):
+
+            cur.execute("""
+
+                UPDATE groups
+                SET is_free_group=%s
+                WHERE id=%s
+
+            """, (
+                is_free,
+                request_row.get("approved_group_id")
+            ))
+
+
+    return request_row
+
+
+def build_access_type_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "🔓 Comunidad gratuita",
+            callback_data=f"creator_setup_access_free_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "💎 Comunidad de pago",
+            callback_data=f"creator_setup_access_paid_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=f"configure_community_{request_id}"
+        )]
+    ])
 
 
 def update_commercial_request_stripe_mode(request_id, stripe_mode):
@@ -3426,6 +3669,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "start_explore_groups":
 
+        await expire_expired_commercial_trials(context)
+
         await send_marketplace_list(
             context,
             query.message.chat_id,
@@ -3437,6 +3682,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data.startswith("marketplace_filter_"):
+
+        await expire_expired_commercial_trials(context)
 
         filter_kind = data.replace("marketplace_filter_", "", 1)
 
@@ -3556,6 +3803,81 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "start_explore_groups",
                 user_id=user_id
             )
+        )
+
+        return
+
+
+    if data.startswith("marketplace_group_"):
+
+        await expire_expired_commercial_trials(context)
+
+        group_id = extract_commercial_request_id(
+            data,
+            "marketplace_group_"
+        )
+        group = fetch_marketplace_group(group_id)
+
+
+        if not group:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Comunidad no encontrada o no disponible."
+            )
+
+            return
+
+
+        group["is_favorite"] = is_group_favorite(user_id, group_id)
+
+        await delete_query_message_safely(query)
+        await send_marketplace_group_card(
+            context,
+            query.message.chat_id,
+            group,
+            user_id=user_id
+        )
+
+        return
+
+
+    if data.startswith("marketplace_dynamic_preview_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "marketplace_dynamic_preview_"
+        )
+        group = fetch_marketplace_group(group_id)
+
+
+        if not group:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Comunidad no encontrada o no disponible."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "⚡ Preview dinámico\n\n"
+            "El preview dinámico estará disponible en una fase posterior. Por ahora puedes ver el preview manual.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "👁 Ver preview",
+                    callback_data=f"marketplace_preview_{group_id}"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ Volver a ficha",
+                    callback_data=f"marketplace_group_{group_id}"
+                )]
+            ])
         )
 
         return
@@ -3750,6 +4072,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["commercial_form_type"] = "shared_trial"
         context.user_data["commercial_form_step"] = 1
         context.user_data["commercial_form_data"] = {}
+        context.user_data["commercial_form_waiting"] = "creator_setup_waiting_community_name"
 
         await send_clean_message(
             context,
@@ -3880,6 +4203,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["commercial_form_type"] = "custom_bot"
         context.user_data["commercial_form_step"] = 1
         context.user_data["commercial_form_data"] = {}
+        context.user_data["commercial_form_waiting"] = "creator_setup_waiting_project_name"
 
         await send_clean_message(
             context,
@@ -9647,6 +9971,101 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             "💰 Crear plan de acceso\n\n"
             "Paso 1: escribe el nombre del plan."
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_access_type_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_access_type_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+            context,
+            query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "💳 Tipo de acceso\n\n"
+            "Elige cómo entrarán los usuarios a tu comunidad. Puedes cambiarlo mientras configuras la comunidad.",
+            reply_markup=build_access_type_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_access_free_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_access_free_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+            context,
+            query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        request_row = update_commercial_request_access_type(request_id, "free")
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Tipo de acceso actualizado.\n\n"
+            "Tu comunidad queda como gratuita. No se pedirá Stripe ni price_id y se mostrará Entrar gratis.",
+            reply_markup=InlineKeyboardMarkup(
+                build_creator_setup_keyboard(
+                    request_id,
+                    request_row.get("payment_mode")
+                )
+            )
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_access_paid_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_access_paid_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+            context,
+            query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        request_row = update_commercial_request_access_type(request_id, "paid")
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Tipo de acceso actualizado.\n\n"
+            "Tu comunidad queda como de pago. Ahora configura tus cobros/Stripe propio y planes con price_id.",
+            reply_markup=InlineKeyboardMarkup(
+                build_creator_setup_keyboard(
+                    request_id,
+                    request_row.get("payment_mode")
+                )
+            )
         )
 
         return
