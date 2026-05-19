@@ -1056,7 +1056,11 @@ COMMERCIAL_REQUEST_FIELDS = [
     "requested_public_visibility",
     "creator_setup_status",
     "creator_preview_text",
-    "max_groups_allowed"
+    "max_groups_allowed",
+    "expired_at",
+    "delete_after",
+    "last_expiry_reminder_at",
+    "previous_public_visibility"
 
 ]
 
@@ -1182,10 +1186,15 @@ def marketplace_trial_visibility_filter():
                 cr.approved_group_id = g.id
                 OR cr.approved_telegram_group_id = g.telegram_group_id
             )
-            AND cr.status='trial_active'
-            AND cr.trial_ends_at IS NOT NULL
-            AND cr.trial_ends_at < NOW()
-            AND COALESCE(cr.commercial_subscription_status, 'pending') NOT IN ('active', 'paid')
+            AND (
+                (
+                    cr.status='trial_active'
+                    AND cr.trial_ends_at IS NOT NULL
+                    AND cr.trial_ends_at < NOW()
+                    AND COALESCE(cr.commercial_subscription_status, 'pending') NOT IN ('active', 'paid')
+                )
+                OR cr.status='expired_pending_reactivation'
+            )
         )
     """
 
@@ -1195,51 +1204,275 @@ def build_expired_trial_recovery_keyboard(request_id):
     return InlineKeyboardMarkup([
 
         [InlineKeyboardButton(
-            "🎟 Tengo un código promocional",
-            callback_data=f"creator_promo_code_start_{request_id}"
-        )],
-
-        [InlineKeyboardButton(
-            "💳 Activar suscripción",
+            "💳 Reactivar pagando",
             callback_data=f"expired_trial_activate_{request_id}"
         )],
 
         [InlineKeyboardButton(
-            "📦 Ver configuración de mi comunidad",
+            "🎟 Reactivar con código promocional",
+            callback_data=f"creator_promo_code_start_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📦 Ver configuración",
             callback_data=f"configure_community_{request_id}"
         )],
 
         [InlineKeyboardButton(
-            "🗑 Eliminar comunidad definitivamente",
+            "🗑 Eliminar ahora definitivamente",
             callback_data=f"expired_trial_delete_{request_id}"
         )],
 
         [InlineKeyboardButton(
-            "🏠 Volver al inicio",
+            "🏠 Inicio",
             callback_data="public_back_start"
         )]
 
     ])
 
 
-async def expire_expired_commercial_trials(context):
+def build_expired_trial_reminder_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+
+        [InlineKeyboardButton(
+            "💳 Reactivar pagando",
+            callback_data=f"expired_trial_activate_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🎟 Usar código promocional",
+            callback_data=f"creator_promo_code_start_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📦 Ver configuración",
+            callback_data=f"configure_community_{request_id}"
+        )]
+
+    ])
+
+
+def format_retention_days_left(delete_after):
+
+    if not delete_after:
+
+        return 0
+
+
+    try:
+
+        remaining_seconds = (delete_after - datetime.now()).total_seconds()
+        remaining_days = int((remaining_seconds + 86399) // 86400)
+
+        return max(remaining_days, 0)
+
+    except Exception:
+
+        return 0
+
+
+def expired_community_message(days_left=None):
+
+    text = (
+        "Tu comunidad ha caducado.\n"
+        "Tus datos se conservarán durante 15 días.\n"
+        "Puedes reactivarla pagando o usando un código promocional."
+    )
+
+
+    if days_left is not None:
+
+        text += f"\n\nTe quedan {days_left} días antes del borrado definitivo."
+
+
+    return text
+
+
+def mark_commercial_request_expired(cur, request_id):
+
+    cur.execute(f"""
+
+        UPDATE commercial_requests cr
+        SET status='expired_pending_reactivation',
+            commercial_subscription_status='expired',
+            previous_public_visibility=COALESCE(
+                NULLIF(cr.previous_public_visibility, 'hidden'),
+                NULLIF(cr.requested_public_visibility, 'hidden'),
+                NULLIF(g.public_visibility, 'hidden'),
+                'explore_only'
+            ),
+            requested_public_visibility='hidden',
+            expired_at=NOW(),
+            delete_after=NOW() + INTERVAL '15 days',
+            last_expiry_reminder_at=NOW(),
+            updated_at=NOW()
+        FROM groups g
+        WHERE cr.id=%s
+        AND (
+            cr.approved_group_id = g.id
+            OR cr.approved_telegram_group_id = g.telegram_group_id
+        )
+        RETURNING {", ".join("cr." + field for field in COMMERCIAL_REQUEST_FIELDS)}
+
+    """, (request_id,))
+
+    row = cur.fetchone()
+
+
+    if not row:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET status='expired_pending_reactivation',
+                commercial_subscription_status='expired',
+                previous_public_visibility=COALESCE(
+                    NULLIF(previous_public_visibility, 'hidden'),
+                    NULLIF(requested_public_visibility, 'hidden'),
+                    'explore_only'
+                ),
+                requested_public_visibility='hidden',
+                expired_at=NOW(),
+                delete_after=NOW() + INTERVAL '15 days',
+                last_expiry_reminder_at=NOW(),
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (request_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def hide_commercial_request_group(cur, request_row):
+
+    approved_group_id = request_row.get("approved_group_id") if request_row else None
+    approved_telegram_group_id = (
+        request_row.get("approved_telegram_group_id")
+        if request_row
+        else None
+    )
+
+
+    if approved_group_id:
+
+        cur.execute("""
+
+            UPDATE groups
+            SET public_visibility='hidden'
+            WHERE id=%s
+
+        """, (approved_group_id,))
+
+    elif approved_telegram_group_id:
+
+        cur.execute("""
+
+            UPDATE groups
+            SET public_visibility='hidden'
+            WHERE telegram_group_id=%s
+
+        """, (approved_telegram_group_id,))
+
+
+def finalize_expired_commercial_request(cur, request_row):
+
+    if not request_row:
+
+        return None
+
+
+    request_id = request_row.get("id")
+    approved_group_id = request_row.get("approved_group_id")
+    approved_telegram_group_id = request_row.get("approved_telegram_group_id")
+
+
+    cur.execute(f"""
+
+        UPDATE commercial_requests
+        SET status='deleted_irreversible',
+            commercial_subscription_status='cancelled',
+            requested_public_visibility='hidden',
+            updated_at=NOW()
+        WHERE id=%s
+        RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+    """, (request_id,))
+
+    row = cur.fetchone()
+
+
+    if approved_group_id:
+
+        cur.execute("""
+
+            UPDATE groups
+            SET is_active=FALSE,
+                public_visibility='hidden',
+                preview_text=NULL,
+                preview_image_file_id=NULL,
+                preview_video_file_id=NULL,
+                category=NULL,
+                tags=NULL,
+                marketplace_badge=NULL
+            WHERE id=%s
+
+        """, (approved_group_id,))
+
+    elif approved_telegram_group_id:
+
+        cur.execute("""
+
+            UPDATE groups
+            SET is_active=FALSE,
+                public_visibility='hidden',
+                preview_text=NULL,
+                preview_image_file_id=NULL,
+                preview_video_file_id=NULL,
+                category=NULL,
+                tags=NULL,
+                marketplace_badge=NULL
+            WHERE telegram_group_id=%s
+
+        """, (approved_telegram_group_id,))
+
+
+    return row_to_commercial_request(row)
+
+
+async def process_expired_commercial_retention(context):
+
+    newly_expired_requests = []
+    reminder_requests = []
+    finalized_requests = []
+
 
     with conn.cursor() as cur:
 
         cur.execute("""
 
-            SELECT cr.id,
-                   cr.user_id,
-                   cr.approved_group_id,
-                   cr.approved_telegram_group_id
-            FROM commercial_requests cr
-            WHERE cr.status='trial_active'
-            AND cr.trial_ends_at IS NOT NULL
-            AND cr.trial_ends_at < NOW()
-            AND COALESCE(cr.commercial_subscription_status, 'pending') NOT IN ('active', 'paid')
+            SELECT id
+            FROM commercial_requests
+            WHERE (
+                (
+                    status='trial_active'
+                    AND trial_ends_at IS NOT NULL
+                    AND trial_ends_at < NOW()
+                    AND COALESCE(commercial_subscription_status, 'pending') NOT IN ('active', 'paid')
+                )
+                OR (
+                    status='active'
+                    AND commercial_subscription_until IS NOT NULL
+                    AND commercial_subscription_until < NOW()
+                )
+            )
             AND (
-                cr.approved_group_id IS NOT NULL
-                OR cr.approved_telegram_group_id IS NOT NULL
+                approved_group_id IS NOT NULL
+                OR approved_telegram_group_id IS NOT NULL
             )
 
         """)
@@ -1247,56 +1480,136 @@ async def expire_expired_commercial_trials(context):
         rows = cur.fetchall()
 
 
-        for request_id, owner_user_id, approved_group_id, approved_telegram_group_id in rows:
+        for (request_id,) in rows:
+
+            request_row = mark_commercial_request_expired(cur, request_id)
+            hide_commercial_request_group(cur, request_row)
+
+
+            if request_row:
+
+                newly_expired_requests.append(request_row)
+
+
+        cur.execute(f"""
+
+            SELECT {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+            FROM commercial_requests
+            WHERE status='expired_pending_reactivation'
+            AND delete_after IS NOT NULL
+            AND delete_after <= NOW()
+
+        """)
+
+        rows = cur.fetchall()
+
+
+        for row in rows:
+
+            request_row = row_to_commercial_request(row)
+            finalized_row = finalize_expired_commercial_request(
+                cur,
+                request_row
+            )
+
+            finalized_requests.append(finalized_row or request_row)
+
+
+        cur.execute(f"""
+
+            SELECT {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+            FROM commercial_requests
+            WHERE status='expired_pending_reactivation'
+            AND delete_after IS NOT NULL
+            AND delete_after > NOW()
+            AND (
+                last_expiry_reminder_at IS NULL
+                OR last_expiry_reminder_at < NOW() - INTERVAL '1 day'
+            )
+
+        """)
+
+        rows = cur.fetchall()
+
+
+        for row in rows:
+
+            request_row = row_to_commercial_request(row)
 
             cur.execute("""
 
                 UPDATE commercial_requests
-                SET status='trial_expired',
-                    requested_public_visibility='hidden',
+                SET last_expiry_reminder_at=NOW(),
                     updated_at=NOW()
                 WHERE id=%s
-                AND status='trial_active'
 
-            """, (request_id,))
+            """, (request_row.get("id"),))
 
-
-            if approved_group_id:
-
-                cur.execute("""
-
-                    UPDATE groups
-                    SET public_visibility='hidden'
-                    WHERE id=%s
-
-                """, (approved_group_id,))
+            reminder_requests.append(request_row)
 
 
-            elif approved_telegram_group_id:
+    for request_row in newly_expired_requests:
 
-                cur.execute("""
+        try:
 
-                    UPDATE groups
-                    SET public_visibility='hidden'
-                    WHERE telegram_group_id=%s
-
-                """, (approved_telegram_group_id,))
-
-
-            try:
-
-                await context.bot.send_message(
-                    chat_id=owner_user_id,
-                    text=(
-                        "Tu prueba ha finalizado. Para volver a publicar tu comunidad, "
-                        "activa una suscripción."
-                    ),
-                    reply_markup=build_expired_trial_recovery_keyboard(request_id)
+            await context.bot.send_message(
+                chat_id=request_row.get("user_id"),
+                text=expired_community_message(
+                    format_retention_days_left(request_row.get("delete_after"))
+                ),
+                reply_markup=build_expired_trial_recovery_keyboard(
+                    request_row.get("id")
                 )
+            )
 
-            except Exception as e:
+        except Exception as e:
 
-                print("Error avisando fin de trial comercial:", e)
+            print("Error avisando comunidad caducada:", e)
+
+
+    for request_row in reminder_requests:
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=request_row.get("user_id"),
+                text=(
+                    "Te quedan "
+                    f"{format_retention_days_left(request_row.get('delete_after'))} días "
+                    "para reactivar tu comunidad antes del borrado definitivo."
+                ),
+                reply_markup=build_expired_trial_reminder_keyboard(
+                    request_row.get("id")
+                )
+            )
+
+        except Exception as e:
+
+            print("Error enviando recordatorio de comunidad caducada:", e)
+
+
+    for request_row in finalized_requests:
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "🗑 Comunidad marcada con borrado definitivo\n\n"
+                    f"Solicitud #{request_row.get('id')}\n"
+                    f"Usuario: {request_row.get('user_id')}\n"
+                    "Se ocultó definitivamente y se limpió la configuración marketplace."
+                )
+            )
+
+        except Exception as e:
+
+            print("Error avisando borrado definitivo comercial:", e)
+
+
+async def expire_expired_commercial_trials(context):
+
+    await process_expired_commercial_retention(context)
 
 
 def marketplace_access_text(group):
@@ -3860,52 +4173,9 @@ def disable_commercial_request_community(request_row):
         return None
 
 
-    request_id = request_row.get("id")
-    approved_group_id = request_row.get("approved_group_id")
-    approved_telegram_group_id = request_row.get("approved_telegram_group_id")
-
-
     with conn.cursor() as cur:
 
-        cur.execute(f"""
-
-            UPDATE commercial_requests
-            SET status='disabled',
-                commercial_subscription_status='cancelled',
-                requested_public_visibility='hidden',
-                updated_at=NOW()
-            WHERE id=%s
-            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
-
-        """, (request_id,))
-
-        row = cur.fetchone()
-
-
-        if approved_group_id:
-
-            cur.execute("""
-
-                UPDATE groups
-                SET public_visibility='hidden',
-                    is_active=FALSE
-                WHERE id=%s
-
-            """, (approved_group_id,))
-
-        elif approved_telegram_group_id:
-
-            cur.execute("""
-
-                UPDATE groups
-                SET public_visibility='hidden',
-                    is_active=FALSE
-                WHERE telegram_group_id=%s
-
-            """, (approved_telegram_group_id,))
-
-
-    return row_to_commercial_request(row)
+        return finalize_expired_commercial_request(cur, request_row)
 
 
 def extract_commercial_plan_selection(data):
@@ -5348,6 +5618,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data == "public_admin_panel":
+
+        await expire_expired_commercial_trials(context)
 
         if not has_any_admin_permission(user_id):
 
@@ -8434,6 +8706,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_back_main":
 
+        await expire_expired_commercial_trials(context)
+
         try:
             await query.message.delete()
         except:
@@ -11082,7 +11356,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            "Tu prueba ha finalizado. Para volver a publicar tu comunidad, activa una suscripción.",
+            expired_community_message(
+                format_retention_days_left(request_row.get("delete_after"))
+            ),
             reply_markup=build_expired_trial_recovery_keyboard(request_id)
         )
 
@@ -11153,7 +11429,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            "✅ Comunidad desactivada.\n\nNo se ha borrado físicamente, pero queda oculta e inactiva.",
+            "✅ Comunidad marcada con borrado definitivo.\n\n"
+            "No se han borrado logs críticos, pero queda oculta, inactiva y fuera del marketplace.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton(
                     "🏠 Volver al inicio",

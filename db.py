@@ -678,6 +678,14 @@ def create_tables():
 
             max_groups_allowed INTEGER DEFAULT 1,
 
+            expired_at TIMESTAMP,
+
+            delete_after TIMESTAMP,
+
+            last_expiry_reminder_at TIMESTAMP,
+
+            previous_public_visibility TEXT,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -988,7 +996,11 @@ def create_tables():
             ("requested_public_visibility", "TEXT DEFAULT 'hidden'"),
             ("creator_setup_status", "TEXT DEFAULT 'awaiting_creator_setup'"),
             ("creator_preview_text", "TEXT"),
-            ("max_groups_allowed", "INTEGER DEFAULT 1")
+            ("max_groups_allowed", "INTEGER DEFAULT 1"),
+            ("expired_at", "TIMESTAMP"),
+            ("delete_after", "TIMESTAMP"),
+            ("last_expiry_reminder_at", "TIMESTAMP"),
+            ("previous_public_visibility", "TEXT")
 
         ]
 
