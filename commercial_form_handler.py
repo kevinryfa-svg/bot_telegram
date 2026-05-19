@@ -287,7 +287,8 @@ def fetch_creator_request(request_id, user_id):
                    requested_public_visibility,
                    approved_group_id,
                    approved_telegram_group_id,
-                   COALESCE(max_groups_allowed, 1)
+                   COALESCE(max_groups_allowed, 1),
+                   previous_public_visibility
             FROM commercial_requests
             WHERE id=%s
             LIMIT 1
@@ -317,7 +318,8 @@ def fetch_creator_request(request_id, user_id):
         "requested_public_visibility": row[3],
         "approved_group_id": row[4],
         "approved_telegram_group_id": row[5],
-        "max_groups_allowed": row[6] or 1
+        "max_groups_allowed": row[6] or 1,
+        "previous_public_visibility": row[7]
     }
 
 
@@ -519,7 +521,10 @@ def activate_request_with_commercial_promo(request_row, promo_row, code):
     request_id = request_row.get("id")
     user_id = request_row.get("user_id")
     group_id = get_request_group_id(request_row)
-    public_visibility = request_row.get("requested_public_visibility")
+    public_visibility = (
+        request_row.get("previous_public_visibility")
+        or request_row.get("requested_public_visibility")
+    )
 
 
     if not public_visibility or public_visibility == "hidden":
@@ -536,6 +541,10 @@ def activate_request_with_commercial_promo(request_row, promo_row, code):
                 commercial_subscription_status='active',
                 commercial_subscription_until=NOW() + (%s * INTERVAL '1 day'),
                 requested_public_visibility=%s,
+                expired_at=NULL,
+                delete_after=NULL,
+                last_expiry_reminder_at=NULL,
+                previous_public_visibility=NULL,
                 creator_setup_status=CASE
                     WHEN %s IS NULL THEN creator_setup_status
                     ELSE 'setup_ready'
