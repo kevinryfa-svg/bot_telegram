@@ -391,6 +391,159 @@ def assign_group_owner_permissions(user_id, group_id):
         return False
 
 
+def get_group_owner_user_id(group_id):
+
+    if not group_id:
+
+        return None
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT user_id
+                FROM admins
+                WHERE group_id=%s
+                AND role=%s
+                AND is_active=TRUE
+                LIMIT 1
+
+            """, (
+                group_id,
+                GROUP_OWNER
+            ))
+
+            row = cur.fetchone()
+
+
+        return row[0] if row else None
+
+    except Exception as e:
+
+        print(
+            "Error obteniendo owner del grupo:",
+            e
+        )
+
+        return None
+
+
+def user_owns_group(user_id, group_id):
+
+    if not user_id or not group_id:
+
+        return False
+
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    owner_user_id = get_group_owner_user_id(group_id)
+
+
+    return (
+        owner_user_id is not None
+        and int(owner_user_id) == int(user_id)
+    )
+
+
+def can_user_claim_telegram_group(user_id, telegram_group_id, commercial_request_id):
+
+    if not user_id or not telegram_group_id:
+
+        return False
+
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    try:
+
+        telegram_group_id = int(telegram_group_id)
+
+    except Exception:
+
+        return False
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       added_by
+                FROM groups
+                WHERE telegram_group_id=%s
+                LIMIT 1
+
+            """, (telegram_group_id,))
+
+            group_row = cur.fetchone()
+
+
+        if not group_row:
+
+            return True
+
+
+        group_id, added_by = group_row
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id
+                FROM commercial_requests
+                WHERE id=%s
+                AND user_id=%s
+                AND (
+                    approved_group_id=%s
+                    OR approved_telegram_group_id=%s
+                )
+                LIMIT 1
+
+            """, (
+                commercial_request_id,
+                user_id,
+                group_id,
+                telegram_group_id
+            ))
+
+            own_request_row = cur.fetchone()
+
+
+        if own_request_row:
+
+            return True
+
+
+        if added_by is not None and int(added_by) == int(user_id):
+
+            return True
+
+
+        return user_owns_group(user_id, group_id)
+
+    except Exception as e:
+
+        print(
+            "Error comprobando propiedad de grupo Telegram:",
+            e
+        )
+
+        return False
+
+
 def assign_pending_commercial_owner_for_group(group_id, telegram_group_id):
 
     try:
