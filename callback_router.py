@@ -1090,6 +1090,29 @@ LEGACY_ADMIN_PLATFORM_STRIPE_CALLBACK_PREFIX = (
     "platform_stripe_"
 )
 
+COMMERCIAL_ADVANCED_STATUSES = (
+    "trial_active",
+    "awaiting_creator_setup",
+    "setup_in_progress",
+    "setup_ready",
+    "active",
+    "trial_expired",
+    "expired_pending_reactivation",
+    "awaiting_payment",
+    "awaiting_payment_setup"
+)
+
+COMMERCIAL_ADVANCED_CREATOR_SETUP_STATUSES = (
+    "awaiting_creator_setup",
+    "setup_in_progress",
+    "setup_ready"
+)
+
+DUPLICATE_COMMERCIAL_APPROVAL_MESSAGE = (
+    "Esta solicitud ya está aprobada o en configuración. "
+    "No se ha reenviado el flujo al usuario."
+)
+
 
 def row_to_commercial_request(row):
 
@@ -1131,6 +1154,40 @@ def format_public_visibility(public_visibility):
     }
 
     return labels.get(public_visibility, public_visibility or "-")
+
+
+def commercial_request_has_linked_group(request_row):
+
+    if not request_row:
+
+        return False
+
+
+    return (
+        request_row.get("approved_group_id") is not None
+        or request_row.get("approved_telegram_group_id") is not None
+    )
+
+
+def is_commercial_request_advanced(request_row):
+
+    if not request_row:
+
+        return False
+
+
+    status = request_row.get("status") or ""
+    creator_setup_status = request_row.get("creator_setup_status") or ""
+
+
+    return (
+        status in COMMERCIAL_ADVANCED_STATUSES
+        or (
+            status != "pending"
+            and creator_setup_status in COMMERCIAL_ADVANCED_CREATOR_SETUP_STATUSES
+        )
+        or commercial_request_has_linked_group(request_row)
+    )
 
 
 MARKETPLACE_CATEGORIES = [
@@ -3465,6 +3522,8 @@ def build_commercial_request_detail_text(request_row):
         f"Fin prueba: {format_commercial_datetime(request_row.get('trial_ends_at'))}\n"
         f"Modo pago: {request_row.get('payment_mode') or '-'}\n"
         f"Modo Stripe: {request_row.get('stripe_mode') or '-'}\n"
+        f"Grupo vinculado: {request_row.get('approved_group_id') or '-'}\n"
+        f"Telegram group ID: {request_row.get('approved_telegram_group_id') or '-'}\n"
         f"Ubicación pública solicitada: {format_public_visibility(request_row.get('requested_public_visibility'))}\n"
         f"Estado configuración creador: {request_row.get('creator_setup_status') or '-'}\n"
         f"Preview creador: {request_row.get('creator_preview_text') or '-'}\n"
@@ -3475,11 +3534,79 @@ def build_commercial_request_detail_text(request_row):
     )
 
 
+def build_commercial_contact_button(request_row):
+
+    username = (request_row.get("username") or "").strip()
+    contact_text = (request_row.get("contact_text") or "").strip()
+
+
+    if username and username != "-" and username.lower() != "sin username":
+
+        username = username.lstrip("@")
+
+        return InlineKeyboardButton(
+            "💬 Hablar con solicitante",
+            url=f"https://t.me/{username}"
+        )
+
+
+    if contact_text.startswith("@") and len(contact_text) > 1:
+
+        return InlineKeyboardButton(
+            "💬 Hablar con solicitante",
+            url=f"https://t.me/{contact_text.lstrip('@')}"
+        )
+
+
+    return None
+
+
+def build_commercial_advanced_review_keyboard(request_row):
+
+    request_id = request_row.get("id")
+    keyboard = []
+    contact_button = build_commercial_contact_button(request_row)
+
+
+    if contact_button:
+
+        keyboard.append([contact_button])
+
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "🔢 Cupo de grupos",
+            callback_data=f"admin_commercial_group_limit_{request_id}"
+        )
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "📦 Ver configuración",
+            callback_data=f"admin_commercial_review_{request_id}"
+        )
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_commercial_requests"
+        )
+    ])
+
+    return keyboard
+
+
 def build_commercial_review_keyboard(request_row):
 
     request_id = request_row.get("id")
     request_type = request_row.get("request_type")
     keyboard = []
+
+
+    if is_commercial_request_advanced(request_row):
+
+        return build_commercial_advanced_review_keyboard(request_row)
 
 
     if request_type == "shared_trial":
@@ -4236,6 +4363,90 @@ async def notify_commercial_request_user(context, request_row, text, reply_marku
         print("Error avisando solicitud comercial:", e)
 
     return False
+
+
+async def reply_duplicate_commercial_approval(query, request_id):
+
+    await query.message.reply_text(
+        DUPLICATE_COMMERCIAL_APPROVAL_MESSAGE,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "👁 Ver estado",
+                callback_data=f"admin_commercial_review_{request_id}"
+            )]
+        ])
+    )
+
+
+async def handle_admin_trial_visibility_approval(
+    context,
+    query,
+    user_id,
+    request_id,
+    public_visibility
+):
+
+    existing_request = fetch_commercial_request(request_id)
+
+
+    if not existing_request:
+
+        await query.message.reply_text(
+            "❌ Solicitud comercial no encontrada."
+        )
+
+        return
+
+
+    if is_commercial_request_advanced(existing_request):
+
+        await reply_duplicate_commercial_approval(query, request_id)
+
+        return
+
+
+    request_row = update_commercial_request_trial_visibility(
+        request_id,
+        user_id,
+        public_visibility
+    )
+
+
+    if not request_row:
+
+        await query.message.reply_text(
+            "❌ Solicitud comercial no encontrada."
+        )
+
+        return
+
+
+    await notify_commercial_request_user(
+        context,
+        request_row,
+        "✅ Tu prueba de 1 día ha sido aprobada.\n\n"
+        "Ahora termina la configuración de tu comunidad.\n\n"
+        "Primero elige cómo será el acceso para tus usuarios:\n\n"
+        "🆓 Comunidad gratuita:\n"
+        "Tus usuarios podrán entrar sin pagar, pero el acceso seguirá protegido por el bot.\n\n"
+        "💳 Comunidad de pago:\n"
+        "Tus usuarios pagarán directamente a través de tus propios cobros/Stripe.",
+        reply_markup=InlineKeyboardMarkup(
+            build_user_trial_choice_keyboard(request_id)
+        )
+    )
+
+    await query.message.reply_text(
+        "✅ Prueba de 1 día aprobada.\n\n"
+        f"Ubicación inicial: {format_public_visibility(public_visibility)}.\n"
+        "El creador ya recibió el flujo para terminar la configuración.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data="admin_commercial_requests"
+            )]
+        ])
+    )
 
 
 SUPPORT_TICKET_FIELDS = [
@@ -6701,6 +6912,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if is_commercial_request_advanced(request_row):
+
+            await reply_duplicate_commercial_approval(query, request_id)
+
+            return
+
+
         await query.message.reply_text(
             "✅ Aprobar prueba de comunidad\n\n"
             "Elige dónde quieres colocar esta comunidad inicialmente:\n\n"
@@ -6722,47 +6940,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "admin_trial_visibility_start_home_"
         )
 
-        request_row = update_commercial_request_trial_visibility(
-            request_id,
-            user_id,
-            "start_home"
-        )
-
-
-        if not request_row:
-
-            await query.message.reply_text(
-                "❌ Solicitud comercial no encontrada."
-            )
-
-            return
-
-
-        await notify_commercial_request_user(
+        await handle_admin_trial_visibility_approval(
             context,
-            request_row,
-            "✅ Tu prueba de 1 día ha sido aprobada.\n\n"
-            "Ahora termina la configuración de tu comunidad.\n\n"
-            "Primero elige cómo será el acceso para tus usuarios:\n\n"
-            "🆓 Comunidad gratuita:\n"
-            "Tus usuarios podrán entrar sin pagar, pero el acceso seguirá protegido por el bot.\n\n"
-            "💳 Comunidad de pago:\n"
-            "Tus usuarios pagarán directamente a través de tus propios cobros/Stripe.",
-            reply_markup=InlineKeyboardMarkup(
-                build_user_trial_choice_keyboard(request_id)
-            )
-        )
-
-        await query.message.reply_text(
-            "✅ Prueba de 1 día aprobada.\n\n"
-            f"Ubicación inicial: {format_public_visibility('start_home')}.\n"
-            "El creador ya recibió el flujo para terminar la configuración.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "⬅️ Volver",
-                    callback_data="admin_commercial_requests"
-                )]
-            ])
+            query,
+            user_id,
+            request_id,
+            "start_home"
         )
 
         return
@@ -6775,47 +6958,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "admin_trial_visibility_explore_only_"
         )
 
-        request_row = update_commercial_request_trial_visibility(
-            request_id,
-            user_id,
-            "explore_only"
-        )
-
-
-        if not request_row:
-
-            await query.message.reply_text(
-                "❌ Solicitud comercial no encontrada."
-            )
-
-            return
-
-
-        await notify_commercial_request_user(
+        await handle_admin_trial_visibility_approval(
             context,
-            request_row,
-            "✅ Tu prueba de 1 día ha sido aprobada.\n\n"
-            "Ahora termina la configuración de tu comunidad.\n\n"
-            "Primero elige cómo será el acceso para tus usuarios:\n\n"
-            "🆓 Comunidad gratuita:\n"
-            "Tus usuarios podrán entrar sin pagar, pero el acceso seguirá protegido por el bot.\n\n"
-            "💳 Comunidad de pago:\n"
-            "Tus usuarios pagarán directamente a través de tus propios cobros/Stripe.",
-            reply_markup=InlineKeyboardMarkup(
-                build_user_trial_choice_keyboard(request_id)
-            )
-        )
-
-        await query.message.reply_text(
-            "✅ Prueba de 1 día aprobada.\n\n"
-            f"Ubicación inicial: {format_public_visibility('explore_only')}.\n"
-            "El creador ya recibió el flujo para terminar la configuración.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "⬅️ Volver",
-                    callback_data="admin_commercial_requests"
-                )]
-            ])
+            query,
+            user_id,
+            request_id,
+            "explore_only"
         )
 
         return
@@ -6828,47 +6976,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "admin_trial_visibility_hidden_"
         )
 
-        request_row = update_commercial_request_trial_visibility(
-            request_id,
-            user_id,
-            "hidden"
-        )
-
-
-        if not request_row:
-
-            await query.message.reply_text(
-                "❌ Solicitud comercial no encontrada."
-            )
-
-            return
-
-
-        await notify_commercial_request_user(
+        await handle_admin_trial_visibility_approval(
             context,
-            request_row,
-            "✅ Tu prueba de 1 día ha sido aprobada.\n\n"
-            "Ahora termina la configuración de tu comunidad.\n\n"
-            "Primero elige cómo será el acceso para tus usuarios:\n\n"
-            "🆓 Comunidad gratuita:\n"
-            "Tus usuarios podrán entrar sin pagar, pero el acceso seguirá protegido por el bot.\n\n"
-            "💳 Comunidad de pago:\n"
-            "Tus usuarios pagarán directamente a través de tus propios cobros/Stripe.",
-            reply_markup=InlineKeyboardMarkup(
-                build_user_trial_choice_keyboard(request_id)
-            )
-        )
-
-        await query.message.reply_text(
-            "✅ Prueba de 1 día aprobada.\n\n"
-            f"Ubicación inicial: {format_public_visibility('hidden')}.\n"
-            "El creador ya recibió el flujo para terminar la configuración.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "⬅️ Volver",
-                    callback_data="admin_commercial_requests"
-                )]
-            ])
+            query,
+            user_id,
+            request_id,
+            "hidden"
         )
 
         return
@@ -6880,6 +6993,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data,
             "admin_commercial_approve_custom_"
         )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        if is_commercial_request_advanced(request_row):
+
+            await reply_duplicate_commercial_approval(query, request_id)
+
+            return
+
 
         request_row = update_commercial_request_custom_approved(
             request_id,
@@ -11095,7 +11227,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
-                    f"🔎 Revisar solicitud #{request_id}",
+                    f"👁 Ver estado #{request_id}",
                     callback_data=f"admin_commercial_review_{request_id}"
                 )]
             ])
@@ -11136,7 +11268,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
-                    f"🔎 Revisar solicitud #{request_id}",
+                    f"👁 Ver estado #{request_id}",
                     callback_data=f"admin_commercial_review_{request_id}"
                 )]
             ])
@@ -11177,7 +11309,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
-                    f"🔎 Revisar solicitud #{request_id}",
+                    f"👁 Ver estado #{request_id}",
                     callback_data=f"admin_commercial_review_{request_id}"
                 )]
             ])
@@ -12673,7 +12805,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ),
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(
-                        f"🔎 Revisar solicitud #{request_id}",
+                        f"👁 Ver estado #{request_id}",
                         callback_data=f"admin_commercial_review_{request_id}"
                     )]
                 ])
@@ -12696,7 +12828,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
-                    f"🔎 Revisar solicitud #{request_id}",
+                    f"👁 Ver estado #{request_id}",
                     callback_data=f"admin_commercial_review_{request_id}"
                 )]
             ])
