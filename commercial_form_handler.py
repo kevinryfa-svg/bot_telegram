@@ -9,7 +9,11 @@ from telegram.ext import ContextTypes
 
 from bot_config import ADMIN_ID
 from db import conn
-from rbac_helpers import assign_group_owner_permissions, is_super_admin
+from rbac_helpers import (
+    assign_group_owner_permissions,
+    can_user_claim_telegram_group,
+    is_super_admin
+)
 
 
 def create_commercial_request(user, request_type, form_data=None):
@@ -797,6 +801,22 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
         if group_row:
 
             group_id, telegram_group_id, is_active, _public_visibility = group_row
+
+
+            if not can_user_claim_telegram_group(
+                request_row["user_id"],
+                telegram_group_id,
+                request_id
+            ):
+
+                clear_creator_setup(context)
+
+                await update.message.reply_text(
+                    "⛔ Este grupo ya está vinculado a otra comunidad. Si crees que es un error, contacta con soporte.",
+                    reply_markup=get_back_to_setup_keyboard(request_id)
+                )
+
+                return
 
 
             if not is_active:

@@ -8,7 +8,9 @@ from bot_config import TOKEN, ADMIN_ID
 from db import conn
 from rbac_helpers import (
     GROUP_OWNER,
-    assign_group_owner_permissions
+    assign_group_owner_permissions,
+    can_user_claim_telegram_group,
+    get_group_owner_user_id
 )
 
 
@@ -234,35 +236,6 @@ def get_existing_group(telegram_group_id):
             LIMIT 1
 
         """, (telegram_group_id,))
-
-        row = cur.fetchone()
-
-
-    return row[0] if row else None
-
-
-def get_group_owner_user_id(group_id):
-
-    if not group_id:
-
-        return None
-
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            SELECT user_id
-            FROM admins
-            WHERE group_id=%s
-            AND role=%s
-            AND is_active=TRUE
-            LIMIT 1
-
-        """, (
-            group_id,
-            GROUP_OWNER
-        ))
 
         row = cur.fetchone()
 
@@ -690,6 +663,25 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
                 "⚠️ Este grupo ya está asociado a otro creador. El bot saldrá del grupo.",
                 "⛔ Este grupo ya está asociado a otro creador. Contacta con soporte si crees que es un error.",
                 "⚠️ Bot añadido a un grupo ya asociado a otro owner."
+            )
+
+            return
+
+
+        if not can_user_claim_telegram_group(
+            added_by,
+            group_id,
+            request_row["id"]
+        ):
+
+            await reject_group_registration(
+                context,
+                group_id,
+                group_name,
+                added_by,
+                "⚠️ Este grupo ya está vinculado a otra comunidad. El bot saldrá del grupo.",
+                "⛔ Este grupo ya está vinculado a otra comunidad. Si crees que es un error, contacta con soporte.",
+                "⚠️ Bot añadido a un grupo vinculado a otra comunidad."
             )
 
             return
