@@ -115,6 +115,24 @@ async def reply_with_recover_navigation(query, text):
     )
 
 
+def build_unknown_callback_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "🏠 Inicio",
+            callback_data="public_back_start"
+        )]
+    ])
+
+
+def is_stripe_checkout_callback(callback_data):
+
+    return (
+        isinstance(callback_data, str)
+        and callback_data.startswith("price_")
+    )
+
+
 ADMIN_PERMISSION_COLUMNS = [
     "can_manage_users",
     "can_kick_users",
@@ -12845,9 +12863,39 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # PAGOS STRIPE
     # =========================
 
+    if not is_stripe_checkout_callback(data):
+
+        print(
+            "callback desconocido o no configurado:",
+            data
+        )
+
+        await query.message.reply_text(
+            "⚠️ Esta opción ya no está disponible o no está configurada.",
+            reply_markup=build_unknown_callback_keyboard()
+        )
+
+        return
+
+
     user_id = query.from_user.id
 
     group_id = context.user_data.get("selected_group")
+
+
+    if not group_id:
+
+        print(
+            "Callback de checkout sin grupo seleccionado:",
+            data
+        )
+
+        await query.message.reply_text(
+            "⚠️ Esta opción ya no está disponible o no está configurada.",
+            reply_markup=build_unknown_callback_keyboard()
+        )
+
+        return
 
     try:
 
