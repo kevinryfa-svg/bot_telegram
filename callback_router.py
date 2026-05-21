@@ -1132,6 +1132,11 @@ COMMERCIAL_ADVANCED_STATUSES = (
     "awaiting_payment_setup"
 )
 
+COMMERCIAL_ARCHIVED_STATUSES = (
+    "archived",
+    "closed"
+)
+
 COMMERCIAL_ADVANCED_CREATOR_SETUP_STATUSES = (
     "awaiting_creator_setup",
     "setup_in_progress",
@@ -1222,12 +1227,23 @@ def is_commercial_request_advanced(request_row):
 
     return (
         status in COMMERCIAL_ADVANCED_STATUSES
+        or status in COMMERCIAL_ARCHIVED_STATUSES
         or (
             status != "pending"
             and creator_setup_status in COMMERCIAL_ADVANCED_CREATOR_SETUP_STATUSES
         )
         or commercial_request_has_linked_group(request_row)
     )
+
+
+def is_commercial_request_archived(request_row):
+
+    if not request_row:
+
+        return False
+
+
+    return (request_row.get("status") or "") in COMMERCIAL_ARCHIVED_STATUSES
 
 
 MARKETPLACE_CATEGORIES = [
@@ -3143,6 +3159,29 @@ def fetch_pending_commercial_requests():
     ]
 
 
+def fetch_archived_commercial_requests():
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+            FROM commercial_requests
+            WHERE status IN ('archived', 'closed')
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 20
+
+        """)
+
+        rows = cur.fetchall()
+
+
+    return [
+        row_to_commercial_request(row)
+        for row in rows
+    ]
+
+
 def fetch_commercial_request(request_id):
 
     with conn.cursor() as cur:
@@ -3154,6 +3193,52 @@ def fetch_commercial_request(request_id):
             WHERE id=%s
 
             LIMIT 1
+
+        """, (request_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def archive_commercial_request(request_id, archived_by):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET status='archived',
+                reviewed_by=COALESCE(reviewed_by, %s),
+                reviewed_at=COALESCE(reviewed_at, NOW()),
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+        """, (
+            archived_by,
+            request_id
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request(row)
+
+
+def reopen_archived_commercial_request(request_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE commercial_requests
+            SET status='setup_ready',
+                updated_at=NOW()
+            WHERE id=%s
+            AND status IN ('archived', 'closed')
+            RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
 
         """, (request_id,))
 
@@ -3918,7 +4003,72 @@ def build_commercial_requests_keyboard(requests):
 
         keyboard.append([
             InlineKeyboardButton(
-                f"✅ Revisar #{request_id}",
+                f"✅ Revisar solicitud #{request_id}",
+                callback_data=f"admin_commercial_review_{request_id}"
+            )
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "📁 Solicitudes archivadas",
+            callback_data="admin_commercial_archived_requests"
+        )
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_back_main"
+        )
+    ])
+
+    return keyboard
+
+
+def build_archived_commercial_requests_text(requests):
+
+    if not requests:
+
+        return (
+            "📁 Solicitudes archivadas\n\n"
+            "No hay solicitudes archivadas."
+        )
+
+
+    lines = [
+        "📁 Solicitudes archivadas"
+    ]
+
+
+    for request_row in requests:
+
+        lines.append(
+            "\n"
+            f"ID: {request_row.get('id')}\n"
+            f"Usuario: {request_row.get('user_id') or '-'}\n"
+            f"Estado: {request_row.get('status') or '-'}\n"
+            f"Grupo vinculado: {request_row.get('approved_group_id') or '-'}\n"
+            f"Telegram group ID: {request_row.get('approved_telegram_group_id') or '-'}\n"
+            f"Fecha: {format_commercial_datetime(request_row.get('updated_at') or request_row.get('created_at'))}"
+        )
+
+
+    return "\n".join(lines)
+
+
+def build_archived_commercial_requests_keyboard(requests):
+
+    keyboard = []
+
+
+    for request_row in requests:
+
+        request_id = request_row.get("id")
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"👁 Ver estado #{request_id}",
                 callback_data=f"admin_commercial_review_{request_id}"
             )
         ])
@@ -3927,7 +4077,7 @@ def build_commercial_requests_keyboard(requests):
     keyboard.append([
         InlineKeyboardButton(
             "⬅️ Volver",
-            callback_data="admin_back_main"
+            callback_data="admin_commercial_requests"
         )
     ])
 
@@ -3997,15 +4147,118 @@ def build_commercial_advanced_review_keyboard(request_row):
 
     keyboard.append([
         InlineKeyboardButton(
-            "🔢 Cupo de grupos",
-            callback_data=f"admin_commercial_group_limit_{request_id}"
+            "📦 Ver configuración",
+            callback_data=f"admin_commercial_status_{request_id}"
         )
     ])
 
     keyboard.append([
         InlineKeyboardButton(
-            "📦 Ver configuración",
-            callback_data=f"admin_commercial_review_{request_id}"
+            "👁 Ver estado",
+            callback_data=f"admin_commercial_status_{request_id}"
+        )
+    ])
+
+    if not is_commercial_request_archived(request_row):
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🔢 Cambiar cupo",
+                callback_data=f"admin_commercial_group_limit_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🗄 Finalizar solicitud",
+                callback_data=f"admin_commercial_archive_{request_id}"
+            )
+        ])
+
+    else:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "📁 Archivada",
+                callback_data=f"admin_commercial_status_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "♻️ Reabrir solicitud",
+                callback_data=f"admin_commercial_reopen_{request_id}"
+            )
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=(
+                "admin_commercial_archived_requests"
+                if is_commercial_request_archived(request_row)
+                else "admin_commercial_requests"
+            )
+        )
+    ])
+
+    return keyboard
+
+
+def build_commercial_archive_confirm_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "✅ Confirmar archivo",
+            callback_data=f"admin_commercial_archive_confirm_{request_id}"
+        )],
+        [InlineKeyboardButton(
+            "❌ Cancelar",
+            callback_data=f"admin_commercial_archive_cancel_{request_id}"
+        )]
+    ])
+
+
+def build_commercial_pending_review_keyboard(request_row):
+
+    request_id = request_row.get("id")
+    request_type = request_row.get("request_type")
+    keyboard = [
+        [build_commercial_contact_button(request_row)]
+    ]
+
+
+    if request_type == "shared_trial":
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "✅ Aprobar prueba",
+                callback_data=f"admin_commercial_approve_trial_{request_id}"
+            )
+        ])
+
+    elif request_type == "custom_bot":
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "✅ Aprobar personalizada",
+                callback_data=f"admin_commercial_approve_custom_{request_id}"
+            )
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "❌ Rechazar",
+            callback_data=f"admin_commercial_reject_{request_id}"
+        )
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "🔢 Ajustar cupo",
+            callback_data=f"admin_commercial_group_limit_{request_id}"
         )
     ])
 
@@ -4021,75 +4274,12 @@ def build_commercial_advanced_review_keyboard(request_row):
 
 def build_commercial_review_keyboard(request_row):
 
-    request_id = request_row.get("id")
-    request_type = request_row.get("request_type")
-    keyboard = [
-        [build_commercial_contact_button(request_row)]
-    ]
-
-
     if is_commercial_request_advanced(request_row):
 
         return build_commercial_advanced_review_keyboard(request_row)
 
 
-    if request_type == "shared_trial":
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "✅ Aprobar prueba 1 día",
-                callback_data=f"admin_commercial_approve_trial_{request_id}"
-            )
-        ])
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "❌ Rechazar",
-                callback_data=f"admin_commercial_reject_{request_id}"
-            )
-        ])
-
-    elif request_type == "custom_bot":
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "✅ Aprobar configuración",
-                callback_data=f"admin_commercial_approve_custom_{request_id}"
-            )
-        ])
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "❌ Rechazar",
-                callback_data=f"admin_commercial_reject_{request_id}"
-            )
-        ])
-
-    else:
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "❌ Rechazar",
-                callback_data=f"admin_commercial_reject_{request_id}"
-            )
-        ])
-
-
-    keyboard.append([
-        InlineKeyboardButton(
-            "🔢 Cupo de grupos",
-            callback_data=f"admin_commercial_group_limit_{request_id}"
-        )
-    ])
-
-    keyboard.append([
-        InlineKeyboardButton(
-            "⬅️ Volver",
-            callback_data="admin_commercial_requests"
-        )
-    ])
-
-    return keyboard
+    return build_commercial_pending_review_keyboard(request_row)
 
 
 def build_commercial_request_chat_text(request_row, messages):
@@ -7503,6 +7693,177 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "admin_commercial_archived_requests":
+
+        requests = fetch_archived_commercial_requests()
+
+        await query.message.reply_text(
+            build_archived_commercial_requests_text(requests),
+            reply_markup=InlineKeyboardMarkup(
+                build_archived_commercial_requests_keyboard(requests)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_status_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_status_"
+        )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            build_commercial_request_detail_text(request_row),
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_review_keyboard(request_row)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_archive_confirm_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_archive_confirm_"
+        )
+
+        request_row = archive_commercial_request(request_id, user_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🗄 Solicitud archivada.\n\n"
+            "No se han borrado datos, grupo, owner ni conversación comercial.",
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_review_keyboard(request_row)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_archive_cancel_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_archive_cancel_"
+        )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            build_commercial_request_detail_text(request_row),
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_review_keyboard(request_row)
+            )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_archive_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_archive_"
+        )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        if is_commercial_request_archived(request_row):
+
+            await query.message.reply_text(
+                "📁 Esta solicitud ya está archivada.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_commercial_review_keyboard(request_row)
+                )
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🗄 Finalizar solicitud\n\n"
+            "Se archivará la solicitud comercial sin borrar datos, grupo, owner ni conversación comercial.",
+            reply_markup=build_commercial_archive_confirm_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_reopen_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_reopen_"
+        )
+
+        request_row = reopen_archived_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud archivada no encontrada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "♻️ Solicitud reabierta.",
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_review_keyboard(request_row)
+            )
+        )
+
+        return
+
+
     if data.startswith("admin_commercial_chat_"):
 
         request_id = extract_commercial_request_id(
@@ -7866,6 +8227,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data,
             "admin_commercial_reject_"
         )
+
+        existing_request = fetch_commercial_request(request_id)
+
+
+        if is_commercial_request_advanced(existing_request):
+
+            await query.message.reply_text(
+                "Esta solicitud ya está aprobada, configurada o archivada. No se ha rechazado.",
+                reply_markup=InlineKeyboardMarkup(
+                    build_commercial_review_keyboard(existing_request)
+                )
+            )
+
+            return
+
 
         request_row = update_commercial_request_rejected(
             request_id,
