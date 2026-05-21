@@ -702,6 +702,31 @@ def create_tables():
 
 
         # =========================
+        # PERFIL COMERCIAL ESTABLE DEL CREATOR
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS commercial_creator_profiles (
+
+            user_id BIGINT PRIMARY KEY,
+
+            group_quota INTEGER DEFAULT 1,
+
+            commercial_status TEXT,
+
+            subscription_until TIMESTAMP NULL,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # MENSAJES SOLICITUDES COMERCIALES
         # =========================
 
@@ -1149,6 +1174,54 @@ def create_tables():
             except Exception:
 
                 print(f"Columna ya existe en commercial_requests: {column_name}")
+
+
+        # =========================
+        # MIGRACIÓN PERFIL COMERCIAL CREATOR
+        # Mantener el mayor cupo ya asignado en solicitudes legacy.
+        # =========================
+
+        try:
+
+            cur.execute("""
+
+                INSERT INTO commercial_creator_profiles
+                (
+                    user_id,
+                    group_quota,
+                    commercial_status,
+                    subscription_until,
+                    updated_at
+                )
+                SELECT user_id,
+                       GREATEST(COALESCE(MAX(max_groups_allowed), 1), 1),
+                       MAX(status),
+                       MAX(commercial_subscription_until),
+                       NOW()
+                FROM commercial_requests
+                WHERE user_id IS NOT NULL
+                GROUP BY user_id
+                ON CONFLICT (user_id)
+                DO UPDATE SET
+                    group_quota=GREATEST(
+                        commercial_creator_profiles.group_quota,
+                        EXCLUDED.group_quota
+                    ),
+                    commercial_status=COALESCE(
+                        commercial_creator_profiles.commercial_status,
+                        EXCLUDED.commercial_status
+                    ),
+                    subscription_until=COALESCE(
+                        commercial_creator_profiles.subscription_until,
+                        EXCLUDED.subscription_until
+                    ),
+                    updated_at=NOW()
+
+            """)
+
+        except Exception as e:
+
+            print("Error migrando commercial_creator_profiles:", e)
 
 
         # =========================

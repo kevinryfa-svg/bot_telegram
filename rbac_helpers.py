@@ -100,6 +100,204 @@ def is_super_admin(user_id):
     return False
 
 
+def ensure_commercial_creator_profile(user_id):
+
+    if not user_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO commercial_creator_profiles
+            (
+                user_id,
+                group_quota,
+                commercial_status,
+                updated_at
+            )
+            VALUES (%s, 1, 'created', NOW())
+            ON CONFLICT (user_id)
+            DO UPDATE SET updated_at=commercial_creator_profiles.updated_at
+            RETURNING user_id,
+                      group_quota,
+                      commercial_status,
+                      subscription_until
+
+        """, (user_id,))
+
+        row = cur.fetchone()
+
+
+    return row
+
+
+def sync_commercial_creator_profile_from_request(user_id):
+
+    if not user_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO commercial_creator_profiles
+            (
+                user_id,
+                group_quota,
+                commercial_status,
+                subscription_until,
+                updated_at
+            )
+            SELECT user_id,
+                   GREATEST(COALESCE(MAX(max_groups_allowed), 1), 1),
+                   MAX(status),
+                   MAX(commercial_subscription_until),
+                   NOW()
+            FROM commercial_requests
+            WHERE user_id=%s
+            GROUP BY user_id
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                group_quota=GREATEST(
+                    commercial_creator_profiles.group_quota,
+                    EXCLUDED.group_quota
+                ),
+                commercial_status=COALESCE(
+                    commercial_creator_profiles.commercial_status,
+                    EXCLUDED.commercial_status
+                ),
+                subscription_until=COALESCE(
+                    commercial_creator_profiles.subscription_until,
+                    EXCLUDED.subscription_until
+                ),
+                updated_at=NOW()
+            RETURNING user_id,
+                      group_quota,
+                      commercial_status,
+                      subscription_until
+
+        """, (user_id,))
+
+        row = cur.fetchone()
+
+
+    if row:
+
+        return row
+
+
+    return ensure_commercial_creator_profile(user_id)
+
+
+def get_creator_group_quota(user_id):
+
+    if not user_id:
+
+        return 0
+
+
+    if is_super_admin(user_id):
+
+        return 999999
+
+
+    profile_row = sync_commercial_creator_profile_from_request(user_id)
+
+
+    if profile_row:
+
+        return profile_row[1] or 1
+
+
+    return 1
+
+
+def get_creator_group_quota_source(user_id, request_row=None):
+
+    if not user_id:
+
+        return 0, "sin usuario"
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT group_quota
+            FROM commercial_creator_profiles
+            WHERE user_id=%s
+            LIMIT 1
+
+        """, (user_id,))
+
+        row = cur.fetchone()
+
+
+    if row:
+
+        return row[0] or 1, "perfil"
+
+
+    if request_row:
+
+        return request_row.get("max_groups_allowed") or 1, "legacy"
+
+
+    return get_creator_group_quota(user_id), "perfil"
+
+
+def set_creator_group_quota(user_id, group_quota, commercial_status=None):
+
+    if not user_id:
+
+        return None
+
+
+    group_quota = int(group_quota)
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO commercial_creator_profiles
+            (
+                user_id,
+                group_quota,
+                commercial_status,
+                updated_at
+            )
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                group_quota=EXCLUDED.group_quota,
+                commercial_status=COALESCE(
+                    EXCLUDED.commercial_status,
+                    commercial_creator_profiles.commercial_status
+                ),
+                updated_at=NOW()
+            RETURNING user_id,
+                      group_quota,
+                      commercial_status,
+                      subscription_until
+
+        """, (
+            user_id,
+            group_quota,
+            commercial_status
+        ))
+
+        row = cur.fetchone()
+
+
+    return row
+
+
 # =========================
 # RBAC — PERMISOS
 # =========================
