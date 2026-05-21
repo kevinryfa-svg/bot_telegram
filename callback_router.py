@@ -2165,6 +2165,7 @@ def row_to_marketplace_group(row):
         "name",
         "is_free_group",
         "preview_text",
+        "preview_file_id",
         "preview_image_file_id",
         "preview_video_file_id",
         "category",
@@ -2188,6 +2189,7 @@ def get_marketplace_group_select():
                g.name,
                COALESCE(g.is_free_group, FALSE),
                g.preview_text,
+               g.preview_file_id,
                g.preview_image_file_id,
                g.preview_video_file_id,
                g.category,
@@ -2536,12 +2538,31 @@ def format_marketplace_card(group):
 
 def format_marketplace_group_caption(group):
 
-    return (
+    preview_mode = group.get("preview_mode") or "manual"
+    base_text = (
         f"🔥 {group.get('name') or 'Comunidad privada'}\n"
         f"📂 {format_marketplace_category(group)}\n"
         f"⭐ {format_marketplace_number(group.get('favorites_count'))} favoritos\n"
         f"👥 {format_marketplace_number(group.get('member_count'))} miembros\n"
-        f"{format_marketplace_kind(group)}\n\n"
+        f"{format_marketplace_kind(group)}"
+    )
+
+
+    if preview_mode == "private":
+
+        return base_text
+
+
+    if preview_mode == "dynamic":
+
+        return (
+            f"{base_text}\n\n"
+            "⚡ Preview dinámico activo."
+        )
+
+
+    return (
+        f"{base_text}\n\n"
         f"📝 {group.get('preview_text') or 'Preview manual pendiente de configurar.'}"
     )
 
@@ -2550,16 +2571,19 @@ def build_marketplace_group_keyboard(group, user_id=None):
 
     group_id = group.get("id")
     is_free_group = group.get("is_free_group")
+    preview_mode = group.get("preview_mode") or "manual"
     keyboard = []
 
 
-    keyboard.append([InlineKeyboardButton(
-        "👁 Ver preview",
-        callback_data=f"marketplace_preview_{group_id}"
-    )])
+    if preview_mode in ("manual", "hybrid"):
+
+        keyboard.append([InlineKeyboardButton(
+            "👁 Ver preview",
+            callback_data=f"marketplace_preview_{group_id}"
+        )])
 
 
-    if (group.get("preview_mode") or "manual") in ("dynamic", "hybrid"):
+    if preview_mode in ("dynamic", "hybrid"):
 
         keyboard.append([InlineKeyboardButton(
             "⚡ Preview dinámico",
@@ -2743,9 +2767,10 @@ async def send_marketplace_group_card(context, chat_id, group, user_id=None):
 
     caption = format_marketplace_group_caption(group)
     keyboard = build_marketplace_group_keyboard(group, user_id=user_id)
+    preview_mode = group.get("preview_mode") or "manual"
 
 
-    if group.get("preview_video_file_id"):
+    if preview_mode in ("manual", "hybrid") and group.get("preview_video_file_id"):
 
         await context.bot.send_video(
             chat_id=chat_id,
@@ -2757,7 +2782,7 @@ async def send_marketplace_group_card(context, chat_id, group, user_id=None):
         return
 
 
-    if group.get("preview_image_file_id"):
+    if preview_mode in ("manual", "hybrid") and group.get("preview_image_file_id"):
 
         await context.bot.send_photo(
             chat_id=chat_id,
@@ -2787,6 +2812,18 @@ async def send_marketplace_preview(context, chat_id, group, user_id=None):
     preview_mode = group.get("preview_mode") or "manual"
 
 
+    if preview_mode not in ("manual", "hybrid"):
+
+        await send_clean_message(
+            context,
+            chat_id,
+            "Este grupo todavía no tiene preview manual.",
+            reply_markup=keyboard
+        )
+
+        return
+
+
     if preview_mode in ("manual", "hybrid") and group.get("preview_video_file_id"):
 
         await context.bot.send_video(
@@ -2805,6 +2842,49 @@ async def send_marketplace_preview(context, chat_id, group, user_id=None):
             chat_id=chat_id,
             photo=group.get("preview_image_file_id"),
             caption=caption,
+            reply_markup=keyboard
+        )
+
+        return
+
+
+    if group.get("preview_file_id"):
+
+        try:
+
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=group.get("preview_file_id"),
+                caption=caption,
+                reply_markup=keyboard
+            )
+
+            return
+
+        except Exception:
+
+            try:
+
+                await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=group.get("preview_file_id"),
+                    caption=caption,
+                    reply_markup=keyboard
+                )
+
+                return
+
+            except Exception as e:
+
+                print("Error mostrando preview legacy:", e)
+
+
+    if not group.get("preview_text"):
+
+        await send_clean_message(
+            context,
+            chat_id,
+            "Este grupo todavía no tiene preview manual.",
             reply_markup=keyboard
         )
 
@@ -2977,6 +3057,47 @@ def build_preview_mode_keyboard(request_id):
     ])
 
 
+def build_group_preview_mode_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "📝 Preview manual",
+            callback_data="edit_group_preview_mode_manual"
+        )],
+        [InlineKeyboardButton(
+            "⚡ Preview dinámico",
+            callback_data="edit_group_preview_mode_dynamic"
+        )],
+        [InlineKeyboardButton(
+            "💎 Preview mixto",
+            callback_data="edit_group_preview_mode_hybrid"
+        )],
+        [InlineKeyboardButton(
+            "🔒 Sin preview público",
+            callback_data="edit_group_preview_mode_private"
+        )],
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="edit_group_back"
+        )]
+    ])
+
+
+def preview_mode_selection_text():
+
+    return (
+        "¿Qué tipo de preview quieres para este grupo?\n\n"
+        "📝 Manual:\n"
+        "Subes una imagen o vídeo fijo que verán los usuarios antes de entrar.\n\n"
+        "⚡ Dinámico:\n"
+        "El bot mostrará los últimos 3 vídeos publicados en el grupo desde que actives este modo.\n\n"
+        "💎 Mixto:\n"
+        "Muestra primero el preview manual y además permite ver los últimos vídeos dinámicos.\n\n"
+        "🔒 Sin preview:\n"
+        "No se mostrará contenido previo, solo la ficha del grupo."
+    )
+
+
 def build_preview_category_keyboard(request_id):
 
     keyboard = [
@@ -3049,6 +3170,35 @@ def set_group_preview_mode(group_id, preview_mode):
             preview_mode,
             group_id
         ))
+
+        conn.commit()
+
+
+def group_has_manual_preview(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT preview_text,
+                   preview_file_id,
+                   preview_image_file_id,
+                   preview_video_file_id
+            FROM groups
+            WHERE id=%s
+            LIMIT 1
+
+        """, (group_id,))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return False
+
+
+    return any(row)
 
 
 def format_owner_dynamic_videos_text(group_id):
@@ -6342,7 +6492,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context,
                 query.message.chat_id,
                 "⚡ Preview dinámico\n\n"
-                "Todavía no hay vídeos guardados para este preview. Se guardarán los próximos vídeos publicados en la comunidad.",
+                "Todavía no hay vídeos capturados para este grupo.\n\n"
+                "Publica un vídeo nuevo en el grupo después de activar el modo dinámico.",
                 reply_markup=build_dynamic_preview_access_keyboard(
                     group,
                     user_id=user_id
@@ -10486,92 +10637,96 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        # =========================
-        # OBTENER PREVIEW ACTUAL
-        # =========================
+        await query.message.reply_text(
+            preview_mode_selection_text(),
+            reply_markup=build_group_preview_mode_keyboard()
 
-        current_preview = None
+        )
 
-        try:
-
-            with conn.cursor() as cur:
-
-                cur.execute("""
-
-                    SELECT preview_file_id
-
-                    FROM groups
-
-                    WHERE id=%s
-
-                """, (group_id,))
-
-                row = cur.fetchone()
-
-                if row:
-
-                    current_preview = row[0]
-
-        except Exception as e:
-
-            print("Error obteniendo preview:", e)
+        return
 
 
-        context.user_data["editing_preview"] = True
+    if data.startswith("edit_group_preview_mode_"):
+
+        preview_mode = data.replace("edit_group_preview_mode_", "", 1)
+
+        if preview_mode not in PREVIEW_MODE_LABELS:
+
+            await query.message.reply_text("❌ Nivel de preview no válido.")
+
+            return
 
 
-        # =========================
-        # MOSTRAR PREVIEW ACTUAL
-        # =========================
-
-        if current_preview:
-
-            try:
-
-                await context.bot.send_photo(
-
-                    chat_id=query.message.chat_id,
-
-                    photo=current_preview,
-
-                    caption="📸 Preview actual del grupo"
-
-                )
-
-            except:
-
-                try:
-
-                    await context.bot.send_video(
-
-                        chat_id=query.message.chat_id,
-
-                        video=current_preview,
-
-                        caption="📸 Preview actual del grupo"
-
-                    )
-
-                except Exception as e:
-
-                    print("Error mostrando preview:", e)
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_edit_marketplace_preview", "can_manage_groups"]
+        )
 
 
-        keyboard = [
+        if not group_id:
 
-            [InlineKeyboardButton("⏭ Omitir", callback_data="skip_preview")],
+            await query.message.reply_text(
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+            )
 
-            [InlineKeyboardButton("⬅️ Volver", callback_data="edit_group_back")]
+            return
 
-        ]
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET preview_mode=%s
+                WHERE id=%s
+
+            """, (
+                preview_mode,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        if preview_mode in ("manual", "hybrid"):
+
+            context.user_data["editing_preview"] = True
+            context.user_data["editing_preview_mode"] = preview_mode
+
+            await query.message.reply_text(
+                "✅ Tipo de preview actualizado.\n\n"
+                "Envía ahora una imagen o vídeo para guardarlo como preview manual.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "⬅️ Volver",
+                        callback_data="edit_group_back"
+                    )]
+                ])
+            )
+
+            return
+
+
+        message = "✅ Preview dinámico activado."
+
+        if preview_mode == "dynamic":
+
+            message = (
+                "✅ Preview dinámico activado.\n\n"
+                "Solo capturará vídeos nuevos publicados en el grupo después de activar este modo."
+            )
+
+        elif preview_mode == "private":
+
+            message = "✅ Sin preview público activado."
 
 
         await query.message.reply_text(
-
-            "🎬 Envía una imagen o video para el nuevo preview.",
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
+            message,
+            reply_markup=InlineKeyboardMarkup(
+                build_group_settings_keyboard(user_id, group_id)
+            )
         )
 
         return
@@ -10584,6 +10739,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["editing_preview"] = False
         context.user_data.pop("new_preview_file", None)
+        context.user_data.pop("new_preview_file_type", None)
+        context.user_data.pop("editing_preview_mode", None)
 
         group_id = get_selected_group_for_permissions(
             context,
@@ -10636,23 +10793,45 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         file_id = context.user_data.get("new_preview_file")
+        file_type = context.user_data.get("new_preview_file_type")
+        preview_mode = context.user_data.get("editing_preview_mode") or "manual"
+
+
+        if not file_id:
+
+            await query.message.reply_text(
+                "❌ Debes enviar una imagen o vídeo antes de guardar."
+            )
+
+            return
+
+
+        column_name = (
+            "preview_video_file_id"
+            if file_type == "video"
+            else "preview_image_file_id"
+        )
 
 
         try:
 
             with conn.cursor() as cur:
 
-                cur.execute("""
+                cur.execute(f"""
 
                     UPDATE groups
 
-                    SET preview_file_id=%s
+                    SET {column_name}=%s,
+                        preview_file_id=%s,
+                        preview_mode=%s
 
                     WHERE id=%s
 
                 """, (
 
                     file_id,
+                    file_id,
+                    preview_mode,
                     group_id
 
                 ))
@@ -10666,6 +10845,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["editing_preview"] = False
         context.user_data.pop("new_preview_file", None)
+        context.user_data.pop("new_preview_file_type", None)
+        context.user_data.pop("editing_preview_mode", None)
 
 
         keyboard = build_group_settings_keyboard(user_id, group_id)
@@ -10673,7 +10854,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
 
-            "✅ Preview actualizado correctamente.",
+            "✅ Preview manual guardado.",
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -10689,6 +10870,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["editing_preview"] = False
         context.user_data.pop("new_preview_file", None)
+        context.user_data.pop("new_preview_file_type", None)
+        context.user_data.pop("editing_preview_mode", None)
 
         group_id = get_selected_group_for_permissions(
             context,
@@ -13247,10 +13430,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             message += (
                 "\n\n"
-                "A partir de ahora se guardarán los vídeos que se publiquen en el grupo mientras el bot los reciba. Solo se mostrarán los últimos 3."
+                "A partir de ahora se guardarán los vídeos nuevos que se publiquen en el grupo mientras el bot los reciba. Solo se mostrarán los últimos 3."
             )
 
         elif preview_mode == "hybrid":
+
+            if not group_has_manual_preview(group_id):
+
+                context.user_data["marketplace_preview_media"] = True
+                context.user_data["marketplace_preview_request_id"] = request_id
+                context.user_data["marketplace_preview_media_type"] = "hybrid_manual"
+                context.user_data["marketplace_preview_target_mode"] = "hybrid"
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "✅ Preview mixto activado.\n\n"
+                    "Muestra primero el preview manual y además permite ver los últimos vídeos dinámicos.\n\n"
+                    "Ahora envía una foto o vídeo fijo para el preview manual."
+                )
+
+                return
+
 
             message += (
                 "\n\n"
@@ -13259,10 +13460,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif preview_mode == "manual":
 
-            message += (
-                "\n\n"
-                "Puedes configurar texto, imagen, vídeo teaser, categoría y tags."
+            context.user_data["marketplace_preview_media"] = True
+            context.user_data["marketplace_preview_request_id"] = request_id
+            context.user_data["marketplace_preview_media_type"] = "manual"
+            context.user_data["marketplace_preview_target_mode"] = "manual"
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Preview manual activado.\n\n"
+                "Manual: subes una imagen o vídeo fijo que verán los usuarios antes de entrar.\n\n"
+                "Envía ahora una foto o vídeo para guardarlo como preview manual."
             )
+
+            return
 
         elif preview_mode == "private":
 

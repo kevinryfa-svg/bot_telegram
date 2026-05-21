@@ -120,6 +120,8 @@ def save_group_preview_video(
             group_id
         ))
 
+        conn.commit()
+
 
     return True
 

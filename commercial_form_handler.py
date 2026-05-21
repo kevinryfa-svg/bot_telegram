@@ -141,6 +141,7 @@ def clear_marketplace_preview_media(context):
     context.user_data.pop("marketplace_preview_media", None)
     context.user_data.pop("marketplace_preview_request_id", None)
     context.user_data.pop("marketplace_preview_media_type", None)
+    context.user_data.pop("marketplace_preview_target_mode", None)
 
 
 def is_valid_telegram_group_id(value):
@@ -1563,11 +1564,60 @@ async def receive_marketplace_preview_media(update: Update, context: ContextType
         return
 
 
+    target_preview_mode = context.user_data.get(
+        "marketplace_preview_target_mode"
+    )
+
+
+    if not target_preview_mode:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(preview_mode, 'manual')
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+
+        target_preview_mode = (
+            row[0]
+            if row and row[0] in ("manual", "hybrid")
+            else "manual"
+        )
+
+
     file_id = None
     column_name = None
 
 
-    if media_type == "image":
+    if media_type in ("manual", "hybrid_manual"):
+
+        if update.message.photo:
+
+            file_id = update.message.photo[-1].file_id
+            column_name = "preview_image_file_id"
+
+        elif update.message.video:
+
+            file_id = update.message.video.file_id
+            column_name = "preview_video_file_id"
+
+        else:
+
+            await update.message.reply_text(
+                "❌ Debes enviar una imagen o un vídeo."
+            )
+
+            return
+
+
+    elif media_type == "image":
 
         if not update.message.photo:
 
@@ -1614,11 +1664,15 @@ async def receive_marketplace_preview_media(update: Update, context: ContextType
         cur.execute(f"""
 
             UPDATE groups
-            SET {column_name}=%s
+            SET {column_name}=%s,
+                preview_file_id=%s,
+                preview_mode=%s
             WHERE id=%s
 
         """, (
             file_id,
+            file_id,
+            target_preview_mode,
             group_id
         ))
 
@@ -1626,9 +1680,10 @@ async def receive_marketplace_preview_media(update: Update, context: ContextType
 
 
     clear_marketplace_preview_media(context)
+    context.user_data.pop("marketplace_preview_target_mode", None)
 
     await update.message.reply_text(
-        "✅ Media preview guardado correctamente.",
+        "✅ Preview manual guardado.",
         reply_markup=get_back_to_setup_keyboard(request_id)
     )
 
