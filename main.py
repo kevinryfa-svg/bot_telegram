@@ -135,6 +135,32 @@ app = Flask(__name__)
 register_checkout_routes(app)
 
 
+def get_commercial_expiry_job_interval_seconds():
+
+    raw_value = os.environ.get(
+        "COMMERCIAL_EXPIRY_JOB_INTERVAL_SECONDS",
+        str(6 * 60 * 60)
+    )
+
+
+    try:
+
+        return max(int(raw_value), 60 * 60)
+
+    except Exception:
+
+        print(
+            "Commercial expiry scheduler: intervalo inválido, usando 6 horas."
+        )
+
+        return 6 * 60 * 60
+
+
+COMMERCIAL_EXPIRY_JOB_INTERVAL_SECONDS = (
+    get_commercial_expiry_job_interval_seconds()
+)
+
+
 # =========================
 # HOME TEST
 # =========================
@@ -151,6 +177,61 @@ def home():
 def run_flask():
 
     run_flask_app(app)
+
+
+# =========================
+# SCHEDULER EXPIRACIONES COMERCIALES
+# =========================
+
+async def commercial_expiry_job(context: ContextTypes.DEFAULT_TYPE):
+
+    print("Commercial expiry scheduler: iniciando revisión periódica")
+
+    try:
+
+        summary = await callback_router_module.process_expired_commercial_retention(
+            context
+        )
+
+        print(
+            "Commercial expiry scheduler: revisión finalizada",
+            summary
+        )
+
+    except Exception as e:
+
+        print("Commercial expiry scheduler: error en revisión periódica:", e)
+
+
+def schedule_commercial_expiry_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Commercial expiry scheduler: JobQueue no disponible. "
+            "No se programó la revisión automática."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        commercial_expiry_job,
+        interval=COMMERCIAL_EXPIRY_JOB_INTERVAL_SECONDS,
+        first=60,
+        name="commercial_expiry_scheduler"
+    )
+
+    print(
+        "Commercial expiry scheduler programado cada",
+        COMMERCIAL_EXPIRY_JOB_INTERVAL_SECONDS,
+        "segundos"
+    )
+
+    return True
 
 
 # =========================
@@ -1449,6 +1530,8 @@ def main():
         ),
         group=1
     )
+
+    schedule_commercial_expiry_job(telegram_app)
 
     threading.Thread(
         target=check_expirations,
