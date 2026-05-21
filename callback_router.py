@@ -5562,7 +5562,30 @@ def build_support_ticket_detail_text(ticket):
     )
 
 
-def build_support_ticket_keyboard(ticket_id):
+def build_support_ticket_keyboard(ticket):
+
+    if isinstance(ticket, dict):
+
+        ticket_id = ticket.get("id")
+        ticket_status = ticket.get("status")
+
+    else:
+
+        ticket_id = ticket
+        ticket_status = None
+
+
+    if ticket_status == "closed":
+
+        return [
+
+            [InlineKeyboardButton(
+                "⬅️ Volver",
+                callback_data="admin_support_tickets"
+            )]
+
+        ]
+
 
     return [
 
@@ -5582,6 +5605,69 @@ def build_support_ticket_keyboard(ticket_id):
         )]
 
     ]
+
+
+def build_support_user_navigation_keyboard():
+
+    return InlineKeyboardMarkup([
+
+        [InlineKeyboardButton(
+            "🛟 Abrir soporte",
+            callback_data="public_support"
+        )],
+
+        [InlineKeyboardButton(
+            "🏠 Inicio",
+            callback_data="public_back_start"
+        )]
+
+    ])
+
+
+def build_support_closed_ticket_keyboard():
+
+    return InlineKeyboardMarkup([
+
+        [InlineKeyboardButton(
+            "🆕 Crear nuevo ticket",
+            callback_data="public_support"
+        )],
+
+        [InlineKeyboardButton(
+            "🏠 Inicio",
+            callback_data="public_back_start"
+        )]
+
+    ])
+
+
+def clear_support_user_state(context):
+
+    context.user_data["support_mode"] = False
+    context.user_data["support_lookup_mode"] = False
+    context.user_data.pop("replying_support_ticket", None)
+    context.user_data.pop("support_replying_ticket", None)
+
+
+def log_support_ticket_privacy_attempt(ticket_id, requester_user_id, owner_user_id=None):
+
+    print(
+        "Intento de acceso indebido a soporte:",
+        f"ticket_id={ticket_id}",
+        f"requester_user_id={requester_user_id}",
+        f"owner_user_id={owner_user_id or '-'}"
+    )
+
+
+def support_ticket_belongs_to_user(ticket, user_id):
+
+    try:
+
+        return int(ticket.get("user_id")) == int(user_id)
+
+    except Exception:
+
+        return False
 
 
 def build_support_tickets_text(tickets):
@@ -5731,17 +5817,17 @@ async def handle_support_lookup_message(update, context, text):
 
     except Exception:
 
+        context.user_data["support_lookup_mode"] = False
+
         await update.message.reply_text(
-            "❌ Número de ticket no válido."
+            "⚠️ No encontré ese ticket.",
+            reply_markup=build_support_user_navigation_keyboard()
         )
 
         return
 
 
-    ticket = fetch_user_support_ticket(
-        ticket_id,
-        user_id
-    )
+    ticket = fetch_support_ticket(ticket_id)
 
     context.user_data["support_lookup_mode"] = False
 
@@ -5749,13 +5835,35 @@ async def handle_support_lookup_message(update, context, text):
     if not ticket:
 
         await update.message.reply_text(
-            "❌ Ese ticket no existe o no pertenece a tu usuario.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "⬅️ Volver al inicio",
-                    callback_data="public_back_start"
-                )]
-            ])
+            "⚠️ No encontré ese ticket.",
+            reply_markup=build_support_user_navigation_keyboard()
+        )
+
+        return
+
+
+    if not support_ticket_belongs_to_user(ticket, user_id):
+
+        log_support_ticket_privacy_attempt(
+            ticket_id,
+            user_id,
+            ticket.get("user_id")
+        )
+
+        await update.message.reply_text(
+            "⛔ No puedes acceder a este ticket.",
+            reply_markup=build_support_user_navigation_keyboard()
+        )
+
+        return
+
+
+    if ticket.get("status") == "closed":
+
+        await update.message.reply_text(
+            f"{build_support_ticket_detail_text(ticket)}\n\n"
+            "📁 Este ticket está cerrado.",
+            reply_markup=build_support_closed_ticket_keyboard()
         )
 
         return
@@ -5763,12 +5871,7 @@ async def handle_support_lookup_message(update, context, text):
 
     await update.message.reply_text(
         build_support_ticket_detail_text(ticket),
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "⬅️ Volver al inicio",
-                callback_data="public_back_start"
-            )]
-        ])
+        reply_markup=build_support_user_navigation_keyboard()
     )
 
 
@@ -5798,6 +5901,23 @@ async def handle_admin_support_reply(update, context, text):
 
         await update.message.reply_text(
             "❌ Ticket de soporte no encontrado."
+        )
+
+        return
+
+
+    if ticket.get("status") == "closed":
+
+        context.user_data.pop("replying_support_ticket", None)
+
+        await update.message.reply_text(
+            "📁 Este ticket está cerrado.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🛟 Tickets abiertos",
+                    callback_data="admin_support_tickets"
+                )]
+            ])
         )
 
         return
@@ -5910,9 +6030,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         CALLBACK_COMMERCIAL_BACK_START
     ):
 
-        context.user_data["support_mode"] = False
-        context.user_data["support_lookup_mode"] = False
-        context.user_data.pop("replying_support_ticket", None)
+        clear_support_user_state(context)
 
         await delete_query_message_safely(query)
 
@@ -6343,6 +6461,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["support_mode"] = True
         context.user_data["support_lookup_mode"] = False
+        context.user_data.pop("replying_support_ticket", None)
+        context.user_data.pop("support_replying_ticket", None)
 
         await delete_query_message_safely(query)
 
@@ -6380,6 +6500,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["support_mode"] = False
         context.user_data["support_lookup_mode"] = True
+        context.user_data.pop("replying_support_ticket", None)
+        context.user_data.pop("support_replying_ticket", None)
 
         await query.message.reply_text(
             "🔎 Consultar ticket\n\n"
@@ -7479,7 +7601,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             build_support_ticket_detail_text(ticket),
             reply_markup=InlineKeyboardMarkup(
-                build_support_ticket_keyboard(ticket_id)
+                build_support_ticket_keyboard(ticket)
             )
         )
 
@@ -7500,6 +7622,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "❌ Ticket de soporte no encontrado."
+            )
+
+            return
+
+
+        if ticket.get("status") == "closed":
+
+            await query.message.reply_text(
+                "📁 Este ticket está cerrado.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "🛟 Tickets abiertos",
+                        callback_data="admin_support_tickets"
+                    )]
+                ])
             )
 
             return
