@@ -12,6 +12,8 @@ from db import conn
 from rbac_helpers import (
     assign_group_owner_permissions,
     can_user_claim_telegram_group,
+    ensure_commercial_creator_profile,
+    get_creator_group_quota,
     is_super_admin
 )
 
@@ -23,6 +25,7 @@ def create_commercial_request(user, request_type, form_data=None):
     username = user.username if user else None
     first_name = user.first_name if user else None
     user_id = user.id if user else None
+    profile_quota = get_creator_group_quota(user_id) or 1
 
     with conn.cursor() as cur:
 
@@ -40,10 +43,11 @@ def create_commercial_request(user, request_type, form_data=None):
                 bot_name,
                 bot_username,
                 project_description,
-                contact_text
+                contact_text,
+                max_groups_allowed
             )
 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 
             RETURNING id
 
@@ -59,13 +63,16 @@ def create_commercial_request(user, request_type, form_data=None):
             form_data.get("bot_name"),
             form_data.get("bot_username"),
             form_data.get("project_description"),
-            form_data.get("contact_text")
+            form_data.get("contact_text"),
+            profile_quota
 
         ))
 
         request_id = cur.fetchone()[0]
 
         conn.commit()
+
+    ensure_commercial_creator_profile(user_id)
 
     return request_id
 
@@ -356,7 +363,14 @@ def find_group_by_telegram_id(text):
         return cur.fetchone()
 
 
-def max_groups_allowed(_user_id, request_row=None):
+def max_groups_allowed(user_id, request_row=None):
+
+    profile_quota = get_creator_group_quota(user_id)
+
+
+    if profile_quota:
+
+        return profile_quota
 
     if request_row:
 

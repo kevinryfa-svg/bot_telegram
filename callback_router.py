@@ -64,10 +64,13 @@ from invite_link_service import (
 )
 from rbac_helpers import (
     assign_group_owner_permissions,
+    get_creator_group_quota_source,
     get_admin_group_ids,
     has_any_permission_any_group,
     has_group_permission,
     has_permission,
+    set_creator_group_quota,
+    sync_commercial_creator_profile_from_request,
     is_super_admin
 )
 from start_handler import start, send_start_menu
@@ -4796,6 +4799,10 @@ def build_archived_commercial_requests_keyboard(requests):
 def build_commercial_request_detail_text(request_row):
 
     username = request_row.get("username") or "-"
+    profile_quota, quota_source = get_creator_group_quota_source(
+        request_row.get("user_id"),
+        request_row
+    )
 
     if username != "-" and not username.startswith("@"):
 
@@ -4829,7 +4836,9 @@ def build_commercial_request_detail_text(request_row):
         f"Ubicación pública solicitada: {format_public_visibility(request_row.get('requested_public_visibility'))}\n"
         f"Estado configuración creador: {request_row.get('creator_setup_status') or '-'}\n"
         f"Preview creador: {request_row.get('creator_preview_text') or '-'}\n"
-        f"Cupo máximo grupos: {request_row.get('max_groups_allowed') or 1}\n"
+        f"Cupo actual del creator: {profile_quota}\n"
+        f"Cupo de esta solicitud: {request_row.get('max_groups_allowed') or 1}\n"
+        f"Fuente de cupo: {quota_source}\n"
         f"Plan comercial: {request_row.get('selected_commercial_plan_id') or '-'}\n"
         f"Estado suscripción comercial: {request_row.get('commercial_subscription_status') or '-'}\n"
         f"Suscripción comercial hasta: {format_commercial_datetime(request_row.get('commercial_subscription_until'))}"
@@ -5077,11 +5086,18 @@ def build_user_commercial_request_chat_keyboard(request_id):
 
 def build_commercial_group_limit_text(request_row):
 
+    profile_quota, quota_source = get_creator_group_quota_source(
+        request_row.get("user_id"),
+        request_row
+    )
+
     return (
         "🔢 Cupo de grupos\n\n"
         f"Solicitud: #{request_row.get('id')}\n"
         f"Creador: {request_row.get('user_id') or '-'}\n"
-        f"Cupo actual: {request_row.get('max_groups_allowed') or 1}\n\n"
+        f"Cupo actual del creator: {profile_quota}\n"
+        f"Cupo de esta solicitud: {request_row.get('max_groups_allowed') or 1}\n"
+        f"Fuente: {quota_source}\n\n"
         "Elige el máximo de comunidades que este creador puede añadir."
     )
 
@@ -5408,7 +5424,34 @@ def update_commercial_request_group_limit(request_id, max_groups_allowed):
         row = cur.fetchone()
 
 
-    return row_to_commercial_request(row)
+    request_row = row_to_commercial_request(row)
+
+
+    if request_row:
+
+        set_creator_group_quota(
+            request_row.get("user_id"),
+            max_groups_allowed,
+            request_row.get("status")
+        )
+
+        with conn.cursor() as cur:
+
+            cur.execute(f"""
+
+                UPDATE commercial_requests
+                SET max_groups_allowed=%s,
+                    updated_at=NOW()
+                WHERE user_id=%s
+                RETURNING {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+
+            """, (
+                max_groups_allowed,
+                request_row.get("user_id")
+            ))
+
+
+    return request_row
 
 
 def update_commercial_request_trial_approved(request_id, reviewer_id):
@@ -5432,7 +5475,17 @@ def update_commercial_request_trial_approved(request_id, reviewer_id):
         row = cur.fetchone()
 
 
-    return row_to_commercial_request(row)
+    request_row = row_to_commercial_request(row)
+
+
+    if request_row:
+
+        sync_commercial_creator_profile_from_request(
+            request_row.get("user_id")
+        )
+
+
+    return request_row
 
 
 def update_commercial_request_trial_visibility(
@@ -5470,6 +5523,10 @@ def update_commercial_request_trial_visibility(
         return None
 
 
+    sync_commercial_creator_profile_from_request(
+        request_row.get("user_id")
+    )
+
     assign_owner_for_commercial_request(request_row)
 
 
@@ -5495,7 +5552,17 @@ def update_commercial_request_custom_approved(request_id, reviewer_id):
         row = cur.fetchone()
 
 
-    return row_to_commercial_request(row)
+    request_row = row_to_commercial_request(row)
+
+
+    if request_row:
+
+        sync_commercial_creator_profile_from_request(
+            request_row.get("user_id")
+        )
+
+
+    return request_row
 
 
 def update_commercial_request_rejected(request_id, reviewer_id):
