@@ -920,6 +920,7 @@ def create_tables():
             ("is_active", "BOOLEAN DEFAULT TRUE"),
             ("added_by", "BIGINT"),
             ("preview_text", "TEXT"),
+            ("preview_file_id", "TEXT"),
             ("preview_image_file_id", "TEXT"),
             ("preview_video_file_id", "TEXT"),
             ("category", "TEXT"),

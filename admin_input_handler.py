@@ -324,14 +324,17 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
     if context.user_data.get("editing_preview"):
 
         file_id = None
+        file_type = None
 
         if update.message.photo:
 
             file_id = update.message.photo[-1].file_id
+            file_type = "image"
 
         elif update.message.video:
 
             file_id = update.message.video.file_id
+            file_type = "video"
 
         else:
 
@@ -343,6 +346,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
         context.user_data["new_preview_file"] = file_id
+        context.user_data["new_preview_file_type"] = file_type
 
 
         keyboard = [
