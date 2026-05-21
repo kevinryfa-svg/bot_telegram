@@ -1030,10 +1030,12 @@ def user_has_group_permission_any(user_id, group_id, permissions):
 
 GROUP_ADMIN_PERMISSION_OPTIONS = [
     ("view_users", "Ver usuarios", "can_view_users"),
+    ("manage_users", "Gestionar usuarios", "can_manage_users"),
     ("kick_users", "Expulsar usuarios", "can_kick_users"),
     ("ban_users", "Banear usuarios", "can_ban_users"),
     ("unban_users", "Desbanear usuarios", "can_unban_users"),
     ("warn_users", "Dar warnings", "can_warn_users"),
+    ("reset_warnings", "Resetear warnings", "can_reset_warnings"),
     ("manage_links", "Gestionar enlaces", "can_resend_links"),
     ("view_stats", "Ver estadísticas", "can_view_stats"),
     ("manage_plans", "Gestionar planes", "can_manage_plans"),
@@ -1065,6 +1067,39 @@ def fetch_group_admin_manageable_groups(user_id):
         user_id,
         ["can_manage_admins"]
     )
+
+
+def fetch_group_admin_context_groups(context, user_id):
+
+    focused_group_id = context.user_data.get("selected_owner_group")
+
+
+    if focused_group_id and can_manage_group_admins(user_id, focused_group_id):
+
+        return [
+            (
+                focused_group_id,
+                fetch_group_name(focused_group_id),
+                None
+            )
+        ]
+
+
+    return fetch_group_admin_manageable_groups(user_id)
+
+
+def build_group_admin_error_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="group_admin_panel"
+        )],
+        [InlineKeyboardButton(
+            "🏠 Inicio",
+            callback_data="public_back_start"
+        )]
+    ])
 
 
 def format_group_admin_permission_list(selected_permissions=None):
@@ -1122,10 +1157,12 @@ def fetch_group_admins(group_id):
             SELECT user_id,
                    role,
                    can_view_users,
+                   can_manage_users,
                    can_kick_users,
                    can_ban_users,
                    can_unban_users,
                    can_warn_users,
+                   can_reset_warnings,
                    can_resend_links,
                    can_view_stats,
                    can_manage_plans,
@@ -1151,10 +1188,12 @@ def fetch_group_admin_permissions(group_id, target_user_id):
         cur.execute("""
 
             SELECT can_view_users,
+                   can_manage_users,
                    can_kick_users,
                    can_ban_users,
                    can_unban_users,
                    can_warn_users,
+                   can_reset_warnings,
                    can_resend_links,
                    can_view_stats,
                    can_manage_plans,
@@ -1192,8 +1231,8 @@ def fetch_group_admin_permissions(group_id, target_user_id):
 
     return {
         "permissions": permissions,
-        "role": row[12],
-        "is_active": row[13] is True
+        "role": row[len(GROUP_ADMIN_PERMISSION_OPTIONS)],
+        "is_active": row[len(GROUP_ADMIN_PERMISSION_OPTIONS) + 1] is True
     }
 
 
@@ -1285,12 +1324,12 @@ def save_group_admin_permissions(group_id, target_user_id, permissions):
         group_id,
         "GROUP_ADMIN",
         False,
-        False,
+        values_by_permission.get("can_manage_users", False),
         values_by_permission.get("can_kick_users", False),
         values_by_permission.get("can_ban_users", False),
         values_by_permission.get("can_unban_users", False),
         values_by_permission.get("can_warn_users", False),
-        False,
+        values_by_permission.get("can_reset_warnings", False),
         values_by_permission.get("can_resend_links", False),
         False,
         False,
@@ -8414,13 +8453,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "group_admin_add":
 
-        groups = fetch_group_admin_manageable_groups(user_id)
+        groups = fetch_group_admin_context_groups(context, user_id)
 
 
         if not groups:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -8434,7 +8474,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            "➕ Añadir admin\n\nEnvía el user_id o @username del usuario si ya existe en la base de datos."
+            "➕ Añadir admin\n\n"
+            "Envía el user_id del usuario.\n\n"
+            "También puedes enviar @username si ese usuario ya existe en la base de datos.",
+            reply_markup=build_group_admin_error_keyboard()
         )
 
         return
@@ -8451,7 +8494,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not can_manage_group_admins(user_id, group_id):
 
             await query.message.reply_text(
-                "⛔ Esta comunidad no pertenece a tu panel."
+                "⛔ Esta comunidad no pertenece a tu panel.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -8463,7 +8507,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target_user_id:
 
             await query.message.reply_text(
-                "❌ No hay usuario pendiente para añadir."
+                "❌ No hay usuario pendiente para añadir.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -8523,7 +8568,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not can_manage_group_admins(user_id, group_id):
 
             await query.message.reply_text(
-                "⛔ Esta comunidad no pertenece a tu panel."
+                "⛔ Esta comunidad no pertenece a tu panel.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -8532,7 +8578,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if int(context.user_data.get("group_admin_target_user_id") or 0) != target_user_id:
 
             await query.message.reply_text(
-                "❌ El usuario pendiente no coincide."
+                "❌ El usuario pendiente no coincide.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -8574,7 +8621,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not can_manage_group_admins(user_id, group_id):
 
             await query.message.reply_text(
-                "⛔ Esta comunidad no pertenece a tu panel."
+                "⛔ Esta comunidad no pertenece a tu panel.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -8587,7 +8635,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target_user_id:
 
             await query.message.reply_text(
-                "❌ No hay usuario pendiente para añadir."
+                "❌ No hay usuario pendiente para añadir.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -8632,13 +8681,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "group_admin_view":
 
-        groups = fetch_group_admin_manageable_groups(user_id)
+        groups = fetch_group_admin_context_groups(context, user_id)
 
 
         if not groups:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -8704,13 +8754,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "group_admin_edit":
 
-        groups = fetch_group_admin_manageable_groups(user_id)
+        groups = fetch_group_admin_context_groups(context, user_id)
 
 
         if not groups:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -8887,13 +8938,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "group_admin_remove":
 
-        groups = fetch_group_admin_manageable_groups(user_id)
+        groups = fetch_group_admin_context_groups(context, user_id)
 
 
         if not groups:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                reply_markup=build_group_admin_error_keyboard()
             )
 
             return
@@ -11752,7 +11804,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                reply_markup=build_group_admin_error_keyboard()
+            )
+
+            return
+
+
+        if data == "edit_group_admins":
+
+            context.user_data["selected_owner_group"] = group_id
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "👥 Admins de mi grupo\n\nGestiona admins y permisos por comunidad.",
+                reply_markup=build_group_admin_panel_keyboard()
             )
 
             return

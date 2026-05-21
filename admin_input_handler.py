@@ -23,10 +23,12 @@ from rbac_helpers import get_admin_group_ids
 
 GROUP_ADMIN_PERMISSION_OPTIONS = [
     ("view_users", "Ver usuarios", "can_view_users"),
+    ("manage_users", "Gestionar usuarios", "can_manage_users"),
     ("kick_users", "Expulsar usuarios", "can_kick_users"),
     ("ban_users", "Banear usuarios", "can_ban_users"),
     ("unban_users", "Desbanear usuarios", "can_unban_users"),
     ("warn_users", "Dar warnings", "can_warn_users"),
+    ("reset_warnings", "Resetear warnings", "can_reset_warnings"),
     ("manage_links", "Gestionar enlaces", "can_resend_links"),
     ("view_stats", "Ver estadísticas", "can_view_stats"),
     ("manage_plans", "Gestionar planes", "can_manage_plans"),
@@ -101,6 +103,11 @@ def lookup_group_admin_target_user(raw_text):
                 return None
 
 
+            if target_user_id <= 0:
+
+                return None
+
+
             cur.execute("""
 
                 SELECT user_id,
@@ -128,7 +135,34 @@ def lookup_group_admin_target_user(raw_text):
             ))
 
 
-        return cur.fetchone()
+        row = cur.fetchone()
+
+
+        if row:
+
+            return row
+
+
+        if not raw_text.startswith("@"):
+
+            return target_user_id, None, None
+
+
+        return None
+
+
+def build_group_admin_back_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="group_admin_panel"
+        )],
+        [InlineKeyboardButton(
+            "🏠 Inicio",
+            callback_data="public_back_start"
+        )]
+    ])
 
 
 def fetch_manageable_admin_groups(user_id):
@@ -174,6 +208,24 @@ def fetch_manageable_admin_groups(user_id):
 
 
         return cur.fetchall()
+
+
+def fetch_context_manageable_admin_groups(context, user_id):
+
+    groups = fetch_manageable_admin_groups(user_id)
+    selected_owner_group = context.user_data.get("selected_owner_group")
+
+
+    if selected_owner_group:
+
+        for group in groups:
+
+            if int(group[0]) == int(selected_owner_group):
+
+                return [group]
+
+
+    return groups
 
 
 def format_pending_group_admin_permissions(selected_permissions):
@@ -248,7 +300,9 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
         if not target:
 
             await update.message.reply_text(
-                "❌ Usuario no encontrado en la base de datos."
+                "❌ Usuario no encontrado en la base de datos.\n\n"
+                "Puedes enviar un user_id numérico válido o un @username que ya exista en la base.",
+                reply_markup=build_group_admin_back_keyboard()
             )
 
             return
@@ -260,13 +314,17 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
         if int(target_user_id) == int(update.effective_user.id):
 
             await update.message.reply_text(
-                "❌ No puedes añadirte a ti mismo como admin."
+                "❌ No puedes añadirte a ti mismo como admin.",
+                reply_markup=build_group_admin_back_keyboard()
             )
 
             return
 
 
-        groups = fetch_manageable_admin_groups(update.effective_user.id)
+        groups = fetch_context_manageable_admin_groups(
+            context,
+            update.effective_user.id
+        )
 
 
         if not groups:
@@ -274,7 +332,8 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
             context.user_data["adding_group_admin"] = False
 
             await update.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                reply_markup=build_group_admin_back_keyboard()
             )
 
             return
@@ -284,6 +343,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["group_admin_target_display"] = (
             f"@{username}" if username else first_name or str(target_user_id)
         )
+        context.user_data["adding_group_admin"] = False
 
 
         if len(groups) > 1:
