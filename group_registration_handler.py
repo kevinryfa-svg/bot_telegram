@@ -10,16 +10,37 @@ from rbac_helpers import (
     GROUP_OWNER,
     assign_group_owner_permissions,
     can_user_claim_telegram_group,
-    get_group_owner_user_id
+    get_group_owner_user_id,
+    is_super_admin
 )
 
 
 APPROVED_COMMERCIAL_STATUSES = (
+    "approved",
     "trial_active",
     "awaiting_creator_setup",
+    "awaiting_payment_setup",
     "setup_in_progress",
     "setup_ready",
     "active"
+)
+
+
+AUTHORIZED_CREATOR_SETUP_STATUSES = (
+    "awaiting_creator_setup",
+    "setup_in_progress",
+    "setup_ready"
+)
+
+
+BLOCKED_CREATOR_STATUSES = (
+    "pending",
+    "rejected",
+    "archived",
+    "closed",
+    "trial_expired",
+    "expired_pending_reactivation",
+    "deleted_irreversible"
 )
 
 
@@ -176,6 +197,10 @@ def get_approved_creator_request(user_id, telegram_group_id):
 
         return None
 
+    if is_super_admin(user_id):
+
+        return None
+
 
     with conn.cursor() as cur:
 
@@ -187,17 +212,26 @@ def get_approved_creator_request(user_id, telegram_group_id):
                    requested_public_visibility,
                    COALESCE(max_groups_allowed, 1),
                    COALESCE(is_free_group, FALSE),
-                   payment_mode
+                   payment_mode,
+                   creator_setup_status
             FROM commercial_requests
             WHERE user_id=%s
             AND request_type='shared_trial'
-            AND status = ANY(%s)
+            AND (
+                status = ANY(%s)
+                OR (
+                    creator_setup_status = ANY(%s)
+                    AND COALESCE(status, 'pending') != ALL(%s)
+                )
+                OR approved_telegram_group_id=%s
+            )
             ORDER BY
                 CASE
                     WHEN approved_telegram_group_id=%s THEN 0
                     WHEN approved_group_id IS NULL THEN 1
                     ELSE 2
                 END ASC,
+                COALESCE(max_groups_allowed, 1) DESC,
                 reviewed_at DESC NULLS LAST,
                 created_at DESC
             LIMIT 1
@@ -205,6 +239,9 @@ def get_approved_creator_request(user_id, telegram_group_id):
         """, (
             user_id,
             list(APPROVED_COMMERCIAL_STATUSES),
+            list(AUTHORIZED_CREATOR_SETUP_STATUSES),
+            list(BLOCKED_CREATOR_STATUSES),
+            telegram_group_id,
             telegram_group_id
         ))
 
@@ -224,6 +261,91 @@ def get_approved_creator_request(user_id, telegram_group_id):
         "max_groups_allowed": row[4] or 1,
         "is_free_group": row[5] is True or row[6] == "free"
     }
+
+
+def is_authorized_creator(user_id):
+
+    if not user_id:
+
+        return False
+
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    return get_creator_group_quota(user_id) > 0
+
+
+def get_creator_group_quota(user_id):
+
+    if not user_id:
+
+        return 0
+
+
+    if is_super_admin(user_id):
+
+        return 999999
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT COALESCE(MAX(COALESCE(max_groups_allowed, 1)), 0)
+            FROM commercial_requests
+            WHERE user_id=%s
+            AND request_type='shared_trial'
+            AND (
+                status = ANY(%s)
+                OR (
+                    creator_setup_status = ANY(%s)
+                    AND COALESCE(status, 'pending') != ALL(%s)
+                )
+            )
+
+        """, (
+            user_id,
+            list(APPROVED_COMMERCIAL_STATUSES),
+            list(AUTHORIZED_CREATOR_SETUP_STATUSES),
+            list(BLOCKED_CREATOR_STATUSES)
+        ))
+
+        row = cur.fetchone()
+
+
+    return row[0] or 0
+
+
+def get_creator_registered_group_count(user_id, exclude_group_id=None):
+
+    return count_group_owner_groups(
+        user_id,
+        exclude_group_id=exclude_group_id
+    )
+
+
+def can_creator_add_group(user_id, group_id=None):
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    quota = get_creator_group_quota(user_id)
+
+
+    if quota <= 0:
+
+        return False
+
+
+    return get_creator_registered_group_count(
+        user_id,
+        exclude_group_id=group_id
+    ) < quota
 
 
 def get_existing_group(telegram_group_id):
@@ -272,7 +394,12 @@ def count_group_owner_groups(user_id, exclude_group_id=None):
 
 def creator_has_capacity(user_id, max_groups_allowed, group_id=None):
 
-    current_groups = count_group_owner_groups(
+    if is_super_admin(user_id):
+
+        return True
+
+
+    current_groups = get_creator_registered_group_count(
         user_id,
         exclude_group_id=group_id
     )
@@ -477,9 +604,8 @@ async def register_authorized_group(group_id, group_name, added_by, context, req
     existing_group_id = get_existing_group(group_id)
 
 
-    if not creator_has_capacity(
+    if not can_creator_add_group(
         added_by,
-        request_row["max_groups_allowed"],
         existing_group_id
     ):
 
@@ -530,6 +656,56 @@ async def register_authorized_group(group_id, group_name, added_by, context, req
             f"ID interno: {internal_group_id}\n"
             f"Owner: {added_by}\n"
             f"Solicitud: #{request_row['id']}"
+        )
+    )
+
+
+async def register_existing_owned_group(group_id, group_name, added_by, context, internal_group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE groups
+            SET name=%s,
+                bot_is_admin=TRUE,
+                is_active=TRUE,
+                added_by=%s
+            WHERE id=%s
+
+        """, (
+            group_name,
+            added_by,
+            internal_group_id
+        ))
+
+
+    await safe_send(
+        context,
+        added_by,
+        (
+            "✅ Este grupo ya está vinculado a tu comunidad.\n\n"
+            "ID del grupo:\n"
+            f"{group_id}\n\n"
+            "Guarda este ID. También puedes usarlo en el panel de configuración de tu comunidad."
+        )
+    )
+
+    await safe_send(
+        context,
+        group_id,
+        "✅ Bot configurado correctamente para esta comunidad."
+    )
+
+    await safe_send(
+        context,
+        ADMIN_ID,
+        (
+            "✅ GRUPO COMERCIAL EXISTENTE VERIFICADO\n\n"
+            f"Grupo: {group_name}\n"
+            f"Telegram ID: {group_id}\n"
+            f"ID interno: {internal_group_id}\n"
+            f"Owner: {added_by}"
         )
     )
 
@@ -587,7 +763,7 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
         print(f"Bot ES administrador en grupo: {group_name} ({group_id})")
 
 
-        if added_by == ADMIN_ID:
+        if added_by and is_super_admin(added_by):
 
             with conn.cursor() as cur:
 
@@ -630,13 +806,39 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
             return
 
 
-        request_row = get_approved_creator_request(
-            added_by,
-            group_id
-        )
+        existing_group_id = get_existing_group(group_id)
+        existing_owner_id = get_group_owner_user_id(existing_group_id)
 
 
-        if not request_row:
+        if added_by and existing_owner_id and int(existing_owner_id) == int(added_by):
+
+            await register_existing_owned_group(
+                group_id,
+                group_name,
+                added_by,
+                context,
+                existing_group_id
+            )
+
+            return
+
+
+        if added_by and existing_owner_id and int(existing_owner_id) != int(added_by):
+
+            await reject_group_registration(
+                context,
+                group_id,
+                group_name,
+                added_by,
+                "⚠️ Este grupo ya está asociado a otro creador. El bot saldrá del grupo.",
+                "⛔ Este grupo ya está asociado a otro creador. Contacta con soporte si crees que es un error.",
+                "⚠️ Bot añadido a un grupo ya asociado a otro owner."
+            )
+
+            return
+
+
+        if not is_authorized_creator(added_by):
 
             await reject_group_registration(
                 context,
@@ -651,20 +853,22 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
             return
 
 
-        existing_group_id = get_existing_group(group_id)
-        existing_owner_id = get_group_owner_user_id(existing_group_id)
+        request_row = get_approved_creator_request(
+            added_by,
+            group_id
+        )
 
 
-        if existing_owner_id and int(existing_owner_id) != int(added_by):
+        if not request_row:
 
             await reject_group_registration(
                 context,
                 group_id,
                 group_name,
                 added_by,
-                "⚠️ Este grupo ya está asociado a otro creador. El bot saldrá del grupo.",
-                "⛔ Este grupo ya está asociado a otro creador. Contacta con soporte si crees que es un error.",
-                "⚠️ Bot añadido a un grupo ya asociado a otro owner."
+                "⚠️ No se encontró una solicitud comercial vigente para vincular este grupo. El bot saldrá del grupo.",
+                "⛔ No he encontrado una solicitud comercial vigente para vincular este grupo. Revisa tu solicitud desde /start.",
+                "⚠️ Bot añadido por creador sin solicitud vinculable."
             )
 
             return
@@ -689,9 +893,8 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
             return
 
 
-        if not creator_has_capacity(
+        if not can_creator_add_group(
             added_by,
-            request_row["max_groups_allowed"],
             existing_group_id
         ):
 
