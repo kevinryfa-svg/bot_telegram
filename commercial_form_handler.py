@@ -790,9 +790,45 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
     if action == "group":
 
-        if waiting_state != "creator_setup_waiting_group_id" or not is_valid_telegram_group_id(text):
+        if (
+            waiting_state not in (
+                "creator_setup_waiting_group_id",
+                "creator_setup_waiting_group_reference"
+            )
+            or not is_valid_group_reference(text)
+        ):
 
             await reply_invalid_data(update, request_id)
+
+            return
+
+
+        if not is_valid_telegram_group_id(text):
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE commercial_requests
+                    SET telegram_group_link=%s,
+                        creator_setup_status='setup_in_progress',
+                        updated_at=NOW()
+                    WHERE id=%s
+
+                """, (
+                    text,
+                    request_id
+                ))
+
+
+            clear_creator_setup(context)
+
+            await update.message.reply_text(
+                "📡 Referencia guardada.\n\n"
+                "El link sirve solo como referencia. El ID real se detectará automáticamente cuando añadas el bot al grupo o canal como administrador.\n\n"
+                "No necesitas usar bots externos para obtener el ID.",
+                reply_markup=get_back_to_setup_keyboard(request_id)
+            )
 
             return
 

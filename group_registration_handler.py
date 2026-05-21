@@ -1,7 +1,11 @@
 import asyncio
 import requests
 
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.ext import ContextTypes
 
 from bot_config import TOKEN, ADMIN_ID
@@ -22,7 +26,8 @@ APPROVED_COMMERCIAL_STATUSES = (
     "awaiting_payment_setup",
     "setup_in_progress",
     "setup_ready",
-    "active"
+    "active",
+    "expired_pending_reactivation"
 )
 
 
@@ -39,7 +44,6 @@ BLOCKED_CREATOR_STATUSES = (
     "archived",
     "closed",
     "trial_expired",
-    "expired_pending_reactivation",
     "deleted_irreversible"
 )
 
@@ -263,6 +267,64 @@ def get_approved_creator_request(user_id, telegram_group_id):
     }
 
 
+def get_creator_request_by_id(user_id, request_id):
+
+    if not user_id or not request_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   approved_group_id,
+                   approved_telegram_group_id,
+                   requested_public_visibility,
+                   COALESCE(max_groups_allowed, 1),
+                   COALESCE(is_free_group, FALSE),
+                   payment_mode,
+                   creator_setup_status
+            FROM commercial_requests
+            WHERE id=%s
+            AND user_id=%s
+            AND request_type='shared_trial'
+            AND (
+                status = ANY(%s)
+                OR (
+                    creator_setup_status = ANY(%s)
+                    AND COALESCE(status, 'pending') != ALL(%s)
+                )
+            )
+            LIMIT 1
+
+        """, (
+            request_id,
+            user_id,
+            list(APPROVED_COMMERCIAL_STATUSES),
+            list(AUTHORIZED_CREATOR_SETUP_STATUSES),
+            list(BLOCKED_CREATOR_STATUSES)
+        ))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return None
+
+
+    return {
+        "id": row[0],
+        "approved_group_id": row[1],
+        "approved_telegram_group_id": row[2],
+        "requested_public_visibility": row[3],
+        "max_groups_allowed": row[4] or 1,
+        "is_free_group": row[5] is True or row[6] == "free"
+    }
+
+
 def is_authorized_creator(user_id):
 
     if not user_id:
@@ -430,6 +492,39 @@ async def safe_send(context, chat_id, text):
         return False
 
 
+async def safe_send_confirmation(context, chat_id, text, pending_id):
+
+    if not chat_id:
+
+        return False
+
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "✅ Sí, vincular este grupo",
+                    callback_data=f"confirm_creator_group_link_{pending_id}"
+                )],
+                [InlineKeyboardButton(
+                    "❌ No, cancelar",
+                    callback_data=f"cancel_creator_group_link_{pending_id}"
+                )]
+            ])
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Error enviando confirmación de grupo:", e)
+
+        return False
+
+
 async def leave_chat_safely(context, telegram_group_id):
 
     try:
@@ -469,6 +564,227 @@ async def leave_chat_safely(context, telegram_group_id):
 
 
     return False
+
+
+def create_creator_group_link_request(user_id, request_id, telegram_group_id, group_name):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE creator_group_link_requests
+            SET status='cancelled',
+                cancelled_at=NOW(),
+                updated_at=NOW()
+            WHERE user_id=%s
+            AND commercial_request_id=%s
+            AND telegram_group_id=%s
+            AND status='pending'
+
+        """, (
+            user_id,
+            request_id,
+            telegram_group_id
+        ))
+
+        cur.execute("""
+
+            INSERT INTO creator_group_link_requests
+            (
+                user_id,
+                commercial_request_id,
+                telegram_group_id,
+                group_name,
+                status
+            )
+            VALUES (%s, %s, %s, %s, 'pending')
+            RETURNING id
+
+        """, (
+            user_id,
+            request_id,
+            telegram_group_id,
+            group_name
+        ))
+
+        pending_id = cur.fetchone()[0]
+
+
+    return pending_id
+
+
+def fetch_creator_group_link_request(pending_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   user_id,
+                   commercial_request_id,
+                   telegram_group_id,
+                   group_name,
+                   status
+            FROM creator_group_link_requests
+            WHERE id=%s
+            LIMIT 1
+
+        """, (pending_id,))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return None
+
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "commercial_request_id": row[2],
+        "telegram_group_id": row[3],
+        "group_name": row[4],
+        "status": row[5]
+    }
+
+
+def mark_creator_group_link_request(pending_id, status):
+
+    status_column = "confirmed_at" if status == "confirmed" else "cancelled_at"
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE creator_group_link_requests
+            SET status=%s,
+                {status_column}=NOW(),
+                updated_at=NOW()
+            WHERE id=%s
+
+        """, (
+            status,
+            pending_id
+        ))
+
+
+def confirm_creator_group_link_request(pending_id, user_id):
+
+    pending_row = fetch_creator_group_link_request(pending_id)
+
+
+    if not pending_row:
+
+        return {"status": "not_found"}
+
+
+    if int(pending_row["user_id"]) != int(user_id):
+
+        return {"status": "not_owner"}
+
+
+    if pending_row["status"] != "pending":
+
+        return {
+            "status": "not_pending",
+            "pending_status": pending_row["status"]
+        }
+
+
+    telegram_group_id = pending_row["telegram_group_id"]
+    internal_group_id = get_existing_group(telegram_group_id)
+    existing_owner_id = get_group_owner_user_id(internal_group_id)
+
+
+    if existing_owner_id and int(existing_owner_id) != int(user_id):
+
+        return {"status": "owned_by_other"}
+
+
+    request_row = get_creator_request_by_id(
+        user_id,
+        pending_row["commercial_request_id"]
+    )
+
+
+    if not request_row:
+
+        return {"status": "no_request"}
+
+
+    if not can_user_claim_telegram_group(
+        user_id,
+        telegram_group_id,
+        request_row["id"]
+    ):
+
+        return {"status": "owned_by_other"}
+
+
+    if not can_creator_add_group(
+        user_id,
+        internal_group_id
+    ):
+
+        return {"status": "no_capacity"}
+
+
+    linked_group_id = upsert_group_for_creator(
+        pending_row["group_name"],
+        telegram_group_id,
+        user_id,
+        request_row
+    )
+
+    mark_creator_group_link_request(
+        pending_id,
+        "confirmed"
+    )
+
+    return {
+        "status": "confirmed",
+        "group_id": linked_group_id,
+        "telegram_group_id": telegram_group_id,
+        "group_name": pending_row["group_name"],
+        "request_id": request_row["id"]
+    }
+
+
+def cancel_creator_group_link_request(pending_id, user_id):
+
+    pending_row = fetch_creator_group_link_request(pending_id)
+
+
+    if not pending_row:
+
+        return {"status": "not_found"}
+
+
+    if int(pending_row["user_id"]) != int(user_id):
+
+        return {"status": "not_owner"}
+
+
+    if pending_row["status"] != "pending":
+
+        return {
+            "status": "not_pending",
+            "pending_status": pending_row["status"]
+        }
+
+
+    mark_creator_group_link_request(
+        pending_id,
+        "cancelled"
+    )
+
+    return {
+        "status": "cancelled",
+        "telegram_group_id": pending_row["telegram_group_id"],
+        "group_name": pending_row["group_name"]
+    }
 
 
 async def reject_group_registration(
@@ -911,12 +1227,45 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
             return
 
 
-        await register_authorized_group(
-            group_id,
-            group_name,
+        pending_id = create_creator_group_link_request(
             added_by,
+            request_row["id"],
+            group_id,
+            group_name
+        )
+
+        confirmation_sent = await safe_send_confirmation(
             context,
-            request_row
+            added_by,
+            (
+                "✅ He detectado tu grupo:\n\n"
+                f"Nombre: {group_name}\n"
+                f"ID: {group_id}\n\n"
+                "¿Quieres vincular este grupo a tu comunidad?"
+            ),
+            pending_id
+        )
+
+        await safe_send(
+            context,
+            group_id,
+            (
+                "✅ Bot detectado correctamente.\n\n"
+                "El creador autorizado debe confirmar la vinculación por privado."
+            )
+        )
+
+        await safe_send(
+            context,
+            ADMIN_ID,
+            (
+                "📡 GRUPO COMERCIAL PENDIENTE DE CONFIRMACIÓN\n\n"
+                f"Grupo: {group_name}\n"
+                f"Telegram ID: {group_id}\n"
+                f"Creator: {added_by}\n"
+                f"Solicitud: #{request_row['id']}\n"
+                f"Confirmación enviada: {'sí' if confirmation_sent else 'no'}"
+            )
         )
 
 

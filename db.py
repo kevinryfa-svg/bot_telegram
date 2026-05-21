@@ -814,6 +814,39 @@ def create_tables():
 
 
         # =========================
+        # TABLA VINCULACIÓN PENDIENTE DE GRUPOS DE CREADORES
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS creator_group_link_requests (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT NOT NULL,
+
+            commercial_request_id INTEGER NOT NULL,
+
+            telegram_group_id BIGINT NOT NULL,
+
+            group_name TEXT,
+
+            status TEXT DEFAULT 'pending',
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            confirmed_at TIMESTAMP,
+
+            cancelled_at TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA PREVIEW DINÁMICO — VÍDEOS DE GRUPO
         # =========================
 
