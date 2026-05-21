@@ -88,6 +88,8 @@ def create_tables():
 
             allowed_region TEXT,
 
+            allowed_region_type TEXT,
+
             bot_is_admin BOOLEAN DEFAULT FALSE,
 
             is_active BOOLEAN DEFAULT TRUE,
@@ -854,6 +856,10 @@ def create_tables():
 
             user_id BIGINT,
 
+            region_type TEXT,
+
+            country TEXT,
+
             region TEXT,
 
             province TEXT,
@@ -865,6 +871,34 @@ def create_tables():
         );
 
         """)
+
+
+        location_verification_columns = [
+
+            ("region_type", "TEXT"),
+            ("country", "TEXT"),
+            ("region", "TEXT"),
+            ("province", "TEXT"),
+            ("status", "TEXT"),
+            ("verified_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+
+        ]
+
+
+        for column_name, column_type in location_verification_columns:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE group_location_verifications
+                    ADD COLUMN IF NOT EXISTS {column_name} {column_type}
+
+                """)
+
+            except Exception:
+
+                pass
 
 
         # =========================
@@ -959,7 +993,8 @@ def create_tables():
             ("marketplace_badge", "TEXT"),
             ("preview_mode", "TEXT DEFAULT 'manual'"),
             ("location_gate_enabled", "BOOLEAN DEFAULT FALSE"),
-            ("allowed_region", "TEXT")
+            ("allowed_region", "TEXT"),
+            ("allowed_region_type", "TEXT")
 
         ]
 

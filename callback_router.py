@@ -136,27 +136,257 @@ def is_stripe_checkout_callback(callback_data):
     )
 
 
+LOCATION_REGION_TYPE_COUNTRY = "country"
+
+LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY = (
+    "spanish_autonomous_community"
+)
+
 COMUNIDAD_VALENCIANA_REGION = "comunidad_valenciana"
 
 COMUNIDAD_VALENCIANA_LABEL = "Comunidad Valenciana"
 
-COMUNIDAD_VALENCIANA_BOXES = [
-    ("Castellón", 39.70, 40.85, -0.90, 0.60),
-    ("Valencia", 38.65, 40.05, -1.60, -0.05),
-    ("Alicante", 37.75, 38.95, -1.25, 0.25)
+HISPANIC_COUNTRIES = [
+    ("ES", "España"),
+    ("MX", "México"),
+    ("AR", "Argentina"),
+    ("CO", "Colombia"),
+    ("CL", "Chile"),
+    ("PE", "Perú"),
+    ("VE", "Venezuela"),
+    ("EC", "Ecuador"),
+    ("BO", "Bolivia"),
+    ("PY", "Paraguay"),
+    ("UY", "Uruguay"),
+    ("CR", "Costa Rica"),
+    ("PA", "Panamá"),
+    ("GT", "Guatemala"),
+    ("HN", "Honduras"),
+    ("SV", "El Salvador"),
+    ("NI", "Nicaragua"),
+    ("DO", "República Dominicana"),
+    ("CU", "Cuba"),
+    ("PR", "Puerto Rico"),
+    ("GQ", "Guinea Ecuatorial")
 ]
+
+HISPANIC_COUNTRY_LABELS = dict(HISPANIC_COUNTRIES)
+
+COUNTRY_BOUNDING_BOXES = {
+    "ES": (27.5, 43.9, -18.3, 4.4),
+    "MX": (14.4, 32.8, -118.5, -86.5),
+    "AR": (-55.2, -21.8, -73.6, -53.6),
+    "CO": (-4.3, 13.5, -79.0, -66.8),
+    "CL": (-56.0, -17.0, -76.0, -66.0),
+    "PE": (-18.5, 0.5, -81.5, -68.5),
+    "VE": (0.5, 12.7, -73.5, -59.5),
+    "EC": (-5.2, 1.8, -81.3, -75.0),
+    "BO": (-22.9, -9.5, -69.7, -57.4),
+    "PY": (-27.7, -19.2, -62.7, -54.2),
+    "UY": (-35.1, -30.0, -58.6, -53.0),
+    "CR": (8.0, 11.3, -86.1, -82.5),
+    "PA": (7.0, 9.8, -83.1, -77.1),
+    "GT": (13.6, 17.9, -92.4, -88.0),
+    "HN": (12.9, 16.6, -89.4, -83.0),
+    "SV": (13.0, 14.5, -90.2, -87.7),
+    "NI": (10.7, 15.1, -87.8, -82.6),
+    "DO": (17.4, 19.9, -72.1, -68.2),
+    "CU": (19.6, 23.4, -85.0, -74.1),
+    "PR": (17.8, 18.6, -67.4, -65.2),
+    "GQ": (-1.7, 3.8, 5.0, 11.5)
+}
+
+SPANISH_AUTONOMOUS_COMMUNITIES = [
+    ("all_spain", "Toda España"),
+    ("andalucia", "Andalucía"),
+    ("aragon", "Aragón"),
+    ("asturias", "Asturias"),
+    ("islas_baleares", "Islas Baleares"),
+    ("canarias", "Canarias"),
+    ("cantabria", "Cantabria"),
+    ("castilla_la_mancha", "Castilla-La Mancha"),
+    ("castilla_y_leon", "Castilla y León"),
+    ("cataluna", "Cataluña"),
+    (COMUNIDAD_VALENCIANA_REGION, COMUNIDAD_VALENCIANA_LABEL),
+    ("extremadura", "Extremadura"),
+    ("galicia", "Galicia"),
+    ("comunidad_de_madrid", "Comunidad de Madrid"),
+    ("region_de_murcia", "Región de Murcia"),
+    ("navarra", "Comunidad Foral de Navarra"),
+    ("pais_vasco", "País Vasco"),
+    ("la_rioja", "La Rioja"),
+    ("ceuta", "Ceuta"),
+    ("melilla", "Melilla")
+]
+
+SPANISH_AUTONOMOUS_COMMUNITY_LABELS = dict(SPANISH_AUTONOMOUS_COMMUNITIES)
+
+SPANISH_AUTONOMOUS_COMMUNITY_BOXES = [
+    ("ceuta", None, 35.86, 35.92, -5.38, -5.27),
+    ("melilla", None, 35.24, 35.35, -3.05, -2.88),
+    ("canarias", None, 27.5, 29.5, -18.3, -13.3),
+    ("andalucia", None, 35.8, 38.8, -7.6, -1.6),
+    ("region_de_murcia", None, 37.3, 38.9, -2.4, -0.6),
+    (COMUNIDAD_VALENCIANA_REGION, "Alicante", 37.75, 38.95, -1.25, 0.25),
+    (COMUNIDAD_VALENCIANA_REGION, "Valencia", 38.65, 40.05, -1.60, -0.05),
+    (COMUNIDAD_VALENCIANA_REGION, "Castellón", 39.70, 40.85, -0.90, 0.60),
+    ("extremadura", None, 37.9, 40.5, -7.6, -4.6),
+    ("comunidad_de_madrid", None, 39.9, 41.2, -4.6, -3.0),
+    ("castilla_la_mancha", None, 38.0, 41.4, -5.4, -1.0),
+    ("islas_baleares", None, 38.6, 40.2, 1.1, 4.4),
+    ("cataluna", None, 40.5, 42.9, 0.1, 3.4),
+    ("aragon", None, 39.8, 42.9, -2.2, 0.9),
+    ("castilla_y_leon", None, 40.0, 43.3, -7.1, -1.8),
+    ("la_rioja", None, 41.8, 42.7, -3.2, -1.7),
+    ("navarra", None, 41.9, 43.3, -2.6, -0.7),
+    ("pais_vasco", None, 42.4, 43.6, -3.5, -1.7),
+    ("cantabria", None, 42.75, 43.55, -4.9, -3.1),
+    ("asturias", None, 42.9, 43.7, -7.2, -4.5),
+    ("galicia", None, 41.8, 43.8, -9.4, -6.7)
+]
+
+
+def point_in_box(lat, lon, box):
+
+    min_lat, max_lat, min_lon, max_lon = box
+
+    return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon
 
 
 def is_location_in_comunidad_valenciana(lat, lon):
 
-    for province, min_lat, max_lat, min_lon, max_lon in COMUNIDAD_VALENCIANA_BOXES:
+    resolved = resolve_location_region(lat, lon)
 
-        if min_lat <= lat <= max_lat and min_lon <= lon <= max_lon:
+    return (
+        resolved.get("spanish_autonomous_community") == COMUNIDAD_VALENCIANA_LABEL,
+        resolved.get("province")
+    )
 
-            return True, province
+
+def resolve_location_region(lat, lon):
+
+    country_code = None
 
 
-    return False, None
+    for code, box in COUNTRY_BOUNDING_BOXES.items():
+
+        if point_in_box(lat, lon, box):
+
+            country_code = code
+
+            break
+
+
+    country_name = HISPANIC_COUNTRY_LABELS.get(country_code)
+    autonomous_community = None
+    province = None
+
+
+    if country_code == "ES":
+
+        for slug, detected_province, min_lat, max_lat, min_lon, max_lon in SPANISH_AUTONOMOUS_COMMUNITY_BOXES:
+
+            if point_in_box(lat, lon, (min_lat, max_lat, min_lon, max_lon)):
+
+                autonomous_community = SPANISH_AUTONOMOUS_COMMUNITY_LABELS.get(slug)
+                province = detected_province
+
+                break
+
+
+    return {
+        "country": country_code,
+        "country_name": country_name,
+        "spanish_autonomous_community": autonomous_community,
+        "province": province
+    }
+
+
+def normalize_allowed_region_type(region_type, allowed_region):
+
+    if region_type:
+
+        return region_type
+
+
+    if allowed_region in HISPANIC_COUNTRY_LABELS:
+
+        return LOCATION_REGION_TYPE_COUNTRY
+
+
+    if allowed_region in (
+        COMUNIDAD_VALENCIANA_REGION,
+        COMUNIDAD_VALENCIANA_LABEL
+    ):
+
+        return LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY
+
+
+    if allowed_region in SPANISH_AUTONOMOUS_COMMUNITY_LABELS:
+
+        return LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY
+
+
+    return LOCATION_REGION_TYPE_COUNTRY
+
+
+def normalize_allowed_region(region_type, allowed_region):
+
+    if allowed_region == COMUNIDAD_VALENCIANA_LABEL:
+
+        return COMUNIDAD_VALENCIANA_REGION
+
+
+    if region_type == LOCATION_REGION_TYPE_COUNTRY:
+
+        return allowed_region or "ES"
+
+
+    if allowed_region in SPANISH_AUTONOMOUS_COMMUNITY_LABELS:
+
+        return allowed_region
+
+
+    return allowed_region or COMUNIDAD_VALENCIANA_REGION
+
+
+def format_allowed_region(region_type, allowed_region):
+
+    region_type = normalize_allowed_region_type(region_type, allowed_region)
+    allowed_region = normalize_allowed_region(region_type, allowed_region)
+
+
+    if region_type == LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY:
+
+        return (
+            f"{SPANISH_AUTONOMOUS_COMMUNITY_LABELS.get(allowed_region, allowed_region)}, España"
+        )
+
+
+    return HISPANIC_COUNTRY_LABELS.get(allowed_region, allowed_region or "España")
+
+
+def location_matches_allowed_region(resolved_region, region_type, allowed_region):
+
+    region_type = normalize_allowed_region_type(region_type, allowed_region)
+    allowed_region = normalize_allowed_region(region_type, allowed_region)
+
+
+    if region_type == LOCATION_REGION_TYPE_COUNTRY:
+
+        return resolved_region.get("country") == allowed_region
+
+
+    if region_type == LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY:
+
+        return (
+            resolved_region.get("country") == "ES"
+            and resolved_region.get("spanish_autonomous_community")
+            == SPANISH_AUTONOMOUS_COMMUNITY_LABELS.get(allowed_region)
+        )
+
+
+    return False
 
 
 def build_location_denied_keyboard():
@@ -191,8 +421,13 @@ def build_location_gate_owner_keyboard(request_id):
         )],
 
         [InlineKeyboardButton(
-            "📍 Elegir región: Comunidad Valenciana",
-            callback_data=f"creator_location_region_cv_{request_id}"
+            "🌎 Elegir país",
+            callback_data=f"creator_location_country_menu_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🇪🇸 Elegir comunidad autónoma",
+            callback_data=f"creator_location_spain_region_menu_{request_id}"
         )],
 
         [InlineKeyboardButton(
@@ -203,11 +438,65 @@ def build_location_gate_owner_keyboard(request_id):
     ])
 
 
+def build_location_country_keyboard(request_id):
+
+    keyboard = []
+
+
+    for country_code, country_name in HISPANIC_COUNTRIES:
+
+        callback_data = (
+            f"creator_location_spain_region_menu_{request_id}"
+            if country_code == "ES"
+            else f"creator_location_country_set_{request_id}_{country_code}"
+        )
+
+        keyboard.append([InlineKeyboardButton(
+            country_name,
+            callback_data=callback_data
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data=f"creator_setup_location_gate_{request_id}"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_spanish_autonomous_community_keyboard(request_id):
+
+    keyboard = []
+
+
+    for slug, label in SPANISH_AUTONOMOUS_COMMUNITIES:
+
+        callback_data = (
+            f"creator_location_country_set_{request_id}_ES"
+            if slug == "all_spain"
+            else f"creator_location_spain_region_set_{request_id}_{slug}"
+        )
+
+        keyboard.append([InlineKeyboardButton(
+            label,
+            callback_data=callback_data
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver",
+        callback_data=f"creator_setup_location_gate_{request_id}"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 def get_group_location_gate(group_id):
 
     if not group_id:
 
-        return False, None
+        return False, None, None
 
 
     with conn.cursor() as cur:
@@ -215,7 +504,8 @@ def get_group_location_gate(group_id):
         cur.execute("""
 
             SELECT COALESCE(location_gate_enabled, FALSE),
-                   allowed_region
+                   allowed_region,
+                   allowed_region_type
             FROM groups
             WHERE id=%s
             AND is_active=TRUE
@@ -228,17 +518,27 @@ def get_group_location_gate(group_id):
 
     if not row:
 
-        return False, None
+        return False, None, None
 
 
-    return row[0] is True, row[1]
+    region_type = normalize_allowed_region_type(row[2], row[1])
+    allowed_region = normalize_allowed_region(region_type, row[1])
+
+    return row[0] is True, allowed_region, region_type
 
 
 def group_requires_location_gate(group_id):
 
-    enabled, allowed_region = get_group_location_gate(group_id)
+    enabled, _allowed_region, _region_type = get_group_location_gate(group_id)
 
-    return enabled and allowed_region == COMUNIDAD_VALENCIANA_REGION
+    return enabled
+
+
+def get_group_location_gate_display(group_id):
+
+    enabled, allowed_region, region_type = get_group_location_gate(group_id)
+
+    return enabled, format_allowed_region(region_type, allowed_region)
 
 
 def get_commercial_request_group_id(request_row):
@@ -316,18 +616,22 @@ async def request_location_verification(
         resize_keyboard=True,
         one_time_keyboard=True
     )
+    _enabled, region_label = get_group_location_gate_display(group_id)
 
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            "📍 Esta comunidad requiere verificar que estás dentro de la región permitida.\n\n"
+            "📍 Esta comunidad requiere verificar tu ubicación.\n\n"
+            f"Región permitida: {region_label}\n\n"
             "Usaremos tu ubicación solo para comprobar la región y no guardaremos tus coordenadas exactas."
         ),
         reply_markup=keyboard
     )
 
 
-def save_group_location_verification(group_id, user_id, province, status):
+def save_group_location_verification(group_id, user_id, resolved_region, status):
+
+    resolved_region = resolved_region or {}
 
     with conn.cursor() as cur:
 
@@ -337,17 +641,26 @@ def save_group_location_verification(group_id, user_id, province, status):
             (
                 group_id,
                 user_id,
+                region_type,
+                country,
                 region,
                 province,
                 status
             )
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
 
         """, (
             group_id,
             user_id,
-            COMUNIDAD_VALENCIANA_LABEL,
-            province,
+            (
+                LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY
+                if resolved_region.get("spanish_autonomous_community")
+                else LOCATION_REGION_TYPE_COUNTRY
+            ),
+            resolved_region.get("country"),
+            resolved_region.get("spanish_autonomous_community")
+            or resolved_region.get("country_name"),
+            resolved_region.get("province"),
             status
         ))
 
@@ -4078,13 +4391,8 @@ def build_creator_setup_panel_text(group_id=None):
 
     else:
 
-        location_enabled, allowed_region = get_group_location_gate(group_id)
+        location_enabled, region_label = get_group_location_gate_display(group_id)
         location_status = "Activada" if location_enabled else "Desactivada"
-        region_label = (
-            COMUNIDAD_VALENCIANA_LABEL
-            if allowed_region == COMUNIDAD_VALENCIANA_REGION
-            else allowed_region or "-"
-        )
 
         text += (
             "\n\n"
@@ -4148,13 +4456,8 @@ def build_creator_setup_summary(request_row):
     visibility = format_public_visibility(
         request_row.get("requested_public_visibility")
     )
-    location_enabled, allowed_region = get_group_location_gate(group_id)
+    location_enabled, region_label = get_group_location_gate_display(group_id)
     location_status = "Activada" if location_enabled else "Desactivada"
-    region_label = (
-        COMUNIDAD_VALENCIANA_LABEL
-        if allowed_region == COMUNIDAD_VALENCIANA_REGION
-        else allowed_region or "-"
-    )
     setup_ready = (
         group_status == "configurado"
         and texts_status == "configurado"
@@ -6659,9 +6962,16 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
     action = context.user_data.get("location_gate_action")
     price_id = context.user_data.get("location_gate_price_id")
     location = update.message.location
-    is_allowed, province = is_location_in_comunidad_valenciana(
+    resolved_region = resolve_location_region(
         location.latitude,
         location.longitude
+    )
+    _enabled, allowed_region, region_type = get_group_location_gate(group_id)
+    region_label = format_allowed_region(region_type, allowed_region)
+    is_allowed = location_matches_allowed_region(
+        resolved_region,
+        region_type,
+        allowed_region
     )
 
 
@@ -6672,7 +6982,7 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
             save_group_location_verification(
                 group_id,
                 user_id,
-                None,
+                resolved_region,
                 "rejected"
             )
 
@@ -6685,7 +6995,7 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="⛔ Esta comunidad solo admite usuarios verificados dentro de la Comunidad Valenciana.",
+            text=f"⛔ Esta comunidad solo admite usuarios verificados en: {region_label}.",
             reply_markup=ReplyKeyboardRemove()
         )
 
@@ -6703,7 +7013,7 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
         save_group_location_verification(
             group_id,
             user_id,
-            province,
+            resolved_region,
             "verified"
         )
 
@@ -9756,7 +10066,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.execute("""
 
                 SELECT COALESCE(location_gate_enabled, FALSE),
-                       allowed_region
+                       allowed_region,
+                       allowed_region_type
                 FROM groups
                 WHERE id=%s
                 AND is_active=TRUE
@@ -9777,10 +10088,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        location_gate_enabled, allowed_region = group_row
+        location_gate_enabled, allowed_region, allowed_region_type = group_row
 
 
-        if location_gate_enabled is True and allowed_region == COMUNIDAD_VALENCIANA_REGION:
+        if location_gate_enabled is True:
 
             await request_location_verification(
                 context,
@@ -14716,12 +15027,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        enabled, allowed_region = get_group_location_gate(group_id)
-        region_label = (
-            COMUNIDAD_VALENCIANA_LABEL
-            if allowed_region == COMUNIDAD_VALENCIANA_REGION
-            else allowed_region or "-"
-        )
+        enabled, region_label = get_group_location_gate_display(group_id)
 
         await send_clean_message(
             context,
@@ -14778,11 +15084,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 UPDATE groups
                 SET location_gate_enabled=TRUE,
-                    allowed_region=COALESCE(allowed_region, %s)
+                    allowed_region=COALESCE(allowed_region, %s),
+                    allowed_region_type=COALESCE(allowed_region_type, %s)
                 WHERE id=%s
 
             """, (
-                COMUNIDAD_VALENCIANA_REGION,
+                "ES",
+                LOCATION_REGION_TYPE_COUNTRY,
                 group_id
             ))
 
@@ -14793,7 +15101,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "✅ Restricción por ubicación activada.\n\n"
-            "Región permitida: Comunidad Valenciana.",
+            "Puedes restringir por país. En España también puedes restringir por comunidad autónoma.\n\n"
+            "Región permitida: España.",
             reply_markup=build_location_gate_owner_keyboard(request_id)
         )
 
@@ -14844,6 +15153,233 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("creator_location_country_menu_"):
+
+        request_id = extract_commercial_request_id(data, "creator_location_country_menu_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🌎 Elegir país\n\n"
+            "Puedes restringir por país. En España también puedes restringir por comunidad autónoma.",
+            reply_markup=build_location_country_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("creator_location_spain_region_menu_"):
+
+        request_id = extract_commercial_request_id(data, "creator_location_spain_region_menu_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🇪🇸 España\n\n"
+            "Elige toda España o una comunidad autónoma concreta.",
+            reply_markup=build_spanish_autonomous_community_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("creator_location_country_set_"):
+
+        payload = data.replace("creator_location_country_set_", "", 1)
+
+        try:
+
+            request_id_text, country_code = payload.split("_", 1)
+            request_id = int(request_id_text)
+
+        except Exception:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ País no válido."
+            )
+
+            return
+
+
+        request_row = fetch_commercial_request(request_id)
+
+        if (
+            country_code not in HISPANIC_COUNTRY_LABELS
+            or not commercial_request_belongs_to_user(request_row, user_id)
+        ):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_commercial_request_group_id(request_row)
+
+
+        if not group_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "📍 Primero vincula tu grupo o canal.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📡 Grupo o canal",
+                        callback_data=f"creator_setup_group_{request_id}"
+                    )]
+                ])
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET location_gate_enabled=TRUE,
+                    allowed_region=%s,
+                    allowed_region_type=%s
+                WHERE id=%s
+
+            """, (
+                country_code,
+                LOCATION_REGION_TYPE_COUNTRY,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Región permitida actualizada.\n\n"
+            f"Región permitida: {HISPANIC_COUNTRY_LABELS.get(country_code)}.",
+            reply_markup=build_location_gate_owner_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("creator_location_spain_region_set_"):
+
+        payload = data.replace("creator_location_spain_region_set_", "", 1)
+
+        try:
+
+            request_id_text, region_slug = payload.split("_", 1)
+            request_id = int(request_id_text)
+
+        except Exception:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "❌ Comunidad autónoma no válida."
+            )
+
+            return
+
+
+        request_row = fetch_commercial_request(request_id)
+
+        if (
+            region_slug not in SPANISH_AUTONOMOUS_COMMUNITY_LABELS
+            or region_slug == "all_spain"
+            or not commercial_request_belongs_to_user(request_row, user_id)
+        ):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_commercial_request_group_id(request_row)
+
+
+        if not group_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "📍 Primero vincula tu grupo o canal.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📡 Grupo o canal",
+                        callback_data=f"creator_setup_group_{request_id}"
+                    )]
+                ])
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET location_gate_enabled=TRUE,
+                    allowed_region=%s,
+                    allowed_region_type=%s
+                WHERE id=%s
+
+            """, (
+                region_slug,
+                LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Región permitida actualizada.\n\n"
+            f"Región permitida: {SPANISH_AUTONOMOUS_COMMUNITY_LABELS.get(region_slug)}, España.",
+            reply_markup=build_location_gate_owner_keyboard(request_id)
+        )
+
+        return
+
+
     if data.startswith("creator_location_region_cv_"):
 
         request_id = extract_commercial_request_id(data, "creator_location_region_cv_")
@@ -14885,11 +15421,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.execute("""
 
                 UPDATE groups
-                SET allowed_region=%s
+                SET location_gate_enabled=TRUE,
+                    allowed_region=%s,
+                    allowed_region_type=%s
                 WHERE id=%s
 
             """, (
                 COMUNIDAD_VALENCIANA_REGION,
+                LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY,
                 group_id
             ))
 
@@ -14900,7 +15439,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "✅ Región permitida actualizada.\n\n"
-            "Región permitida: Comunidad Valenciana.",
+            "Región permitida: Comunidad Valenciana, España.",
             reply_markup=build_location_gate_owner_keyboard(request_id)
         )
 
