@@ -1247,10 +1247,10 @@ MARKETPLACE_CATEGORY_LABELS = {
 }
 
 PREVIEW_MODE_LABELS = {
-    "private": "privado / mínimo",
-    "manual": "manual",
-    "dynamic": "dinámico",
-    "hybrid": "mixto"
+    "private": "sin preview público",
+    "manual": "preview fijo/manual",
+    "dynamic": "preview dinámico",
+    "hybrid": "preview mixto"
 }
 
 
@@ -1266,6 +1266,8 @@ MARKETPLACE_FILTER_LABELS = {
     slug: label
     for label, slug in MARKETPLACE_FILTERS
 }
+
+MARKETPLACE_DEFAULT_FILTER = "trending"
 
 COMMUNITY_STATS_COLUMNS = {
     "preview_views",
@@ -1781,6 +1783,193 @@ def build_marketplace_filter_keyboard(active_filter="trending"):
     return keyboard
 
 
+def marketplace_filter_title(filter_kind):
+
+    if filter_kind in MARKETPLACE_FILTER_LABELS:
+
+        return MARKETPLACE_FILTER_LABELS.get(filter_kind)
+
+
+    if filter_kind.startswith("category:"):
+
+        category = filter_kind.split(":", 1)[1]
+
+        return f"📂 {MARKETPLACE_CATEGORY_LABELS.get(category, category)}"
+
+
+    if filter_kind.startswith("tag:"):
+
+        tag = filter_kind.split(":", 1)[1].replace("-", " ")
+
+        return f"🏷 {tag}"
+
+
+    return MARKETPLACE_FILTER_LABELS.get(MARKETPLACE_DEFAULT_FILTER)
+
+
+def build_marketplace_filter_menu_keyboard(active_filter=MARKETPLACE_DEFAULT_FILTER):
+
+    keyboard = []
+
+
+    for label, slug in MARKETPLACE_FILTERS:
+
+        text = label
+
+        if slug == active_filter:
+
+            text = f"• {label}"
+
+
+        keyboard.append([InlineKeyboardButton(
+            text,
+            callback_data=f"marketplace_filter_{slug}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "📂 Categoría",
+        callback_data="marketplace_filter_category"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "🏷 Tags",
+        callback_data="marketplace_filter_tags"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "🧹 Quitar filtros",
+        callback_data="start_explore_groups"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver a comunidades",
+        callback_data=marketplace_filter_callback_data(active_filter)
+        if active_filter
+        else "start_explore_groups"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "🏠 Inicio",
+        callback_data="public_back_start"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_marketplace_category_filter_keyboard():
+
+    keyboard = [
+        [InlineKeyboardButton(
+            label,
+            callback_data=f"marketplace_filter_category_{slug}"
+        )]
+        for label, slug in MARKETPLACE_CATEGORIES
+    ]
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver a filtros",
+        callback_data="marketplace_filters"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def marketplace_tag_callback_slug(tag):
+
+    normalized = (tag or "").strip().lower().replace(" ", "-")
+    allowed = set(string.ascii_lowercase + string.digits + "-_")
+
+    return "".join(
+        char
+        for char in normalized
+        if char in allowed
+    )[:32]
+
+
+def fetch_marketplace_filter_tags(limit=8):
+
+    tags = []
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT g.tags
+            FROM groups g
+            WHERE g.is_active=TRUE
+            AND g.telegram_group_id != 0
+            AND COALESCE(g.public_visibility, 'start_home')='explore_only'
+            AND g.tags IS NOT NULL
+            AND g.tags != ''
+            AND {marketplace_trial_visibility_filter()}
+            LIMIT 80
+
+        """)
+
+        rows = cur.fetchall()
+
+
+    seen = set()
+
+
+    for row in rows:
+
+        for raw_tag in (row[0] or "").split(","):
+
+            tag = raw_tag.strip()
+            slug = marketplace_tag_callback_slug(tag)
+
+
+            if not tag or not slug or slug in seen:
+
+                continue
+
+
+            seen.add(slug)
+            tags.append((tag, slug))
+
+
+            if len(tags) >= limit:
+
+                return tags
+
+
+    return tags
+
+
+def build_marketplace_tag_filter_keyboard():
+
+    tags = fetch_marketplace_filter_tags()
+
+
+    if not tags:
+
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "⬅️ Volver a filtros",
+                callback_data="marketplace_filters"
+            )]
+        ])
+
+
+    keyboard = [
+        [InlineKeyboardButton(
+            f"🏷 {tag}",
+            callback_data=f"marketplace_filter_tag_{slug}"
+        )]
+        for tag, slug in tags
+    ]
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver a filtros",
+        callback_data="marketplace_filters"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 def build_marketplace_access_keyboard(
     group_id,
     is_free_group,
@@ -1814,6 +2003,43 @@ def build_marketplace_access_keyboard(
     return InlineKeyboardMarkup(keyboard)
 
 
+def build_marketplace_preview_keyboard(group, user_id=None):
+
+    group_id = group.get("id")
+    keyboard = []
+
+
+    if user_id:
+
+        is_favorite = is_group_favorite(user_id, group_id)
+
+        keyboard.append([InlineKeyboardButton(
+            favorite_button_text(is_favorite),
+            callback_data=favorite_callback_data(group_id, is_favorite)
+        )])
+
+
+    if (group.get("preview_mode") or "manual") in ("dynamic", "hybrid"):
+
+        keyboard.append([InlineKeyboardButton(
+            "⚡ Ver últimos vídeos",
+            callback_data=f"marketplace_dynamic_preview_{group_id}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "🔓 Entrar gratis" if group.get("is_free_group") else "💳 Ver acceso",
+        callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "⬅️ Volver a comunidad",
+        callback_data=f"marketplace_group_{group_id}"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 def build_marketplace_cards_keyboard(groups, user_id, active_filter="trending"):
 
     keyboard = []
@@ -1835,7 +2061,15 @@ def build_marketplace_cards_keyboard(groups, user_id, active_filter="trending"):
         callback_data=CALLBACK_GROUP_PLANS_HELP
     )])
 
-    keyboard.extend(build_marketplace_filter_keyboard(active_filter))
+    keyboard.append([InlineKeyboardButton(
+        "🔎 Filtrar grupos",
+        callback_data="marketplace_filters"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "🏠 Inicio",
+        callback_data="public_back_start"
+    )])
 
     return keyboard
 
@@ -1944,6 +2178,26 @@ def get_marketplace_order_clause(filter_kind):
     """
 
 
+def marketplace_filter_callback_data(filter_kind):
+
+    if filter_kind.startswith("category:"):
+
+        return f"marketplace_filter_category_{filter_kind.split(':', 1)[1]}"
+
+
+    if filter_kind.startswith("tag:"):
+
+        return f"marketplace_filter_tag_{filter_kind.split(':', 1)[1]}"
+
+
+    if filter_kind in MARKETPLACE_FILTER_LABELS:
+
+        return f"marketplace_filter_{filter_kind}"
+
+
+    return "start_explore_groups"
+
+
 def fetch_marketplace_groups(filter_kind="trending", limit=8):
 
     filters = [
@@ -1952,6 +2206,7 @@ def fetch_marketplace_groups(filter_kind="trending", limit=8):
         "COALESCE(g.public_visibility, 'start_home')='explore_only'",
         marketplace_trial_visibility_filter()
     ]
+    params = []
 
 
     if filter_kind == "free":
@@ -1962,6 +2217,19 @@ def fetch_marketplace_groups(filter_kind="trending", limit=8):
     if filter_kind == "premium":
 
         filters.append("COALESCE(g.is_free_group, FALSE)=FALSE")
+
+
+    if filter_kind.startswith("category:"):
+
+        filters.append("COALESCE(g.category, '')=%s")
+        params.append(filter_kind.split(":", 1)[1])
+
+
+    if filter_kind.startswith("tag:"):
+
+        tag_slug = filter_kind.split(":", 1)[1].replace("-", " ")
+        filters.append("LOWER(COALESCE(g.tags, '')) LIKE %s")
+        params.append(f"%{tag_slug.lower()}%")
 
 
     where_clause = " AND ".join(filters)
@@ -1977,7 +2245,7 @@ def fetch_marketplace_groups(filter_kind="trending", limit=8):
             {order_clause}
             LIMIT %s
 
-        """, (limit,))
+        """, tuple(params + [limit]))
 
         rows = cur.fetchall()
 
@@ -2356,14 +2624,14 @@ def format_marketplace_preview_caption(group):
         )
 
 
-    if preview_mode in ("dynamic", "hybrid"):
+    if preview_mode == "dynamic":
 
         return (
             f"🔥 {group.get('name') or 'Comunidad privada'}\n"
             f"📂 {format_marketplace_category(group)}\n"
             f"{stats_text}\n"
             f"{format_marketplace_kind(group)}\n\n"
-            "⚡ Preview dinámico activo. Se mostrarán vídeos publicados en la comunidad desde que el owner lo activó."
+            "⚡ Preview dinámico activo. Se mostrarán los últimos 3 vídeos publicados en la comunidad desde que el owner lo activó."
         )
 
 
@@ -2374,6 +2642,14 @@ def format_marketplace_preview_caption(group):
         f"{format_marketplace_kind(group)}\n\n"
         f"📝 {group.get('preview_text') or 'Preview manual pendiente de configurar.'}"
     )
+
+
+    if preview_mode == "hybrid":
+
+        text += (
+            "\n\n"
+            "💎 Preview mixto activo: este teaser se combina con los últimos vídeos dinámicos disponibles."
+        )
 
 
     if group.get("tags"):
@@ -2425,16 +2701,14 @@ async def send_marketplace_group_card(context, chat_id, group, user_id=None):
 async def send_marketplace_preview(context, chat_id, group, user_id=None):
 
     caption = format_marketplace_preview_caption(group)
-    keyboard = build_marketplace_access_keyboard(
-        group.get("id"),
-        group.get("is_free_group"),
-        f"marketplace_group_{group.get('id')}",
+    keyboard = build_marketplace_preview_keyboard(
+        group,
         user_id=user_id
     )
     preview_mode = group.get("preview_mode") or "manual"
 
 
-    if preview_mode == "manual" and group.get("preview_video_file_id"):
+    if preview_mode in ("manual", "hybrid") and group.get("preview_video_file_id"):
 
         await context.bot.send_video(
             chat_id=chat_id,
@@ -2446,7 +2720,7 @@ async def send_marketplace_preview(context, chat_id, group, user_id=None):
         return
 
 
-    if preview_mode == "manual" and group.get("preview_image_file_id"):
+    if preview_mode in ("manual", "hybrid") and group.get("preview_image_file_id"):
 
         await context.bot.send_photo(
             chat_id=chat_id,
@@ -2472,10 +2746,7 @@ async def send_marketplace_list(context, chat_id, user_id, filter_kind="trending
         fetch_marketplace_groups(filter_kind),
         user_id
     )
-    title = MARKETPLACE_FILTER_LABELS.get(
-        filter_kind,
-        MARKETPLACE_FILTER_LABELS.get("trending")
-    )
+    title = marketplace_filter_title(filter_kind)
 
 
     if not groups:
@@ -2543,16 +2814,24 @@ def build_creator_marketplace_keyboard(request_id):
 
     return [
         [InlineKeyboardButton(
-            "⚙️ Nivel de preview",
+            "📝 Preview fijo/manual",
+            callback_data=f"creator_preview_mode_set_{request_id}_manual"
+        )],
+        [InlineKeyboardButton(
+            "⚡ Preview dinámico (últimos 3 vídeos)",
+            callback_data=f"creator_preview_mode_set_{request_id}_dynamic"
+        )],
+        [InlineKeyboardButton(
+            "💎 Preview mixto",
+            callback_data=f"creator_preview_mode_set_{request_id}_hybrid"
+        )],
+        [InlineKeyboardButton(
+            "🔒 Sin preview público",
+            callback_data=f"creator_preview_mode_set_{request_id}_private"
+        )],
+        [InlineKeyboardButton(
+            "⚙️ Ver explicación de modos",
             callback_data=f"creator_preview_mode_{request_id}"
-        )],
-        [InlineKeyboardButton(
-            "⚡ Activar preview dinámico",
-            callback_data=f"creator_dynamic_preview_enable_{request_id}"
-        )],
-        [InlineKeyboardButton(
-            "⏸ Desactivar preview dinámico",
-            callback_data=f"creator_dynamic_preview_disable_{request_id}"
         )],
         [InlineKeyboardButton(
             "🎬 Ver vídeos guardados",
@@ -2597,20 +2876,20 @@ def build_preview_mode_keyboard(request_id):
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            "🔒 Privado / mínimo",
-            callback_data=f"creator_preview_mode_set_{request_id}_private"
-        )],
-        [InlineKeyboardButton(
-            "📝 Manual",
+            "📝 Preview fijo/manual",
             callback_data=f"creator_preview_mode_set_{request_id}_manual"
         )],
         [InlineKeyboardButton(
-            "⚡ Dinámico",
+            "⚡ Preview dinámico: últimos 3 vídeos",
             callback_data=f"creator_preview_mode_set_{request_id}_dynamic"
         )],
         [InlineKeyboardButton(
-            "💎 Mixto",
+            "💎 Preview mixto",
             callback_data=f"creator_preview_mode_set_{request_id}_hybrid"
+        )],
+        [InlineKeyboardButton(
+            "🔒 Sin preview público",
+            callback_data=f"creator_preview_mode_set_{request_id}_private"
         )],
         [InlineKeyboardButton(
             "⬅️ Volver",
@@ -2641,7 +2920,11 @@ def build_creator_marketplace_text(group_id):
 
     text = (
         "👁 Preview marketplace\n\n"
-        "Configura cómo se verá tu comunidad en Explorar comunidades privadas."
+        "¿Qué tipo de preview quieres mostrar?\n\n"
+        "📝 Preview fijo/manual: texto, imagen, vídeo teaser, categoría y tags.\n\n"
+        "⚡ Preview dinámico: muestra los últimos 3 vídeos publicados después de activarlo. El bot no descarga vídeos; solo guarda el file_id de Telegram.\n\n"
+        "💎 Preview mixto: combina tu teaser manual con los últimos vídeos dinámicos si existen.\n\n"
+        "🔒 Sin preview público: muestra una ficha mínima sin enseñar contenido."
     )
 
 
@@ -5416,7 +5699,82 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             user_id,
-            "trending"
+            MARKETPLACE_DEFAULT_FILTER
+        )
+
+        return
+
+
+    if data == "marketplace_filters":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🔎 Filtrar grupos\n\nElige cómo quieres ordenar o acotar las comunidades.",
+            reply_markup=build_marketplace_filter_menu_keyboard()
+        )
+
+        return
+
+
+    if data == "marketplace_filter_category":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📂 Filtrar por categoría\n\nElige una categoría para ver comunidades relacionadas.",
+            reply_markup=build_marketplace_category_filter_keyboard()
+        )
+
+        return
+
+
+    if data == "marketplace_filter_tags":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🏷 Filtrar por tags\n\nElige uno de los tags disponibles.",
+            reply_markup=build_marketplace_tag_filter_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("marketplace_filter_category_"):
+
+        await expire_expired_commercial_trials(context)
+
+        category = data.replace("marketplace_filter_category_", "", 1)
+
+
+        if category not in MARKETPLACE_CATEGORY_LABELS:
+
+            category = "otros"
+
+
+        await send_marketplace_list(
+            context,
+            query.message.chat_id,
+            user_id,
+            f"category:{category}"
+        )
+
+        return
+
+
+    if data.startswith("marketplace_filter_tag_"):
+
+        await expire_expired_commercial_trials(context)
+
+        tag_slug = data.replace("marketplace_filter_tag_", "", 1)
+
+
+        await send_marketplace_list(
+            context,
+            query.message.chat_id,
+            user_id,
+            f"tag:{tag_slug}"
         )
 
         return
@@ -12218,8 +12576,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            "⚙️ Nivel de preview\n\n"
-            "Elige cuánto quieres mostrar en el marketplace.",
+            "¿Qué tipo de preview quieres mostrar?\n\n"
+            "📝 Preview fijo/manual: enseña un texto, imagen o vídeo teaser que tú configuras.\n\n"
+            "⚡ Preview dinámico: enseña los últimos 3 vídeos publicados después de activar este modo. El bot no descarga vídeos, solo usa file_id.\n\n"
+            "💎 Preview mixto: combina tu teaser manual con vídeos dinámicos recientes.\n\n"
+            "🔒 Sin preview público: solo muestra información mínima de la comunidad.",
             reply_markup=build_preview_mode_keyboard(request_id)
         )
 
@@ -12304,13 +12665,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 
-        message = "✅ Nivel de preview actualizado."
+        message = "✅ Tipo de preview actualizado."
 
-        if preview_mode in ("dynamic", "hybrid"):
+        if preview_mode == "dynamic":
 
             message += (
                 "\n\n"
-                "A partir de ahora se guardarán los vídeos que se publiquen en el grupo mientras el bot los reciba."
+                "A partir de ahora se guardarán los vídeos que se publiquen en el grupo mientras el bot los reciba. Solo se mostrarán los últimos 3."
+            )
+
+        elif preview_mode == "hybrid":
+
+            message += (
+                "\n\n"
+                "Tu preview combinará el teaser manual con los últimos vídeos dinámicos disponibles."
+            )
+
+        elif preview_mode == "manual":
+
+            message += (
+                "\n\n"
+                "Puedes configurar texto, imagen, vídeo teaser, categoría y tags."
+            )
+
+        elif preview_mode == "private":
+
+            message += (
+                "\n\n"
+                "La ficha pública mostrará solo información mínima."
             )
 
 

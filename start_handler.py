@@ -572,9 +572,9 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
             InlineKeyboardButton(
 
-                group_name,
+                f"➡️ Ver comunidad — {group_name}",
 
-                callback_data=f"group_{group_id}"
+                callback_data=f"marketplace_group_{group_id}"
 
             )
 
