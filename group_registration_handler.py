@@ -14,6 +14,7 @@ from rbac_helpers import (
     GROUP_OWNER,
     assign_group_owner_permissions,
     can_user_claim_telegram_group,
+    get_creator_group_quota as get_persistent_creator_group_quota,
     get_group_owner_user_id,
     is_super_admin
 )
@@ -459,7 +460,39 @@ def is_authorized_creator(user_id):
         return True
 
 
-    return get_creator_group_quota(user_id) > 0
+    if get_creator_group_quota(user_id) <= 0:
+
+        return False
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id
+            FROM commercial_requests
+            WHERE user_id=%s
+            AND request_type='shared_trial'
+            AND (
+                status = ANY(%s)
+                OR (
+                    creator_setup_status = ANY(%s)
+                    AND COALESCE(status, 'pending') != ALL(%s)
+                )
+            )
+            LIMIT 1
+
+        """, (
+            user_id,
+            list(APPROVED_COMMERCIAL_STATUSES),
+            list(AUTHORIZED_CREATOR_SETUP_STATUSES),
+            list(BLOCKED_CREATOR_STATUSES)
+        ))
+
+        row = cur.fetchone()
+
+
+    return row is not None
 
 
 def get_creator_group_quota(user_id):
@@ -474,33 +507,7 @@ def get_creator_group_quota(user_id):
         return 999999
 
 
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            SELECT COALESCE(MAX(COALESCE(max_groups_allowed, 1)), 0)
-            FROM commercial_requests
-            WHERE user_id=%s
-            AND request_type='shared_trial'
-            AND (
-                status = ANY(%s)
-                OR (
-                    creator_setup_status = ANY(%s)
-                    AND COALESCE(status, 'pending') != ALL(%s)
-                )
-            )
-
-        """, (
-            user_id,
-            list(APPROVED_COMMERCIAL_STATUSES),
-            list(AUTHORIZED_CREATOR_SETUP_STATUSES),
-            list(BLOCKED_CREATOR_STATUSES)
-        ))
-
-        row = cur.fetchone()
-
-
-    return row[0] or 0
+    return get_persistent_creator_group_quota(user_id)
 
 
 def get_creator_registered_group_count(user_id, exclude_group_id=None):

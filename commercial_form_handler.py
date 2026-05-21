@@ -12,6 +12,8 @@ from db import conn
 from rbac_helpers import (
     assign_group_owner_permissions,
     can_user_claim_telegram_group,
+    ensure_commercial_creator_profile,
+    get_creator_group_quota,
     is_super_admin
 )
 
@@ -23,6 +25,7 @@ def create_commercial_request(user, request_type, form_data=None):
     username = user.username if user else None
     first_name = user.first_name if user else None
     user_id = user.id if user else None
+    profile_quota = get_creator_group_quota(user_id) or 1
 
     print(
         "commercial_request_create:",
@@ -49,13 +52,14 @@ def create_commercial_request(user, request_type, form_data=None):
                 bot_username,
                 project_description,
                 contact_text,
+                max_groups_allowed,
                 last_interaction_user_id,
                 last_interaction_username,
                 last_interaction_first_name,
                 last_interaction_at
             )
 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
 
             RETURNING id
 
@@ -72,6 +76,7 @@ def create_commercial_request(user, request_type, form_data=None):
             form_data.get("bot_username"),
             form_data.get("project_description"),
             form_data.get("contact_text"),
+            profile_quota,
             user_id,
             username,
             first_name
@@ -81,6 +86,8 @@ def create_commercial_request(user, request_type, form_data=None):
         request_id = cur.fetchone()[0]
 
         conn.commit()
+
+    ensure_commercial_creator_profile(user_id)
 
     return request_id
 
@@ -371,7 +378,14 @@ def find_group_by_telegram_id(text):
         return cur.fetchone()
 
 
-def max_groups_allowed(_user_id, request_row=None):
+def max_groups_allowed(user_id, request_row=None):
+
+    profile_quota = get_creator_group_quota(user_id)
+
+
+    if profile_quota:
+
+        return profile_quota
 
     if request_row:
 
