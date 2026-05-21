@@ -696,6 +696,31 @@ def create_tables():
 
 
         # =========================
+        # MENSAJES SOLICITUDES COMERCIALES
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS commercial_request_messages (
+
+            id SERIAL PRIMARY KEY,
+
+            commercial_request_id INTEGER NOT NULL,
+
+            sender_type TEXT NOT NULL,
+
+            sender_id BIGINT NOT NULL,
+
+            message_text TEXT NOT NULL,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA PLANES COMERCIALES
         # =========================
 
