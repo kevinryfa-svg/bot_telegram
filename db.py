@@ -458,6 +458,8 @@ def create_tables():
 
             group_id INTEGER,
 
+            telegram_group_id BIGINT,
+
             invite_link TEXT,
 
             is_active BOOLEAN DEFAULT TRUE,
@@ -475,6 +477,7 @@ def create_tables():
 
         invite_link_columns = [
 
+            ("telegram_group_id", "BIGINT"),
             ("is_active", "BOOLEAN DEFAULT TRUE"),
             ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
             ("revoked_at", "TIMESTAMP")
@@ -498,6 +501,33 @@ def create_tables():
             except Exception:
 
                 print(f"Columna ya existe en invite_links: {column_name}")
+
+
+        try:
+
+            cur.execute("""
+
+                UPDATE invite_links il
+                SET telegram_group_id = g.telegram_group_id
+                FROM groups g
+                WHERE il.telegram_group_id IS NULL
+                AND il.group_id = g.id
+
+            """)
+
+            cur.execute("""
+
+                UPDATE invite_links il
+                SET telegram_group_id = g.telegram_group_id
+                FROM groups g
+                WHERE il.telegram_group_id IS NULL
+                AND il.group_id = g.telegram_group_id
+
+            """)
+
+        except Exception as e:
+
+            print("Error normalizando telegram_group_id en invite_links:", e)
 
 
 

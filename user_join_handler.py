@@ -126,7 +126,11 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     SELECT invite_link
                     FROM invite_links
                     WHERE user_id=%s
-                    AND group_id IN (%s, %s)
+                    AND (
+                        group_id=%s
+                        OR telegram_group_id=%s
+                        OR group_id=%s
+                    )
                     AND is_active=TRUE
                     ORDER BY created_at DESC
                     LIMIT 1
@@ -134,10 +138,43 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """, (
                     user_id,
                     group_id,
+                    telegram_group_id,
                     telegram_group_id
                 ))
 
                 invite_row = cur.fetchone()
+
+
+                if invite_link_used:
+
+                    cur.execute("""
+
+                        SELECT invite_link
+                        FROM invite_links
+                        WHERE user_id=%s
+                        AND invite_link=%s
+                        AND (
+                            group_id=%s
+                            OR telegram_group_id=%s
+                            OR group_id=%s
+                        )
+                        AND is_active=TRUE
+                        LIMIT 1
+
+                    """, (
+                        user_id,
+                        invite_link_used,
+                        group_id,
+                        telegram_group_id,
+                        telegram_group_id
+                    ))
+
+                    exact_invite_row = cur.fetchone()
+
+
+                    if exact_invite_row:
+
+                        invite_row = exact_invite_row
 
 
                 link_is_valid = invite_row is not None
@@ -149,10 +186,21 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                 # =========================
-                # SI NO EXISTE O NO TIENE LINK VÁLIDO → EXPULSAR
+                # SI NO EXISTE ACCESO ACTIVO → EXPULSAR
                 # =========================
 
-                if not user_row or not user_row[1] or not link_is_valid:
+                expiration = user_row[0] if user_row else None
+                subscription_active = user_row[1] is True if user_row else False
+                access_is_active = (
+                    subscription_active
+                    and (
+                        expiration is None
+                        or datetime.now() <= expiration
+                    )
+                )
+
+
+                if not access_is_active:
 
                     print(
                         "Usuario sin acceso válido:",
@@ -196,7 +244,61 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
 
-                expiration = user_row[0]
+                if not link_is_valid:
+
+                    print(
+                        "WARNING: usuario con acceso activo entró sin link registrado:",
+                        user_id,
+                        "group_id:",
+                        group_id,
+                        "telegram_group_id:",
+                        telegram_group_id
+                    )
+
+
+                    if invite_link_used:
+
+                        cur.execute("""
+
+                            UPDATE invite_links
+                            SET telegram_group_id=%s,
+                                invite_link=%s,
+                                is_active=TRUE,
+                                revoked_at=NULL
+                            WHERE user_id=%s
+                            AND group_id=%s
+
+                        """, (
+                            telegram_group_id,
+                            invite_link_used,
+                            user_id,
+                            group_id
+                        ))
+
+
+                        if cur.rowcount == 0:
+
+                            cur.execute("""
+
+                                INSERT INTO invite_links
+                                (
+                                    user_id,
+                                    group_id,
+                                    telegram_group_id,
+                                    invite_link,
+                                    is_active
+                                )
+                                VALUES (%s, %s, %s, %s, TRUE)
+
+                            """, (
+                                user_id,
+                                group_id,
+                                telegram_group_id,
+                                invite_link_used
+                            ))
+
+
+                        conn.commit()
 
 
                 if invite_row:

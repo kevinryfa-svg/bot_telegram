@@ -9,6 +9,7 @@ from bot_config import TOKEN, ADMIN_ID, STRIPE_WEBHOOK_SECRET
 from db import conn
 from invite_link_service import create_telegram_invite_link
 from notification_service import send_telegram_message
+from rbac_helpers import get_group_owner_user_id
 
 
 # =========================
@@ -169,54 +170,6 @@ def stripe_webhook():
         # GUARDAR USUARIO
         # =========================
 
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-            INSERT INTO users
-            (user_id, group_id, expiration)
-
-            VALUES (%s, %s, %s)
-
-            ON CONFLICT (user_id, group_id)
-
-            DO UPDATE SET expiration=%s
-
-            """, (
-
-                user_id,
-                metadata_group_id,
-                expiration,
-                expiration
-
-            ))
-
-
-            # =========================
-            # REGISTRAR PAGO
-            # =========================
-
-            cur.execute("""
-
-            INSERT INTO payments
-            (user_id, plan)
-
-            VALUES (%s, %s)
-
-            """, (
-
-                user_id,
-                plan_name
-
-            ))
-
-
-            conn.commit()
-
-
-        print("Usuario guardado:", user_id)
-
-
         # =========================
         # CREAR LINK VIP (1 uso)
         # =========================
@@ -231,7 +184,8 @@ def stripe_webhook():
 
             cur.execute("""
 
-                SELECT telegram_group_id
+                SELECT telegram_group_id,
+                       name
 
                 FROM groups
 
@@ -248,6 +202,7 @@ def stripe_webhook():
                 return "OK"
 
             telegram_group_id = row[0]
+            group_name = row[1] or f"Grupo {group_id}"
 
 
         # =========================
@@ -304,17 +259,81 @@ def stripe_webhook():
 
             with conn.cursor() as cur:
 
-                # borrar links antiguos
+                # guardar acceso activo del comprador
+
+                cur.execute("""
+
+                    INSERT INTO users
+                    (
+                        user_id,
+                        group_id,
+                        expiration,
+                        subscription_active,
+                        last_invite_link
+                    )
+                    VALUES (%s, %s, %s, TRUE, %s)
+                    ON CONFLICT (user_id, group_id)
+                    DO UPDATE SET
+                        expiration=EXCLUDED.expiration,
+                        subscription_active=TRUE,
+                        last_invite_link=EXCLUDED.last_invite_link
+
+                """, (
+
+                    user_id,
+                    group_id,
+                    expiration,
+                    link
+
+                ))
+
+
+                # registrar pago
+
+                cur.execute("""
+
+                    INSERT INTO payments
+                    (
+                        user_id,
+                        group_id,
+                        stripe_payment_id,
+                        amount,
+                        currency,
+                        status,
+                        plan
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+
+                """, (
+
+                    user_id,
+                    group_id,
+                    session.get("payment_intent") or session.get("id"),
+                    session.get("amount_total"),
+                    (session.get("currency") or "").upper() or None,
+                    "paid",
+                    plan_name
+
+                ))
+
+
+                # borrar links antiguos del mismo usuario y grupo
 
                 cur.execute("""
 
                     DELETE FROM invite_links
                     WHERE user_id=%s
-                    AND group_id=%s
+                    AND (
+                        group_id=%s
+                        OR telegram_group_id=%s
+                        OR group_id=%s
+                    )
 
                 """, (
 
                     user_id,
+                    group_id,
+                    telegram_group_id,
                     telegram_group_id
 
                 ))
@@ -325,13 +344,20 @@ def stripe_webhook():
                 cur.execute("""
 
                     INSERT INTO invite_links
-                    (user_id, group_id, invite_link)
+                    (
+                        user_id,
+                        group_id,
+                        telegram_group_id,
+                        invite_link,
+                        is_active
+                    )
 
-                    VALUES (%s, %s, %s)
+                    VALUES (%s, %s, %s, %s, TRUE)
 
                 """, (
 
                     user_id,
+                    group_id,
                     telegram_group_id,
                     link
 
@@ -364,14 +390,31 @@ def stripe_webhook():
             TOKEN,
             ADMIN_ID,
             f"💳 Nuevo pago recibido\n\n"
+            f"Grupo: {group_name}\n"
             f"Usuario: {user_id}\n"
-            f"Plan: {plan_name}"
+            f"Plan: {plan_name}\n"
+            f"Importe: {session.get('amount_total') or '-'} "
+            f"{(session.get('currency') or '').upper()}"
         )
+
+        owner_user_id = get_group_owner_user_id(group_id)
+
+        if owner_user_id and int(owner_user_id) != int(ADMIN_ID):
+
+            send_telegram_message(
+                TOKEN,
+                owner_user_id,
+                f"💳 Nuevo pago en tu comunidad\n\n"
+                f"Grupo: {group_name}\n"
+                f"Usuario: {user_id}\n"
+                f"Plan: {plan_name}\n"
+                f"Importe: {session.get('amount_total') or '-'} "
+                f"{(session.get('currency') or '').upper()}"
+            )
 
 
         print("Pago confirmado:", user_id)
 
 
     return "OK"
-
 
