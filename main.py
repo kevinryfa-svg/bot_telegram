@@ -96,7 +96,8 @@ import callback_router as callback_router_module
 from callback_router import (
     button,
     receive_commercial_request_chat_message,
-    receive_support_message
+    receive_support_message,
+    receive_location_gate
 )
 from code_flow_handler import receive_code
 from admin_input_handler import receive_admin_inputs
@@ -352,6 +353,10 @@ async def handle_media(update, context):
 
 
 async def handle_text(update, context):
+
+    if context.user_data.get("location_gate_pending"):
+        await receive_location_gate(update, context)
+        return
 
     if context.user_data.get("creator_setup"):
         await receive_creator_setup(update, context)
@@ -1497,6 +1502,13 @@ def main():
         MessageHandler(
             filters.PHOTO | filters.VIDEO,
             handle_media
+        )
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.LOCATION,
+            receive_location_gate
         )
     )
 
