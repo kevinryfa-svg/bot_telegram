@@ -189,19 +189,22 @@ def save_user_group_link(user_id, group_id, invite_link, is_active=True):
 
     try:
 
+        telegram_group_id = resolve_telegram_group_id(group_id)
+
         with conn.cursor() as cur:
 
             cur.execute("""
 
                 INSERT INTO invite_links
-                (user_id, group_id, invite_link, is_active)
+                (user_id, group_id, telegram_group_id, invite_link, is_active)
 
-                VALUES (%s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s)
 
             """, (
 
                 user_id,
                 group_id,
+                telegram_group_id,
                 invite_link,
                 is_active
 

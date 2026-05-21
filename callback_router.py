@@ -6964,12 +6964,17 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
                 SELECT invite_link
                 FROM invite_links
                 WHERE user_id=%s
-                AND group_id IN (%s, %s)
+                AND (
+                    group_id=%s
+                    OR telegram_group_id=%s
+                    OR group_id=%s
+                )
                 AND is_active=TRUE
 
             """, (
                 user_id,
                 group_id,
+                telegram_group_id,
                 telegram_group_id
             ))
 
@@ -7020,22 +7025,28 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
 
                 DELETE FROM invite_links
                 WHERE user_id=%s
-                AND group_id IN (%s, %s)
+                AND (
+                    group_id=%s
+                    OR telegram_group_id=%s
+                    OR group_id=%s
+                )
 
             """, (
                 user_id,
                 group_id,
+                telegram_group_id,
                 telegram_group_id
             ))
 
             cur.execute("""
 
                 INSERT INTO invite_links
-                (user_id, group_id, invite_link, is_active)
-                VALUES (%s, %s, %s, TRUE)
+                (user_id, group_id, telegram_group_id, invite_link, is_active)
+                VALUES (%s, %s, %s, %s, TRUE)
 
             """, (
                 user_id,
+                group_id,
                 telegram_group_id,
                 link
             ))
@@ -10237,7 +10248,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     FROM invite_links
 
                     WHERE user_id=%s
-                    AND group_id=%s
+                    AND (
+                        group_id=%s
+                        OR telegram_group_id=%s
+                        OR group_id=%s
+                    )
                     AND is_active=TRUE
 
                     ORDER BY created_at DESC
@@ -10247,6 +10262,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """, (
 
                     user_id,
+                    real_group_id,
+                    telegram_group_id,
                     telegram_group_id
 
                 ))
@@ -10287,11 +10304,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 FROM invite_links
 
                 WHERE user_id=%s
-                AND group_id=%s
+                AND (
+                    group_id=%s
+                    OR telegram_group_id=%s
+                    OR group_id=%s
+                )
 
             """, (
 
                 user_id,
+                real_group_id,
+                telegram_group_id,
                 telegram_group_id
 
             ))
@@ -10332,11 +10355,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 DELETE FROM invite_links
 
                 WHERE user_id=%s
-                AND group_id=%s
+                AND (
+                    group_id=%s
+                    OR telegram_group_id=%s
+                    OR group_id=%s
+                )
 
             """, (
 
                 user_id,
+                real_group_id,
+                telegram_group_id,
                 telegram_group_id
 
             ))
@@ -10402,13 +10431,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.execute("""
 
                 INSERT INTO invite_links
-                (user_id, group_id, invite_link)
+                (user_id, group_id, telegram_group_id, invite_link)
 
-                VALUES (%s, %s, %s)
+                VALUES (%s, %s, %s, %s)
 
             """, (
 
                 user_id,
+                real_group_id,
                 telegram_group_id,
                 link
 
@@ -13647,7 +13677,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         cur2.execute("""
 
-                            SELECT group_id
+                            SELECT COALESCE(telegram_group_id, group_id)
                             FROM invite_links
                             WHERE invite_link=%s
 
@@ -13802,14 +13832,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         cur.execute("""
 
                             INSERT INTO invite_links
-                            (user_id, group_id, invite_link)
+                            (user_id, group_id, telegram_group_id, invite_link)
 
-                            VALUES (%s, %s, %s)
+                            VALUES (%s, %s, %s, %s)
 
                         """, (
 
                             user_id,
                             get_group_id(),
+                            telegram_group_id,
                             link
 
                         ))
