@@ -267,6 +267,128 @@ def get_approved_creator_request(user_id, telegram_group_id):
     }
 
 
+def get_commercial_request_identity_summary(user_id):
+
+    if not user_id:
+
+        return "sin user_id"
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   status,
+                   creator_setup_status,
+                   approved_group_id,
+                   approved_telegram_group_id,
+                   username,
+                   first_name,
+                   created_at
+            FROM commercial_requests
+            WHERE user_id=%s
+            ORDER BY created_at DESC
+            LIMIT 3
+
+        """, (user_id,))
+
+        rows = cur.fetchall()
+
+
+    if not rows:
+
+        return "sin solicitudes comerciales para este user_id"
+
+
+    parts = []
+
+    for row in rows:
+
+        parts.append(
+            "#{} status={} setup={} group={} telegram_group={} username={} first_name={} created_at={}".format(
+                row[0],
+                row[1] or "-",
+                row[2] or "-",
+                row[3] or "-",
+                row[4] or "-",
+                row[5] or "-",
+                row[6] or "-",
+                row[7] or "-"
+            )
+        )
+
+
+    return " | ".join(parts)
+
+
+def find_unlinked_owner_request_for_confirmation():
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   user_id,
+                   approved_group_id,
+                   approved_telegram_group_id,
+                   requested_public_visibility,
+                   COALESCE(max_groups_allowed, 1),
+                   COALESCE(is_free_group, FALSE),
+                   payment_mode,
+                   username,
+                   first_name,
+                   status,
+                   creator_setup_status,
+                   created_at
+            FROM commercial_requests
+            WHERE request_type='shared_trial'
+            AND approved_group_id IS NULL
+            AND approved_telegram_group_id IS NULL
+            AND (
+                status = ANY(%s)
+                OR (
+                    creator_setup_status = ANY(%s)
+                    AND COALESCE(status, 'pending') != ALL(%s)
+                )
+            )
+            ORDER BY reviewed_at DESC NULLS LAST,
+                     updated_at DESC NULLS LAST,
+                     created_at DESC
+            LIMIT 2
+
+        """, (
+            list(APPROVED_COMMERCIAL_STATUSES),
+            list(AUTHORIZED_CREATOR_SETUP_STATUSES),
+            list(BLOCKED_CREATOR_STATUSES)
+        ))
+
+        rows = cur.fetchall()
+
+
+    if len(rows) != 1:
+
+        return None, len(rows)
+
+
+    row = rows[0]
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "approved_group_id": row[2],
+        "approved_telegram_group_id": row[3],
+        "requested_public_visibility": row[4],
+        "max_groups_allowed": row[5] or 1,
+        "is_free_group": row[6] is True or row[7] == "free",
+        "username": row[8],
+        "first_name": row[9],
+        "status": row[10],
+        "creator_setup_status": row[11],
+        "created_at": row[12]
+    }, 1
+
+
 def get_creator_request_by_id(user_id, request_id):
 
     if not user_id or not request_id:
@@ -794,7 +916,9 @@ async def reject_group_registration(
     added_by,
     group_message,
     user_message,
-    admin_message
+    admin_message,
+    added_by_username=None,
+    added_by_first_name=None
 ):
 
     await safe_send(
@@ -817,7 +941,10 @@ async def reject_group_registration(
             + "\n\n"
             + f"Grupo: {group_name}\n"
             + f"ID: {group_id}\n"
-            + f"Usuario: {added_by or '-'}"
+            + f"Usuario: {added_by or '-'}\n"
+            + f"Username: {('@' + added_by_username) if added_by_username else '-'}\n"
+            + f"Nombre: {added_by_first_name or '-'}\n"
+            + f"Solicitudes del user_id: {get_commercial_request_identity_summary(added_by)}"
         )
     )
 
@@ -1030,7 +1157,24 @@ async def register_existing_owned_group(group_id, group_name, added_by, context,
 # VERIFICAR ADMIN DESPUÉS DE 30s
 # =========================
 
-async def verificar_admin_despues(group_id, group_name, bot_id, context, added_by):
+async def verificar_admin_despues(
+    group_id,
+    group_name,
+    bot_id,
+    context,
+    added_by,
+    added_by_username=None,
+    added_by_first_name=None
+):
+
+    print(
+        "group_registration_verify_start:",
+        f"chat.id={group_id}",
+        f"chat.title={group_name or '-'}",
+        f"added_by={added_by or '-'}",
+        f"username={added_by_username or '-'}",
+        f"first_name={added_by_first_name or '-'}"
+    )
 
     print("Esperando 30 segundos antes de verificar permisos...")
 
@@ -1156,6 +1300,92 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
 
         if not is_authorized_creator(added_by):
 
+            owner_request, candidate_count = find_unlinked_owner_request_for_confirmation()
+
+
+            if owner_request and can_user_claim_telegram_group(
+                owner_request["user_id"],
+                group_id,
+                owner_request["id"]
+            ) and can_creator_add_group(
+                owner_request["user_id"],
+                existing_group_id
+            ):
+
+                pending_id = create_creator_group_link_request(
+                    owner_request["user_id"],
+                    owner_request["id"],
+                    group_id,
+                    group_name
+                )
+
+                confirmation_sent = await safe_send_confirmation(
+                    context,
+                    owner_request["user_id"],
+                    (
+                        "✅ He detectado un grupo pendiente de vinculación:\n\n"
+                        f"Nombre: {group_name}\n"
+                        f"ID: {group_id}\n\n"
+                        "Lo añadió otra cuenta o Telegram reportó otro user_id:\n"
+                        f"Usuario detectado: {added_by or '-'}\n"
+                        f"Username detectado: {('@' + added_by_username) if added_by_username else '-'}\n"
+                        f"Nombre detectado: {added_by_first_name or '-'}\n\n"
+                        "¿Quieres vincular este grupo a tu comunidad?"
+                    ),
+                    pending_id
+                )
+
+                await safe_send(
+                    context,
+                    group_id,
+                    (
+                        "✅ Bot detectado correctamente.\n\n"
+                        "El propietario aprobado debe confirmar la vinculación por privado."
+                    )
+                )
+
+                await safe_send(
+                    context,
+                    ADMIN_ID,
+                    (
+                        "📡 GRUPO COMERCIAL PENDIENTE DE CONFIRMACIÓN POR OWNER\n\n"
+                        f"Grupo: {group_name}\n"
+                        f"Telegram ID: {group_id}\n"
+                        f"Usuario que añadió el bot: {added_by or '-'}\n"
+                        f"Username: {('@' + added_by_username) if added_by_username else '-'}\n"
+                        f"Nombre: {added_by_first_name or '-'}\n"
+                        f"Solicitud owner: #{owner_request['id']}\n"
+                        f"Owner user_id: {owner_request['user_id']}\n"
+                        f"Owner username: {owner_request.get('username') or '-'}\n"
+                        f"Owner first_name: {owner_request.get('first_name') or '-'}\n"
+                        f"Solicitudes del added_by: {get_commercial_request_identity_summary(added_by)}\n"
+                        f"Confirmación enviada: {'sí' if confirmation_sent else 'no'}"
+                    )
+                )
+
+                print(
+                    "group_registration_owner_confirmation_fallback:",
+                    f"chat.id={group_id}",
+                    f"added_by={added_by or '-'}",
+                    f"owner_user_id={owner_request['user_id']}",
+                    f"request_id={owner_request['id']}",
+                    f"confirmation_sent={confirmation_sent}"
+                )
+
+                return
+
+
+            print(
+                "group_registration_unauthorized:",
+                f"chat.id={group_id}",
+                f"chat.title={group_name or '-'}",
+                f"added_by={added_by or '-'}",
+                f"username={added_by_username or '-'}",
+                f"first_name={added_by_first_name or '-'}",
+                f"commercial_requests.user_id={get_commercial_request_identity_summary(added_by)}",
+                f"unlinked_owner_candidate_count={candidate_count}"
+            )
+
             await reject_group_registration(
                 context,
                 group_id,
@@ -1163,7 +1393,12 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
                 added_by,
                 "⚠️ No tienes una solicitud aprobada para añadir este bot a esta comunidad. El bot saldrá del grupo.",
                 "⛔ No tienes aprobado añadir el bot a un grupo. Solicita aprobación desde /start.",
-                "⚠️ Bot añadido por usuario no autorizado."
+                (
+                    "⚠️ Bot añadido por usuario no autorizado.\n"
+                    f"Solicitudes pendientes/vinculables de otro user_id: {candidate_count}"
+                ),
+                added_by_username,
+                added_by_first_name
             )
 
             return
@@ -1280,7 +1515,17 @@ async def verificar_admin_despues(group_id, group_name, bot_id, context, added_b
 
 async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    print("detect_bot_added ejecutado")
+    effective_user = update.effective_user
+
+    print(
+        "detect_bot_added ejecutado",
+        f"effective_user.id={effective_user.id if effective_user else '-'}",
+        f"username={effective_user.username if effective_user and effective_user.username else '-'}",
+        f"first_name={effective_user.first_name if effective_user and effective_user.first_name else '-'}",
+        f"chat.id={update.effective_chat.id if update.effective_chat else '-'}",
+        f"chat.type={update.effective_chat.type if update.effective_chat else '-'}",
+        f"chat.title={update.effective_chat.title if update.effective_chat else '-'}"
+    )
 
     if not update.message:
         return
@@ -1313,16 +1558,26 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             try:
 
-                added_by = update.message.from_user.id
+                added_by_user = update.message.from_user
+                added_by = added_by_user.id
+                added_by_username = added_by_user.username
+                added_by_first_name = added_by_user.first_name
 
             except Exception:
 
                 added_by = None
+                added_by_username = None
+                added_by_first_name = None
 
 
             print(
                 "Bot añadido por usuario:",
-                added_by
+                f"update.effective_user.id={effective_user.id if effective_user else '-'}",
+                f"update.message.from_user.id={added_by or '-'}",
+                f"username={added_by_username or '-'}",
+                f"first_name={added_by_first_name or '-'}",
+                f"chat.id={group_id}",
+                f"chat.title={group_name or '-'}"
             )
 
 
@@ -1370,7 +1625,11 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     context,
 
-                    added_by
+                    added_by,
+
+                    added_by_username,
+
+                    added_by_first_name
 
                 )
 

@@ -24,6 +24,14 @@ def create_commercial_request(user, request_type, form_data=None):
     first_name = user.first_name if user else None
     user_id = user.id if user else None
 
+    print(
+        "commercial_request_create:",
+        f"effective_user.id={user_id or '-'}",
+        f"username={username or '-'}",
+        f"first_name={first_name or '-'}",
+        f"request_type={request_type}"
+    )
+
     with conn.cursor() as cur:
 
         cur.execute("""
@@ -40,10 +48,14 @@ def create_commercial_request(user, request_type, form_data=None):
                 bot_name,
                 bot_username,
                 project_description,
-                contact_text
+                contact_text,
+                last_interaction_user_id,
+                last_interaction_username,
+                last_interaction_first_name,
+                last_interaction_at
             )
 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
 
             RETURNING id
 
@@ -59,7 +71,10 @@ def create_commercial_request(user, request_type, form_data=None):
             form_data.get("bot_name"),
             form_data.get("bot_username"),
             form_data.get("project_description"),
-            form_data.get("contact_text")
+            form_data.get("contact_text"),
+            user_id,
+            username,
+            first_name
 
         ))
 
@@ -1727,6 +1742,17 @@ async def receive_marketplace_preview_media(update: Update, context: ContextType
 async def finish_commercial_form(update, context, request_type, form_data):
 
     user = update.effective_user
+
+    message_user = update.message.from_user if update.message else None
+
+    print(
+        "commercial_form_finish:",
+        f"effective_user.id={user.id if user else '-'}",
+        f"message.from_user.id={message_user.id if message_user else '-'}",
+        f"username={user.username if user and user.username else '-'}",
+        f"first_name={user.first_name if user and user.first_name else '-'}",
+        f"request_type={request_type}"
+    )
 
     request_id = create_commercial_request(
         user,
