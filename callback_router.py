@@ -1548,6 +1548,16 @@ async def process_expired_commercial_retention(context):
     newly_expired_requests = []
     reminder_requests = []
     finalized_requests = []
+    summary = {
+        "newly_expired": 0,
+        "expiry_notices_sent": 0,
+        "reminders_due": 0,
+        "reminders_sent": 0,
+        "finalized": 0,
+        "admin_notices_sent": 0,
+        "send_errors": 0,
+        "skipped_without_user": 0
+    }
 
 
     with conn.cursor() as cur:
@@ -1649,10 +1659,24 @@ async def process_expired_commercial_retention(context):
 
     for request_row in newly_expired_requests:
 
+        summary["newly_expired"] += 1
+        user_id = request_row.get("user_id")
+
+
+        if not user_id:
+
+            summary["skipped_without_user"] += 1
+            print(
+                "Commercial expiry scheduler: solicitud sin user_id:",
+                request_row.get("id")
+            )
+            continue
+
+
         try:
 
             await context.bot.send_message(
-                chat_id=request_row.get("user_id"),
+                chat_id=user_id,
                 text=expired_community_message(
                     format_retention_days_left(request_row.get("delete_after"))
                 ),
@@ -1661,17 +1685,34 @@ async def process_expired_commercial_retention(context):
                 )
             )
 
+            summary["expiry_notices_sent"] += 1
+
         except Exception as e:
 
+            summary["send_errors"] += 1
             print("Error avisando comunidad caducada:", e)
 
 
     for request_row in reminder_requests:
 
+        summary["reminders_due"] += 1
+        user_id = request_row.get("user_id")
+
+
+        if not user_id:
+
+            summary["skipped_without_user"] += 1
+            print(
+                "Commercial expiry scheduler: recordatorio sin user_id:",
+                request_row.get("id")
+            )
+            continue
+
+
         try:
 
             await context.bot.send_message(
-                chat_id=request_row.get("user_id"),
+                chat_id=user_id,
                 text=(
                     "Te quedan "
                     f"{format_retention_days_left(request_row.get('delete_after'))} días "
@@ -1682,12 +1723,17 @@ async def process_expired_commercial_retention(context):
                 )
             )
 
+            summary["reminders_sent"] += 1
+
         except Exception as e:
 
+            summary["send_errors"] += 1
             print("Error enviando recordatorio de comunidad caducada:", e)
 
 
     for request_row in finalized_requests:
+
+        summary["finalized"] += 1
 
         try:
 
@@ -1701,9 +1747,26 @@ async def process_expired_commercial_retention(context):
                 )
             )
 
+            summary["admin_notices_sent"] += 1
+
         except Exception as e:
 
+            summary["send_errors"] += 1
             print("Error avisando borrado definitivo comercial:", e)
+
+    print(
+        "Commercial expiry scheduler:",
+        f"newly_expired={summary['newly_expired']}",
+        f"expiry_notices_sent={summary['expiry_notices_sent']}",
+        f"reminders_due={summary['reminders_due']}",
+        f"reminders_sent={summary['reminders_sent']}",
+        f"finalized={summary['finalized']}",
+        f"admin_notices_sent={summary['admin_notices_sent']}",
+        f"skipped_without_user={summary['skipped_without_user']}",
+        f"send_errors={summary['send_errors']}"
+    )
+
+    return summary
 
 
 async def expire_expired_commercial_trials(context):
