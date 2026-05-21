@@ -1617,7 +1617,11 @@ COMMERCIAL_REQUEST_FIELDS = [
     "expired_at",
     "delete_after",
     "last_expiry_reminder_at",
-    "previous_public_visibility"
+    "previous_public_visibility",
+    "last_interaction_user_id",
+    "last_interaction_username",
+    "last_interaction_first_name",
+    "last_interaction_at"
 
 ]
 
@@ -3966,6 +3970,33 @@ def create_commercial_request_message(request_id, sender_type, sender_id, messag
     return row_to_commercial_request_message(row)
 
 
+def update_commercial_request_last_interaction(request_id, user):
+
+    if not request_id or not user:
+
+        return
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE commercial_requests
+            SET last_interaction_user_id=%s,
+                last_interaction_username=%s,
+                last_interaction_first_name=%s,
+                last_interaction_at=NOW(),
+                updated_at=NOW()
+            WHERE id=%s
+
+        """, (
+            user.id,
+            user.username,
+            user.first_name,
+            request_id
+        ))
+
+
 def fetch_commercial_request_messages(request_id, limit=10):
 
     with conn.cursor() as cur:
@@ -4830,6 +4861,10 @@ def build_commercial_request_detail_text(request_row):
         f"Estado configuración creador: {request_row.get('creator_setup_status') or '-'}\n"
         f"Preview creador: {request_row.get('creator_preview_text') or '-'}\n"
         f"Cupo máximo grupos: {request_row.get('max_groups_allowed') or 1}\n"
+        f"Último user_id interacción: {request_row.get('last_interaction_user_id') or '-'}\n"
+        f"Último username interacción: {request_row.get('last_interaction_username') or '-'}\n"
+        f"Último nombre interacción: {request_row.get('last_interaction_first_name') or '-'}\n"
+        f"Última interacción: {format_commercial_datetime(request_row.get('last_interaction_at'))}\n"
         f"Plan comercial: {request_row.get('selected_commercial_plan_id') or '-'}\n"
         f"Estado suscripción comercial: {request_row.get('commercial_subscription_status') or '-'}\n"
         f"Suscripción comercial hasta: {format_commercial_datetime(request_row.get('commercial_subscription_until'))}"
@@ -5882,7 +5917,19 @@ async def receive_commercial_request_chat_message(update: Update, context: Conte
     sender_type = context.user_data.get("replying_commercial_request_as")
     text = update.message.text.strip()
     user = update.effective_user
+    message_user = update.message.from_user
     request_row = fetch_commercial_request(request_id)
+
+    print(
+        "commercial_request_chat_message:",
+        f"request_id={request_id or '-'}",
+        f"sender_type={sender_type or '-'}",
+        f"effective_user.id={user.id if user else '-'}",
+        f"message.from_user.id={message_user.id if message_user else '-'}",
+        f"username={user.username if user and user.username else '-'}",
+        f"first_name={user.first_name if user and user.first_name else '-'}",
+        f"commercial_requests.user_id={request_row.get('user_id') if request_row else '-'}"
+    )
 
 
     if not request_row:
@@ -5914,6 +5961,11 @@ async def receive_commercial_request_chat_message(update: Update, context: Conte
             "admin",
             user.id,
             text
+        )
+
+        update_commercial_request_last_interaction(
+            request_id,
+            user
         )
 
         clear_commercial_request_chat_state(context)
@@ -5952,6 +6004,11 @@ async def receive_commercial_request_chat_message(update: Update, context: Conte
             "user",
             user.id,
             text
+        )
+
+        update_commercial_request_last_interaction(
+            request_id,
+            user
         )
 
         clear_commercial_request_chat_state(context)
@@ -6058,6 +6115,13 @@ def get_or_create_support_ticket(user):
     username = user.username if user and user.username else None
     first_name = user.first_name if user and user.first_name else None
     user_id = user.id if user else None
+
+    print(
+        "support_ticket_get_or_create:",
+        f"effective_user.id={user_id or '-'}",
+        f"username={username or '-'}",
+        f"first_name={first_name or '-'}"
+    )
 
 
     with conn.cursor() as cur:
@@ -6476,6 +6540,16 @@ async def notify_support_admin(context, ticket, message_text):
 async def handle_user_support_message(update, context, text):
 
     user = update.effective_user
+    message_user = update.message.from_user if update.message else None
+
+    print(
+        "support_message_user:",
+        f"effective_user.id={user.id if user else '-'}",
+        f"message.from_user.id={message_user.id if message_user else '-'}",
+        f"username={user.username if user and user.username else '-'}",
+        f"first_name={user.first_name if user and user.first_name else '-'}"
+    )
+
     ticket = get_or_create_support_ticket(user)
 
     create_support_message(
@@ -7097,6 +7171,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         status = result.get("status")
+
+        print(
+            "creator_group_link_confirm_callback:",
+            f"pending_id={pending_id}",
+            f"query.from_user.id={query.from_user.id if query.from_user else '-'}",
+            f"username={query.from_user.username if query.from_user and query.from_user.username else '-'}",
+            f"first_name={query.from_user.first_name if query.from_user and query.from_user.first_name else '-'}",
+            f"status={status}"
+        )
 
 
         if status == "confirmed":
@@ -7818,6 +7901,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "commercial_shared_trial_start":
 
+        print(
+            "commercial_form_start:",
+            f"query.from_user.id={query.from_user.id if query.from_user else '-'}",
+            f"username={query.from_user.username if query.from_user and query.from_user.username else '-'}",
+            f"first_name={query.from_user.first_name if query.from_user and query.from_user.first_name else '-'}",
+            "request_type=shared_trial"
+        )
+
         context.user_data["commercial_form"] = True
         context.user_data["commercial_form_type"] = "shared_trial"
         context.user_data["commercial_form_step"] = 1
@@ -7949,6 +8040,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "commercial_custom_bot_start":
 
+        print(
+            "commercial_form_start:",
+            f"query.from_user.id={query.from_user.id if query.from_user else '-'}",
+            f"username={query.from_user.username if query.from_user and query.from_user.username else '-'}",
+            f"first_name={query.from_user.first_name if query.from_user and query.from_user.first_name else '-'}",
+            "request_type=custom_bot"
+        )
+
         context.user_data["commercial_form"] = True
         context.user_data["commercial_form_type"] = "custom_bot"
         context.user_data["commercial_form_step"] = 1
@@ -7967,6 +8066,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "commercial_contact":
 
         await delete_query_message_safely(query)
+
+        print(
+            "commercial_contact_request:",
+            f"query.from_user.id={query.from_user.id if query.from_user else '-'}",
+            f"username={query.from_user.username if query.from_user and query.from_user.username else '-'}",
+            f"first_name={query.from_user.first_name if query.from_user and query.from_user.first_name else '-'}"
+        )
 
         request_id = create_commercial_request(
             query.from_user,

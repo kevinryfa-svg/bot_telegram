@@ -692,6 +692,14 @@ def create_tables():
 
             previous_public_visibility TEXT,
 
+            last_interaction_user_id BIGINT,
+
+            last_interaction_username TEXT,
+
+            last_interaction_first_name TEXT,
+
+            last_interaction_at TIMESTAMP,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -1127,7 +1135,11 @@ def create_tables():
             ("expired_at", "TIMESTAMP"),
             ("delete_after", "TIMESTAMP"),
             ("last_expiry_reminder_at", "TIMESTAMP"),
-            ("previous_public_visibility", "TEXT")
+            ("previous_public_visibility", "TEXT"),
+            ("last_interaction_user_id", "BIGINT"),
+            ("last_interaction_username", "TEXT"),
+            ("last_interaction_first_name", "TEXT"),
+            ("last_interaction_at", "TIMESTAMP")
 
         ]
 
