@@ -84,6 +84,10 @@ def create_tables():
 
             is_free_group BOOLEAN DEFAULT FALSE,
 
+            location_gate_enabled BOOLEAN DEFAULT FALSE,
+
+            allowed_region TEXT,
+
             bot_is_admin BOOLEAN DEFAULT FALSE,
 
             is_active BOOLEAN DEFAULT TRUE,
@@ -837,6 +841,33 @@ def create_tables():
 
 
         # =========================
+        # TABLA VERIFICACIONES DE UBICACIÓN
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS group_location_verifications (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER,
+
+            user_id BIGINT,
+
+            region TEXT,
+
+            province TEXT,
+
+            verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            status TEXT
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA COBROS DEL CREADOR
         # =========================
 
@@ -926,7 +957,9 @@ def create_tables():
             ("category", "TEXT"),
             ("tags", "TEXT"),
             ("marketplace_badge", "TEXT"),
-            ("preview_mode", "TEXT DEFAULT 'manual'")
+            ("preview_mode", "TEXT DEFAULT 'manual'"),
+            ("location_gate_enabled", "BOOLEAN DEFAULT FALSE"),
+            ("allowed_region", "TEXT")
 
         ]
 

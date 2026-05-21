@@ -9,7 +9,10 @@ from datetime import datetime
 from telegram import (
     Update,
     InlineKeyboardButton,
-    InlineKeyboardMarkup
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove
 )
 from telegram.ext import ContextTypes
 
@@ -131,6 +134,224 @@ def is_stripe_checkout_callback(callback_data):
         isinstance(callback_data, str)
         and callback_data.startswith("price_")
     )
+
+
+COMUNIDAD_VALENCIANA_REGION = "comunidad_valenciana"
+
+COMUNIDAD_VALENCIANA_LABEL = "Comunidad Valenciana"
+
+COMUNIDAD_VALENCIANA_BOXES = [
+    ("Castellón", 39.70, 40.85, -0.90, 0.60),
+    ("Valencia", 38.65, 40.05, -1.60, -0.05),
+    ("Alicante", 37.75, 38.95, -1.25, 0.25)
+]
+
+
+def is_location_in_comunidad_valenciana(lat, lon):
+
+    for province, min_lat, max_lat, min_lon, max_lon in COMUNIDAD_VALENCIANA_BOXES:
+
+        if min_lat <= lat <= max_lat and min_lon <= lon <= max_lon:
+
+            return True, province
+
+
+    return False, None
+
+
+def build_location_denied_keyboard():
+
+    return InlineKeyboardMarkup([
+
+        [InlineKeyboardButton(
+            "🛟 Contactar soporte",
+            callback_data="public_support"
+        )],
+
+        [InlineKeyboardButton(
+            "🏠 Inicio",
+            callback_data="public_back_start"
+        )]
+
+    ])
+
+
+def build_location_gate_owner_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+
+        [InlineKeyboardButton(
+            "✅ Activar restricción por ubicación",
+            callback_data=f"creator_location_gate_enable_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🚫 Desactivar restricción",
+            callback_data=f"creator_location_gate_disable_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📍 Elegir región: Comunidad Valenciana",
+            callback_data=f"creator_location_region_cv_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=f"configure_community_{request_id}"
+        )]
+
+    ])
+
+
+def get_group_location_gate(group_id):
+
+    if not group_id:
+
+        return False, None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT COALESCE(location_gate_enabled, FALSE),
+                   allowed_region
+            FROM groups
+            WHERE id=%s
+            AND is_active=TRUE
+            LIMIT 1
+
+        """, (group_id,))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return False, None
+
+
+    return row[0] is True, row[1]
+
+
+def group_requires_location_gate(group_id):
+
+    enabled, allowed_region = get_group_location_gate(group_id)
+
+    return enabled and allowed_region == COMUNIDAD_VALENCIANA_REGION
+
+
+def get_commercial_request_group_id(request_row):
+
+    if not request_row:
+
+        return None
+
+
+    if request_row.get("approved_group_id"):
+
+        return request_row.get("approved_group_id")
+
+
+    approved_telegram_group_id = request_row.get("approved_telegram_group_id")
+
+
+    if not approved_telegram_group_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id
+            FROM groups
+            WHERE telegram_group_id=%s
+            LIMIT 1
+
+        """, (approved_telegram_group_id,))
+
+        row = cur.fetchone()
+
+
+    return row[0] if row else None
+
+
+def clear_location_gate_state(context):
+
+    context.user_data.pop("location_gate_pending", None)
+    context.user_data.pop("location_gate_group_id", None)
+    context.user_data.pop("location_gate_action", None)
+    context.user_data.pop("location_gate_price_id", None)
+
+
+async def request_location_verification(
+    context,
+    chat_id,
+    group_id,
+    action,
+    price_id=None
+):
+
+    context.user_data["location_gate_pending"] = True
+    context.user_data["location_gate_group_id"] = group_id
+    context.user_data["location_gate_action"] = action
+
+
+    if price_id:
+
+        context.user_data["location_gate_price_id"] = price_id
+
+    else:
+
+        context.user_data.pop("location_gate_price_id", None)
+
+
+    keyboard = ReplyKeyboardMarkup(
+        [[KeyboardButton(
+            "📍 Enviar ubicación",
+            request_location=True
+        )]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "📍 Esta comunidad requiere verificar que estás dentro de la región permitida.\n\n"
+            "Usaremos tu ubicación solo para comprobar la región y no guardaremos tus coordenadas exactas."
+        ),
+        reply_markup=keyboard
+    )
+
+
+def save_group_location_verification(group_id, user_id, province, status):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO group_location_verifications
+            (
+                group_id,
+                user_id,
+                region,
+                province,
+                status
+            )
+            VALUES (%s, %s, %s, %s, %s)
+
+        """, (
+            group_id,
+            user_id,
+            COMUNIDAD_VALENCIANA_LABEL,
+            province,
+            status
+        ))
+
+        conn.commit()
 
 
 ADMIN_PERMISSION_COLUMNS = [
@@ -3739,6 +3960,11 @@ def build_creator_setup_keyboard(request_id, payment_mode=None):
         [InlineKeyboardButton(
             "💳 Tipo de acceso",
             callback_data=f"creator_setup_access_type_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📍 Restricción por ubicación",
+            callback_data=f"creator_setup_location_gate_{request_id}"
         )]
 
     ]
@@ -3850,6 +4076,22 @@ def build_creator_setup_panel_text(group_id=None):
             "6. Pega ahí el ID recibido si no se vinculó automáticamente."
         )
 
+    else:
+
+        location_enabled, allowed_region = get_group_location_gate(group_id)
+        location_status = "Activada" if location_enabled else "Desactivada"
+        region_label = (
+            COMUNIDAD_VALENCIANA_LABEL
+            if allowed_region == COMUNIDAD_VALENCIANA_REGION
+            else allowed_region or "-"
+        )
+
+        text += (
+            "\n\n"
+            f"📍 Ubicación: {location_status}\n"
+            f"Región permitida: {region_label}"
+        )
+
 
     return text
 
@@ -3906,6 +4148,13 @@ def build_creator_setup_summary(request_row):
     visibility = format_public_visibility(
         request_row.get("requested_public_visibility")
     )
+    location_enabled, allowed_region = get_group_location_gate(group_id)
+    location_status = "Activada" if location_enabled else "Desactivada"
+    region_label = (
+        COMUNIDAD_VALENCIANA_LABEL
+        if allowed_region == COMUNIDAD_VALENCIANA_REGION
+        else allowed_region or "-"
+    )
     setup_ready = (
         group_status == "configurado"
         and texts_status == "configurado"
@@ -3942,6 +4191,8 @@ def build_creator_setup_summary(request_row):
         f"Stripe propio: {stripe_status}\n"
         f"Planes: {plan_count}\n"
         f"Visibilidad: {visibility}\n"
+        f"📍 Ubicación: {location_status}\n"
+        f"Región permitida: {region_label}\n"
         f"Estado owner: {owner_status}\n"
         f"Estado setup: {setup_status}\n\n"
         "El checkout real con Stripe del creador todavía está pendiente de conectar."
@@ -6161,6 +6412,341 @@ async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_
         return
 
 
+async def create_free_access_for_user(context, chat_id, telegram_user, group_id):
+
+    user_id = telegram_user.id
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT name,
+                       telegram_group_id
+                FROM groups
+                WHERE id=%s
+                AND is_active=TRUE
+                AND COALESCE(is_free_group, FALSE)=TRUE
+                LIMIT 1
+
+            """, (group_id,))
+
+            group_row = cur.fetchone()
+
+
+            if not group_row:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="❌ Comunidad gratuita no encontrada o no disponible.",
+                    reply_markup=ReplyKeyboardRemove()
+                )
+
+                return
+
+
+            group_name, telegram_group_id = group_row
+
+            increment_community_stat(group_id, "access_clicks")
+
+            cur.execute("""
+
+                SELECT invite_link
+                FROM invite_links
+                WHERE user_id=%s
+                AND group_id IN (%s, %s)
+                AND is_active=TRUE
+
+            """, (
+                user_id,
+                group_id,
+                telegram_group_id
+            ))
+
+            old_links = cur.fetchall()
+
+
+        for (old_link,) in old_links:
+
+            try:
+
+                revoke_telegram_invite_link(
+                    TOKEN,
+                    telegram_group_id,
+                    old_link
+                )
+
+            except Exception as e:
+
+                print("Error revocando link gratuito anterior:", e)
+
+
+        link = create_telegram_invite_link(
+            TOKEN,
+            telegram_group_id,
+            expire_seconds=180,
+            member_limit=1
+        )
+
+
+        if not link:
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="❌ Error creando acceso.",
+                reply_markup=ReplyKeyboardRemove()
+            )
+
+            return
+
+
+        username = telegram_user.username
+        first_name = telegram_user.first_name
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                DELETE FROM invite_links
+                WHERE user_id=%s
+                AND group_id IN (%s, %s)
+
+            """, (
+                user_id,
+                group_id,
+                telegram_group_id
+            ))
+
+            cur.execute("""
+
+                INSERT INTO invite_links
+                (user_id, group_id, invite_link, is_active)
+                VALUES (%s, %s, %s, TRUE)
+
+            """, (
+                user_id,
+                telegram_group_id,
+                link
+            ))
+
+            cur.execute("""
+
+                INSERT INTO users
+                (
+                    user_id,
+                    group_id,
+                    username,
+                    first_name,
+                    expiration,
+                    subscription_active,
+                    last_invite_link
+                )
+                VALUES (%s, %s, %s, %s, NULL, TRUE, %s)
+                ON CONFLICT (user_id, group_id)
+                DO UPDATE SET
+                    username=EXCLUDED.username,
+                    first_name=EXCLUDED.first_name,
+                    expiration=NULL,
+                    subscription_active=TRUE,
+                    last_invite_link=EXCLUDED.last_invite_link
+
+            """, (
+                user_id,
+                group_id,
+                username,
+                first_name,
+                link
+            ))
+
+            conn.commit()
+
+    except Exception as e:
+
+        print("Error concediendo acceso gratuito:", e)
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Error creando acceso gratuito.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+        return
+
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "✅ Acceso gratuito concedido.\n\n"
+            "Este enlace es personal y de un solo uso.\n"
+            "No lo compartas.\n\n"
+            f"{link}"
+        ),
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+
+async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id):
+
+    try:
+
+        response = requests.post(
+
+            f"{SERVER_URL}/create-checkout-session",
+
+            json={
+
+                "telegram_id": user_id,
+                "plan": price_id,
+                "group_id": group_id
+
+            }
+
+        )
+
+        payment_url = response.json()["url"]
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"💳 Paga aquí:\n{payment_url}",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+    except Exception as e:
+
+        print(e)
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Error creando pago",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+
+async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not context.user_data.get("location_gate_pending"):
+
+        return
+
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+
+    if not update.message or not update.message.location:
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📍 Para continuar debes pulsar el botón de ubicación.",
+            reply_markup=ReplyKeyboardMarkup(
+                [[KeyboardButton(
+                    "📍 Enviar ubicación",
+                    request_location=True
+                )]],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+        )
+
+        return
+
+
+    group_id = context.user_data.get("location_gate_group_id")
+    action = context.user_data.get("location_gate_action")
+    price_id = context.user_data.get("location_gate_price_id")
+    location = update.message.location
+    is_allowed, province = is_location_in_comunidad_valenciana(
+        location.latitude,
+        location.longitude
+    )
+
+
+    if not is_allowed:
+
+        try:
+
+            save_group_location_verification(
+                group_id,
+                user_id,
+                None,
+                "rejected"
+            )
+
+        except Exception as e:
+
+            print("Error guardando verificación de ubicación rechazada:", e)
+
+
+        clear_location_gate_state(context)
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⛔ Esta comunidad solo admite usuarios verificados dentro de la Comunidad Valenciana.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Puedes contactar con soporte si crees que es un error.",
+            reply_markup=build_location_denied_keyboard()
+        )
+
+        return
+
+
+    try:
+
+        save_group_location_verification(
+            group_id,
+            user_id,
+            province,
+            "verified"
+        )
+
+    except Exception as e:
+
+        print("Error guardando verificación de ubicación:", e)
+
+
+    clear_location_gate_state(context)
+
+
+    if action == "free_access":
+
+        await create_free_access_for_user(
+            context,
+            chat_id,
+            update.effective_user,
+            group_id
+        )
+
+        return
+
+
+    if action == "checkout":
+
+        await create_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return
+
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="✅ Ubicación verificada.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+
 # =========================
 # BOTONES
 # =========================
@@ -6181,6 +6767,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ):
 
         clear_support_user_state(context)
+        clear_location_gate_state(context)
 
         await delete_query_message_safely(query)
 
@@ -9164,164 +9751,52 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        try:
+        with conn.cursor() as cur:
 
-            with conn.cursor() as cur:
+            cur.execute("""
 
-                cur.execute("""
+                SELECT COALESCE(location_gate_enabled, FALSE),
+                       allowed_region
+                FROM groups
+                WHERE id=%s
+                AND is_active=TRUE
+                AND COALESCE(is_free_group, FALSE)=TRUE
+                LIMIT 1
 
-                    SELECT name,
-                           telegram_group_id
-                    FROM groups
-                    WHERE id=%s
-                    AND is_active=TRUE
-                    AND COALESCE(is_free_group, FALSE)=TRUE
-                    LIMIT 1
+            """, (group_id,))
 
-                """, (group_id,))
-
-                group_row = cur.fetchone()
+            group_row = cur.fetchone()
 
 
-                if not group_row:
-
-                    await query.message.reply_text(
-                        "❌ Comunidad gratuita no encontrada o no disponible."
-                    )
-
-                    return
-
-
-                group_name, telegram_group_id = group_row
-
-                increment_community_stat(group_id, "access_clicks")
-
-                cur.execute("""
-
-                    SELECT invite_link
-                    FROM invite_links
-                    WHERE user_id=%s
-                    AND group_id IN (%s, %s)
-                    AND is_active=TRUE
-
-                """, (
-                    user_id,
-                    group_id,
-                    telegram_group_id
-                ))
-
-                old_links = cur.fetchall()
-
-
-            for (old_link,) in old_links:
-
-                try:
-
-                    revoke_telegram_invite_link(
-                        TOKEN,
-                        telegram_group_id,
-                        old_link
-                    )
-
-                except Exception as e:
-
-                    print("Error revocando link gratuito anterior:", e)
-
-
-            link = create_telegram_invite_link(
-                TOKEN,
-                telegram_group_id,
-                expire_seconds=180,
-                member_limit=1
-            )
-
-
-            if not link:
-
-                await query.message.reply_text(
-                    "❌ Error creando acceso."
-                )
-
-                return
-
-
-            username = query.from_user.username
-            first_name = query.from_user.first_name
-
-
-            with conn.cursor() as cur:
-
-                cur.execute("""
-
-                    DELETE FROM invite_links
-                    WHERE user_id=%s
-                    AND group_id IN (%s, %s)
-
-                """, (
-                    user_id,
-                    group_id,
-                    telegram_group_id
-                ))
-
-                cur.execute("""
-
-                    INSERT INTO invite_links
-                    (user_id, group_id, invite_link, is_active)
-                    VALUES (%s, %s, %s, TRUE)
-
-                """, (
-                    user_id,
-                    telegram_group_id,
-                    link
-                ))
-
-                cur.execute("""
-
-                    INSERT INTO users
-                    (
-                        user_id,
-                        group_id,
-                        username,
-                        first_name,
-                        expiration,
-                        subscription_active,
-                        last_invite_link
-                    )
-                    VALUES (%s, %s, %s, %s, NULL, TRUE, %s)
-                    ON CONFLICT (user_id, group_id)
-                    DO UPDATE SET
-                        username=EXCLUDED.username,
-                        first_name=EXCLUDED.first_name,
-                        expiration=NULL,
-                        subscription_active=TRUE,
-                        last_invite_link=EXCLUDED.last_invite_link
-
-                """, (
-                    user_id,
-                    group_id,
-                    username,
-                    first_name,
-                    link
-                ))
-
-                conn.commit()
-
-        except Exception as e:
-
-            print("Error concediendo acceso gratuito:", e)
+        if not group_row:
 
             await query.message.reply_text(
-                "❌ Error creando acceso gratuito."
+                "❌ Comunidad gratuita no encontrada o no disponible."
             )
 
             return
 
 
-        await query.message.reply_text(
-            "✅ Acceso gratuito concedido.\n\n"
-            "Este enlace es personal y de un solo uso.\n"
-            "No lo compartas.\n\n"
-            f"{link}"
+        location_gate_enabled, allowed_region = group_row
+
+
+        if location_gate_enabled is True and allowed_region == COMUNIDAD_VALENCIANA_REGION:
+
+            await request_location_verification(
+                context,
+                query.message.chat_id,
+                group_id,
+                "free_access"
+            )
+
+            return
+
+
+        await create_free_access_for_user(
+            context,
+            query.message.chat_id,
+            query.from_user,
+            group_id
         )
 
         return
@@ -14200,6 +14675,238 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("creator_setup_location_gate_"):
+
+        request_id = extract_commercial_request_id(data, "creator_setup_location_gate_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_commercial_request_group_id(request_row)
+
+
+        if not group_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "📍 Restricción por ubicación\n\n"
+                "Primero debes vincular tu grupo o canal. Después podrás activar esta restricción.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📡 Grupo o canal",
+                        callback_data=f"creator_setup_group_{request_id}"
+                    )],
+                    [InlineKeyboardButton(
+                        "⬅️ Volver",
+                        callback_data=f"configure_community_{request_id}"
+                    )]
+                ])
+            )
+
+            return
+
+
+        enabled, allowed_region = get_group_location_gate(group_id)
+        region_label = (
+            COMUNIDAD_VALENCIANA_LABEL
+            if allowed_region == COMUNIDAD_VALENCIANA_REGION
+            else allowed_region or "-"
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📍 Restricción por ubicación\n\n"
+            f"Estado: {'Activada' if enabled else 'Desactivada'}\n"
+            f"Región permitida: {region_label}\n\n"
+            "Si está activada, antes de entrar el usuario deberá enviar ubicación desde el botón oficial de Telegram.",
+            reply_markup=build_location_gate_owner_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("creator_location_gate_enable_"):
+
+        request_id = extract_commercial_request_id(data, "creator_location_gate_enable_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_commercial_request_group_id(request_row)
+
+
+        if not group_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "📍 Primero vincula tu grupo o canal.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📡 Grupo o canal",
+                        callback_data=f"creator_setup_group_{request_id}"
+                    )]
+                ])
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET location_gate_enabled=TRUE,
+                    allowed_region=COALESCE(allowed_region, %s)
+                WHERE id=%s
+
+            """, (
+                COMUNIDAD_VALENCIANA_REGION,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Restricción por ubicación activada.\n\n"
+            "Región permitida: Comunidad Valenciana.",
+            reply_markup=build_location_gate_owner_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("creator_location_gate_disable_"):
+
+        request_id = extract_commercial_request_id(data, "creator_location_gate_disable_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_commercial_request_group_id(request_row)
+
+
+        if group_id:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE groups
+                    SET location_gate_enabled=FALSE
+                    WHERE id=%s
+
+                """, (group_id,))
+
+                conn.commit()
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Restricción por ubicación desactivada.",
+            reply_markup=build_location_gate_owner_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("creator_location_region_cv_"):
+
+        request_id = extract_commercial_request_id(data, "creator_location_region_cv_")
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        group_id = get_commercial_request_group_id(request_row)
+
+
+        if not group_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "📍 Primero vincula tu grupo o canal.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📡 Grupo o canal",
+                        callback_data=f"creator_setup_group_{request_id}"
+                    )]
+                ])
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET allowed_region=%s
+                WHERE id=%s
+
+            """, (
+                COMUNIDAD_VALENCIANA_REGION,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Región permitida actualizada.\n\n"
+            "Región permitida: Comunidad Valenciana.",
+            reply_markup=build_location_gate_owner_keyboard(request_id)
+        )
+
+        return
+
+
     if data.startswith("creator_setup_visibility_"):
 
         request_id = extract_commercial_request_id(data, "creator_setup_visibility_")
@@ -14438,35 +15145,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    try:
+    if group_requires_location_gate(group_id):
 
-        response = requests.post(
-
-            f"{SERVER_URL}/create-checkout-session",
-
-            json={
-
-                "telegram_id": user_id,
-                "plan": data,
-                "group_id": group_id
-
-            }
-
+        await request_location_verification(
+            context,
+            query.message.chat_id,
+            group_id,
+            "checkout",
+            price_id=data
         )
 
-        payment_url = response.json()["url"]
+        return
 
 
-        await query.message.reply_text(
-
-            f"💳 Paga aquí:\n{payment_url}"
-
-        )
-
-    except Exception as e:
-
-        print(e)
-
-        await query.message.reply_text(
-            "❌ Error creando pago"
-        )
+    await create_checkout_for_user(
+        context,
+        query.message.chat_id,
+        user_id,
+        group_id,
+        data
+    )
