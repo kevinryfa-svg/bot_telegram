@@ -53,6 +53,11 @@ from commercial_form_handler import (
 )
 from db import conn
 from formatters import format_tiempo_restante
+from group_registration_handler import (
+    cancel_creator_group_link_request,
+    confirm_creator_group_link_request,
+    leave_chat_safely
+)
 from invite_link_service import (
     create_telegram_invite_link,
     revoke_telegram_invite_link
@@ -4407,7 +4412,7 @@ def build_creator_setup_panel_text(group_id=None):
 def start_creator_setup_state(context, request_id, action):
 
     waiting_states = {
-        "group": "creator_setup_waiting_group_id",
+        "group": "creator_setup_waiting_group_reference",
         "texts": "creator_setup_waiting_text_name",
         "marketplace_preview_text": "creator_setup_waiting_preview_text",
         "marketplace_tags": "creator_setup_waiting_tags",
@@ -7069,6 +7074,191 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     user_id = query.from_user.id
+
+
+    if data.startswith("confirm_creator_group_link_"):
+
+        try:
+
+            pending_id = int(data.replace("confirm_creator_group_link_", "", 1))
+
+        except Exception:
+
+            await query.message.reply_text(
+                "❌ Solicitud de vinculación no válida."
+            )
+
+            return
+
+
+        result = confirm_creator_group_link_request(
+            pending_id,
+            user_id
+        )
+
+        status = result.get("status")
+
+
+        if status == "confirmed":
+
+            await query.message.reply_text(
+                "✅ Grupo vinculado correctamente.\n\n"
+                "El panel de gestión se activó para esta comunidad."
+            )
+
+            await query.message.reply_text(
+                "📦 Puedes continuar configurando tu comunidad desde el panel.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📦 Configurar comunidad",
+                        callback_data=f"configure_community_{result.get('request_id')}"
+                    )],
+                    [InlineKeyboardButton(
+                        "🏠 Inicio",
+                        callback_data="public_back_start"
+                    )]
+                ])
+            )
+
+            try:
+
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(
+                        "✅ Grupo vinculado por creator\n\n"
+                        f"Grupo: {result.get('group_name')}\n"
+                        f"Telegram ID: {result.get('telegram_group_id')}\n"
+                        f"ID interno: {result.get('group_id')}\n"
+                        f"Usuario: {user_id}\n"
+                        f"Solicitud: #{result.get('request_id')}"
+                    )
+                )
+
+            except Exception as e:
+
+                print("Error avisando admin de vinculación:", e)
+
+            return
+
+
+        if status == "not_owner":
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        if status == "owned_by_other":
+
+            await query.message.reply_text(
+                "⛔ Este grupo ya está vinculado a otra comunidad."
+            )
+
+            return
+
+
+        if status == "no_capacity":
+
+            await query.message.reply_text(
+                "Has alcanzado el cupo máximo de grupos de tu suscripción."
+            )
+
+            return
+
+
+        if status == "not_pending":
+
+            await query.message.reply_text(
+                "⚠️ Esta vinculación ya fue procesada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "⚠️ No se pudo confirmar esta vinculación. Vuelve a añadir el bot desde tu panel de configuración."
+        )
+
+        return
+
+
+    if data.startswith("cancel_creator_group_link_"):
+
+        try:
+
+            pending_id = int(data.replace("cancel_creator_group_link_", "", 1))
+
+        except Exception:
+
+            await query.message.reply_text(
+                "❌ Solicitud de vinculación no válida."
+            )
+
+            return
+
+
+        result = cancel_creator_group_link_request(
+            pending_id,
+            user_id
+        )
+
+        status = result.get("status")
+
+
+        if status == "cancelled":
+
+            telegram_group_id = result.get("telegram_group_id")
+
+            await query.message.reply_text(
+                "❌ Vinculación cancelada.\n\n"
+                "No se ha asociado este grupo a tu comunidad."
+            )
+
+            try:
+
+                await context.bot.send_message(
+                    chat_id=telegram_group_id,
+                    text="⚠️ La vinculación fue cancelada. El bot saldrá del grupo."
+                )
+
+            except Exception as e:
+
+                print("Error avisando grupo de cancelación:", e)
+
+
+            await leave_chat_safely(
+                context,
+                telegram_group_id
+            )
+
+            return
+
+
+        if status == "not_owner":
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        if status == "not_pending":
+
+            await query.message.reply_text(
+                "⚠️ Esta vinculación ya fue procesada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "⚠️ No encontré esta vinculación pendiente."
+        )
+
+        return
 
 
     if data in (
@@ -14639,10 +14829,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Flujo recomendado:\n\n"
             "1️⃣ Añade este bot a tu grupo o canal.\n"
             "2️⃣ Dale permisos de administrador para gestionar enlaces, usuarios y mensajes de acceso.\n"
-            "3️⃣ Espera 30 segundos mientras el bot valida autorización y cupo.\n"
-            "4️⃣ Si todo está correcto, el bot te enviará el ID del grupo por privado. Suele empezar por -100.\n"
-            "5️⃣ Vuelve a este panel y pega el ID aquí si hace falta para completar la configuración.\n\n"
-            "Si ya recibiste el ID, envíalo ahora."
+            "3️⃣ Espera 30 segundos.\n"
+            "4️⃣ El bot detectará automáticamente el ID del grupo.\n"
+            "5️⃣ Recibirás un mensaje privado para confirmar la vinculación.\n\n"
+            "No necesitas usar bots externos para obtener el ID.\n\n"
+            "Si quieres, puedes enviar aquí el link del grupo como referencia. "
+            "El link no se usará para sacar el ID real; el ID real se detecta cuando añades el bot al grupo."
         )
 
         return
