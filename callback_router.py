@@ -1098,6 +1098,18 @@ COMMERCIAL_PLAN_FIELDS = [
 ]
 
 
+COMMERCIAL_REQUEST_MESSAGE_FIELDS = [
+
+    "id",
+    "commercial_request_id",
+    "sender_type",
+    "sender_id",
+    "message_text",
+    "created_at"
+
+]
+
+
 LEGACY_USER_PLATFORM_STRIPE_CALLBACK_PREFIX = (
     "user_trial_setup_"
     "platform_stripe_"
@@ -1150,6 +1162,16 @@ def row_to_commercial_plan(row):
 
 
     return dict(zip(COMMERCIAL_PLAN_FIELDS, row))
+
+
+def row_to_commercial_request_message(row):
+
+    if not row:
+
+        return None
+
+
+    return dict(zip(COMMERCIAL_REQUEST_MESSAGE_FIELDS, row))
 
 
 def format_commercial_request_type(request_type):
@@ -2795,6 +2817,63 @@ def fetch_commercial_request(request_id):
     return row_to_commercial_request(row)
 
 
+def create_commercial_request_message(request_id, sender_type, sender_id, message_text):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            INSERT INTO commercial_request_messages
+            (
+                commercial_request_id,
+                sender_type,
+                sender_id,
+                message_text
+            )
+            VALUES (%s, %s, %s, %s)
+            RETURNING {", ".join(COMMERCIAL_REQUEST_MESSAGE_FIELDS)}
+
+        """, (
+            request_id,
+            sender_type,
+            sender_id,
+            message_text
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_commercial_request_message(row)
+
+
+def fetch_commercial_request_messages(request_id, limit=10):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(COMMERCIAL_REQUEST_MESSAGE_FIELDS)}
+            FROM commercial_request_messages
+            WHERE commercial_request_id=%s
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+
+        """, (
+            request_id,
+            limit
+        ))
+
+        rows = cur.fetchall()
+
+
+    messages = [
+        row_to_commercial_request_message(row)
+        for row in rows
+    ]
+
+    return list(reversed(messages))
+
+
 def fetch_active_commercial_plans(product_type):
 
     with conn.cursor() as cur:
@@ -3554,29 +3633,10 @@ def build_commercial_request_detail_text(request_row):
 
 def build_commercial_contact_button(request_row):
 
-    username = (request_row.get("username") or "").strip()
-    contact_text = (request_row.get("contact_text") or "").strip()
-
-
-    if username and username != "-" and username.lower() != "sin username":
-
-        username = username.lstrip("@")
-
-        return InlineKeyboardButton(
-            "💬 Hablar con solicitante",
-            url=f"https://t.me/{username}"
-        )
-
-
-    if contact_text.startswith("@") and len(contact_text) > 1:
-
-        return InlineKeyboardButton(
-            "💬 Hablar con solicitante",
-            url=f"https://t.me/{contact_text.lstrip('@')}"
-        )
-
-
-    return None
+    return InlineKeyboardButton(
+        "💬 Hablar con solicitante",
+        callback_data=f"admin_commercial_chat_{request_row.get('id')}"
+    )
 
 
 def build_commercial_advanced_review_keyboard(request_row):
@@ -3586,9 +3646,7 @@ def build_commercial_advanced_review_keyboard(request_row):
     contact_button = build_commercial_contact_button(request_row)
 
 
-    if contact_button:
-
-        keyboard.append([contact_button])
+    keyboard.append([contact_button])
 
 
     keyboard.append([
@@ -3619,7 +3677,9 @@ def build_commercial_review_keyboard(request_row):
 
     request_id = request_row.get("id")
     request_type = request_row.get("request_type")
-    keyboard = []
+    keyboard = [
+        [build_commercial_contact_button(request_row)]
+    ]
 
 
     if is_commercial_request_advanced(request_row):
@@ -3684,6 +3744,90 @@ def build_commercial_review_keyboard(request_row):
     ])
 
     return keyboard
+
+
+def build_commercial_request_chat_text(request_row, messages):
+
+    request_id = request_row.get("id")
+    title = get_commercial_request_title(request_row)
+
+
+    lines = [
+        "💬 Chat de solicitud comercial",
+        "",
+        f"Solicitud: #{request_id}",
+        f"Solicitante: {request_row.get('user_id') or '-'}",
+        f"Proyecto: {title}",
+        ""
+    ]
+
+
+    if not messages:
+
+        lines.append("Todavía no hay mensajes en esta conversación.")
+
+    else:
+
+        lines.append("Historial reciente:")
+
+
+        for message in messages:
+
+            sender_label = (
+                "Admin"
+                if message.get("sender_type") == "admin"
+                else "Solicitante"
+            )
+            created_at = format_commercial_datetime(message.get("created_at"))
+            text = (message.get("message_text") or "").strip()
+
+            lines.append(
+                "\n"
+                f"{sender_label} · {created_at}\n"
+                f"{text}"
+            )
+
+
+    return "\n".join(lines)
+
+
+def build_admin_commercial_request_chat_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+
+        [InlineKeyboardButton(
+            "✍️ Responder",
+            callback_data=f"admin_commercial_reply_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "📩 Ver solicitud",
+            callback_data=f"admin_commercial_review_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_commercial_requests"
+        )]
+
+    ])
+
+
+def build_user_commercial_request_chat_keyboard(request_id):
+
+    return InlineKeyboardMarkup([
+
+        [InlineKeyboardButton(
+            "Responder solicitud",
+            callback_data=f"commercial_request_chat_{request_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🏠 Inicio",
+            callback_data="public_back_start"
+        )]
+
+    ])
 
 
 def build_commercial_group_limit_text(request_row):
@@ -4464,6 +4608,139 @@ async def handle_admin_trial_visibility_approval(
                 callback_data="admin_commercial_requests"
             )]
         ])
+    )
+
+
+def clear_commercial_request_chat_state(context):
+
+    context.user_data.pop("replying_commercial_request", None)
+    context.user_data.pop("replying_commercial_request_as", None)
+
+
+def start_commercial_request_chat_reply(context, request_id, sender_type):
+
+    context.user_data["replying_commercial_request"] = request_id
+    context.user_data["replying_commercial_request_as"] = sender_type
+    context.user_data["support_mode"] = False
+    context.user_data["support_lookup_mode"] = False
+    context.user_data.pop("replying_support_ticket", None)
+
+
+async def receive_commercial_request_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message or not update.message.text:
+
+        return
+
+
+    request_id = context.user_data.get("replying_commercial_request")
+    sender_type = context.user_data.get("replying_commercial_request_as")
+    text = update.message.text.strip()
+    user = update.effective_user
+    request_row = fetch_commercial_request(request_id)
+
+
+    if not request_row:
+
+        clear_commercial_request_chat_state(context)
+
+        await update.message.reply_text(
+            "❌ Solicitud comercial no encontrada."
+        )
+
+        return
+
+
+    if sender_type == "admin":
+
+        if not is_super_admin(user.id):
+
+            clear_commercial_request_chat_state(context)
+
+            await update.message.reply_text(
+                "⛔ No tienes permisos para responder esta solicitud."
+            )
+
+            return
+
+
+        create_commercial_request_message(
+            request_id,
+            "admin",
+            user.id,
+            text
+        )
+
+        clear_commercial_request_chat_state(context)
+
+        await notify_commercial_request_user(
+            context,
+            request_row,
+            "💬 Mensaje sobre tu solicitud comercial:\n\n"
+            f"{text}",
+            reply_markup=build_user_commercial_request_chat_keyboard(request_id)
+        )
+
+        await update.message.reply_text(
+            "✅ Mensaje enviado al solicitante.",
+            reply_markup=build_admin_commercial_request_chat_keyboard(request_id)
+        )
+
+        return
+
+
+    if sender_type == "user":
+
+        if int(request_row.get("user_id") or 0) != int(user.id):
+
+            clear_commercial_request_chat_state(context)
+
+            await update.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        create_commercial_request_message(
+            request_id,
+            "user",
+            user.id,
+            text
+        )
+
+        clear_commercial_request_chat_state(context)
+
+        await notify_commercial_admin(
+            context,
+            "💬 Respuesta sobre solicitud comercial\n\n"
+            f"Solicitud: #{request_id}\n"
+            f"Usuario: {user.id}\n\n"
+            f"{text}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "💬 Abrir conversación",
+                    callback_data=f"admin_commercial_chat_{request_id}"
+                )],
+                [InlineKeyboardButton(
+                    "👁 Ver solicitud",
+                    callback_data=f"admin_commercial_review_{request_id}"
+                )]
+            ])
+        )
+
+        await update.message.reply_text(
+            "✅ Respuesta enviada sobre tu solicitud comercial.",
+            reply_markup=build_user_commercial_request_chat_keyboard(request_id)
+        )
+
+        return
+
+
+    clear_commercial_request_chat_state(context)
+
+    await update.message.reply_text(
+        "⚠️ No se pudo continuar esta conversación comercial."
     )
 
 
@@ -6800,6 +7077,101 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(
                 build_commercial_requests_keyboard(requests)
             )
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_chat_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_chat_"
+        )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        messages = fetch_commercial_request_messages(request_id)
+
+        await query.message.reply_text(
+            build_commercial_request_chat_text(request_row, messages),
+            reply_markup=build_admin_commercial_request_chat_keyboard(request_id)
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_reply_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_reply_"
+        )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        start_commercial_request_chat_reply(
+            context,
+            request_id,
+            "admin"
+        )
+
+        await query.message.reply_text(
+            f"✍️ Responder solicitud comercial #{request_id}\n\n"
+            "Escribe ahora el mensaje para el solicitante."
+        )
+
+        return
+
+
+    if data.startswith("commercial_request_chat_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "commercial_request_chat_"
+        )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        start_commercial_request_chat_reply(
+            context,
+            request_id,
+            "user"
+        )
+
+        await query.message.reply_text(
+            f"💬 Responder solicitud comercial #{request_id}\n\n"
+            "Escribe ahora tu respuesta."
         )
 
         return

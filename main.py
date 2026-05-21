@@ -93,7 +93,11 @@ from code_admin_handler import (
 )
 from admin_panel_handler import admin_panel
 import callback_router as callback_router_module
-from callback_router import button, receive_support_message
+from callback_router import (
+    button,
+    receive_commercial_request_chat_message,
+    receive_support_message
+)
 from code_flow_handler import receive_code
 from admin_input_handler import receive_admin_inputs
 from commercial_form_handler import (
@@ -294,6 +298,10 @@ async def handle_text(update, context):
 
     if context.user_data.get("waiting_code"):
         await receive_admin_inputs(update, context)
+        return
+
+    if context.user_data.get("replying_commercial_request"):
+        await receive_commercial_request_chat_message(update, context)
         return
 
     if (
