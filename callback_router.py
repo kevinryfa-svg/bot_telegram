@@ -1,3 +1,4 @@
+import asyncio
 import os
 import requests
 import secrets
@@ -57,7 +58,8 @@ from formatters import format_tiempo_restante
 from group_registration_handler import (
     cancel_creator_group_link_request,
     confirm_creator_group_link_request,
-    leave_chat_safely
+    leave_chat_safely,
+    verificar_admin_despues
 )
 from invite_link_service import (
     create_telegram_invite_link,
@@ -2847,6 +2849,7 @@ COMMERCIAL_ARCHIVED_STATUSES = (
 
 COMMERCIAL_ADVANCED_CREATOR_SETUP_STATUSES = (
     "awaiting_creator_setup",
+    "pending_group_link",
     "setup_in_progress",
     "setup_ready"
 )
@@ -2952,6 +2955,51 @@ def is_commercial_request_archived(request_row):
 
 
     return (request_row.get("status") or "") in COMMERCIAL_ARCHIVED_STATUSES
+
+
+def fetch_recoverable_creator_request_id(user_id):
+
+    if not user_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id
+            FROM commercial_requests
+            WHERE user_id=%s
+            AND request_type='shared_trial'
+            AND COALESCE(status, 'pending') NOT IN (
+                'pending',
+                'rejected',
+                'archived',
+                'closed',
+                'deleted_irreversible'
+            )
+            AND (
+                status = ANY(%s)
+                OR creator_setup_status = ANY(%s)
+                OR approved_group_id IS NOT NULL
+                OR approved_telegram_group_id IS NOT NULL
+            )
+            ORDER BY reviewed_at DESC NULLS LAST,
+                     updated_at DESC NULLS LAST,
+                     created_at DESC
+            LIMIT 1
+
+        """, (
+            user_id,
+            list(COMMERCIAL_ADVANCED_STATUSES) + ["approved"],
+            list(COMMERCIAL_ADVANCED_CREATOR_SETUP_STATUSES)
+        ))
+
+        row = cur.fetchone()
+
+
+    return row[0] if row else None
 
 
 MARKETPLACE_CATEGORIES = [
@@ -5642,6 +5690,8 @@ def build_creator_setup_panel_text(group_id=None):
 
 def start_creator_setup_state(context, request_id, action):
 
+    clear_creator_onboarding_context(context)
+
     waiting_states = {
         "group": "creator_setup_waiting_group_reference",
         "texts": "creator_setup_waiting_text_name",
@@ -5658,6 +5708,29 @@ def start_creator_setup_state(context, request_id, action):
     context.user_data["creator_setup_step"] = 1
     context.user_data["creator_setup_data"] = {}
     context.user_data["creator_setup_waiting"] = waiting_states.get(action)
+
+
+def clear_creator_onboarding_context(context):
+
+    for key in (
+        "commercial_form",
+        "commercial_form_type",
+        "commercial_form_step",
+        "commercial_form_data",
+        "commercial_form_waiting",
+        "creator_setup",
+        "creator_setup_request_id",
+        "creator_setup_action",
+        "creator_setup_step",
+        "creator_setup_data",
+        "creator_setup_waiting",
+        "marketplace_preview_media",
+        "marketplace_preview_request_id",
+        "marketplace_preview_media_type",
+        "marketplace_preview_target_mode"
+    ):
+
+        context.user_data.pop(key, None)
 
 
 def build_creator_setup_summary(request_row):
@@ -8425,6 +8498,54 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
 
+    if data.startswith("retry_creator_group_verification_"):
+
+        try:
+
+            telegram_group_id = int(
+                data.replace("retry_creator_group_verification_", "", 1)
+            )
+
+        except Exception:
+
+            await query.message.reply_text(
+                "❌ Grupo no válido para reintentar verificación."
+            )
+
+            return
+
+
+        try:
+
+            chat = await context.bot.get_chat(telegram_group_id)
+            group_name = chat.title or str(telegram_group_id)
+
+        except Exception as e:
+
+            print("Error obteniendo grupo para reintentar verificación:", e)
+            group_name = str(telegram_group_id)
+
+
+        asyncio.create_task(
+            verificar_admin_despues(
+                telegram_group_id,
+                group_name,
+                context.bot.id,
+                context,
+                user_id,
+                query.from_user.username,
+                query.from_user.first_name
+            )
+        )
+
+        await query.message.reply_text(
+            "🔁 Reintentando verificación.\n\n"
+            "Comprobaré de nuevo si el bot ya tiene permisos de administrador."
+        )
+
+        return
+
+
     if data.startswith("confirm_creator_group_link_"):
 
         try:
@@ -9184,6 +9305,47 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "request_type=shared_trial"
         )
 
+        recoverable_request_id = fetch_recoverable_creator_request_id(user_id)
+
+        if recoverable_request_id:
+
+            clear_creator_onboarding_context(context)
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "Ya tienes una prueba/configuración pendiente.\n\n"
+                "Puedes continuar donde lo dejaste sin iniciar otra solicitud.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "🔄 Recuperar configuración",
+                        callback_data=f"configure_community_{recoverable_request_id}"
+                    )],
+                    [InlineKeyboardButton(
+                        "📡 Añadir grupo/canal",
+                        callback_data=f"creator_setup_group_{recoverable_request_id}"
+                    )],
+                    [InlineKeyboardButton(
+                        "🎟 Tengo código promocional",
+                        callback_data=f"creator_promo_code_start_{recoverable_request_id}"
+                    )],
+                    [InlineKeyboardButton(
+                        "🛟 Soporte",
+                        callback_data="public_support"
+                    )],
+                    [InlineKeyboardButton(
+                        "🧹 Reiniciar configuración",
+                        callback_data=f"creator_setup_reset_{recoverable_request_id}"
+                    )],
+                    [InlineKeyboardButton(
+                        "🏠 Inicio",
+                        callback_data="public_back_start"
+                    )]
+                ])
+            )
+
+            return
+
         context.user_data["commercial_form"] = True
         context.user_data["commercial_form_type"] = "shared_trial"
         context.user_data["commercial_form_step"] = 1
@@ -9193,7 +9355,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            "Indica el nombre de la comunidad."
+            "Indica el nombre de la comunidad.\n\n"
+            "Ejemplo: GrupoStarsVip"
         )
 
         return
@@ -16444,6 +16607,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
+        clear_creator_onboarding_context(context)
+
         _assigned, group_id = assign_owner_for_commercial_request(request_row)
 
         await send_clean_message(
@@ -16456,6 +16621,101 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     request_row.get("payment_mode")
                 )
             )
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_reset_confirm_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "creator_setup_reset_confirm_"
+        )
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        clear_creator_onboarding_context(context)
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE commercial_requests
+                SET updated_at=NOW()
+                WHERE id=%s
+
+            """, (request_id,))
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🧹 Configuración reiniciada.\n\n"
+            "La prueba y el cupo asignado se mantienen. Puedes continuar desde el panel.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🔄 Recuperar configuración",
+                    callback_data=f"configure_community_{request_id}"
+                )],
+                [InlineKeyboardButton(
+                    "📡 Añadir grupo/canal",
+                    callback_data=f"creator_setup_group_{request_id}"
+                )],
+                [InlineKeyboardButton(
+                    "🏠 Inicio",
+                    callback_data="public_back_start"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("creator_setup_reset_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "creator_setup_reset_"
+        )
+        request_row = fetch_commercial_request(request_id)
+
+        if not commercial_request_belongs_to_user(request_row, user_id):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⛔ Esta solicitud no pertenece a tu usuario."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🧹 Reiniciar configuración\n\n"
+            "Esto limpiará los pasos temporales abiertos en este chat, pero no borrará tu prueba, cupo ni solicitud comercial.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "✅ Confirmar reinicio",
+                    callback_data=f"creator_setup_reset_confirm_{request_id}"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ Volver a configuración",
+                    callback_data=f"configure_community_{request_id}"
+                )]
+            ])
         )
 
         return
@@ -17447,7 +17707,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "📝 Textos y descripción\n\n"
-            "Paso 1: escribe el nombre público de tu comunidad."
+            "Paso 1: escribe el nombre público de tu comunidad.\n\n"
+            "Ejemplo: GrupoStarsVip"
         )
 
         return

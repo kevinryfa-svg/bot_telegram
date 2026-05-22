@@ -37,6 +37,7 @@ APPROVED_COMMERCIAL_STATUSES = (
 
 AUTHORIZED_CREATOR_SETUP_STATUSES = (
     "awaiting_creator_setup",
+    "pending_group_link",
     "setup_in_progress",
     "setup_ready"
 )
@@ -1226,6 +1227,15 @@ def create_creator_group_link_request(user_id, request_id, telegram_group_id, gr
 
         pending_id = cur.fetchone()[0]
 
+        cur.execute("""
+
+            UPDATE commercial_requests
+            SET creator_setup_status='pending_group_link',
+                updated_at=NOW()
+            WHERE id=%s
+
+        """, (request_id,))
+
 
     return pending_id
 
@@ -1720,14 +1730,127 @@ async def verificar_admin_despues(
 
             print("Bot NO es administrador después de 30s.")
 
+            existing_group_id = get_existing_group(group_id)
+            owner_request = None
+
+            if added_by:
+
+                request_row = get_approved_creator_request(
+                    added_by,
+                    group_id
+                )
+
+                if request_row:
+
+                    owner_request = {
+                        **request_row,
+                        "user_id": added_by
+                    }
+
+
+            if not owner_request:
+
+                fallback_request, candidate_count = find_unlinked_owner_request_for_confirmation()
+
+                if fallback_request and can_user_claim_telegram_group(
+                    fallback_request["user_id"],
+                    group_id,
+                    fallback_request["id"]
+                ):
+
+                    owner_request = fallback_request
+
+
+            if owner_request and not can_creator_add_group(
+                owner_request["user_id"],
+                existing_group_id
+            ):
+
+                await reject_group_registration(
+                    context,
+                    group_id,
+                    group_name,
+                    added_by,
+                    "⚠️ Has alcanzado el cupo máximo de grupos de tu suscripción. El bot saldrá del grupo.",
+                    "Has alcanzado el cupo máximo de grupos de tu suscripción.",
+                    "⚠️ Creator sin cupo intentó añadir un grupo."
+                )
+
+                return
+
+
+            if owner_request:
+
+                pending_id = create_creator_group_link_request(
+                    owner_request["user_id"],
+                    owner_request["id"],
+                    group_id,
+                    group_name
+                )
+
+                await safe_send(
+                    context,
+                    group_id,
+                    (
+                        "⚠️ Necesito permisos de administrador para terminar la configuración.\n\n"
+                        "Dame permisos de administrador y luego pulsa Reintentar verificación desde el chat privado."
+                    )
+                )
+
+                try:
+
+                    await context.bot.send_message(
+                        chat_id=owner_request["user_id"],
+                        text=(
+                            "Necesito permisos de administrador.\n\n"
+                            f"Grupo: {group_name}\n"
+                            f"ID: {group_id}\n\n"
+                            "Cuando me los des, pulsa Reintentar verificación."
+                        ),
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(
+                                "🔁 Reintentar verificación",
+                                callback_data=f"retry_creator_group_verification_{group_id}"
+                            )],
+                            [InlineKeyboardButton(
+                                "✅ Confirmar grupo",
+                                callback_data=f"confirm_creator_group_link_{pending_id}"
+                            )],
+                            [InlineKeyboardButton(
+                                "📦 Ver estado",
+                                callback_data=f"configure_community_{owner_request['id']}"
+                            )]
+                        ])
+                    )
+
+                except Exception as e:
+
+                    print("Error avisando owner por falta de admin:", e)
+
+
+                await safe_send(
+                    context,
+                    ADMIN_ID,
+                    (
+                        "⚠️ Grupo comercial pendiente de permisos de administrador\n\n"
+                        f"Grupo: {group_name}\n"
+                        f"Telegram ID: {group_id}\n"
+                        f"Owner user_id: {owner_request['user_id']}\n"
+                        f"Solicitud: #{owner_request['id']}"
+                    )
+                )
+
+                return
+
+
             await reject_group_registration(
                 context,
                 group_id,
                 group_name,
                 added_by,
-                "⚠️ No tengo permisos de administrador.\n\nSaldré del grupo en este momento.",
-                "⚠️ El bot no quedó como administrador del grupo. Añádelo de nuevo con permisos de administrador.",
-                "⚠️ BOT SALIENDO DEL GRUPO\n\nNo fue asignado como administrador."
+                "⚠️ No tienes una solicitud aprobada para añadir este bot a esta comunidad. El bot saldrá del grupo.",
+                "⛔ No tienes aprobado añadir el bot a un grupo. Solicita aprobación desde /start.",
+                "⚠️ BOT AÑADIDO POR USUARIO NO AUTORIZADO"
             )
 
             return

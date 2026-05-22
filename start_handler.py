@@ -115,6 +115,117 @@ def expired_community_message(days_left=None):
     return text
 
 
+RECOVERABLE_CREATOR_STATUSES = (
+    "approved",
+    "trial_active",
+    "awaiting_creator_setup",
+    "setup_in_progress",
+    "setup_ready",
+    "active",
+    "expired_pending_reactivation"
+)
+
+
+RECOVERABLE_CREATOR_SETUP_STATUSES = (
+    "awaiting_creator_setup",
+    "pending_group_link",
+    "setup_in_progress",
+    "setup_ready"
+)
+
+
+def fetch_pending_creator_group_link(user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   commercial_request_id,
+                   telegram_group_id,
+                   group_name
+            FROM creator_group_link_requests
+            WHERE user_id=%s
+            AND status='pending'
+            ORDER BY updated_at DESC NULLS LAST,
+                     created_at DESC
+            LIMIT 1
+
+        """, (user_id,))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return None
+
+
+    return {
+        "id": row[0],
+        "request_id": row[1],
+        "telegram_group_id": row[2],
+        "group_name": row[3]
+    }
+
+
+def fetch_recoverable_creator_request(user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   status,
+                   creator_setup_status,
+                   approved_group_id,
+                   approved_telegram_group_id,
+                   trial_ends_at
+            FROM commercial_requests
+            WHERE user_id=%s
+            AND request_type='shared_trial'
+            AND COALESCE(status, 'pending') NOT IN (
+                'pending',
+                'rejected',
+                'archived',
+                'closed',
+                'deleted_irreversible'
+            )
+            AND (
+                status = ANY(%s)
+                OR creator_setup_status = ANY(%s)
+                OR approved_group_id IS NOT NULL
+                OR approved_telegram_group_id IS NOT NULL
+            )
+            ORDER BY reviewed_at DESC NULLS LAST,
+                     updated_at DESC NULLS LAST,
+                     created_at DESC
+            LIMIT 1
+
+        """, (
+            user_id,
+            list(RECOVERABLE_CREATOR_STATUSES),
+            list(RECOVERABLE_CREATOR_SETUP_STATUSES)
+        ))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return None
+
+
+    return {
+        "id": row[0],
+        "status": row[1],
+        "creator_setup_status": row[2],
+        "approved_group_id": row[3],
+        "approved_telegram_group_id": row[4],
+        "trial_ends_at": row[5]
+    }
+
+
 def hide_group_for_expired_request(cur, approved_group_id, approved_telegram_group_id):
 
     if approved_group_id:
@@ -551,6 +662,104 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     # =========================
 
     keyboard = []
+    creator_recovery_text = ""
+
+
+    try:
+
+        pending_group_link = fetch_pending_creator_group_link(user_id)
+        recoverable_request = fetch_recoverable_creator_request(user_id)
+
+    except Exception as e:
+
+        print("Error cargando recuperación creator:", e)
+        pending_group_link = None
+        recoverable_request = None
+
+
+    if pending_group_link:
+
+        creator_recovery_text = (
+            "He detectado un grupo pendiente de confirmar.\n\n"
+            f"Grupo: {pending_group_link.get('group_name') or '-'}\n"
+            f"ID: {pending_group_link.get('telegram_group_id') or '-'}"
+        )
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "✅ Confirmar grupo",
+                callback_data=f"confirm_creator_group_link_{pending_group_link['id']}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "❌ Cancelar vinculación",
+                callback_data=f"cancel_creator_group_link_{pending_group_link['id']}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "📦 Ver estado",
+                callback_data=f"configure_community_{pending_group_link['request_id']}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🛟 Soporte",
+                callback_data=CALLBACK_SUPPORT
+            ),
+            InlineKeyboardButton(
+                "🏠 Inicio",
+                callback_data="public_back_start"
+            )
+        ])
+
+    elif recoverable_request:
+
+        request_id = recoverable_request["id"]
+        creator_recovery_text = "Ya tienes una prueba/configuración pendiente."
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🔄 Recuperar configuración",
+                callback_data=f"configure_community_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "📡 Añadir grupo/canal",
+                callback_data=f"creator_setup_group_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🎟 Tengo código promocional",
+                callback_data=f"creator_promo_code_start_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🧹 Reiniciar configuración",
+                callback_data=f"creator_setup_reset_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🛟 Soporte",
+                callback_data=CALLBACK_SUPPORT
+            ),
+            InlineKeyboardButton(
+                "🏠 Inicio",
+                callback_data="public_back_start"
+            )
+        ])
 
 
     keyboard.append([
@@ -831,6 +1040,11 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     else:
 
         mensaje = PUBLIC_START_TEXT_ES
+
+
+    if creator_recovery_text:
+
+        mensaje = f"{creator_recovery_text}\n\n{mensaje}"
 
 
     message = update.message or (
