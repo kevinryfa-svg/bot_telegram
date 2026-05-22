@@ -1,4 +1,5 @@
 import asyncio
+import json
 import requests
 
 from telegram import (
@@ -195,6 +196,270 @@ async def capture_group_preview_video(update: Update, context: ContextTypes.DEFA
             group_row["group_id"],
             update.message.message_id
         )
+
+
+def fetch_active_text_backup_configs(source_telegram_group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT c.id,
+                   c.owner_user_id,
+                   c.source_group_id,
+                   c.source_telegram_group_id,
+                   c.destination_group_id,
+                   c.destination_telegram_group_id
+            FROM group_backup_configs c
+            JOIN groups source_group
+            ON source_group.id = c.source_group_id
+            JOIN groups destination_group
+            ON destination_group.id = c.destination_group_id
+            WHERE c.source_telegram_group_id=%s
+            AND c.status='active'
+            AND c.mode='text'
+            AND COALESCE(source_group.bot_is_admin, FALSE)=TRUE
+            AND COALESCE(destination_group.bot_is_admin, FALSE)=TRUE
+            AND COALESCE(source_group.is_active, TRUE)=TRUE
+            AND COALESCE(destination_group.is_active, TRUE)=TRUE
+
+        """, (source_telegram_group_id,))
+
+        return cur.fetchall()
+
+
+def record_backup_message(
+    cur,
+    config_id,
+    source_group_id,
+    destination_group_id,
+    source_message_id,
+    destination_message_id,
+    status,
+    error_message=None
+):
+
+    cur.execute("""
+
+        INSERT INTO backup_message_log
+        (
+            config_id,
+            source_group_id,
+            destination_group_id,
+            source_message_id,
+            destination_message_id,
+            message_type,
+            status,
+            error_message
+        )
+        VALUES (%s, %s, %s, %s, %s, 'text', %s, %s)
+
+    """, (
+        config_id,
+        source_group_id,
+        destination_group_id,
+        source_message_id,
+        destination_message_id,
+        status,
+        error_message
+    ))
+
+
+def record_backup_error(cur, config_id, owner_user_id, error_type, message, metadata=None):
+
+    cur.execute("""
+
+        INSERT INTO backup_errors
+        (
+            config_id,
+            owner_user_id,
+            severity,
+            error_type,
+            message,
+            metadata
+        )
+        VALUES (%s, %s, 'warning', %s, %s, %s::jsonb)
+
+    """, (
+        config_id,
+        owner_user_id,
+        error_type,
+        message,
+        json.dumps(
+            metadata or {},
+            default=str,
+            ensure_ascii=False
+        )
+    ))
+
+
+async def handle_group_backup_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message:
+
+        return
+
+
+    if not update.message.text:
+
+        return
+
+
+    if not update.effective_chat or update.effective_chat.type == "private":
+
+        return
+
+
+    if update.effective_user and update.effective_user.id == context.bot.id:
+
+        return
+
+
+    source_telegram_group_id = update.effective_chat.id
+    source_message_id = update.message.message_id
+    configs = fetch_active_text_backup_configs(source_telegram_group_id)
+
+
+    if not configs:
+
+        return
+
+
+    for config in configs:
+
+        (
+            config_id,
+            owner_user_id,
+            source_group_id,
+            _source_telegram_group_id,
+            destination_group_id,
+            destination_telegram_group_id
+        ) = config
+
+
+        try:
+
+            sent_message = await context.bot.send_message(
+                chat_id=destination_telegram_group_id,
+                text=update.message.text
+            )
+
+            destination_message_id = (
+                sent_message.message_id
+                if sent_message
+                else None
+            )
+
+
+            with conn.cursor() as cur:
+
+                record_backup_message(
+                    cur,
+                    config_id,
+                    source_group_id,
+                    destination_group_id,
+                    source_message_id,
+                    destination_message_id,
+                    "copied"
+                )
+
+                cur.execute("""
+
+                    UPDATE group_backup_configs
+                    SET last_message_at=NOW(),
+                        last_checked_at=NOW(),
+                        updated_at=NOW()
+                    WHERE id=%s
+
+                """, (config_id,))
+
+                conn.commit()
+
+
+            log_event(
+                "backup_message_copied",
+                category="backup",
+                severity="info",
+                scope="group",
+                group_id=source_group_id,
+                telegram_group_id=source_telegram_group_id,
+                actor_user_id=update.effective_user.id if update.effective_user else None,
+                target_user_id=owner_user_id,
+                message="Mensaje de texto copiado por backup premium.",
+                metadata={
+                    "config_id": config_id,
+                    "destination_group_id": destination_group_id,
+                    "destination_telegram_group_id": destination_telegram_group_id,
+                    "source_message_id": source_message_id,
+                    "destination_message_id": destination_message_id
+                }
+            )
+
+        except Exception as e:
+
+            error_message = str(e)
+
+
+            try:
+
+                with conn.cursor() as cur:
+
+                    record_backup_message(
+                        cur,
+                        config_id,
+                        source_group_id,
+                        destination_group_id,
+                        source_message_id,
+                        None,
+                        "failed",
+                        error_message
+                    )
+
+                    record_backup_error(
+                        cur,
+                        config_id,
+                        owner_user_id,
+                        "telegram_send_error",
+                        "No se pudo copiar un mensaje de texto al grupo destino.",
+                        {
+                            "source_group_id": source_group_id,
+                            "destination_group_id": destination_group_id,
+                            "destination_telegram_group_id": destination_telegram_group_id,
+                            "source_message_id": source_message_id,
+                            "error": error_message
+                        }
+                    )
+
+                    conn.commit()
+
+            except Exception as log_error:
+
+                conn.rollback()
+
+                print(
+                    "Error registrando fallo de backup:",
+                    log_error
+                )
+
+
+            log_event(
+                "backup_message_failed",
+                category="backup",
+                severity="warning",
+                scope="group",
+                group_id=source_group_id,
+                telegram_group_id=source_telegram_group_id,
+                actor_user_id=update.effective_user.id if update.effective_user else None,
+                target_user_id=owner_user_id,
+                message="Falló la copia de mensaje de texto por backup premium.",
+                metadata={
+                    "config_id": config_id,
+                    "destination_group_id": destination_group_id,
+                    "destination_telegram_group_id": destination_telegram_group_id,
+                    "source_message_id": source_message_id,
+                    "error": error_message
+                }
+            )
 
 
 def get_approved_creator_request(user_id, telegram_group_id):

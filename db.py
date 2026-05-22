@@ -615,6 +615,140 @@ def create_tables():
 
 
         # =========================
+        # BACKUP PREMIUM — FASE 1
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS backup_subscriptions (
+
+            id SERIAL PRIMARY KEY,
+
+            owner_user_id BIGINT NOT NULL,
+
+            status TEXT DEFAULT 'inactive',
+
+            plan_type TEXT DEFAULT 'text',
+
+            billing_provider TEXT DEFAULT 'manual',
+
+            stripe_subscription_id TEXT,
+
+            current_period_start TIMESTAMP,
+
+            current_period_end TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS group_backup_configs (
+
+            id SERIAL PRIMARY KEY,
+
+            owner_user_id BIGINT NOT NULL,
+
+            source_group_id INTEGER NOT NULL,
+
+            source_telegram_group_id BIGINT NOT NULL,
+
+            destination_group_id INTEGER NOT NULL,
+
+            destination_telegram_group_id BIGINT NOT NULL,
+
+            subscription_id INTEGER,
+
+            mode TEXT DEFAULT 'text',
+
+            status TEXT DEFAULT 'inactive',
+
+            copy_topics BOOLEAN DEFAULT FALSE,
+
+            last_checked_at TIMESTAMP,
+
+            last_message_at TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (owner_user_id, source_group_id, destination_group_id)
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS backup_message_log (
+
+            id SERIAL PRIMARY KEY,
+
+            config_id INTEGER NOT NULL,
+
+            source_group_id INTEGER,
+
+            destination_group_id INTEGER,
+
+            source_message_id INTEGER,
+
+            destination_message_id INTEGER,
+
+            source_topic_id INTEGER,
+
+            destination_topic_id INTEGER,
+
+            message_type TEXT,
+
+            status TEXT,
+
+            error_code TEXT,
+
+            error_message TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS backup_errors (
+
+            id SERIAL PRIMARY KEY,
+
+            config_id INTEGER,
+
+            owner_user_id BIGINT,
+
+            severity TEXT DEFAULT 'warning',
+
+            error_type TEXT,
+
+            message TEXT,
+
+            metadata JSONB,
+
+            resolved BOOLEAN DEFAULT FALSE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA CONFIG
         # =========================
 
