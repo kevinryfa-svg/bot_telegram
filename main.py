@@ -78,6 +78,7 @@ from expiration_worker import check_expirations
 from group_registration_handler import (
     capture_group_preview_video,
     detect_bot_added,
+    handle_backup_destination_token_command,
     handle_group_backup_media,
     handle_group_backup_text
 )
@@ -1518,6 +1519,14 @@ def main():
             filters.LOCATION,
             receive_location_gate
         )
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & filters.TEXT & filters.Regex(r"^/backup_"),
+            handle_backup_destination_token_command
+        ),
+        group=0
     )
 
     telegram_app.add_handler(

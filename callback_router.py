@@ -57,6 +57,7 @@ from db import conn
 from formatters import format_tiempo_restante
 from group_registration_handler import (
     cancel_creator_group_link_request,
+    confirm_backup_destination_token,
     confirm_creator_group_link_request,
     leave_chat_safely,
     verificar_admin_despues
@@ -1152,7 +1153,8 @@ def fetch_backup_config(config_id, user_id):
                    destination_group_id,
                    destination_telegram_group_id,
                    mode,
-                   status
+                   status,
+                   COALESCE(show_original_author, FALSE)
             FROM group_backup_configs
             WHERE id=%s
             AND owner_user_id=%s
@@ -1179,7 +1181,8 @@ def fetch_owner_backup_configs(user_id):
                    dg.name,
                    c.last_message_at,
                    c.source_group_id,
-                   c.destination_group_id
+                   c.destination_group_id,
+                   COALESCE(c.show_original_author, FALSE)
             FROM group_backup_configs c
             LEFT JOIN groups sg
             ON sg.id = c.source_group_id
@@ -1223,7 +1226,8 @@ def format_backup_panel_text(user_id):
             destination_name,
             last_message_at,
             _source_group_id,
-            _destination_group_id
+            _destination_group_id,
+            show_original_author
         ) = config
 
         text += (
@@ -1232,6 +1236,7 @@ def format_backup_panel_text(user_id):
             f"Origen: {source_name or '-'}\n"
             f"Destino: {destination_name or '-'}\n"
             f"Modo: {format_backup_mode(mode)}\n"
+            f"Mostrar autor original: {'Activado' if show_original_author else 'Desactivado'}\n"
             f"Último mensaje copiado: {last_message_at or '-'}\n\n"
         )
 
@@ -1246,6 +1251,11 @@ def format_backup_mode(mode):
         return "Texto + fotos"
 
 
+    if mode == "text_photos_videos":
+
+        return "Texto + fotos + vídeos"
+
+
     return "Solo texto"
 
 
@@ -1255,6 +1265,8 @@ def build_backup_panel_keyboard():
         [InlineKeyboardButton("▶️ Activar backup", callback_data="owner_backup_activate")],
         [InlineKeyboardButton("⏸ Pausar backup", callback_data="owner_backup_pause")],
         [InlineKeyboardButton("⚙️ Cambiar modo", callback_data="owner_backup_change_mode")],
+        [InlineKeyboardButton("🔗 Vincular grupo destino con código", callback_data="owner_backup_destination_token")],
+        [InlineKeyboardButton("👤 Mostrar autor original", callback_data="owner_backup_toggle_author")],
         [InlineKeyboardButton("🔁 Cambiar destino", callback_data="owner_backup_change_destination")],
         [InlineKeyboardButton("⚠️ Últimos errores", callback_data="owner_backup_errors")],
         [InlineKeyboardButton("📜 Últimos mensajes copiados", callback_data="owner_backup_messages")],
@@ -1317,7 +1329,8 @@ def build_backup_config_select_keyboard(configs, prefix, back_callback="owner_ba
             destination_name,
             _last_message_at,
             _source_group_id,
-            _destination_group_id
+            _destination_group_id,
+            _show_original_author
         ) = config
 
         keyboard.append([
@@ -1338,8 +1351,79 @@ def build_backup_mode_keyboard(config_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Solo texto", callback_data=f"owner_backup_set_mode_{config_id}_text")],
         [InlineKeyboardButton("Texto + fotos", callback_data=f"owner_backup_set_mode_{config_id}_text_photos")],
+        [InlineKeyboardButton("Texto + fotos + vídeos", callback_data=f"owner_backup_set_mode_{config_id}_text_photos_videos")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="owner_backup_panel")]
     ])
+
+
+def generate_backup_destination_token():
+
+    alphabet = string.ascii_uppercase + string.digits
+
+    return "BACKUP-" + "".join(
+        secrets.choice(alphabet)
+        for _ in range(5)
+    )
+
+
+def create_backup_destination_token(owner_user_id, source_group_id, source_telegram_group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE backup_destination_tokens
+            SET status='expired',
+                updated_at=NOW()
+            WHERE owner_user_id=%s
+            AND source_group_id=%s
+            AND status='pending'
+
+        """, (
+            owner_user_id,
+            source_group_id
+        ))
+
+
+        for _attempt in range(5):
+
+            token = generate_backup_destination_token()
+
+            try:
+
+                cur.execute("""
+
+                    INSERT INTO backup_destination_tokens
+                    (
+                        token,
+                        owner_user_id,
+                        source_group_id,
+                        source_telegram_group_id,
+                        status,
+                        expires_at,
+                        updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, 'pending', NOW() + INTERVAL '24 hours', NOW())
+                    RETURNING id, token, expires_at
+
+                """, (
+                    token,
+                    owner_user_id,
+                    source_group_id,
+                    source_telegram_group_id
+                ))
+
+                row = cur.fetchone()
+                conn.commit()
+
+                return row
+
+            except Exception:
+
+                conn.rollback()
+
+
+    return None
 
 
 def fetch_backup_recent_messages(user_id, limit=20):
@@ -9828,7 +9912,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data in (
         "owner_backup_activate",
-        "owner_backup_change_destination"
+        "owner_backup_change_destination",
+        "owner_backup_destination_token"
     ):
 
         groups = [
@@ -9838,10 +9923,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
 
-        if len(groups) < 2:
+        if not groups:
 
             await query.message.reply_text(
-                "⚠️ Necesitas al menos dos grupos propios con el bot añadido como administrador: origen y destino.",
+                "⚠️ Necesitas al menos un grupo origen propio con el bot añadido como administrador.",
                 reply_markup=build_backup_panel_keyboard()
             )
 
@@ -9851,7 +9936,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            "🛡 Backup premium\n\nSelecciona el grupo origen.",
+            "🛡 Backup premium\n\nSelecciona el grupo origen. Después generaré un código para vincular el grupo destino.",
             reply_markup=build_backup_group_select_keyboard(
                 groups,
                 "owner_backup_source_"
@@ -9881,7 +9966,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             "⚙️ Cambiar modo de backup\n\n"
             "Solo texto copia mensajes de texto.\n"
-            "Texto + fotos copia texto, captions y fotos nuevas sin descargar archivos.",
+            "Texto + fotos copia texto, captions y fotos nuevas sin descargar archivos.\n"
+            "Texto + fotos + vídeos añade vídeos nuevos usando Telegram, sin descargar archivos.",
             reply_markup=build_backup_config_select_keyboard(
                 configs,
                 "owner_backup_mode_config_"
@@ -9924,7 +10010,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             "⚙️ Elige el modo de backup\n\n"
             "Solo texto: copia únicamente mensajes de texto.\n"
-            "Texto + fotos: copia mensajes de texto, captions y fotos nuevas usando Telegram, sin descargar imágenes.",
+            "Texto + fotos: copia mensajes de texto, captions y fotos nuevas usando Telegram, sin descargar imágenes.\n"
+            "Texto + fotos + vídeos: también copia vídeos nuevos con copy_message, sin guardar binarios.",
             reply_markup=build_backup_mode_keyboard(config_id)
         )
 
@@ -9948,7 +10035,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if selected_mode not in (
             "text",
-            "text_photos"
+            "text_photos",
+            "text_photos_videos"
         ):
 
             await query.message.reply_text("❌ Modo de backup no válido.")
@@ -10015,6 +10103,126 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "owner_backup_toggle_author":
+
+        configs = fetch_owner_backup_configs(user_id)
+
+
+        if not configs:
+
+            await query.message.reply_text(
+                "⚠️ No tienes ninguna configuración de backup para cambiar esta opción.",
+                reply_markup=build_backup_panel_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "👤 Mostrar autor original\n\n"
+            "Elige la configuración donde quieres activar o desactivar la atribución.",
+            reply_markup=build_backup_config_select_keyboard(
+                configs,
+                "owner_backup_author_config_"
+            )
+        )
+
+        return
+
+
+    if data.startswith("owner_backup_author_config_"):
+
+        try:
+
+            config_id = int(
+                data.replace("owner_backup_author_config_", "", 1)
+            )
+
+        except Exception:
+
+            await query.message.reply_text("❌ Configuración de backup no válida.")
+
+            return
+
+
+        config = fetch_backup_config(config_id, user_id)
+
+
+        if not config:
+
+            await query.message.reply_text(
+                "⛔ Esta configuración de backup no pertenece a tu panel.",
+                reply_markup=build_backup_panel_keyboard()
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE group_backup_configs
+                SET show_original_author=NOT COALESCE(show_original_author, FALSE),
+                    updated_at=NOW()
+                WHERE id=%s
+                AND owner_user_id=%s
+                RETURNING COALESCE(show_original_author, FALSE)
+
+            """, (
+                config_id,
+                user_id
+            ))
+
+            show_original_author = cur.fetchone()[0]
+            conn.commit()
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Preferencia actualizada.\n\n"
+            f"Mostrar autor original: {'Activado' if show_original_author else 'Desactivado'}",
+            reply_markup=build_backup_panel_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("owner_backup_confirm_destination_"):
+
+        try:
+
+            token_id = int(
+                data.replace("owner_backup_confirm_destination_", "", 1)
+            )
+
+        except Exception:
+
+            await query.message.reply_text("❌ Código de backup no válido.")
+
+            return
+
+
+        result = await confirm_backup_destination_token(
+            token_id,
+            user_id,
+            context
+        )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            result["message"],
+            reply_markup=build_backup_panel_keyboard()
+        )
+
+        return
+
+
     if data.startswith("owner_backup_source_"):
 
         try:
@@ -10047,30 +10255,55 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        destination_groups = [
-            group
-            for group in groups
-            if int(group[0]) != int(source_group_id)
-        ]
+        token_row = create_backup_destination_token(
+            user_id,
+            source_group[0],
+            source_group[2]
+        )
 
 
-        if not destination_groups:
+        if not token_row:
 
             await query.message.reply_text(
-                "⚠️ No tienes otro grupo propio disponible como destino."
+                "❌ No pude generar el código de vinculación del backup.",
+                reply_markup=build_backup_panel_keyboard()
             )
 
             return
 
 
+        token_id, token, expires_at = token_row
+        command = f"/backup_{token}"
+
+
+        log_event(
+            "backup_destination_token_created",
+            category="backup",
+            severity="info",
+            scope="group",
+            group_id=source_group[0],
+            telegram_group_id=source_group[2],
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Token de destino backup creado.",
+            metadata={
+                "token_id": token_id,
+                "expires_at": expires_at
+            }
+        )
+
+
         await send_clean_message(
             context,
             query.message.chat_id,
-            "🛡 Backup premium\n\nSelecciona el grupo destino.",
-            reply_markup=build_backup_group_select_keyboard(
-                destination_groups,
-                f"owner_backup_dest_{source_group_id}_"
-            )
+            "🛡 Backup premium\n\n"
+            f"Origen: {source_group[1] or source_group_id}\n\n"
+            "Crea un grupo nuevo o usa un grupo vacío como destino.\n"
+            "Añade este bot como administrador.\n"
+            "Dentro del grupo destino escribe este comando:\n\n"
+            f"{command}\n\n"
+            "El código caduca en 24 horas y solo puede usarse una vez.",
+            reply_markup=build_backup_panel_keyboard()
         )
 
         return
