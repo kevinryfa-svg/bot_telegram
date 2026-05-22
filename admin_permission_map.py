@@ -8,6 +8,8 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
         "can_manage_users",
         "can_manage_codes",
         "can_manage_groups",
+        "can_manage_admins",
+        "can_manage_plans",
         "can_view_payments",
         "can_manage_payments",
         "can_view_stats",
@@ -25,14 +27,16 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_reset_warnings": ("can_reset_warnings", "can_manage_users"),
     "admin_move_user": (SUPER_ADMIN_ONLY,),
 
-    "menu_codes": ("can_manage_codes",),
-    "admin_create_code": ("can_manage_codes",),
-    "admin_codes": ("can_manage_codes",),
-    "admin_delete_code": ("can_manage_codes",),
+    "menu_codes": (SUPER_ADMIN_ONLY,),
+    "admin_create_code": (SUPER_ADMIN_ONLY,),
+    "admin_codes": (SUPER_ADMIN_ONLY,),
+    "admin_delete_code": (SUPER_ADMIN_ONLY,),
 
     "menu_groups": (
         "can_manage_groups",
         "can_manage_plans",
+        "can_manage_codes",
+        "can_manage_admins",
         "can_edit_group_texts",
         "can_edit_marketplace_preview"
     ),
@@ -40,18 +44,24 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_edit_group": (
         "can_manage_groups",
         "can_manage_plans",
+        "can_manage_codes",
+        "can_manage_admins",
         "can_edit_group_texts",
         "can_edit_marketplace_preview"
     ),
     "admin_view_groups": (
         "can_manage_groups",
         "can_manage_plans",
+        "can_manage_codes",
+        "can_manage_admins",
         "can_edit_group_texts",
         "can_edit_marketplace_preview"
     ),
     "admin_groups_help": (
         "can_manage_groups",
         "can_manage_plans",
+        "can_manage_codes",
+        "can_manage_admins",
         "can_edit_group_texts",
         "can_edit_marketplace_preview"
     ),
@@ -101,9 +111,12 @@ ADMIN_CALLBACK_PREFIX_PERMISSION_MAP = (
     ("edit_group", (
         "can_manage_groups",
         "can_manage_plans",
+        "can_manage_codes",
+        "can_manage_admins",
         "can_edit_group_texts",
         "can_edit_marketplace_preview"
     )),
+    ("group_user_code_", ("can_manage_codes",)),
     ("edit_plan_", ("can_manage_groups", "can_manage_plans")),
     ("delete_group", (SUPER_ADMIN_ONLY,)),
     ("delete_plan_", ("can_manage_groups", "can_manage_plans")),
@@ -123,6 +136,7 @@ ADMIN_CALLBACK_PREFIXES = (
     "add_group_admin_",
     "edit_admin_permissions_",
     "edit_group",
+    "group_user_code_",
     "view_group_plans",
     "add_group_plan",
     "edit_plan_",

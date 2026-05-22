@@ -17,6 +17,7 @@ ADMIN_MENU_COMMERCIAL = "commercial"
 ADMIN_MENU_SUPPORT = "support"
 ADMIN_MENU_GROUP_ADMINS = "group_admins"
 ADMIN_MENU_BACKUP = "backup_premium"
+ADMIN_MENU_OWNER_COMMUNITIES = "owner_communities"
 
 
 ADMIN_MENU_SECTIONS = [
@@ -34,7 +35,20 @@ ADMIN_MENU_SECTIONS = [
         "text": "🎟️ Gestión Accesos",
         "callback_data": "menu_codes",
         "permissions_any": [
-            "can_manage_codes"
+            "super_admin_only"
+        ]
+    },
+    {
+        "key": ADMIN_MENU_OWNER_COMMUNITIES,
+        "text": "🏪 Mis comunidades",
+        "callback_data": "admin_edit_group",
+        "permissions_any": [
+            "can_manage_groups",
+            "can_manage_plans",
+            "can_manage_codes",
+            "can_manage_admins",
+            "can_edit_group_texts",
+            "can_edit_marketplace_preview"
         ]
     },
     {
@@ -127,6 +141,7 @@ ADMIN_HELP_CONTEXT_BY_CALLBACK = {
     "menu_payments": "admin_payments",
     "menu_business": "admin_business",
     "menu_logs": "admin_logs",
+    "admin_edit_group": "admin_groups",
     "owner_backup_panel": "backup_premium",
     "group_admin_panel": "group_admins",
     "admin_commercial_requests": "commercial_admin",

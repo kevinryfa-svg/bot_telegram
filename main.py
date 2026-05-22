@@ -98,6 +98,7 @@ import callback_router as callback_router_module
 from callback_router import (
     button,
     receive_commercial_request_chat_message,
+    receive_group_user_promo_code,
     receive_support_message,
     receive_location_gate
 )
@@ -383,6 +384,10 @@ async def handle_text(update, context):
 
     if context.user_data.get("adding_group_admin"):
         await receive_admin_inputs(update, context)
+        return
+
+    if context.user_data.get("group_user_promo_waiting"):
+        await receive_group_user_promo_code(update, context)
         return
 
     if context.user_data.get("waiting_code"):
