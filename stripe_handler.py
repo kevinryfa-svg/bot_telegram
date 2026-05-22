@@ -6,10 +6,74 @@ from flask import request
 from datetime import datetime, timedelta
 
 from bot_config import TOKEN, ADMIN_ID, STRIPE_WEBHOOK_SECRET
+from audit_log_service import log_event
 from db import conn
 from invite_link_service import create_telegram_invite_link
-from notification_service import send_telegram_message
+from notification_service import notify_super_admins, send_telegram_message
 from rbac_helpers import get_group_owner_user_id
+
+
+def get_payment_owner_user_id(group_id, telegram_group_id):
+
+    owner_user_id = get_group_owner_user_id(group_id)
+
+
+    if owner_user_id:
+
+        return owner_user_id
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT user_id
+                FROM commercial_requests
+                WHERE (
+                    approved_group_id=%s
+                    OR approved_telegram_group_id=%s
+                )
+                AND user_id IS NOT NULL
+                ORDER BY updated_at DESC NULLS LAST,
+                         created_at DESC
+                LIMIT 1
+
+            """, (
+                group_id,
+                telegram_group_id
+            ))
+
+            row = cur.fetchone()
+
+
+        if row:
+
+            return row[0]
+
+    except Exception as e:
+
+        print("Error buscando owner de pago:", e)
+
+
+    return None
+
+
+def format_payment_amount(amount, currency):
+
+    if amount is None:
+
+        return "-"
+
+
+    try:
+
+        return f"{int(amount) / 100:.2f} {(currency or '').upper()}".strip()
+
+    except Exception:
+
+        return f"{amount} {(currency or '').upper()}".strip()
 
 
 # =========================
@@ -42,6 +106,10 @@ def stripe_webhook():
         user_id = int(
             session["metadata"]["telegram_id"]
         )
+        stripe_session_id = session.get("id")
+        stripe_payment_id = session.get("payment_intent") or stripe_session_id
+        amount_total = session.get("amount_total")
+        currency = (session.get("currency") or "").upper() or None
 
 
         # =========================
@@ -63,6 +131,19 @@ def stripe_webhook():
             if banned:
 
                 print("Usuario baneado intentó pagar:", user_id)
+
+                log_event(
+                    "payment_blocked_banned_user",
+                    category="payment",
+                    severity="warning",
+                    actor_user_id=user_id,
+                    target_user_id=user_id,
+                    message="Usuario baneado intentó completar un pago.",
+                    metadata={
+                        "stripe_session_id": stripe_session_id,
+                        "stripe_payment_id": stripe_payment_id
+                    }
+                )
 
                 return "OK"
 
@@ -199,6 +280,23 @@ def stripe_webhook():
 
                 print("ERROR: grupo no encontrado en DB:", group_id)
 
+                log_event(
+                    "payment_group_not_found",
+                    category="payment",
+                    severity="error",
+                    group_id=group_id,
+                    actor_user_id=user_id,
+                    target_user_id=user_id,
+                    message="Pago recibido pero no se encontró el grupo interno.",
+                    metadata={
+                        "stripe_session_id": stripe_session_id,
+                        "stripe_payment_id": stripe_payment_id,
+                        "plan": plan_name,
+                        "amount": amount_total,
+                        "currency": currency
+                    }
+                )
+
                 return "OK"
 
             telegram_group_id = row[0]
@@ -247,6 +345,34 @@ def stripe_webhook():
         if not link:
 
             print("ERROR creando invite link")
+
+            log_event(
+                "payment_invite_link_error",
+                category="payment",
+                severity="error",
+                scope="group",
+                group_id=group_id,
+                telegram_group_id=telegram_group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Pago confirmado pero no se pudo crear invite link.",
+                metadata={
+                    "stripe_session_id": stripe_session_id,
+                    "stripe_payment_id": stripe_payment_id,
+                    "plan": plan_name,
+                    "amount": amount_total,
+                    "currency": currency
+                }
+            )
+
+            notify_super_admins(
+                TOKEN,
+                "⚠️ Pago recibido pero no se pudo crear el link de acceso.\n\n"
+                f"Grupo: {group_name}\n"
+                f"Usuario: {user_id}\n"
+                f"Plan: {plan_name}",
+                fallback_admin_id=ADMIN_ID
+            )
 
             return "OK"
 
@@ -308,9 +434,9 @@ def stripe_webhook():
 
                     user_id,
                     group_id,
-                    session.get("payment_intent") or session.get("id"),
-                    session.get("amount_total"),
-                    (session.get("currency") or "").upper() or None,
+                    stripe_payment_id,
+                    amount_total,
+                    currency,
                     "paid",
                     plan_name
 
@@ -370,46 +496,253 @@ def stripe_webhook():
 
             print("Error guardando invite link:", e)
 
+            log_event(
+                "payment_storage_error",
+                category="payment",
+                severity="error",
+                scope="group",
+                group_id=group_id,
+                telegram_group_id=telegram_group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Pago confirmado pero falló el guardado del acceso/link.",
+                metadata={
+                    "stripe_session_id": stripe_session_id,
+                    "stripe_payment_id": stripe_payment_id,
+                    "plan": plan_name,
+                    "amount": amount_total,
+                    "currency": currency,
+                    "error": str(e)
+                }
+            )
+
+            notify_super_admins(
+                TOKEN,
+                "⚠️ Pago recibido pero falló el guardado del acceso.\n\n"
+                f"Grupo: {group_name}\n"
+                f"Usuario: {user_id}\n"
+                f"Plan: {plan_name}",
+                fallback_admin_id=ADMIN_ID
+            )
+
+            return "OK"
+
+
+        log_event(
+            "payment_confirmed",
+            category="payment",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Pago confirmado y acceso activado.",
+            metadata={
+                "stripe_session_id": stripe_session_id,
+                "stripe_payment_id": stripe_payment_id,
+                "plan": plan_name,
+                "amount": amount_total,
+                "currency": currency,
+                "expiration": expiration
+            }
+        )
+
+        log_event(
+            "invite_link_created",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Invite link creado tras pago confirmado.",
+            metadata={
+                "stripe_session_id": stripe_session_id,
+                "stripe_payment_id": stripe_payment_id
+            }
+        )
+
 
         # =========================
         # ENVIAR LINK AL USUARIO
         # =========================
 
-        send_telegram_message(
+        user_response = send_telegram_message(
             TOKEN,
             user_id,
             f"🔗 Tu acceso VIP:\n{link}"
         )
 
 
+        if not user_response or not user_response.get("ok"):
+
+            log_event(
+                "payment_buyer_notification_error",
+                category="notification",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                telegram_group_id=telegram_group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="No se pudo notificar el link de acceso al comprador.",
+                metadata={
+                    "stripe_session_id": stripe_session_id,
+                    "stripe_payment_id": stripe_payment_id
+                }
+            )
+
+
         # =========================
         # AVISAR AL ADMIN
         # =========================
 
-        send_telegram_message(
-            TOKEN,
-            ADMIN_ID,
+        amount_text = format_payment_amount(
+            amount_total,
+            currency
+        )
+
+
+        admin_text = (
             f"💳 Nuevo pago recibido\n\n"
             f"Grupo: {group_name}\n"
             f"Usuario: {user_id}\n"
             f"Plan: {plan_name}\n"
-            f"Importe: {session.get('amount_total') or '-'} "
-            f"{(session.get('currency') or '').upper()}"
+            f"Importe: {amount_text}\n"
+            "Acceso: activo"
         )
 
-        owner_user_id = get_group_owner_user_id(group_id)
+        sent_admins = notify_super_admins(
+            TOKEN,
+            admin_text,
+            fallback_admin_id=ADMIN_ID
+        )
+
+
+        if sent_admins:
+
+            log_event(
+                "payment_admin_notified",
+                category="notification",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                telegram_group_id=telegram_group_id,
+                actor_user_id=user_id,
+                target_user_id=ADMIN_ID,
+                message="Super admin notificado de pago confirmado.",
+                metadata={
+                    "stripe_session_id": stripe_session_id,
+                    "stripe_payment_id": stripe_payment_id,
+                    "sent_admin_count": sent_admins
+                }
+            )
+
+        else:
+
+            log_event(
+                "payment_admin_notification_error",
+                category="notification",
+                severity="error",
+                scope="group",
+                group_id=group_id,
+                telegram_group_id=telegram_group_id,
+                actor_user_id=user_id,
+                target_user_id=ADMIN_ID,
+                message="No se pudo notificar a ningún super admin del pago.",
+                metadata={
+                    "stripe_session_id": stripe_session_id,
+                    "stripe_payment_id": stripe_payment_id
+                }
+            )
+
+        owner_user_id = get_payment_owner_user_id(
+            group_id,
+            telegram_group_id
+        )
 
         if owner_user_id and int(owner_user_id) != int(ADMIN_ID):
 
-            send_telegram_message(
+            owner_response = send_telegram_message(
                 TOKEN,
                 owner_user_id,
                 f"💳 Nuevo pago en tu comunidad\n\n"
                 f"Grupo: {group_name}\n"
                 f"Usuario: {user_id}\n"
                 f"Plan: {plan_name}\n"
-                f"Importe: {session.get('amount_total') or '-'} "
-                f"{(session.get('currency') or '').upper()}"
+                f"Importe: {amount_text}\n"
+                "Acceso: activo"
+            )
+
+
+            if owner_response and owner_response.get("ok"):
+
+                log_event(
+                    "payment_owner_notified",
+                    category="notification",
+                    severity="info",
+                    scope="group",
+                    group_id=group_id,
+                    telegram_group_id=telegram_group_id,
+                    actor_user_id=user_id,
+                    target_user_id=owner_user_id,
+                    message="Owner notificado de nuevo pago.",
+                    metadata={
+                        "stripe_session_id": stripe_session_id,
+                        "stripe_payment_id": stripe_payment_id
+                    }
+                )
+
+            else:
+
+                log_event(
+                    "payment_owner_notification_error",
+                    category="notification",
+                    severity="warning",
+                    scope="group",
+                    group_id=group_id,
+                    telegram_group_id=telegram_group_id,
+                    actor_user_id=user_id,
+                    target_user_id=owner_user_id,
+                    message="No se pudo notificar al owner del pago.",
+                    metadata={
+                        "stripe_session_id": stripe_session_id,
+                        "stripe_payment_id": stripe_payment_id
+                    }
+                )
+
+        elif not owner_user_id:
+
+            log_event(
+                "payment_owner_not_found",
+                category="payment",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                telegram_group_id=telegram_group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Pago recibido pero no se encontró owner del grupo.",
+                metadata={
+                    "stripe_session_id": stripe_session_id,
+                    "stripe_payment_id": stripe_payment_id,
+                    "plan": plan_name,
+                    "amount": amount_total,
+                    "currency": currency
+                }
+            )
+
+            notify_super_admins(
+                TOKEN,
+                "⚠️ Pago recibido pero no encontré owner del grupo\n\n"
+                f"Grupo: {group_name}\n"
+                f"ID interno: {group_id}\n"
+                f"Telegram ID: {telegram_group_id}\n"
+                f"Usuario: {user_id}\n"
+                f"Plan: {plan_name}",
+                fallback_admin_id=ADMIN_ID
             )
 
 
@@ -417,4 +750,3 @@ def stripe_webhook():
 
 
     return "OK"
-

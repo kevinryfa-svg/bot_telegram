@@ -22,6 +22,7 @@ from admin_permission_map import (
     is_admin_callback
 )
 from admin_menu_catalog import build_admin_menu_button_rows
+from audit_log_service import list_recent_events
 from ai_handler import activate_ai_help_context
 from code_admin_handler import crear_codigo_callback
 from bot_config import ADMIN_ID
@@ -11529,9 +11530,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
+        logs_label = (
+            "📜 Logs del sistema"
+            if is_super_admin(user_id)
+            else "📜 Logs de mi grupo"
+        )
+
+
         keyboard = [
 
-            [InlineKeyboardButton("📜 Ver logs", callback_data="admin_logs")],
+            [InlineKeyboardButton(logs_label, callback_data="admin_logs")],
 
             [InlineKeyboardButton("👥 Logs usuarios", callback_data="admin_logs_users")],
 
@@ -11549,7 +11557,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
 
-            "📜 LOGS SISTEMA",
+            logs_label,
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -13563,53 +13571,35 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ):
 
         group_ids = get_admin_group_ids(user_id, ["can_view_logs"])
+        category_filter = None
 
 
-        with conn.cursor() as cur:
+        if data == "admin_logs_payments":
 
-            if group_ids is None:
+            category_filter = "payment"
 
-                cur.execute("""
+        elif data == "admin_logs_security":
 
-                    SELECT l.user_id,
-                           g.name,
-                           l.action,
-                           l.details,
-                           l.created_at
-                    FROM logs l
-                    LEFT JOIN groups g
-                    ON l.group_id = g.id
-                    ORDER BY l.created_at DESC
-                    LIMIT 20
+            category_filter = "access"
 
-                """)
+        elif data == "admin_logs_users":
 
-            elif not group_ids:
-
-                rows = []
-
-            else:
-
-                cur.execute("""
-
-                    SELECT l.user_id,
-                           g.name,
-                           l.action,
-                           l.details,
-                           l.created_at
-                    FROM logs l
-                    LEFT JOIN groups g
-                    ON l.group_id = g.id
-                    WHERE l.group_id = ANY(%s)
-                    ORDER BY l.created_at DESC
-                    LIMIT 20
-
-                """, (group_ids,))
+            category_filter = "user"
 
 
-            if group_ids is None or group_ids:
+        rows = list_recent_events(
+            limit=50,
+            group_ids=group_ids
+        )
 
-                rows = cur.fetchall()
+
+        if category_filter:
+
+            rows = [
+                row
+                for row in rows
+                if row[2] == category_filter
+            ]
 
 
         if not rows:
@@ -13621,21 +13611,44 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        text = "📜 Últimos logs\n\n"
+        text = (
+            "📜 Logs del sistema\n\n"
+            if group_ids is None
+            else "📜 Logs de mi grupo\n\n"
+        )
 
 
-        for log_user_id, group_name, action, details, created_at in rows:
+        for (
+            created_at,
+            event_type,
+            category,
+            severity,
+            log_group_id,
+            log_telegram_group_id,
+            actor_user_id,
+            target_user_id,
+            message
+        ) in rows[:30]:
 
             text += (
-                f"Usuario: {log_user_id or '-'}\n"
-                f"Grupo: {group_name or '-'}\n"
-                f"Acción: {action or '-'}\n"
-                f"Detalle: {details or '-'}\n"
+                f"Evento: {event_type or '-'}\n"
+                f"Categoría: {category or '-'} / {severity or '-'}\n"
+                f"Grupo: {log_group_id or '-'}"
+                f" / {log_telegram_group_id or '-'}\n"
+                f"Actor: {actor_user_id or '-'}\n"
+                f"Usuario: {target_user_id or '-'}\n"
+                f"Detalle: {message or '-'}\n"
                 f"Fecha: {created_at or '-'}\n\n"
             )
 
 
-        await query.message.reply_text(text)
+        await query.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver", callback_data="menu_logs")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
 
         return
 

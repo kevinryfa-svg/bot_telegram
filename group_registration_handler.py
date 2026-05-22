@@ -8,6 +8,7 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
+from audit_log_service import log_event
 from bot_config import TOKEN, ADMIN_ID
 from db import conn
 from rbac_helpers import (
@@ -1044,6 +1045,23 @@ def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_ro
     assign_group_owner_permissions(
         added_by,
         group_id
+    )
+
+    log_event(
+        "group_linked",
+        category="group",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        telegram_group_id=telegram_group_id,
+        actor_user_id=added_by,
+        target_user_id=request_row.get("user_id"),
+        message="Grupo vinculado a solicitud comercial.",
+        metadata={
+            "request_id": request_row.get("id"),
+            "group_name": group_name,
+            "public_visibility": public_visibility
+        }
     )
 
     return group_id

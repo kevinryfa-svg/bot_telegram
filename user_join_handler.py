@@ -8,6 +8,7 @@ from telegram import (
 
 from telegram.ext import ContextTypes
 
+from audit_log_service import log_event
 from bot_config import TOKEN, ADMIN_ID
 from db import conn
 from message_templates import unauthorized_access_detected_text
@@ -75,6 +76,17 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     print(
                         "Grupo no encontrado en DB:",
                         telegram_group_id
+                    )
+
+                    log_event(
+                        "user_join_group_not_found",
+                        category="access",
+                        severity="warning",
+                        scope="group",
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Usuario entró en un grupo no registrado."
                     )
 
                     return
@@ -218,6 +230,26 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     )
 
+                    log_event(
+                        "access_unauthorized",
+                        category="access",
+                        severity="warning",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Acceso no autorizado detectado. Usuario expulsado.",
+                        metadata={
+                            "username": username,
+                            "first_name": first_name,
+                            "has_user_row": user_row is not None,
+                            "subscription_active": subscription_active,
+                            "link_is_valid": link_is_valid,
+                            "invite_link_present": invite_link_used is not None
+                        }
+                    )
+
 
                     try:
 
@@ -238,6 +270,21 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         print(
                             "Error enviando aviso admin:",
                             e
+                        )
+
+                        log_event(
+                            "unauthorized_access_admin_notification_error",
+                            category="notification",
+                            severity="warning",
+                            scope="group",
+                            group_id=group_id,
+                            telegram_group_id=telegram_group_id,
+                            actor_user_id=user_id,
+                            target_user_id=ADMIN_ID,
+                            message="No se pudo avisar al admin de acceso no autorizado.",
+                            metadata={
+                                "error": str(e)
+                            }
                         )
 
 
@@ -301,6 +348,22 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         conn.commit()
 
 
+                    log_event(
+                        "access_allowed_active_payment_fallback",
+                        category="access",
+                        severity="warning",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Entrada permitida por pago activo aunque faltaba link registrado.",
+                        metadata={
+                            "invite_link_present": invite_link_used is not None
+                        }
+                    )
+
+
                 if invite_row:
 
                     cur.execute("""
@@ -311,6 +374,22 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         WHERE invite_link=%s
 
                     """, (invite_row[0],))
+
+
+                    conn.commit()
+
+
+                    log_event(
+                        "access_join_valid_link",
+                        category="access",
+                        severity="info",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Usuario entró con link registrado válido."
+                    )
 
 
                 # =========================
@@ -333,6 +412,19 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         user_id
 
+                    )
+
+
+                    log_event(
+                        "access_expired",
+                        category="access",
+                        severity="warning",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Usuario expulsado por acceso expirado."
                     )
 
 
