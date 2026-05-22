@@ -1228,7 +1228,7 @@ def format_backup_panel_text(user_id):
             f"Estado: {status or 'inactive'}\n"
             f"Origen: {source_name or '-'}\n"
             f"Destino: {destination_name or '-'}\n"
-            f"Modo: {mode or 'text'}\n"
+            f"Modo: {format_backup_mode(mode)}\n"
             f"Último mensaje copiado: {last_message_at or '-'}\n\n"
         )
 
@@ -1236,11 +1236,22 @@ def format_backup_panel_text(user_id):
     return text
 
 
+def format_backup_mode(mode):
+
+    if mode == "text_photos":
+
+        return "Texto + fotos"
+
+
+    return "Solo texto"
+
+
 def build_backup_panel_keyboard():
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ Activar backup", callback_data="owner_backup_activate")],
         [InlineKeyboardButton("⏸ Pausar backup", callback_data="owner_backup_pause")],
+        [InlineKeyboardButton("⚙️ Cambiar modo", callback_data="owner_backup_change_mode")],
         [InlineKeyboardButton("🔁 Cambiar destino", callback_data="owner_backup_change_destination")],
         [InlineKeyboardButton("⚠️ Últimos errores", callback_data="owner_backup_errors")],
         [InlineKeyboardButton("📜 Últimos mensajes copiados", callback_data="owner_backup_messages")],
@@ -1288,6 +1299,46 @@ def backup_group_by_id(groups, group_id):
     return None
 
 
+def build_backup_config_select_keyboard(configs, prefix, back_callback="owner_backup_panel"):
+
+    keyboard = []
+
+
+    for config in configs:
+
+        (
+            config_id,
+            status,
+            mode,
+            source_name,
+            destination_name,
+            _last_message_at,
+            _source_group_id,
+            _destination_group_id
+        ) = config
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"#{config_id} · {source_name or '-'} → {destination_name or '-'} · {format_backup_mode(mode)} · {status or 'inactive'}",
+                callback_data=f"{prefix}{config_id}"
+            )
+        ])
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=back_callback)])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_backup_mode_keyboard(config_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Solo texto", callback_data=f"owner_backup_set_mode_{config_id}_text")],
+        [InlineKeyboardButton("Texto + fotos", callback_data=f"owner_backup_set_mode_{config_id}_text_photos")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="owner_backup_panel")]
+    ])
+
+
 def fetch_backup_recent_messages(user_id, limit=20):
 
     with conn.cursor() as cur:
@@ -1299,6 +1350,7 @@ def fetch_backup_recent_messages(user_id, limit=20):
                    dg.name,
                    l.source_message_id,
                    l.destination_message_id,
+                   l.message_type,
                    l.status
             FROM backup_message_log l
             JOIN group_backup_configs c
@@ -8749,6 +8801,160 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "owner_backup_change_mode":
+
+        configs = fetch_owner_backup_configs(user_id)
+
+
+        if not configs:
+
+            await query.message.reply_text(
+                "⚠️ No tienes ninguna configuración de backup activa para cambiar el modo.",
+                reply_markup=build_backup_panel_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "⚙️ Cambiar modo de backup\n\n"
+            "Solo texto copia mensajes de texto.\n"
+            "Texto + fotos copia texto, captions y fotos nuevas sin descargar archivos.",
+            reply_markup=build_backup_config_select_keyboard(
+                configs,
+                "owner_backup_mode_config_"
+            )
+        )
+
+        return
+
+
+    if data.startswith("owner_backup_mode_config_"):
+
+        try:
+
+            config_id = int(
+                data.replace("owner_backup_mode_config_", "", 1)
+            )
+
+        except Exception:
+
+            await query.message.reply_text("❌ Configuración de backup no válida.")
+
+            return
+
+
+        config = fetch_backup_config(config_id, user_id)
+
+
+        if not config:
+
+            await query.message.reply_text(
+                "⛔ Esta configuración de backup no pertenece a tu panel.",
+                reply_markup=build_backup_panel_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "⚙️ Elige el modo de backup\n\n"
+            "Solo texto: copia únicamente mensajes de texto.\n"
+            "Texto + fotos: copia mensajes de texto, captions y fotos nuevas usando Telegram, sin descargar imágenes.",
+            reply_markup=build_backup_mode_keyboard(config_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_backup_set_mode_"):
+
+        try:
+
+            payload = data.replace("owner_backup_set_mode_", "", 1)
+            config_id_text, selected_mode = payload.split("_", 1)
+            config_id = int(config_id_text)
+
+        except Exception:
+
+            await query.message.reply_text("❌ Modo de backup no válido.")
+
+            return
+
+
+        if selected_mode not in (
+            "text",
+            "text_photos"
+        ):
+
+            await query.message.reply_text("❌ Modo de backup no válido.")
+
+            return
+
+
+        config = fetch_backup_config(config_id, user_id)
+
+
+        if not config:
+
+            await query.message.reply_text(
+                "⛔ Esta configuración de backup no pertenece a tu panel.",
+                reply_markup=build_backup_panel_keyboard()
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE group_backup_configs
+                SET mode=%s,
+                    updated_at=NOW()
+                WHERE id=%s
+                AND owner_user_id=%s
+
+            """, (
+                selected_mode,
+                config_id,
+                user_id
+            ))
+
+            conn.commit()
+
+
+        log_event(
+            "backup_mode_changed",
+            category="backup",
+            severity="info",
+            scope="group",
+            group_id=config[2],
+            telegram_group_id=config[3],
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Modo de backup premium actualizado.",
+            metadata={
+                "config_id": config_id,
+                "mode": selected_mode
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Modo de backup actualizado.\n\n"
+            f"Modo activo: {format_backup_mode(selected_mode)}",
+            reply_markup=build_backup_panel_keyboard()
+        )
+
+        return
+
+
     if data.startswith("owner_backup_source_"):
 
         try:
@@ -8997,11 +9203,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "📜 Últimos mensajes copiados\n\n"
 
 
-        for created_at, source_name, destination_name, source_message_id, destination_message_id, status in rows[:20]:
+        for created_at, source_name, destination_name, source_message_id, destination_message_id, message_type, status in rows[:20]:
 
             text += (
                 f"Origen: {source_name or '-'}\n"
                 f"Destino: {destination_name or '-'}\n"
+                f"Tipo: {message_type or '-'}\n"
                 f"Mensaje origen: {source_message_id or '-'}\n"
                 f"Mensaje destino: {destination_message_id or '-'}\n"
                 f"Estado: {status or '-'}\n"

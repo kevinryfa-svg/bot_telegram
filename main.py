@@ -78,6 +78,7 @@ from expiration_worker import check_expirations
 from group_registration_handler import (
     capture_group_preview_video,
     detect_bot_added,
+    handle_group_backup_media,
     handle_group_backup_text
 )
 from user_join_handler import detect_user_join
@@ -340,6 +341,7 @@ async def handle_media(update, context):
 
     if update.effective_chat and update.effective_chat.type != "private":
         await capture_group_preview_video(update, context)
+        await handle_group_backup_media(update, context)
         return
 
     if context.user_data.get("marketplace_preview_media"):
