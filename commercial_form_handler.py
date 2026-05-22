@@ -18,6 +18,11 @@ from rbac_helpers import (
 )
 
 
+def is_valid_plan_duration_days(duration_days):
+
+    return 1 <= int(duration_days) <= 3650
+
+
 def create_commercial_request(user, request_type, form_data=None):
 
     form_data = form_data or {}
@@ -1448,7 +1453,7 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
                 return
 
 
-            if setup_data["duration_days"] <= 0:
+            if not is_valid_plan_duration_days(setup_data["duration_days"]):
 
                 await reply_invalid_data(update, request_id)
 

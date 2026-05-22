@@ -208,7 +208,8 @@ def stripe_webhook():
 
                 duration_days, plan_name = row
 
-                # Protección contra valores inválidos
+                # plans.duration_days siempre está expresado en DÍAS.
+                # El valor 0 se reserva para planes permanentes explícitos.
 
                 if duration_days is None or duration_days == 0:
 
@@ -218,23 +219,38 @@ def stripe_webhook():
 
                     duration_value = int(duration_days)
 
-                    # =========================
-                    # MODO INTELIGENTE DURACIÓN
-                    # < 1440 → minutos
-                    # >= 1440 → días
-                    # =========================
+                    if duration_value < 1 or duration_value > 3650:
 
-                    if duration_value < 1440:
-
-                        expiration = datetime.now() + timedelta(
-                            minutes=duration_value
+                        print(
+                            "ERROR: duración de plan fuera de rango:",
+                            duration_value,
+                            price_id,
+                            metadata_group_id
                         )
 
-                    else:
-
-                        expiration = datetime.now() + timedelta(
-                            days=duration_value // 1440
+                        log_event(
+                            "payment_plan_duration_invalid",
+                            category="payment",
+                            severity="error",
+                            scope="group",
+                            group_id=metadata_group_id,
+                            actor_user_id=user_id,
+                            target_user_id=user_id,
+                            message="Pago recibido con duración de plan fuera de rango.",
+                            metadata={
+                                "stripe_session_id": stripe_session_id,
+                                "stripe_payment_id": stripe_payment_id,
+                                "price_id": price_id,
+                                "duration_days": duration_value
+                            }
                         )
+
+                        return "OK"
+
+
+                    expiration = datetime.now() + timedelta(
+                        days=duration_value
+                    )
 
         except Exception as e:
 

@@ -165,6 +165,11 @@ def build_group_admin_back_keyboard():
     ])
 
 
+def is_valid_plan_duration_days(duration_days):
+
+    return 1 <= int(duration_days) <= 3650
+
+
 def fetch_manageable_admin_groups(user_id):
 
     group_ids = get_admin_group_ids(
@@ -503,6 +508,15 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
 
 
+            if not is_valid_plan_duration_days(duration_days):
+
+                await update.message.reply_text(
+                    "⚠️ La duración debe estar entre 1 y 3650 días."
+                )
+
+                return
+
+
             context.user_data["edit_plan_duration"] = duration_days
             context.user_data["edit_plan_step"] = 4
 
@@ -691,6 +705,15 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
                 await update.message.reply_text(
                     "❌ Número inválido."
+                )
+
+                return
+
+
+            if not is_valid_plan_duration_days(duration_days):
+
+                await update.message.reply_text(
+                    "⚠️ La duración debe estar entre 1 y 3650 días."
                 )
 
                 return
