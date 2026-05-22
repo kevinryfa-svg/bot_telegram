@@ -69,6 +69,7 @@ from rbac_helpers import (
     assign_group_owner_permissions,
     get_creator_group_quota_source,
     get_admin_group_ids,
+    get_group_owner_user_id,
     has_any_permission_any_group,
     has_group_permission,
     has_permission,
@@ -1445,6 +1446,78 @@ def fetch_group_basic_info(group_id):
         return cur.fetchone()
 
 
+def build_group_user_codes_error_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="group_user_codes_panel"
+        )],
+        [InlineKeyboardButton(
+            "🏠 Inicio",
+            callback_data="public_back_start"
+        )]
+    ])
+
+
+def set_group_user_promo_context(context, group_id, step=None):
+
+    group = fetch_group_basic_info(group_id)
+
+
+    if not group:
+
+        return None
+
+
+    resolved_group_id, _group_name, telegram_group_id = group
+    owner_user_id = get_group_owner_user_id(resolved_group_id)
+
+    context.user_data["selected_group_admin"] = resolved_group_id
+    context.user_data["selected_group_user_codes"] = resolved_group_id
+    context.user_data["selected_group_id"] = resolved_group_id
+    context.user_data["group_user_promo_group_id"] = resolved_group_id
+    context.user_data["group_user_promo_telegram_group_id"] = telegram_group_id
+    context.user_data["group_user_promo_owner_user_id"] = owner_user_id
+
+
+    if step:
+
+        context.user_data["group_user_promo_step"] = step
+
+
+    return group
+
+
+def clear_group_user_promo_wizard(context, keep_group=True):
+
+    keys = (
+        "group_user_promo_duration_days",
+        "group_user_promo_is_permanent",
+        "group_user_promo_max_uses",
+        "group_user_promo_waiting",
+        "group_user_promo_step",
+        "group_user_promo_pending_code_id"
+    )
+
+
+    for key in keys:
+
+        context.user_data.pop(key, None)
+
+
+    if not keep_group:
+
+        for key in (
+            "selected_group_user_codes",
+            "group_user_promo_group_id",
+            "group_user_promo_telegram_group_id",
+            "group_user_promo_owner_user_id"
+        ):
+
+            context.user_data.pop(key, None)
+
+
 def fetch_group_user_promo_codes(group_id, active_only=False):
 
     with conn.cursor() as cur:
@@ -1615,6 +1688,7 @@ def create_group_user_promo_code(
 
 
     _group_id, _group_name, telegram_group_id = group
+    group_owner_user_id = get_group_owner_user_id(group_id) or owner_user_id
 
 
     if is_permanent:
@@ -1670,7 +1744,7 @@ def create_group_user_promo_code(
                 """, (
                     group_id,
                     telegram_group_id,
-                    owner_user_id,
+                    group_owner_user_id,
                     candidate,
                     duration_days,
                     is_permanent,
@@ -2032,9 +2106,7 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
 
             await update.message.reply_text(
                 "⚠️ El dato no parece válido. Revisa el formato y vuelve a intentarlo.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
-                ])
+                reply_markup=build_group_user_codes_error_keyboard()
             )
 
             return
@@ -2065,9 +2137,7 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
 
             await update.message.reply_text(
                 "⚠️ El dato no parece válido. Revisa el formato y vuelve a intentarlo.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
-                ])
+                reply_markup=build_group_user_codes_error_keyboard()
             )
 
             return
@@ -2075,7 +2145,10 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
 
         if not group_id or max_uses is None:
 
-            await update.message.reply_text("❌ No hay configuración de código pendiente.")
+            await update.message.reply_text(
+                "❌ No hay configuración de código pendiente.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
             context.user_data.pop("group_user_promo_waiting", None)
 
             return
@@ -2087,7 +2160,10 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
             ["can_manage_codes"]
         ):
 
-            await update.message.reply_text("⛔ No tienes permiso para crear códigos en esta comunidad.")
+            await update.message.reply_text(
+                "⛔ No tienes permiso para crear códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
             context.user_data.pop("group_user_promo_waiting", None)
 
             return
@@ -2116,7 +2192,7 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
             return
 
 
-        context.user_data.pop("group_user_promo_waiting", None)
+        clear_group_user_promo_wizard(context, keep_group=True)
 
         await update.message.reply_text(
             "✅ Código creado\n\n"
@@ -2730,20 +2806,36 @@ def build_group_settings_keyboard(user_id, group_id):
 
 def get_selected_group_for_permissions(context, user_id, permissions):
 
-    group_id = context.user_data.get("selected_group_admin")
+    for key in (
+        "selected_group_admin",
+        "selected_group_user_codes",
+        "group_user_promo_group_id",
+        "selected_owner_group"
+    ):
+
+        group_id = context.user_data.get(key)
 
 
-    if not group_id:
+        if not group_id:
 
-        return None
-
-
-    if not user_has_group_permission_any(user_id, group_id, permissions):
-
-        return None
+            continue
 
 
-    return group_id
+        try:
+
+            group_id = int(group_id)
+
+        except Exception:
+
+            continue
+
+
+        if user_has_group_permission_any(user_id, group_id, permissions):
+
+            return group_id
+
+
+    return None
 
 
 COMMERCIAL_REQUEST_FIELDS = [
@@ -11034,7 +11126,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not duration:
 
-            await query.message.reply_text("❌ Duración no válida.")
+            await query.message.reply_text(
+                "❌ Duración no válida.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver", callback_data="admin_commercial_promo_codes")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
 
             return
 
@@ -13467,6 +13565,113 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # CÓDIGOS POR GRUPO — SUPER ADMIN
+    # =========================
+
+    if data == "admin_group_user_codes":
+
+        rows = fetch_admin_groups_for_permissions(
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "⚠️ No hay grupos disponibles.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        keyboard = []
+
+        for group_id, group_name, _telegram_group_id in rows:
+
+            keyboard.append([InlineKeyboardButton(
+                group_name or f"Grupo {group_id}",
+                callback_data=f"group_user_code_select_group_{group_id}"
+            )])
+
+
+        keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")])
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🎟 Códigos por grupo\n\n"
+            "Elige el grupo para gestionar códigos de acceso de usuarios finales.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data.startswith("group_user_code_select_group_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "group_user_code_select_group_"
+        )
+
+
+        if not user_has_group_permission_any(
+            user_id,
+            group_id,
+            ["can_manage_codes"]
+        ):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para gestionar códigos en esta comunidad.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver", callback_data="admin_group_user_codes")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        group = set_group_user_promo_context(
+            context,
+            group_id,
+            step="panel"
+        )
+
+
+        if not group:
+
+            await query.message.reply_text(
+                "❌ Grupo no encontrado.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver", callback_data="admin_group_user_codes")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        _group_id, group_name, _telegram_group_id = group
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🎟 Códigos de mi grupo\n\n"
+            f"Grupo: {group_name or group_id}\n\n"
+            "Crea códigos para usuarios finales de esta comunidad.",
+            reply_markup=build_group_user_codes_keyboard()
+        )
+
+        return
+
+
+    # =========================
     # EDITAR GRUPO — LISTA
     # =========================
 
@@ -13696,7 +13901,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data == "edit_group_user_codes":
 
-            context.user_data["selected_group_user_codes"] = group_id
+            set_group_user_promo_context(
+                context,
+                group_id,
+                step="panel"
+            )
 
             await send_clean_message(
                 context,
@@ -13729,11 +13938,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para gestionar códigos en esta comunidad."
+                "⛔ No tienes permiso para gestionar códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
             )
 
             return
 
+
+        set_group_user_promo_context(
+            context,
+            group_id,
+            step="panel"
+        )
 
         await send_clean_message(
             context,
@@ -13758,17 +13974,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad."
+                "⛔ No tienes permiso para crear códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
             )
 
             return
 
 
-        context.user_data["group_user_promo_group_id"] = group_id
-        context.user_data.pop("group_user_promo_duration_days", None)
-        context.user_data.pop("group_user_promo_is_permanent", None)
-        context.user_data.pop("group_user_promo_max_uses", None)
-        context.user_data.pop("group_user_promo_waiting", None)
+        set_group_user_promo_context(
+            context,
+            group_id,
+            step="duration"
+        )
+        clear_group_user_promo_wizard(context, keep_group=True)
+        context.user_data["group_user_promo_step"] = "duration"
 
         await send_clean_message(
             context,
@@ -13792,14 +14011,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad."
+                "⛔ No tienes permiso para crear códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
             )
 
             return
 
 
         slug = data.replace("group_user_code_duration_", "", 1)
-        context.user_data["group_user_promo_group_id"] = group_id
+        set_group_user_promo_context(
+            context,
+            group_id,
+            step="uses"
+        )
 
 
         if slug == "custom":
@@ -13808,9 +14032,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "Envía la duración en días, entre 1 y 3650.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
-                ])
+                reply_markup=build_group_user_codes_error_keyboard()
             )
 
             return
@@ -13829,14 +14051,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             except Exception:
 
-                await query.message.reply_text("❌ Duración no válida.")
+                await query.message.reply_text(
+                    "❌ Duración no válida.",
+                    reply_markup=build_group_user_codes_error_keyboard()
+                )
 
                 return
 
 
             if not 1 <= duration_days <= 3650:
 
-                await query.message.reply_text("❌ Duración no válida.")
+                await query.message.reply_text(
+                    "❌ Duración no válida.",
+                    reply_markup=build_group_user_codes_error_keyboard()
+                )
 
                 return
 
@@ -13867,7 +14095,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad."
+                "⛔ No tienes permiso para crear códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
             )
 
             return
@@ -13879,19 +14108,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception:
 
-            await query.message.reply_text("❌ Número de usos no válido.")
+            await query.message.reply_text(
+                "❌ Número de usos no válido.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
 
             return
 
 
         if max_uses not in (0, 1, 5, 10):
 
-            await query.message.reply_text("❌ Número de usos no válido.")
+            await query.message.reply_text(
+                "❌ Número de usos no válido.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
 
             return
 
 
-        context.user_data["group_user_promo_group_id"] = group_id
+        set_group_user_promo_context(
+            context,
+            group_id,
+            step="code_kind"
+        )
         context.user_data["group_user_promo_max_uses"] = max_uses
 
         await send_clean_message(
@@ -13916,13 +14155,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad."
+                "⛔ No tienes permiso para crear códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
             )
 
             return
 
 
-        context.user_data["group_user_promo_group_id"] = group_id
+        set_group_user_promo_context(
+            context,
+            group_id,
+            step="manual_code"
+        )
         context.user_data["group_user_promo_waiting"] = "manual_code"
 
         await query.message.reply_text(
@@ -13948,7 +14192,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad."
+                "⛔ No tienes permiso para crear códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
             )
 
             return
@@ -13961,7 +14206,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if max_uses is None:
 
-            await query.message.reply_text("❌ Falta completar la configuración del código.")
+            await query.message.reply_text(
+                "❌ Falta completar la configuración del código.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
 
             return
 
@@ -13998,6 +14246,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        clear_group_user_promo_wizard(context, keep_group=True)
+
         await send_clean_message(
             context,
             query.message.chat_id,
@@ -14022,7 +14272,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not group_id:
 
-            await query.message.reply_text("⛔ No tienes permiso para ver códigos en esta comunidad.")
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
 
             return
 
@@ -14072,7 +14325,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not group_id:
 
-            await query.message.reply_text("⛔ No tienes permiso para desactivar códigos en esta comunidad.")
+            await query.message.reply_text(
+                "⛔ No tienes permiso para desactivar códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
 
             return
 
@@ -14099,7 +14355,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not group_id:
 
-            await query.message.reply_text("⛔ No tienes permiso para desactivar códigos en esta comunidad.")
+            await query.message.reply_text(
+                "⛔ No tienes permiso para desactivar códigos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
 
             return
 
@@ -14110,7 +14369,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception:
 
-            await query.message.reply_text("❌ Código no válido.")
+            await query.message.reply_text(
+                "❌ Código no válido.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
 
             return
 
@@ -14136,7 +14398,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not row:
 
-            await query.message.reply_text("❌ Código no encontrado.")
+            await query.message.reply_text(
+                "❌ Código no encontrado.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
 
             return
 
@@ -14160,7 +14425,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not group_id:
 
-            await query.message.reply_text("⛔ No tienes permiso para ver usos en esta comunidad.")
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver usos en esta comunidad.",
+                reply_markup=build_group_user_codes_error_keyboard()
+            )
 
             return
 
@@ -16341,7 +16609,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception:
 
-            await query.message.reply_text("❌ Código no válido.")
+            await query.message.reply_text(
+                "❌ Código no válido.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
 
             return
 
