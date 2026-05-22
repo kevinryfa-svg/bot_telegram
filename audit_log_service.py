@@ -1,4 +1,145 @@
+import json
+
 from db import conn
+
+
+# =========================
+# AUDIT LOG — CENTRAL EVENT
+# =========================
+
+def log_event(
+    event_type,
+    category="system",
+    severity="info",
+    message=None,
+    scope="global",
+    group_id=None,
+    telegram_group_id=None,
+    actor_user_id=None,
+    target_user_id=None,
+    metadata=None
+):
+
+    safe_metadata = metadata or {}
+
+
+    try:
+
+        metadata_json = json.dumps(
+            safe_metadata,
+            default=str,
+            ensure_ascii=False
+        )
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO audit_logs
+                (
+                    scope,
+                    group_id,
+                    telegram_group_id,
+                    actor_user_id,
+                    target_user_id,
+                    event_type,
+                    category,
+                    severity,
+                    message,
+                    metadata
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+
+            """, (
+                scope,
+                group_id,
+                telegram_group_id,
+                actor_user_id,
+                target_user_id,
+                event_type,
+                category,
+                severity,
+                message,
+                metadata_json
+            ))
+
+            conn.commit()
+
+            return True
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print(
+            "Error creando audit event:",
+            event_type,
+            e
+        )
+
+        return False
+
+
+def list_recent_events(limit=50, group_ids=None):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            if group_ids is None:
+
+                cur.execute("""
+
+                    SELECT created_at,
+                           event_type,
+                           category,
+                           severity,
+                           group_id,
+                           telegram_group_id,
+                           actor_user_id,
+                           target_user_id,
+                           message
+                    FROM audit_logs
+                    ORDER BY created_at DESC
+                    LIMIT %s
+
+                """, (limit,))
+
+            else:
+
+                cur.execute("""
+
+                    SELECT created_at,
+                           event_type,
+                           category,
+                           severity,
+                           group_id,
+                           telegram_group_id,
+                           actor_user_id,
+                           target_user_id,
+                           message
+                    FROM audit_logs
+                    WHERE group_id = ANY(%s)
+                    ORDER BY created_at DESC
+                    LIMIT %s
+
+                """, (
+                    group_ids,
+                    limit
+                ))
+
+
+            return cur.fetchall()
+
+    except Exception as e:
+
+        print(
+            "Error listando audit events:",
+            e
+        )
+
+        return []
 
 
 # =========================

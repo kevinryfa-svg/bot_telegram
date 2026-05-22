@@ -578,6 +578,43 @@ def create_tables():
 
 
         # =========================
+        # TABLA AUDIT LOGS
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS audit_logs (
+
+            id SERIAL PRIMARY KEY,
+
+            scope TEXT DEFAULT 'global',
+
+            group_id INTEGER,
+
+            telegram_group_id BIGINT,
+
+            actor_user_id BIGINT,
+
+            target_user_id BIGINT,
+
+            event_type TEXT,
+
+            category TEXT,
+
+            severity TEXT DEFAULT 'info',
+
+            message TEXT,
+
+            metadata JSONB,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA CONFIG
         # =========================
 
