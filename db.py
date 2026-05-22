@@ -1596,6 +1596,25 @@ def create_tables():
                 print(f"Columna ya existe en admins: {column_name}")
 
 
+        try:
+
+            cur.execute("""
+
+                UPDATE admins
+                SET can_manage_codes=TRUE
+                WHERE role='GROUP_OWNER'
+                AND COALESCE(can_manage_codes, FALSE)=FALSE
+
+            """)
+
+        except Exception as e:
+
+            print(
+                "Error asegurando can_manage_codes para GROUP_OWNER:",
+                e
+            )
+
+
         # =========================
         # ASEGURAR UNIQUE admins(user_id, group_id)
         # =========================

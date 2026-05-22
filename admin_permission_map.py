@@ -31,6 +31,7 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_create_code": (SUPER_ADMIN_ONLY,),
     "admin_codes": (SUPER_ADMIN_ONLY,),
     "admin_delete_code": (SUPER_ADMIN_ONLY,),
+    "admin_group_user_codes": (SUPER_ADMIN_ONLY,),
 
     "menu_groups": (
         "can_manage_groups",

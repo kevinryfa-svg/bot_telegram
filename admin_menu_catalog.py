@@ -126,6 +126,14 @@ ADMIN_MENU_SECTIONS = [
         "permissions_any": [
             "super_admin_only"
         ]
+    },
+    {
+        "key": "group_user_promo_codes",
+        "text": "🎟 Códigos por grupo",
+        "callback_data": "admin_group_user_codes",
+        "permissions_any": [
+            "super_admin_only"
+        ]
     }
 ]
 
@@ -146,6 +154,7 @@ ADMIN_HELP_CONTEXT_BY_CALLBACK = {
     "group_admin_panel": "group_admins",
     "admin_commercial_requests": "commercial_admin",
     "admin_commercial_promo_codes": "commercial_admin",
+    "admin_group_user_codes": "admin_groups",
     "admin_support_tickets": "support_admin"
 }
 

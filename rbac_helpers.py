@@ -40,7 +40,7 @@ GROUP_OWNER_PERMISSIONS = {
     "can_reset_warnings": True,
     "can_resend_links": True,
     "can_recover_access": True,
-    "can_manage_codes": False,
+    "can_manage_codes": True,
     "can_manage_groups": True,
     "can_manage_plans": True,
     "can_manage_payments": False,
@@ -320,7 +320,7 @@ def has_permission(user_id, group_id, permission):
 
             cur.execute(f"""
 
-                SELECT {permission}
+                SELECT {permission}, role
                 FROM admins
                 WHERE user_id=%s
                 AND group_id=%s
@@ -339,6 +339,15 @@ def has_permission(user_id, group_id, permission):
 
 
         if row and row[0] is True:
+
+            return True
+
+
+        if (
+            row
+            and row[1] == GROUP_OWNER
+            and GROUP_OWNER_PERMISSIONS.get(permission) is True
+        ):
 
             return True
 
@@ -385,6 +394,19 @@ def has_any_permission_any_group(user_id, permissions):
         for permission in valid_permissions
 
     )
+
+    owner_allowed_permissions = [
+        permission
+        for permission in valid_permissions
+        if GROUP_OWNER_PERMISSIONS.get(permission) is True
+    ]
+
+
+    if owner_allowed_permissions:
+
+        permission_conditions = (
+            f"({permission_conditions}) OR role='{GROUP_OWNER}'"
+        )
 
 
     try:
@@ -482,6 +504,19 @@ def get_admin_group_ids(user_id, permissions=None):
         for permission in valid_permissions
 
     )
+
+    owner_allowed_permissions = [
+        permission
+        for permission in valid_permissions
+        if GROUP_OWNER_PERMISSIONS.get(permission) is True
+    ]
+
+
+    if owner_allowed_permissions:
+
+        permission_conditions = (
+            f"({permission_conditions}) OR role='{GROUP_OWNER}'"
+        )
 
 
     try:
