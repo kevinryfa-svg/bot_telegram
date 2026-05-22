@@ -4,7 +4,7 @@ import secrets
 import string
 import time
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from telegram import (
     Update,
@@ -1394,6 +1394,785 @@ def fetch_backup_recent_errors(user_id, limit=20):
         return cur.fetchall()
 
 
+def generate_group_user_promo_code():
+
+    alphabet = string.ascii_uppercase + string.digits
+
+    return "G-" + "".join(
+        secrets.choice(alphabet)
+        for _ in range(10)
+    )
+
+
+def normalize_group_user_promo_code(raw_code):
+
+    return (raw_code or "").strip().upper()
+
+
+def is_valid_group_user_promo_code(raw_code):
+
+    code = normalize_group_user_promo_code(raw_code)
+
+
+    if not 4 <= len(code) <= 32:
+
+        return False
+
+
+    return all(
+        char in string.ascii_uppercase + string.digits + "-_"
+        for char in code
+    )
+
+
+def fetch_group_basic_info(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   name,
+                   telegram_group_id
+            FROM groups
+            WHERE id=%s
+            LIMIT 1
+
+        """, (group_id,))
+
+        return cur.fetchone()
+
+
+def fetch_group_user_promo_codes(group_id, active_only=False):
+
+    with conn.cursor() as cur:
+
+        active_filter = ""
+
+
+        if active_only:
+
+            active_filter = """
+                AND is_active=TRUE
+                AND (
+                    expires_at IS NULL
+                    OR expires_at > NOW()
+                )
+                AND (
+                    max_uses=0
+                    OR used_count < max_uses
+                )
+            """
+
+
+        cur.execute(f"""
+
+            SELECT id,
+                   code,
+                   duration_days,
+                   is_permanent,
+                   max_uses,
+                   used_count,
+                   is_active,
+                   expires_at,
+                   created_at
+            FROM group_user_promo_codes
+            WHERE group_id=%s
+            {active_filter}
+            ORDER BY created_at DESC
+            LIMIT 50
+
+        """, (group_id,))
+
+        return cur.fetchall()
+
+
+def fetch_group_user_promo_usage(group_id, limit=30):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT r.redeemed_at,
+                   r.user_id,
+                   c.code,
+                   r.expiration
+            FROM group_user_promo_redemptions r
+            JOIN group_user_promo_codes c
+            ON c.id = r.code_id
+            WHERE r.group_id=%s
+            ORDER BY r.redeemed_at DESC
+            LIMIT %s
+
+        """, (
+            group_id,
+            limit
+        ))
+
+        return cur.fetchall()
+
+
+def format_group_user_promo_duration(duration_days, is_permanent):
+
+    if is_permanent:
+
+        return "permanente"
+
+
+    return f"{duration_days} día(s)"
+
+
+def format_group_user_promo_uses(max_uses, used_count):
+
+    if max_uses == 0:
+
+        return f"{used_count}/ilimitado"
+
+
+    return f"{used_count}/{max_uses}"
+
+
+def build_group_user_codes_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Crear código", callback_data="group_user_code_create")],
+        [InlineKeyboardButton("📋 Ver códigos activos", callback_data="group_user_codes_active")],
+        [InlineKeyboardButton("🚫 Desactivar código", callback_data="group_user_code_deactivate_menu")],
+        [InlineKeyboardButton("📊 Usos de códigos", callback_data="group_user_code_usage")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="edit_group_back")]
+    ])
+
+
+def build_group_user_code_duration_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("1 día", callback_data="group_user_code_duration_1")],
+        [InlineKeyboardButton("7 días", callback_data="group_user_code_duration_7")],
+        [InlineKeyboardButton("30 días", callback_data="group_user_code_duration_30")],
+        [InlineKeyboardButton("Permanente", callback_data="group_user_code_duration_permanent")],
+        [InlineKeyboardButton("Personalizado", callback_data="group_user_code_duration_custom")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
+    ])
+
+
+def build_group_user_code_uses_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("1 uso", callback_data="group_user_code_uses_1")],
+        [InlineKeyboardButton("5 usos", callback_data="group_user_code_uses_5")],
+        [InlineKeyboardButton("10 usos", callback_data="group_user_code_uses_10")],
+        [InlineKeyboardButton("Ilimitado", callback_data="group_user_code_uses_0")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_code_create")]
+    ])
+
+
+def build_group_user_code_kind_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Código automático", callback_data="group_user_code_auto")],
+        [InlineKeyboardButton("Código manual", callback_data="group_user_code_manual")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_code_create")]
+    ])
+
+
+def build_group_user_code_deactivate_keyboard(rows):
+
+    keyboard = []
+
+
+    for code_id, code, duration_days, is_permanent, max_uses, used_count, _is_active, _expires_at, _created_at in rows:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{code} · {format_group_user_promo_duration(duration_days, is_permanent)} · {format_group_user_promo_uses(max_uses, used_count)}",
+                callback_data=f"group_user_code_deactivate_{code_id}"
+            )
+        ])
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def create_group_user_promo_code(
+    group_id,
+    owner_user_id,
+    duration_days,
+    is_permanent,
+    max_uses,
+    code=None
+):
+
+    group = fetch_group_basic_info(group_id)
+
+
+    if not group:
+
+        return None
+
+
+    _group_id, _group_name, telegram_group_id = group
+
+
+    if is_permanent:
+
+        duration_days = None
+
+    elif not duration_days or not 1 <= int(duration_days) <= 3650:
+
+        raise ValueError("invalid_duration")
+
+
+    if max_uses != 0 and max_uses < 1:
+
+        raise ValueError("invalid_max_uses")
+
+
+    for _attempt in range(8):
+
+        candidate = normalize_group_user_promo_code(
+            code or generate_group_user_promo_code()
+        )
+
+
+        if not is_valid_group_user_promo_code(candidate):
+
+            raise ValueError("invalid_code")
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    INSERT INTO group_user_promo_codes
+                    (
+                        group_id,
+                        telegram_group_id,
+                        owner_user_id,
+                        code,
+                        duration_days,
+                        is_permanent,
+                        max_uses,
+                        is_active
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE)
+                    RETURNING id,
+                              code,
+                              duration_days,
+                              is_permanent,
+                              max_uses
+
+                """, (
+                    group_id,
+                    telegram_group_id,
+                    owner_user_id,
+                    candidate,
+                    duration_days,
+                    is_permanent,
+                    max_uses
+                ))
+
+                row = cur.fetchone()
+                conn.commit()
+
+                return row
+
+        except Exception as e:
+
+            conn.rollback()
+
+
+            if code:
+
+                raise
+
+
+            print("Reintentando código de grupo duplicado:", e)
+
+
+    return None
+
+
+def fetch_group_user_promo_by_code(code):
+
+    normalized_code = normalize_group_user_promo_code(code)
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT c.id,
+                   c.group_id,
+                   c.telegram_group_id,
+                   c.owner_user_id,
+                   c.code,
+                   c.duration_days,
+                   c.is_permanent,
+                   c.max_uses,
+                   c.used_count,
+                   c.is_active,
+                   c.expires_at,
+                   g.name,
+                   COALESCE(g.is_active, TRUE)
+            FROM group_user_promo_codes c
+            JOIN groups g
+            ON g.id = c.group_id
+            WHERE c.code=%s
+            LIMIT 1
+
+        """, (normalized_code,))
+
+        return cur.fetchone()
+
+
+def validate_group_user_promo_row(row):
+
+    if not row:
+
+        return False, "❌ Código de acceso no encontrado."
+
+
+    (
+        _code_id,
+        _group_id,
+        _telegram_group_id,
+        _owner_user_id,
+        _code,
+        _duration_days,
+        _is_permanent,
+        max_uses,
+        used_count,
+        is_active,
+        expires_at,
+        _group_name,
+        group_is_active
+    ) = row
+
+
+    if group_is_active is not True:
+
+        return False, "❌ Esta comunidad no está disponible."
+
+
+    if is_active is not True:
+
+        return False, "❌ Este código ya no está activo."
+
+
+    if expires_at and expires_at <= datetime.now():
+
+        return False, "❌ Este código ha caducado."
+
+
+    if max_uses != 0 and used_count >= max_uses:
+
+        return False, "❌ Este código ya alcanzó el máximo de usos."
+
+
+    return True, None
+
+
+async def grant_group_user_promo_access(context, chat_id, telegram_user, promo_row):
+
+    (
+        code_id,
+        group_id,
+        telegram_group_id,
+        owner_user_id,
+        code,
+        duration_days,
+        is_permanent,
+        _max_uses,
+        _used_count,
+        _is_active,
+        _expires_at,
+        group_name,
+        _group_is_active
+    ) = promo_row
+
+    user_id = telegram_user.id
+
+
+    if not is_permanent and not duration_days:
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Este código no tiene una duración válida."
+        )
+
+        return
+
+
+    expiration = None
+
+
+    if not is_permanent:
+
+        expiration = datetime.now() + timedelta(days=int(duration_days))
+
+
+    link = create_telegram_invite_link(
+        TOKEN,
+        telegram_group_id,
+        expire_seconds=180,
+        member_limit=1
+    )
+
+
+    if not link:
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Error creando el enlace de acceso."
+        )
+
+        return
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE group_user_promo_codes
+            SET used_count=used_count + 1
+            WHERE id=%s
+            AND is_active=TRUE
+            AND (
+                expires_at IS NULL
+                OR expires_at > NOW()
+            )
+            AND (
+                max_uses=0
+                OR used_count < max_uses
+            )
+            RETURNING used_count
+
+        """, (code_id,))
+
+        code_update = cur.fetchone()
+
+
+        if not code_update:
+
+            conn.rollback()
+
+            try:
+
+                revoke_telegram_invite_link(
+                    TOKEN,
+                    telegram_group_id,
+                    link
+                )
+
+            except Exception as e:
+
+                print("Error revocando link de código no disponible:", e)
+
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="❌ Este código ya no está disponible."
+            )
+
+            return
+
+
+        cur.execute("""
+
+            DELETE FROM invite_links
+            WHERE user_id=%s
+            AND (
+                group_id=%s
+                OR telegram_group_id=%s
+                OR group_id=%s
+            )
+
+        """, (
+            user_id,
+            group_id,
+            telegram_group_id,
+            telegram_group_id
+        ))
+
+        cur.execute("""
+
+            INSERT INTO invite_links
+            (user_id, group_id, telegram_group_id, invite_link, is_active)
+            VALUES (%s, %s, %s, %s, TRUE)
+
+        """, (
+            user_id,
+            group_id,
+            telegram_group_id,
+            link
+        ))
+
+        cur.execute("""
+
+            INSERT INTO users
+            (
+                user_id,
+                group_id,
+                username,
+                first_name,
+                expiration,
+                subscription_active,
+                last_invite_link
+            )
+            VALUES (%s, %s, %s, %s, %s, TRUE, %s)
+            ON CONFLICT (user_id, group_id)
+            DO UPDATE SET
+                username=EXCLUDED.username,
+                first_name=EXCLUDED.first_name,
+                expiration=EXCLUDED.expiration,
+                subscription_active=TRUE,
+                last_invite_link=EXCLUDED.last_invite_link
+
+        """, (
+            user_id,
+            group_id,
+            telegram_user.username,
+            telegram_user.first_name,
+            expiration,
+            link
+        ))
+
+        cur.execute("""
+
+            INSERT INTO group_user_promo_redemptions
+            (
+                code_id,
+                group_id,
+                user_id,
+                invite_link,
+                expiration
+            )
+            VALUES (%s, %s, %s, %s, %s)
+
+        """, (
+            code_id,
+            group_id,
+            user_id,
+            link,
+            expiration
+        ))
+
+        conn.commit()
+
+
+    log_event(
+        "group_user_promo_redeemed",
+        category="access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        telegram_group_id=telegram_group_id,
+        actor_user_id=user_id,
+        target_user_id=owner_user_id,
+        message="Código promocional de grupo canjeado.",
+        metadata={
+            "code_id": code_id,
+            "code": code,
+            "is_permanent": is_permanent,
+            "duration_days": duration_days
+        }
+    )
+
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=owner_user_id,
+            text=(
+                "🎟 Código de tu grupo canjeado\n\n"
+                f"Grupo: {group_name or group_id}\n"
+                f"Usuario: {user_id}\n"
+                f"Código: {code}"
+            )
+        )
+
+    except Exception as e:
+
+        print("Error avisando al owner del canje de código:", e)
+
+
+    expiration_text = "permanente" if expiration is None else expiration.strftime("%Y-%m-%d %H:%M")
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "✅ Código canjeado correctamente.\n\n"
+            f"Comunidad: {group_name or group_id}\n"
+            f"Acceso: {expiration_text}\n\n"
+            "Este enlace es personal y de un solo uso.\n"
+            "No lo compartas.\n\n"
+            f"{link}"
+        ),
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+
+async def receive_group_user_promo_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    waiting = context.user_data.get("group_user_promo_waiting")
+
+
+    if waiting == "custom_duration":
+
+        raw_duration = (update.message.text or "").strip()
+
+
+        if not raw_duration.isdigit() or not 1 <= int(raw_duration) <= 3650:
+
+            await update.message.reply_text(
+                "⚠️ El dato no parece válido. Revisa el formato y vuelve a intentarlo.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
+                ])
+            )
+
+            return
+
+
+        context.user_data["group_user_promo_duration_days"] = int(raw_duration)
+        context.user_data["group_user_promo_is_permanent"] = False
+        context.user_data["group_user_promo_waiting"] = None
+
+        await update.message.reply_text(
+            "Elige cuántos usos tendrá el código.",
+            reply_markup=build_group_user_code_uses_keyboard()
+        )
+
+        return
+
+
+    if waiting == "manual_code":
+
+        manual_code = normalize_group_user_promo_code(update.message.text)
+        group_id = context.user_data.get("group_user_promo_group_id")
+        duration_days = context.user_data.get("group_user_promo_duration_days")
+        is_permanent = context.user_data.get("group_user_promo_is_permanent") is True
+        max_uses = context.user_data.get("group_user_promo_max_uses")
+
+
+        if not is_valid_group_user_promo_code(manual_code):
+
+            await update.message.reply_text(
+                "⚠️ El dato no parece válido. Revisa el formato y vuelve a intentarlo.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
+                ])
+            )
+
+            return
+
+
+        if not group_id or max_uses is None:
+
+            await update.message.reply_text("❌ No hay configuración de código pendiente.")
+            context.user_data.pop("group_user_promo_waiting", None)
+
+            return
+
+
+        if not user_has_group_permission_any(
+            update.effective_user.id,
+            group_id,
+            ["can_manage_codes"]
+        ):
+
+            await update.message.reply_text("⛔ No tienes permiso para crear códigos en esta comunidad.")
+            context.user_data.pop("group_user_promo_waiting", None)
+
+            return
+
+
+        try:
+
+            row = create_group_user_promo_code(
+                group_id,
+                update.effective_user.id,
+                duration_days,
+                is_permanent,
+                max_uses,
+                code=manual_code
+            )
+
+        except Exception as e:
+
+            print("Error creando código manual de grupo:", e)
+
+            await update.message.reply_text(
+                "❌ No pude crear el código. Revisa que no esté repetido.",
+                reply_markup=build_group_user_codes_keyboard()
+            )
+
+            return
+
+
+        context.user_data.pop("group_user_promo_waiting", None)
+
+        await update.message.reply_text(
+            "✅ Código creado\n\n"
+            f"Código: {row[1]}\n"
+            f"Duración: {format_group_user_promo_duration(row[2], row[3])}\n"
+            f"Usos máximos: {'ilimitado' if row[4] == 0 else row[4]}",
+            reply_markup=build_group_user_codes_keyboard()
+        )
+
+        return
+
+
+    if waiting == "redeem_code":
+
+        promo_row = fetch_group_user_promo_by_code(update.message.text)
+        valid, error_message = validate_group_user_promo_row(promo_row)
+
+
+        if not valid:
+
+            context.user_data.pop("group_user_promo_waiting", None)
+
+            await update.message.reply_text(
+                error_message,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        context.user_data["group_user_promo_waiting"] = None
+        context.user_data["group_user_promo_pending_code_id"] = promo_row[0]
+
+        await update.message.reply_text(
+            "🎟 Código encontrado\n\n"
+            f"Comunidad: {promo_row[11] or promo_row[1]}\n"
+            f"Duración: {format_group_user_promo_duration(promo_row[5], promo_row[6])}\n\n"
+            "Confirma para generar tu enlace personal de acceso.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Canjear acceso", callback_data=f"group_user_promo_confirm_{promo_row[0]}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    await update.message.reply_text(
+        "No estaba esperando ese dato. Usa los botones del menú para continuar.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+    )
+
+
 def fetch_group_admin_manageable_groups(user_id):
 
     return fetch_admin_groups_for_permissions(
@@ -1908,6 +2687,17 @@ def build_group_settings_keyboard(user_id, group_id):
 
         keyboard.append([
             InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_codes"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("🎟 Códigos de mi grupo", callback_data="edit_group_user_codes")
         ])
 
 
@@ -3003,6 +3793,11 @@ def build_marketplace_access_keyboard(
     )])
 
     keyboard.append([InlineKeyboardButton(
+        "🎟 Tengo código de acceso",
+        callback_data="group_user_promo_redeem_start"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
         "⬅️ Volver",
         callback_data=back_callback
     )])
@@ -3037,6 +3832,11 @@ def build_marketplace_preview_keyboard(group, user_id=None):
     keyboard.append([InlineKeyboardButton(
         "🔓 Entrar gratis" if group.get("is_free_group") else "💳 Ver acceso",
         callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "🎟 Tengo código de acceso",
+        callback_data="group_user_promo_redeem_start"
     )])
 
     keyboard.append([InlineKeyboardButton(
@@ -3531,6 +4331,11 @@ def build_marketplace_group_keyboard(group, user_id=None):
     keyboard.append([InlineKeyboardButton(
         "🔓 Entrar gratis" if is_free_group else "💳 Comprar acceso",
         callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
+    )])
+
+    keyboard.append([InlineKeyboardButton(
+        "🎟 Tengo código de acceso",
+        callback_data="group_user_promo_redeem_start"
     )])
 
     keyboard.append([InlineKeyboardButton(
@@ -11529,6 +12334,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         callback_data=f"free_access_{group_id}"
                     )],
                     [InlineKeyboardButton(
+                        "🎟 Tengo código de acceso",
+                        callback_data="group_user_promo_redeem_start"
+                    )],
+                    [InlineKeyboardButton(
                         "💬 Ayuda sobre este menú",
                         callback_data=CALLBACK_GROUP_PLANS_HELP
                     )],
@@ -11584,9 +12393,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             InlineKeyboardButton(
 
-                "🎟️ Usar código",
+                "🎟 Tengo código de acceso",
 
-                callback_data="codigo"
+                callback_data="group_user_promo_redeem_start"
 
             )
 
@@ -11645,7 +12454,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
 
         return
-    
+
 
     # =========================
     # RECUPERAR ACCESO
@@ -12492,7 +13301,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
-    
+
 
     # =========================
     # EDITAR GRUPO — LISTA
@@ -12515,6 +13324,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [
                         "can_manage_groups",
                         "can_manage_plans",
+                        "can_manage_codes",
+                        "can_manage_admins",
                         "can_edit_group_texts",
                         "can_edit_marketplace_preview"
                     ]
@@ -12585,7 +13396,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
-    
+
 
     # =========================
     # MENÚ INTERNO DEL GRUPO
@@ -12606,6 +13417,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id,
             group_id,
             ["can_manage_groups", "can_manage_plans"]
+            + ["can_manage_codes", "can_manage_admins"]
             + ["can_edit_group_texts", "can_edit_marketplace_preview"]
         ):
 
@@ -12641,6 +13453,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             user_id,
             ["can_manage_groups", "can_manage_plans"]
+            + ["can_manage_codes", "can_manage_admins"]
             + ["can_edit_group_texts", "can_edit_marketplace_preview"]
         )
 
@@ -12667,7 +13480,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data in (
         "edit_group_name",
         "edit_group_stripe",
-        "edit_group_admins"
+        "edit_group_admins",
+        "edit_group_user_codes"
     ):
 
         required_permissions = ["can_manage_groups"]
@@ -12681,6 +13495,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "edit_group_admins":
 
             required_permissions = ["can_manage_admins"]
+
+        if data == "edit_group_user_codes":
+
+            required_permissions = ["can_manage_codes"]
 
         group_id = get_selected_group_for_permissions(
             context,
@@ -12713,8 +13531,506 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if data == "edit_group_user_codes":
+
+            context.user_data["selected_group_user_codes"] = group_id
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🎟 Códigos de mi grupo\n\n"
+                "Crea códigos para usuarios finales de esta comunidad. "
+                "Estos códigos solo funcionan en este grupo y no se mezclan con los códigos promocionales comerciales.",
+                reply_markup=build_group_user_codes_keyboard()
+            )
+
+            return
+
+
         await query.message.reply_text(
             "⚠️ Esta acción todavía no tiene un flujo seguro disponible."
+        )
+
+        return
+
+
+    if data == "group_user_codes_panel":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para gestionar códigos en esta comunidad."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🎟 Códigos de mi grupo\n\n"
+            "Estos códigos dan acceso a usuarios finales solo para esta comunidad.",
+            reply_markup=build_group_user_codes_keyboard()
+        )
+
+        return
+
+
+    if data == "group_user_code_create":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para crear códigos en esta comunidad."
+            )
+
+            return
+
+
+        context.user_data["group_user_promo_group_id"] = group_id
+        context.user_data.pop("group_user_promo_duration_days", None)
+        context.user_data.pop("group_user_promo_is_permanent", None)
+        context.user_data.pop("group_user_promo_max_uses", None)
+        context.user_data.pop("group_user_promo_waiting", None)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "➕ Crear código\n\nElige la duración del acceso para el usuario final.",
+            reply_markup=build_group_user_code_duration_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("group_user_code_duration_"):
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para crear códigos en esta comunidad."
+            )
+
+            return
+
+
+        slug = data.replace("group_user_code_duration_", "", 1)
+        context.user_data["group_user_promo_group_id"] = group_id
+
+
+        if slug == "custom":
+
+            context.user_data["group_user_promo_waiting"] = "custom_duration"
+
+            await query.message.reply_text(
+                "Envía la duración en días, entre 1 y 3650.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
+                ])
+            )
+
+            return
+
+
+        if slug == "permanent":
+
+            context.user_data["group_user_promo_duration_days"] = None
+            context.user_data["group_user_promo_is_permanent"] = True
+
+        else:
+
+            try:
+
+                duration_days = int(slug)
+
+            except Exception:
+
+                await query.message.reply_text("❌ Duración no válida.")
+
+                return
+
+
+            if not 1 <= duration_days <= 3650:
+
+                await query.message.reply_text("❌ Duración no válida.")
+
+                return
+
+
+            context.user_data["group_user_promo_duration_days"] = duration_days
+            context.user_data["group_user_promo_is_permanent"] = False
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "Elige cuántos usos tendrá el código.",
+            reply_markup=build_group_user_code_uses_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("group_user_code_uses_"):
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para crear códigos en esta comunidad."
+            )
+
+            return
+
+
+        try:
+
+            max_uses = int(data.replace("group_user_code_uses_", "", 1))
+
+        except Exception:
+
+            await query.message.reply_text("❌ Número de usos no válido.")
+
+            return
+
+
+        if max_uses not in (0, 1, 5, 10):
+
+            await query.message.reply_text("❌ Número de usos no válido.")
+
+            return
+
+
+        context.user_data["group_user_promo_group_id"] = group_id
+        context.user_data["group_user_promo_max_uses"] = max_uses
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "Elige cómo quieres generar el código.",
+            reply_markup=build_group_user_code_kind_keyboard()
+        )
+
+        return
+
+
+    if data == "group_user_code_manual":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para crear códigos en esta comunidad."
+            )
+
+            return
+
+
+        context.user_data["group_user_promo_group_id"] = group_id
+        context.user_data["group_user_promo_waiting"] = "manual_code"
+
+        await query.message.reply_text(
+            "Envía el código manual.\n\n"
+            "Usa entre 4 y 32 caracteres: letras, números, guion o guion bajo.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
+            ])
+        )
+
+        return
+
+
+    if data == "group_user_code_auto":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para crear códigos en esta comunidad."
+            )
+
+            return
+
+
+        duration_days = context.user_data.get("group_user_promo_duration_days")
+        is_permanent = context.user_data.get("group_user_promo_is_permanent") is True
+        max_uses = context.user_data.get("group_user_promo_max_uses")
+
+
+        if max_uses is None:
+
+            await query.message.reply_text("❌ Falta completar la configuración del código.")
+
+            return
+
+
+        try:
+
+            row = create_group_user_promo_code(
+                group_id,
+                user_id,
+                duration_days,
+                is_permanent,
+                max_uses
+            )
+
+        except Exception as e:
+
+            print("Error creando código de grupo:", e)
+
+            await query.message.reply_text(
+                "❌ Error creando el código.",
+                reply_markup=build_group_user_codes_keyboard()
+            )
+
+            return
+
+
+        if not row:
+
+            await query.message.reply_text(
+                "❌ Error creando el código.",
+                reply_markup=build_group_user_codes_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Código creado\n\n"
+            f"Código: {row[1]}\n"
+            f"Duración: {format_group_user_promo_duration(row[2], row[3])}\n"
+            f"Usos máximos: {'ilimitado' if row[4] == 0 else row[4]}",
+            reply_markup=build_group_user_codes_keyboard()
+        )
+
+        return
+
+
+    if data == "group_user_codes_active":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text("⛔ No tienes permiso para ver códigos en esta comunidad.")
+
+            return
+
+
+        rows = fetch_group_user_promo_codes(group_id, active_only=True)
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "📋 No hay códigos activos para este grupo.",
+                reply_markup=build_group_user_codes_keyboard()
+            )
+
+            return
+
+
+        text = "📋 Códigos activos de mi grupo\n\n"
+
+
+        for _code_id, code, duration_days, is_permanent, max_uses, used_count, _is_active, expires_at, _created_at in rows:
+
+            text += (
+                f"Código: {code}\n"
+                f"Duración: {format_group_user_promo_duration(duration_days, is_permanent)}\n"
+                f"Usos: {format_group_user_promo_uses(max_uses, used_count)}\n"
+                f"Caduca: {expires_at or '-'}\n\n"
+            )
+
+
+        await query.message.reply_text(
+            text,
+            reply_markup=build_group_user_codes_keyboard()
+        )
+
+        return
+
+
+    if data == "group_user_code_deactivate_menu":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text("⛔ No tienes permiso para desactivar códigos en esta comunidad.")
+
+            return
+
+
+        rows = fetch_group_user_promo_codes(group_id, active_only=True)
+
+
+        await query.message.reply_text(
+            "🚫 Desactivar código\n\nElige el código que quieres desactivar.",
+            reply_markup=build_group_user_code_deactivate_keyboard(rows)
+        )
+
+        return
+
+
+    if data.startswith("group_user_code_deactivate_"):
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text("⛔ No tienes permiso para desactivar códigos en esta comunidad.")
+
+            return
+
+
+        try:
+
+            code_id = int(data.replace("group_user_code_deactivate_", "", 1))
+
+        except Exception:
+
+            await query.message.reply_text("❌ Código no válido.")
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE group_user_promo_codes
+                SET is_active=FALSE
+                WHERE id=%s
+                AND group_id=%s
+                RETURNING code
+
+            """, (
+                code_id,
+                group_id
+            ))
+
+            row = cur.fetchone()
+            conn.commit()
+
+
+        if not row:
+
+            await query.message.reply_text("❌ Código no encontrado.")
+
+            return
+
+
+        await query.message.reply_text(
+            f"🚫 Código desactivado:\n{row[0]}",
+            reply_markup=build_group_user_codes_keyboard()
+        )
+
+        return
+
+
+    if data == "group_user_code_usage":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_codes"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text("⛔ No tienes permiso para ver usos en esta comunidad.")
+
+            return
+
+
+        rows = fetch_group_user_promo_usage(group_id)
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "📊 Todavía no hay usos de códigos en este grupo.",
+                reply_markup=build_group_user_codes_keyboard()
+            )
+
+            return
+
+
+        text = "📊 Usos de códigos\n\n"
+
+
+        for redeemed_at, redeemed_user_id, code, expiration in rows:
+
+            text += (
+                f"Código: {code}\n"
+                f"Usuario: {redeemed_user_id}\n"
+                f"Canjeado: {redeemed_at}\n"
+                f"Expira: {expiration or 'permanente'}\n\n"
+            )
+
+
+        await query.message.reply_text(
+            text,
+            reply_markup=build_group_user_codes_keyboard()
         )
 
         return
@@ -12854,7 +14170,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
-    
+
     # =========================
     # OMITIR PREVIEW
     # =========================
@@ -14835,6 +16151,121 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Introduce tu código:"
         )
+
+        return
+
+
+    if data == "group_user_promo_redeem_start":
+
+        context.user_data["group_user_promo_waiting"] = "redeem_code"
+
+        await query.message.reply_text(
+            "🎟 Tengo código de acceso\n\n"
+            "Envía ahora el código de acceso de tu comunidad.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("group_user_promo_confirm_"):
+
+        try:
+
+            code_id = int(data.replace("group_user_promo_confirm_", "", 1))
+
+        except Exception:
+
+            await query.message.reply_text("❌ Código no válido.")
+
+            return
+
+
+        pending_code_id = context.user_data.get("group_user_promo_pending_code_id")
+
+
+        if int(pending_code_id or 0) != code_id:
+
+            await query.message.reply_text(
+                "❌ No hay un código pendiente para confirmar.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT c.id,
+                       c.group_id,
+                       c.telegram_group_id,
+                       c.owner_user_id,
+                       c.code,
+                       c.duration_days,
+                       c.is_permanent,
+                       c.max_uses,
+                       c.used_count,
+                       c.is_active,
+                       c.expires_at,
+                       g.name,
+                       COALESCE(g.is_active, TRUE)
+                FROM group_user_promo_codes c
+                JOIN groups g
+                ON g.id = c.group_id
+                WHERE c.id=%s
+                LIMIT 1
+
+            """, (code_id,))
+
+            promo_row = cur.fetchone()
+
+
+        valid, error_message = validate_group_user_promo_row(promo_row)
+
+
+        if not valid:
+
+            await query.message.reply_text(
+                error_message,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        try:
+
+            await grant_group_user_promo_access(
+                context,
+                query.message.chat_id,
+                query.from_user,
+                promo_row
+            )
+
+            context.user_data.pop("group_user_promo_pending_code_id", None)
+            context.user_data.pop("group_user_promo_waiting", None)
+
+        except Exception as e:
+
+            print("Error canjeando código de grupo:", e)
+
+            await query.message.reply_text(
+                "❌ Error canjeando el código.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
 
         return
 

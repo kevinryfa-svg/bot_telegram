@@ -1048,6 +1048,66 @@ def create_tables():
 
 
         # =========================
+        # TABLAS CÓDIGOS PROMOCIONALES POR GRUPO
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS group_user_promo_codes (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER NOT NULL,
+
+            telegram_group_id BIGINT,
+
+            owner_user_id BIGINT,
+
+            code TEXT UNIQUE NOT NULL,
+
+            duration_days INTEGER,
+
+            is_permanent BOOLEAN DEFAULT FALSE,
+
+            max_uses INTEGER DEFAULT 1,
+
+            used_count INTEGER DEFAULT 0,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            expires_at TIMESTAMP
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS group_user_promo_redemptions (
+
+            id SERIAL PRIMARY KEY,
+
+            code_id INTEGER,
+
+            group_id INTEGER,
+
+            user_id BIGINT,
+
+            redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            invite_link TEXT,
+
+            expiration TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA VINCULACIÓN PENDIENTE DE GRUPOS DE CREADORES
         # =========================
 

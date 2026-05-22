@@ -644,6 +644,19 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         ])
 
 
+    keyboard.append([
+
+        InlineKeyboardButton(
+
+            "🎟 Tengo código de acceso",
+
+            callback_data="group_user_promo_redeem_start"
+
+        )
+
+    ])
+
+
     # =========================
     # BOTONES COMERCIALES PÚBLICOS
     # =========================
