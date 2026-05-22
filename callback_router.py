@@ -22,7 +22,7 @@ from admin_permission_map import (
     is_admin_callback
 )
 from admin_menu_catalog import build_admin_menu_button_rows
-from audit_log_service import list_recent_events
+from audit_log_service import list_recent_events, log_event
 from ai_handler import activate_ai_help_context
 from code_admin_handler import crear_codigo_callback
 from bot_config import ADMIN_ID
@@ -1060,6 +1060,286 @@ def can_manage_group_admins(user_id, group_id):
         group_id,
         "can_manage_admins"
     )
+
+
+def user_is_group_owner(user_id, group_id):
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT 1
+            FROM admins
+            WHERE user_id=%s
+            AND group_id=%s
+            AND role='GROUP_OWNER'
+            AND is_active=TRUE
+            LIMIT 1
+
+        """, (
+            user_id,
+            group_id
+        ))
+
+        return cur.fetchone() is not None
+
+
+def fetch_backup_owner_groups(user_id):
+
+    with conn.cursor() as cur:
+
+        if is_super_admin(user_id):
+
+            cur.execute("""
+
+                SELECT id,
+                       name,
+                       telegram_group_id,
+                       COALESCE(bot_is_admin, FALSE)
+                FROM groups
+                WHERE telegram_group_id IS NOT NULL
+                AND telegram_group_id != 0
+                AND COALESCE(is_active, TRUE)=TRUE
+                ORDER BY name ASC NULLS LAST,
+                         id ASC
+
+            """)
+
+        else:
+
+            cur.execute("""
+
+                SELECT g.id,
+                       g.name,
+                       g.telegram_group_id,
+                       COALESCE(g.bot_is_admin, FALSE)
+                FROM admins a
+                JOIN groups g
+                ON g.id = a.group_id
+                WHERE a.user_id=%s
+                AND a.role='GROUP_OWNER'
+                AND a.is_active=TRUE
+                AND g.telegram_group_id IS NOT NULL
+                AND g.telegram_group_id != 0
+                AND COALESCE(g.is_active, TRUE)=TRUE
+                ORDER BY g.name ASC NULLS LAST,
+                         g.id ASC
+
+            """, (user_id,))
+
+
+        return cur.fetchall()
+
+
+def fetch_backup_config(config_id, user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   owner_user_id,
+                   source_group_id,
+                   source_telegram_group_id,
+                   destination_group_id,
+                   destination_telegram_group_id,
+                   mode,
+                   status
+            FROM group_backup_configs
+            WHERE id=%s
+            AND owner_user_id=%s
+            LIMIT 1
+
+        """, (
+            config_id,
+            user_id
+        ))
+
+        return cur.fetchone()
+
+
+def fetch_owner_backup_configs(user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT c.id,
+                   c.status,
+                   c.mode,
+                   sg.name,
+                   dg.name,
+                   c.last_message_at,
+                   c.source_group_id,
+                   c.destination_group_id
+            FROM group_backup_configs c
+            LEFT JOIN groups sg
+            ON sg.id = c.source_group_id
+            LEFT JOIN groups dg
+            ON dg.id = c.destination_group_id
+            WHERE c.owner_user_id=%s
+            ORDER BY c.updated_at DESC,
+                     c.created_at DESC
+
+        """, (user_id,))
+
+        return cur.fetchall()
+
+
+def format_backup_panel_text(user_id):
+
+    configs = fetch_owner_backup_configs(user_id)
+
+
+    if not configs:
+
+        return (
+            "🛡 Backup premium\n\n"
+            "Estado: sin configurar\n"
+            "Modo disponible: texto\n\n"
+            "Selecciona un grupo origen y un grupo destino para copiar "
+            "mensajes de texto nuevos que el bot reciba."
+        )
+
+
+    text = "🛡 Backup premium\n\n"
+
+
+    for config in configs[:3]:
+
+        (
+            config_id,
+            status,
+            mode,
+            source_name,
+            destination_name,
+            last_message_at,
+            _source_group_id,
+            _destination_group_id
+        ) = config
+
+        text += (
+            f"Config #{config_id}\n"
+            f"Estado: {status or 'inactive'}\n"
+            f"Origen: {source_name or '-'}\n"
+            f"Destino: {destination_name or '-'}\n"
+            f"Modo: {mode or 'text'}\n"
+            f"Último mensaje copiado: {last_message_at or '-'}\n\n"
+        )
+
+
+    return text
+
+
+def build_backup_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Activar backup", callback_data="owner_backup_activate")],
+        [InlineKeyboardButton("⏸ Pausar backup", callback_data="owner_backup_pause")],
+        [InlineKeyboardButton("🔁 Cambiar destino", callback_data="owner_backup_change_destination")],
+        [InlineKeyboardButton("⚠️ Últimos errores", callback_data="owner_backup_errors")],
+        [InlineKeyboardButton("📜 Últimos mensajes copiados", callback_data="owner_backup_messages")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+    ])
+
+
+def build_backup_group_select_keyboard(groups, prefix, back_callback="owner_backup_panel"):
+
+    keyboard = []
+
+
+    for group_id, name, _telegram_group_id, bot_is_admin in groups:
+
+        label = name or f"Grupo {group_id}"
+
+
+        if not bot_is_admin:
+
+            label += " · bot sin admin"
+
+
+        keyboard.append([
+            InlineKeyboardButton(
+                label,
+                callback_data=f"{prefix}{group_id}"
+            )
+        ])
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=back_callback)])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def backup_group_by_id(groups, group_id):
+
+    for group in groups:
+
+        if int(group[0]) == int(group_id):
+
+            return group
+
+
+    return None
+
+
+def fetch_backup_recent_messages(user_id, limit=20):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT l.created_at,
+                   sg.name,
+                   dg.name,
+                   l.source_message_id,
+                   l.destination_message_id,
+                   l.status
+            FROM backup_message_log l
+            JOIN group_backup_configs c
+            ON c.id = l.config_id
+            LEFT JOIN groups sg
+            ON sg.id = l.source_group_id
+            LEFT JOIN groups dg
+            ON dg.id = l.destination_group_id
+            WHERE c.owner_user_id=%s
+            ORDER BY l.created_at DESC
+            LIMIT %s
+
+        """, (
+            user_id,
+            limit
+        ))
+
+        return cur.fetchall()
+
+
+def fetch_backup_recent_errors(user_id, limit=20):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT e.created_at,
+                   e.severity,
+                   e.error_type,
+                   e.message
+            FROM backup_errors e
+            WHERE e.owner_user_id=%s
+            ORDER BY e.created_at DESC
+            LIMIT %s
+
+        """, (
+            user_id,
+            limit
+        ))
+
+        return cur.fetchall()
 
 
 def fetch_group_admin_manageable_groups(user_id):
@@ -8408,6 +8688,369 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             return
+
+
+    if data == "owner_backup_panel":
+
+        groups = fetch_backup_owner_groups(user_id)
+
+
+        if not groups:
+
+            await query.message.reply_text(
+                "⛔ No tienes grupos propios con permisos para configurar backup."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            format_backup_panel_text(user_id),
+            reply_markup=build_backup_panel_keyboard()
+        )
+
+        return
+
+
+    if data in (
+        "owner_backup_activate",
+        "owner_backup_change_destination"
+    ):
+
+        groups = [
+            group
+            for group in fetch_backup_owner_groups(user_id)
+            if group[3] is True
+        ]
+
+
+        if len(groups) < 2:
+
+            await query.message.reply_text(
+                "⚠️ Necesitas al menos dos grupos propios con el bot añadido como administrador: origen y destino.",
+                reply_markup=build_backup_panel_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🛡 Backup premium\n\nSelecciona el grupo origen.",
+            reply_markup=build_backup_group_select_keyboard(
+                groups,
+                "owner_backup_source_"
+            )
+        )
+
+        return
+
+
+    if data.startswith("owner_backup_source_"):
+
+        try:
+
+            source_group_id = int(
+                data.replace("owner_backup_source_", "", 1)
+            )
+
+        except Exception:
+
+            await query.message.reply_text("❌ Grupo origen no válido.")
+
+            return
+
+
+        groups = [
+            group
+            for group in fetch_backup_owner_groups(user_id)
+            if group[3] is True
+        ]
+        source_group = backup_group_by_id(groups, source_group_id)
+
+
+        if not source_group:
+
+            await query.message.reply_text(
+                "⛔ Este grupo no pertenece a tu panel o el bot no está como administrador."
+            )
+
+            return
+
+
+        destination_groups = [
+            group
+            for group in groups
+            if int(group[0]) != int(source_group_id)
+        ]
+
+
+        if not destination_groups:
+
+            await query.message.reply_text(
+                "⚠️ No tienes otro grupo propio disponible como destino."
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🛡 Backup premium\n\nSelecciona el grupo destino.",
+            reply_markup=build_backup_group_select_keyboard(
+                destination_groups,
+                f"owner_backup_dest_{source_group_id}_"
+            )
+        )
+
+        return
+
+
+    if data.startswith("owner_backup_dest_"):
+
+        try:
+
+            payload = data.replace("owner_backup_dest_", "", 1)
+            source_group_text, destination_group_text = payload.split("_", 1)
+            source_group_id = int(source_group_text)
+            destination_group_id = int(destination_group_text)
+
+        except Exception:
+
+            await query.message.reply_text("❌ Configuración de backup no válida.")
+
+            return
+
+
+        if source_group_id == destination_group_id:
+
+            await query.message.reply_text(
+                "⚠️ El origen y el destino no pueden ser el mismo grupo."
+            )
+
+            return
+
+
+        groups = [
+            group
+            for group in fetch_backup_owner_groups(user_id)
+            if group[3] is True
+        ]
+        source_group = backup_group_by_id(groups, source_group_id)
+        destination_group = backup_group_by_id(groups, destination_group_id)
+
+
+        if not source_group or not destination_group:
+
+            await query.message.reply_text(
+                "⛔ Solo puedes configurar backup entre grupos propios donde el bot esté como administrador."
+            )
+
+            return
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO backup_subscriptions
+                (
+                    owner_user_id,
+                    status,
+                    plan_type,
+                    updated_at
+                )
+                VALUES (%s, 'active', 'text', NOW())
+                RETURNING id
+
+            """, (user_id,))
+
+            subscription_id = cur.fetchone()[0]
+
+            cur.execute("""
+
+                INSERT INTO group_backup_configs
+                (
+                    owner_user_id,
+                    source_group_id,
+                    source_telegram_group_id,
+                    destination_group_id,
+                    destination_telegram_group_id,
+                    subscription_id,
+                    mode,
+                    status,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, 'text', 'active', NOW())
+                ON CONFLICT (owner_user_id, source_group_id, destination_group_id)
+                DO UPDATE SET
+                    source_telegram_group_id=EXCLUDED.source_telegram_group_id,
+                    destination_telegram_group_id=EXCLUDED.destination_telegram_group_id,
+                    subscription_id=EXCLUDED.subscription_id,
+                    mode='text',
+                    status='active',
+                    updated_at=NOW()
+                RETURNING id
+
+            """, (
+                user_id,
+                source_group[0],
+                source_group[2],
+                destination_group[0],
+                destination_group[2],
+                subscription_id
+            ))
+
+            config_id = cur.fetchone()[0]
+
+            conn.commit()
+
+
+        log_event(
+            "backup_activated",
+            category="backup",
+            severity="info",
+            scope="group",
+            group_id=source_group_id,
+            telegram_group_id=source_group[2],
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Backup premium texto activado.",
+            metadata={
+                "config_id": config_id,
+                "destination_group_id": destination_group_id,
+                "destination_telegram_group_id": destination_group[2],
+                "mode": "text"
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Backup premium activado.\n\n"
+            f"Origen: {source_group[1] or source_group_id}\n"
+            f"Destino: {destination_group[1] or destination_group_id}\n"
+            "Modo: texto",
+            reply_markup=build_backup_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "owner_backup_pause":
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE group_backup_configs
+                SET status='paused',
+                    updated_at=NOW()
+                WHERE owner_user_id=%s
+                AND status='active'
+
+            """, (user_id,))
+
+            affected = cur.rowcount
+            conn.commit()
+
+
+        log_event(
+            "backup_paused",
+            category="backup",
+            severity="info",
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Backup premium pausado por owner.",
+            metadata={
+                "configs_paused": affected
+            }
+        )
+
+        await query.message.reply_text(
+            f"⏸ Backup pausado en {affected} configuración(es).",
+            reply_markup=build_backup_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "owner_backup_messages":
+
+        rows = fetch_backup_recent_messages(user_id)
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "📜 Todavía no hay mensajes copiados.",
+                reply_markup=build_backup_panel_keyboard()
+            )
+
+            return
+
+
+        text = "📜 Últimos mensajes copiados\n\n"
+
+
+        for created_at, source_name, destination_name, source_message_id, destination_message_id, status in rows[:20]:
+
+            text += (
+                f"Origen: {source_name or '-'}\n"
+                f"Destino: {destination_name or '-'}\n"
+                f"Mensaje origen: {source_message_id or '-'}\n"
+                f"Mensaje destino: {destination_message_id or '-'}\n"
+                f"Estado: {status or '-'}\n"
+                f"Fecha: {created_at or '-'}\n\n"
+            )
+
+
+        await query.message.reply_text(
+            text,
+            reply_markup=build_backup_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "owner_backup_errors":
+
+        rows = fetch_backup_recent_errors(user_id)
+
+
+        if not rows:
+
+            await query.message.reply_text(
+                "✅ No hay errores recientes de backup.",
+                reply_markup=build_backup_panel_keyboard()
+            )
+
+            return
+
+
+        text = "⚠️ Últimos errores de backup\n\n"
+
+
+        for created_at, severity, error_type, message in rows[:20]:
+
+            text += (
+                f"Tipo: {error_type or '-'}\n"
+                f"Severidad: {severity or '-'}\n"
+                f"Detalle: {message or '-'}\n"
+                f"Fecha: {created_at or '-'}\n\n"
+            )
+
+
+        await query.message.reply_text(
+            text,
+            reply_markup=build_backup_panel_keyboard()
+        )
+
+        return
 
 
     if data == "group_admin_panel":

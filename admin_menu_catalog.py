@@ -16,6 +16,7 @@ ADMIN_MENU_LOGS = "logs"
 ADMIN_MENU_COMMERCIAL = "commercial"
 ADMIN_MENU_SUPPORT = "support"
 ADMIN_MENU_GROUP_ADMINS = "group_admins"
+ADMIN_MENU_BACKUP = "backup_premium"
 
 
 ADMIN_MENU_SECTIONS = [
@@ -73,6 +74,14 @@ ADMIN_MENU_SECTIONS = [
         ]
     },
     {
+        "key": ADMIN_MENU_BACKUP,
+        "text": "🛡 Backup premium",
+        "callback_data": "owner_backup_panel",
+        "permissions_any": [
+            "can_manage_groups"
+        ]
+    },
+    {
         "key": ADMIN_MENU_GROUP_ADMINS,
         "text": "👥 Admins de mi grupo",
         "callback_data": "group_admin_panel",
@@ -118,6 +127,7 @@ ADMIN_HELP_CONTEXT_BY_CALLBACK = {
     "menu_payments": "admin_payments",
     "menu_business": "admin_business",
     "menu_logs": "admin_logs",
+    "owner_backup_panel": "backup_premium",
     "group_admin_panel": "group_admins",
     "admin_commercial_requests": "commercial_admin",
     "admin_commercial_promo_codes": "commercial_admin",

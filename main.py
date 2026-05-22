@@ -77,7 +77,8 @@ from admin_view_handlers import (
 from expiration_worker import check_expirations
 from group_registration_handler import (
     capture_group_preview_video,
-    detect_bot_added
+    detect_bot_added,
+    handle_group_backup_text
 )
 from user_join_handler import detect_user_join
 from ai_handler import (
@@ -1509,6 +1510,13 @@ def main():
         MessageHandler(
             filters.LOCATION,
             receive_location_gate
+        )
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & filters.TEXT & ~filters.COMMAND,
+            handle_group_backup_text
         )
     )
 
