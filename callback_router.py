@@ -1530,12 +1530,12 @@ def fetch_group_basic_info(group_id):
         return cur.fetchone()
 
 
-def build_group_user_codes_error_keyboard():
+def build_group_user_codes_error_keyboard(group_id=None):
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "⬅️ Volver",
-            callback_data="group_user_codes_panel"
+            callback_data=build_group_user_code_callback("group_user_codes_panel", group_id)
         )],
         [InlineKeyboardButton(
             "🏠 Inicio",
@@ -1691,50 +1691,64 @@ def format_group_user_promo_uses(max_uses, used_count):
     return f"{used_count}/{max_uses}"
 
 
-def build_group_user_codes_keyboard():
+def build_group_user_code_callback(callback_data, group_id=None):
+
+    if group_id:
+
+        return f"{callback_data}_{group_id}"
+
+
+    return callback_data
+
+
+def build_group_user_codes_keyboard(group_id=None):
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Crear código", callback_data="group_user_code_create")],
-        [InlineKeyboardButton("📋 Ver códigos activos", callback_data="group_user_codes_active")],
-        [InlineKeyboardButton("🚫 Desactivar código", callback_data="group_user_code_deactivate_menu")],
-        [InlineKeyboardButton("📊 Usos de códigos", callback_data="group_user_code_usage")],
+        [InlineKeyboardButton("➕ Crear código", callback_data=build_group_user_code_callback("group_user_code_create", group_id))],
+        [InlineKeyboardButton("📋 Ver códigos activos", callback_data=build_group_user_code_callback("group_user_codes_active", group_id))],
+        [InlineKeyboardButton("🚫 Desactivar código", callback_data=build_group_user_code_callback("group_user_code_deactivate_menu", group_id))],
+        [InlineKeyboardButton("📊 Usos de códigos", callback_data=build_group_user_code_callback("group_user_code_usage", group_id))],
         [InlineKeyboardButton("⬅️ Volver", callback_data="edit_group_back")]
     ])
 
 
-def build_group_user_code_duration_keyboard():
+def build_group_user_code_duration_keyboard(group_id=None):
+
+    suffix = f"_{group_id}" if group_id else ""
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("1 día", callback_data="group_user_code_duration_1")],
-        [InlineKeyboardButton("7 días", callback_data="group_user_code_duration_7")],
-        [InlineKeyboardButton("30 días", callback_data="group_user_code_duration_30")],
-        [InlineKeyboardButton("Permanente", callback_data="group_user_code_duration_permanent")],
-        [InlineKeyboardButton("Personalizado", callback_data="group_user_code_duration_custom")],
-        [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
+        [InlineKeyboardButton("1 día", callback_data=f"group_user_code_duration{suffix}_1")],
+        [InlineKeyboardButton("7 días", callback_data=f"group_user_code_duration{suffix}_7")],
+        [InlineKeyboardButton("30 días", callback_data=f"group_user_code_duration{suffix}_30")],
+        [InlineKeyboardButton("Permanente", callback_data=f"group_user_code_duration{suffix}_permanent")],
+        [InlineKeyboardButton("Personalizado", callback_data=f"group_user_code_duration{suffix}_custom")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data=build_group_user_code_callback("group_user_codes_panel", group_id))]
     ])
 
 
-def build_group_user_code_uses_keyboard():
+def build_group_user_code_uses_keyboard(group_id=None):
+
+    suffix = f"_{group_id}" if group_id else ""
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("1 uso", callback_data="group_user_code_uses_1")],
-        [InlineKeyboardButton("5 usos", callback_data="group_user_code_uses_5")],
-        [InlineKeyboardButton("10 usos", callback_data="group_user_code_uses_10")],
-        [InlineKeyboardButton("Ilimitado", callback_data="group_user_code_uses_0")],
-        [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_code_create")]
+        [InlineKeyboardButton("1 uso", callback_data=f"group_user_code_uses{suffix}_1")],
+        [InlineKeyboardButton("5 usos", callback_data=f"group_user_code_uses{suffix}_5")],
+        [InlineKeyboardButton("10 usos", callback_data=f"group_user_code_uses{suffix}_10")],
+        [InlineKeyboardButton("Ilimitado", callback_data=f"group_user_code_uses{suffix}_0")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data=build_group_user_code_callback("group_user_code_create", group_id))]
     ])
 
 
-def build_group_user_code_kind_keyboard():
+def build_group_user_code_kind_keyboard(group_id=None):
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Código automático", callback_data="group_user_code_auto")],
-        [InlineKeyboardButton("Código manual", callback_data="group_user_code_manual")],
-        [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_code_create")]
+        [InlineKeyboardButton("Código automático", callback_data=build_group_user_code_callback("group_user_code_auto", group_id))],
+        [InlineKeyboardButton("Código manual", callback_data=build_group_user_code_callback("group_user_code_manual", group_id))],
+        [InlineKeyboardButton("⬅️ Volver", callback_data=build_group_user_code_callback("group_user_code_create", group_id))]
     ])
 
 
-def build_group_user_code_deactivate_keyboard(rows):
+def build_group_user_code_deactivate_keyboard(rows, group_id=None):
 
     keyboard = []
 
@@ -1744,12 +1758,16 @@ def build_group_user_code_deactivate_keyboard(rows):
         keyboard.append([
             InlineKeyboardButton(
                 f"{code} · {format_group_user_promo_duration(duration_days, is_permanent)} · {format_group_user_promo_uses(max_uses, used_count)}",
-                callback_data=f"group_user_code_deactivate_{code_id}"
+                callback_data=(
+                    f"group_user_code_deactivate_{group_id}_{code_id}"
+                    if group_id
+                    else f"group_user_code_deactivate_{code_id}"
+                )
             )
         ])
 
 
-    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")])
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=build_group_user_code_callback("group_user_codes_panel", group_id))])
 
     return InlineKeyboardMarkup(keyboard)
 
@@ -2184,6 +2202,7 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
     if waiting == "custom_duration":
 
         raw_duration = (update.message.text or "").strip()
+        group_id = context.user_data.get("group_user_promo_group_id")
 
 
         if not raw_duration.isdigit() or not 1 <= int(raw_duration) <= 3650:
@@ -2202,7 +2221,7 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
 
         await update.message.reply_text(
             "Elige cuántos usos tendrá el código.",
-            reply_markup=build_group_user_code_uses_keyboard()
+            reply_markup=build_group_user_code_uses_keyboard(group_id)
         )
 
         return
@@ -2270,7 +2289,7 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
 
             await update.message.reply_text(
                 "❌ No pude crear el código. Revisa que no esté repetido.",
-                reply_markup=build_group_user_codes_keyboard()
+                reply_markup=build_group_user_codes_keyboard(group_id)
             )
 
             return
@@ -2283,7 +2302,7 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
             f"Código: {row[1]}\n"
             f"Duración: {format_group_user_promo_duration(row[2], row[3])}\n"
             f"Usos máximos: {'ilimitado' if row[4] == 0 else row[4]}",
-            reply_markup=build_group_user_codes_keyboard()
+            reply_markup=build_group_user_codes_keyboard(group_id)
         )
 
         return
@@ -2920,6 +2939,83 @@ def get_selected_group_for_permissions(context, user_id, permissions):
 
 
     return None
+
+
+def resolve_group_user_codes_group(context, user_id, permissions, group_id=None):
+
+    if group_id:
+
+        try:
+
+            group_id = int(group_id)
+
+        except Exception:
+
+            return None
+
+
+        if not user_has_group_permission_any(user_id, group_id, permissions):
+
+            return None
+
+
+        if not set_group_user_promo_context(context, group_id):
+
+            return None
+
+
+        return group_id
+
+
+    return get_selected_group_for_permissions(
+        context,
+        user_id,
+        permissions
+    )
+
+
+def parse_group_user_code_group_callback(data, prefix):
+
+    if data == prefix:
+
+        return None
+
+
+    if not data.startswith(f"{prefix}_"):
+
+        return None
+
+
+    payload = data.replace(f"{prefix}_", "", 1)
+
+
+    if not payload.isdigit():
+
+        return None
+
+
+    return int(payload)
+
+
+def parse_group_user_code_step_callback(data, prefix):
+
+    payload = data.replace(prefix, "", 1).strip("_")
+
+
+    if not payload:
+
+        return None, None
+
+
+    parts = payload.split("_", 1)
+
+
+    if len(parts) == 2 and parts[0].isdigit():
+
+        return int(parts[0]), parts[1]
+
+
+    return None, payload
 
 
 COMMERCIAL_REQUEST_FIELDS = [
@@ -13898,7 +13994,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🎟 Códigos de mi grupo\n\n"
             f"Grupo: {group_name or group_id}\n\n"
             "Crea códigos para usuarios finales de esta comunidad.",
-            reply_markup=build_group_user_codes_keyboard()
+            reply_markup=build_group_user_codes_keyboard(group_id)
         )
 
         return
@@ -14146,7 +14242,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🎟 Códigos de mi grupo\n\n"
                 "Crea códigos para usuarios finales de esta comunidad. "
                 "Estos códigos solo funcionan en este grupo y no se mezclan con los códigos promocionales comerciales.",
-                reply_markup=build_group_user_codes_keyboard()
+                reply_markup=build_group_user_codes_keyboard(group_id)
             )
 
             return
@@ -14159,12 +14255,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data == "group_user_codes_panel":
+    if data == "group_user_codes_panel" or data.startswith("group_user_codes_panel_"):
 
-        group_id = get_selected_group_for_permissions(
+        callback_group_id = parse_group_user_code_group_callback(
+            data,
+            "group_user_codes_panel"
+        )
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14189,18 +14290,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             "🎟 Códigos de mi grupo\n\n"
             "Estos códigos dan acceso a usuarios finales solo para esta comunidad.",
-            reply_markup=build_group_user_codes_keyboard()
+            reply_markup=build_group_user_codes_keyboard(group_id)
         )
 
         return
 
 
-    if data == "group_user_code_create":
+    if data == "group_user_code_create" or data.startswith("group_user_code_create_"):
 
-        group_id = get_selected_group_for_permissions(
+        callback_group_id = parse_group_user_code_group_callback(
+            data,
+            "group_user_code_create"
+        )
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14226,7 +14332,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "➕ Crear código\n\nElige la duración del acceso para el usuario final.",
-            reply_markup=build_group_user_code_duration_keyboard()
+            reply_markup=build_group_user_code_duration_keyboard(group_id)
         )
 
         return
@@ -14234,10 +14340,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("group_user_code_duration_"):
 
-        group_id = get_selected_group_for_permissions(
+        callback_group_id, slug = parse_group_user_code_step_callback(
+            data,
+            "group_user_code_duration"
+        )
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14251,7 +14362,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        slug = data.replace("group_user_code_duration_", "", 1)
         set_group_user_promo_context(
             context,
             group_id,
@@ -14310,7 +14420,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "Elige cuántos usos tendrá el código.",
-            reply_markup=build_group_user_code_uses_keyboard()
+            reply_markup=build_group_user_code_uses_keyboard(group_id)
         )
 
         return
@@ -14318,10 +14428,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("group_user_code_uses_"):
 
-        group_id = get_selected_group_for_permissions(
+        callback_group_id, uses_text = parse_group_user_code_step_callback(
+            data,
+            "group_user_code_uses"
+        )
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14337,7 +14452,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
 
-            max_uses = int(data.replace("group_user_code_uses_", "", 1))
+            max_uses = int(uses_text)
 
         except Exception:
 
@@ -14370,18 +14485,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "Elige cómo quieres generar el código.",
-            reply_markup=build_group_user_code_kind_keyboard()
+            reply_markup=build_group_user_code_kind_keyboard(group_id)
         )
 
         return
 
 
-    if data == "group_user_code_manual":
+    if data == "group_user_code_manual" or data.startswith("group_user_code_manual_"):
 
-        group_id = get_selected_group_for_permissions(
+        callback_group_id = parse_group_user_code_group_callback(
+            data,
+            "group_user_code_manual"
+        )
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14406,19 +14526,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Envía el código manual.\n\n"
             "Usa entre 4 y 32 caracteres: letras, números, guion o guion bajo.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Volver", callback_data="group_user_codes_panel")]
+                [InlineKeyboardButton("⬅️ Volver", callback_data=build_group_user_code_callback("group_user_codes_panel", group_id))]
             ])
         )
 
         return
 
 
-    if data == "group_user_code_auto":
+    if data == "group_user_code_auto" or data.startswith("group_user_code_auto_"):
 
-        group_id = get_selected_group_for_permissions(
+        callback_group_id = parse_group_user_code_group_callback(
+            data,
+            "group_user_code_auto"
+        )
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14463,7 +14588,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "❌ Error creando el código.",
-                reply_markup=build_group_user_codes_keyboard()
+                reply_markup=build_group_user_codes_keyboard(group_id)
             )
 
             return
@@ -14473,7 +14598,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "❌ Error creando el código.",
-                reply_markup=build_group_user_codes_keyboard()
+                reply_markup=build_group_user_codes_keyboard(group_id)
             )
 
             return
@@ -14488,18 +14613,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Código: {row[1]}\n"
             f"Duración: {format_group_user_promo_duration(row[2], row[3])}\n"
             f"Usos máximos: {'ilimitado' if row[4] == 0 else row[4]}",
-            reply_markup=build_group_user_codes_keyboard()
+            reply_markup=build_group_user_codes_keyboard(group_id)
         )
 
         return
 
 
-    if data == "group_user_codes_active":
+    if data == "group_user_codes_active" or data.startswith("group_user_codes_active_"):
 
-        group_id = get_selected_group_for_permissions(
+        callback_group_id = parse_group_user_code_group_callback(
+            data,
+            "group_user_codes_active"
+        )
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14520,7 +14650,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "📋 No hay códigos activos para este grupo.",
-                reply_markup=build_group_user_codes_keyboard()
+                reply_markup=build_group_user_codes_keyboard(group_id)
             )
 
             return
@@ -14541,18 +14671,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             text,
-            reply_markup=build_group_user_codes_keyboard()
+            reply_markup=build_group_user_codes_keyboard(group_id)
         )
 
         return
 
 
-    if data == "group_user_code_deactivate_menu":
+    if data == "group_user_code_deactivate_menu" or data.startswith("group_user_code_deactivate_menu_"):
 
-        group_id = get_selected_group_for_permissions(
+        callback_group_id = parse_group_user_code_group_callback(
+            data,
+            "group_user_code_deactivate_menu"
+        )
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14571,7 +14706,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "🚫 Desactivar código\n\nElige el código que quieres desactivar.",
-            reply_markup=build_group_user_code_deactivate_keyboard(rows)
+            reply_markup=build_group_user_code_deactivate_keyboard(rows, group_id)
         )
 
         return
@@ -14579,10 +14714,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("group_user_code_deactivate_"):
 
-        group_id = get_selected_group_for_permissions(
+        payload = data.replace("group_user_code_deactivate_", "", 1)
+        callback_group_id = None
+        code_id_text = payload
+
+
+        if "_" in payload:
+
+            maybe_group_id, maybe_code_id = payload.split("_", 1)
+
+
+            if maybe_group_id.isdigit() and maybe_code_id.isdigit():
+
+                callback_group_id = int(maybe_group_id)
+                code_id_text = maybe_code_id
+
+
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14598,7 +14750,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
 
-            code_id = int(data.replace("group_user_code_deactivate_", "", 1))
+            code_id = int(code_id_text)
 
         except Exception:
 
@@ -14641,18 +14793,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             f"🚫 Código desactivado:\n{row[0]}",
-            reply_markup=build_group_user_codes_keyboard()
+            reply_markup=build_group_user_codes_keyboard(group_id)
         )
 
         return
 
 
-    if data == "group_user_code_usage":
+    if data == "group_user_code_usage" or data.startswith("group_user_code_usage_"):
 
-        group_id = get_selected_group_for_permissions(
+        callback_group_id = parse_group_user_code_group_callback(
+            data,
+            "group_user_code_usage"
+        )
+        group_id = resolve_group_user_codes_group(
             context,
             user_id,
-            ["can_manage_codes"]
+            ["can_manage_codes"],
+            callback_group_id
         )
 
 
@@ -14673,7 +14830,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "📊 Todavía no hay usos de códigos en este grupo.",
-                reply_markup=build_group_user_codes_keyboard()
+                reply_markup=build_group_user_codes_keyboard(group_id)
             )
 
             return
@@ -14694,7 +14851,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             text,
-            reply_markup=build_group_user_codes_keyboard()
+            reply_markup=build_group_user_codes_keyboard(group_id)
         )
 
         return
