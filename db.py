@@ -748,6 +748,49 @@ def create_tables():
         """)
 
 
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS backup_destination_tokens (
+
+            id SERIAL PRIMARY KEY,
+
+            token TEXT UNIQUE NOT NULL,
+
+            owner_user_id BIGINT NOT NULL,
+
+            source_group_id INTEGER NOT NULL,
+
+            source_telegram_group_id BIGINT NOT NULL,
+
+            status TEXT DEFAULT 'pending',
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            expires_at TIMESTAMP,
+
+            destination_telegram_group_id BIGINT,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        try:
+
+            cur.execute("""
+
+                ALTER TABLE group_backup_configs
+                ADD COLUMN IF NOT EXISTS show_original_author BOOLEAN DEFAULT FALSE
+
+            """)
+
+        except Exception:
+
+            pass
+
+
         # =========================
         # TABLA CONFIG
         # =========================

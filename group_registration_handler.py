@@ -2,6 +2,8 @@ import asyncio
 import json
 import requests
 
+from datetime import datetime
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -19,6 +21,7 @@ from rbac_helpers import (
     can_user_claim_telegram_group,
     get_creator_group_quota as get_persistent_creator_group_quota,
     get_group_owner_user_id,
+    has_permission,
     is_super_admin
 )
 
@@ -211,7 +214,8 @@ def fetch_active_backup_configs(source_telegram_group_id, allowed_modes):
                    c.source_group_id,
                    c.source_telegram_group_id,
                    c.destination_group_id,
-                   c.destination_telegram_group_id
+                   c.destination_telegram_group_id,
+                   COALESCE(c.show_original_author, FALSE)
             FROM group_backup_configs c
             JOIN groups source_group
             ON source_group.id = c.source_group_id
@@ -300,6 +304,628 @@ def record_backup_error(cur, config_id, owner_user_id, error_type, message, meta
     ))
 
 
+def format_backup_original_author(update):
+
+    user = update.effective_user
+
+
+    if not user:
+
+        return "👤 Original de: usuario desconocido"
+
+
+    display_name = (
+        user.full_name
+        or user.first_name
+        or user.username
+        or str(user.id)
+    )
+
+
+    if user.username:
+
+        display_name += f" (@{user.username})"
+
+
+    return f"👤 Original de: {display_name}"
+
+
+def backup_user_can_manage_source(user_id, owner_user_id, source_group_id):
+
+    if not user_id:
+
+        return False
+
+
+    if int(user_id) == int(owner_user_id):
+
+        return True
+
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    return has_permission(
+        user_id,
+        source_group_id,
+        "can_manage_groups"
+    )
+
+
+def fetch_backup_destination_token(token):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   token,
+                   owner_user_id,
+                   source_group_id,
+                   source_telegram_group_id,
+                   status,
+                   expires_at,
+                   destination_telegram_group_id
+            FROM backup_destination_tokens
+            WHERE token=%s
+            LIMIT 1
+
+        """, (token,))
+
+        return cur.fetchone()
+
+
+def fetch_backup_destination_token_by_id(token_id, owner_user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   token,
+                   owner_user_id,
+                   source_group_id,
+                   source_telegram_group_id,
+                   status,
+                   expires_at,
+                   destination_telegram_group_id
+            FROM backup_destination_tokens
+            WHERE id=%s
+            AND owner_user_id=%s
+            LIMIT 1
+
+        """, (
+            token_id,
+            owner_user_id
+        ))
+
+        return cur.fetchone()
+
+
+def mark_backup_destination_token_destination(token_id, destination_telegram_group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE backup_destination_tokens
+            SET destination_telegram_group_id=%s,
+                updated_at=NOW()
+            WHERE id=%s
+
+        """, (
+            destination_telegram_group_id,
+            token_id
+        ))
+
+        conn.commit()
+
+
+def backup_destination_token_is_expired(expires_at):
+
+    if not expires_at:
+
+        return False
+
+
+    now = datetime.now(expires_at.tzinfo) if getattr(expires_at, "tzinfo", None) else datetime.now()
+
+    return expires_at <= now
+
+
+async def bot_is_admin_in_chat(context, telegram_group_id):
+
+    try:
+
+        bot_member = await context.bot.get_chat_member(
+            telegram_group_id,
+            context.bot.id
+        )
+
+        return bot_member.status in (
+            "administrator",
+            "creator"
+        )
+
+    except Exception:
+
+        return False
+
+
+def upsert_backup_destination_group(owner_user_id, destination_telegram_group_id, destination_title):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO groups
+            (
+                name,
+                telegram_group_id,
+                public_visibility,
+                bot_is_admin,
+                is_active,
+                added_by
+            )
+            VALUES (%s, %s, 'hidden', TRUE, TRUE, %s)
+            ON CONFLICT (telegram_group_id)
+            DO UPDATE SET
+                name=COALESCE(EXCLUDED.name, groups.name),
+                public_visibility='hidden',
+                bot_is_admin=TRUE,
+                is_active=TRUE,
+                added_by=EXCLUDED.added_by
+            RETURNING id
+
+        """, (
+            destination_title,
+            destination_telegram_group_id,
+            owner_user_id
+        ))
+
+        destination_group_id = cur.fetchone()[0]
+        conn.commit()
+
+
+    assign_group_owner_permissions(
+        owner_user_id,
+        destination_group_id
+    )
+
+    return destination_group_id
+
+
+async def confirm_backup_destination_token(
+    token_id,
+    owner_user_id,
+    context,
+    destination_title=None
+):
+
+    token_row = fetch_backup_destination_token_by_id(
+        token_id,
+        owner_user_id
+    )
+
+
+    if not token_row:
+
+        return {
+            "ok": False,
+            "message": "⚠️ No encontré ese código de backup."
+        }
+
+
+    (
+        _token_id,
+        token,
+        _owner_user_id,
+        source_group_id,
+        source_telegram_group_id,
+        status,
+        _expires_at,
+        destination_telegram_group_id
+    ) = token_row
+
+
+    if status == "used":
+
+        log_event(
+            "backup_token_used",
+            category="backup",
+            severity="warning",
+            actor_user_id=owner_user_id,
+            target_user_id=owner_user_id,
+            message="Intento de reutilizar token de destino backup.",
+            metadata={
+                "token_id": token_id,
+                "token": token
+            }
+        )
+
+        return {
+            "ok": False,
+            "message": "⚠️ Este código de backup ya fue usado."
+        }
+
+
+    if status != "pending" or not destination_telegram_group_id:
+
+        return {
+            "ok": False,
+            "message": "⚠️ Este código de backup no está pendiente de vinculación."
+        }
+
+
+    if backup_destination_token_is_expired(_expires_at):
+
+        return {
+            "ok": False,
+            "message": "⚠️ Este código de backup ha caducado. Genera otro desde el panel."
+        }
+
+
+    if int(destination_telegram_group_id) == int(source_telegram_group_id):
+
+        return {
+            "ok": False,
+            "message": "⚠️ El origen y el destino no pueden ser el mismo grupo."
+        }
+
+
+    if not await bot_is_admin_in_chat(context, destination_telegram_group_id):
+
+        return {
+            "ok": False,
+            "message": "⚠️ Necesito ser administrador en el grupo destino para activar el backup."
+        }
+
+
+    destination_group_id = upsert_backup_destination_group(
+        owner_user_id,
+        destination_telegram_group_id,
+        destination_title or f"Backup destino {destination_telegram_group_id}"
+    )
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO backup_subscriptions
+            (
+                owner_user_id,
+                status,
+                plan_type,
+                updated_at
+            )
+            VALUES (%s, 'active', 'text', NOW())
+            RETURNING id
+
+        """, (owner_user_id,))
+
+        subscription_id = cur.fetchone()[0]
+
+        cur.execute("""
+
+            UPDATE group_backup_configs
+            SET status='paused',
+                updated_at=NOW()
+            WHERE owner_user_id=%s
+            AND source_group_id=%s
+            AND destination_group_id<>%s
+            AND status='active'
+
+        """, (
+            owner_user_id,
+            source_group_id,
+            destination_group_id
+        ))
+
+        cur.execute("""
+
+            INSERT INTO group_backup_configs
+            (
+                owner_user_id,
+                source_group_id,
+                source_telegram_group_id,
+                destination_group_id,
+                destination_telegram_group_id,
+                subscription_id,
+                mode,
+                status,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, 'text', 'active', NOW())
+            ON CONFLICT (owner_user_id, source_group_id, destination_group_id)
+            DO UPDATE SET
+                source_telegram_group_id=EXCLUDED.source_telegram_group_id,
+                destination_telegram_group_id=EXCLUDED.destination_telegram_group_id,
+                subscription_id=EXCLUDED.subscription_id,
+                status='active',
+                updated_at=NOW()
+            RETURNING id
+
+        """, (
+            owner_user_id,
+            source_group_id,
+            source_telegram_group_id,
+            destination_group_id,
+            destination_telegram_group_id,
+            subscription_id
+        ))
+
+        config_id = cur.fetchone()[0]
+
+        cur.execute("""
+
+            UPDATE backup_destination_tokens
+            SET status='used',
+                updated_at=NOW()
+            WHERE id=%s
+
+        """, (token_id,))
+
+        conn.commit()
+
+
+    log_event(
+        "backup_destination_linked",
+        category="backup",
+        severity="info",
+        scope="group",
+        group_id=source_group_id,
+        telegram_group_id=source_telegram_group_id,
+        actor_user_id=owner_user_id,
+        target_user_id=owner_user_id,
+        message="Grupo destino vinculado correctamente para backup premium.",
+        metadata={
+            "config_id": config_id,
+            "token_id": token_id,
+            "destination_group_id": destination_group_id,
+            "destination_telegram_group_id": destination_telegram_group_id
+        }
+    )
+
+    return {
+        "ok": True,
+        "message": (
+            "✅ Grupo destino vinculado correctamente.\n\n"
+            "El backup queda activo en modo solo texto. Puedes cambiarlo a "
+            "texto + fotos o texto + fotos + vídeos desde el panel."
+        )
+    }
+
+
+async def handle_backup_destination_token_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message or not update.message.text:
+
+        return
+
+
+    if not update.effective_chat or update.effective_chat.type == "private":
+
+        return
+
+
+    command = update.message.text.strip().split()[0]
+
+
+    if not command.startswith("/backup_"):
+
+        return
+
+
+    token = command.replace("/backup_", "", 1).split("@", 1)[0].strip().upper()
+    token_row = fetch_backup_destination_token(token)
+    destination_telegram_group_id = update.effective_chat.id
+    destination_title = update.effective_chat.title or f"Grupo {destination_telegram_group_id}"
+
+
+    if not token_row:
+
+        log_event(
+            "backup_token_invalid",
+            category="backup",
+            severity="warning",
+            scope="group",
+            telegram_group_id=destination_telegram_group_id,
+            actor_user_id=update.effective_user.id if update.effective_user else None,
+            message="Token de destino backup inválido.",
+            metadata={
+                "token": token
+            }
+        )
+
+        await update.message.reply_text(
+            "⚠️ Código de backup no válido o caducado."
+        )
+
+        return
+
+
+    (
+        token_id,
+        _token,
+        owner_user_id,
+        source_group_id,
+        _source_telegram_group_id,
+        status,
+        expires_at,
+        _previous_destination
+    ) = token_row
+
+
+    if status == "used":
+
+        log_event(
+            "backup_token_used",
+            category="backup",
+            severity="warning",
+            scope="group",
+            group_id=source_group_id,
+            telegram_group_id=destination_telegram_group_id,
+            actor_user_id=update.effective_user.id if update.effective_user else None,
+            target_user_id=owner_user_id,
+            message="Intento de reutilizar token de destino backup.",
+            metadata={
+                "token_id": token_id,
+                "token": token
+            }
+        )
+
+        await update.message.reply_text(
+            "⚠️ Este código de backup ya fue usado."
+        )
+
+        return
+
+
+    if status != "pending" or backup_destination_token_is_expired(expires_at):
+
+        log_event(
+            "backup_token_invalid",
+            category="backup",
+            severity="warning",
+            scope="group",
+            group_id=source_group_id,
+            telegram_group_id=destination_telegram_group_id,
+            actor_user_id=update.effective_user.id if update.effective_user else None,
+            target_user_id=owner_user_id,
+            message="Token de destino backup caducado o no pendiente.",
+            metadata={
+                "token_id": token_id,
+                "status": status
+            }
+        )
+
+        await update.message.reply_text(
+            "⚠️ Este código de backup no está disponible. Genera otro desde el panel."
+        )
+
+        return
+
+
+    mark_backup_destination_token_destination(
+        token_id,
+        destination_telegram_group_id
+    )
+
+
+    user = update.effective_user
+    is_anonymous_admin = (
+        not user
+        or user.is_bot
+        or user.username == "GroupAnonymousBot"
+    )
+
+
+    if is_anonymous_admin:
+
+        await update.message.reply_text(
+            "⚠️ No puedo verificar un administrador anónimo. "
+            "He enviado una confirmación al owner por privado."
+        )
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=owner_user_id,
+                text=(
+                    "🛡 Backup premium\n\n"
+                    f"Se ha usado tu código en el grupo destino:\n"
+                    f"{destination_title}\n"
+                    f"ID: {destination_telegram_group_id}\n\n"
+                    "Confirma desde aquí si quieres vincular este grupo como destino."
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "✅ Vincular grupo destino",
+                        callback_data=f"owner_backup_confirm_destination_{token_id}"
+                    )]
+                ])
+            )
+
+        except Exception as e:
+
+            log_event(
+                "backup_permission_error",
+                category="backup",
+                severity="warning",
+                scope="group",
+                group_id=source_group_id,
+                telegram_group_id=destination_telegram_group_id,
+                target_user_id=owner_user_id,
+                message="No se pudo pedir confirmación privada para token backup.",
+                metadata={
+                    "token_id": token_id,
+                    "error": str(e)
+                }
+            )
+
+        return
+
+
+    if not backup_user_can_manage_source(
+        user.id,
+        owner_user_id,
+        source_group_id
+    ):
+
+        log_event(
+            "backup_permission_error",
+            category="backup",
+            severity="warning",
+            scope="group",
+            group_id=source_group_id,
+            telegram_group_id=destination_telegram_group_id,
+            actor_user_id=user.id,
+            target_user_id=owner_user_id,
+            message="Usuario no autorizado intentó usar token de destino backup.",
+            metadata={
+                "token_id": token_id
+            }
+        )
+
+        await update.message.reply_text(
+            "⛔ No tienes permiso para vincular este backup."
+        )
+
+        return
+
+
+    result = await confirm_backup_destination_token(
+        token_id,
+        owner_user_id,
+        context,
+        destination_title
+    )
+
+
+    await update.message.reply_text(result["message"])
+
+
+    if result.get("ok"):
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=owner_user_id,
+                text=(
+                    "✅ Grupo destino vinculado correctamente.\n\n"
+                    f"Destino: {destination_title}\n"
+                    f"ID: {destination_telegram_group_id}"
+                )
+            )
+
+        except Exception:
+
+            pass
+
+
 async def handle_group_backup_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message:
@@ -326,7 +952,7 @@ async def handle_group_backup_text(update: Update, context: ContextTypes.DEFAULT
     source_message_id = update.message.message_id
     configs = fetch_active_backup_configs(
         source_telegram_group_id,
-        ("text", "text_photos")
+        ("text", "text_photos", "text_photos_videos")
     )
 
 
@@ -343,15 +969,25 @@ async def handle_group_backup_text(update: Update, context: ContextTypes.DEFAULT
             source_group_id,
             _source_telegram_group_id,
             destination_group_id,
-            destination_telegram_group_id
+            destination_telegram_group_id,
+            show_original_author
         ) = config
 
 
         try:
 
+            message_text = update.message.text
+
+            if show_original_author:
+
+                message_text = (
+                    f"{message_text}\n\n"
+                    f"{format_backup_original_author(update)}"
+                )
+
             sent_message = await context.bot.send_message(
                 chat_id=destination_telegram_group_id,
-                text=update.message.text
+                text=message_text
             )
 
             destination_message_id = (
@@ -481,7 +1117,31 @@ async def handle_group_backup_media(update: Update, context: ContextTypes.DEFAUL
         return
 
 
-    if not update.message.photo:
+    if update.message.photo:
+
+        message_type = "photo"
+        allowed_modes = ("text_photos", "text_photos_videos")
+        copied_event = "backup_photo_copied"
+        failed_event = "backup_photo_failed"
+        failure_type = "backup_photo_error"
+        telegram_failure_type = "telegram_copy_error"
+        copied_message = "Foto copiada por backup premium."
+        failed_message = "Falló la copia de foto por backup premium."
+        backup_error_message = "No se pudo copiar una foto al grupo destino."
+
+    elif update.message.video:
+
+        message_type = "video"
+        allowed_modes = ("text_photos_videos",)
+        copied_event = "backup_video_copied"
+        failed_event = "backup_video_failed"
+        failure_type = "backup_video_error"
+        telegram_failure_type = "telegram_copy_error"
+        copied_message = "Vídeo copiado por backup premium."
+        failed_message = "Falló la copia de vídeo por backup premium."
+        backup_error_message = "No se pudo copiar un vídeo al grupo destino."
+
+    else:
 
         return
 
@@ -500,7 +1160,7 @@ async def handle_group_backup_media(update: Update, context: ContextTypes.DEFAUL
     source_message_id = update.message.message_id
     configs = fetch_active_backup_configs(
         source_telegram_group_id,
-        ("text_photos",)
+        allowed_modes
     )
 
 
@@ -517,11 +1177,19 @@ async def handle_group_backup_media(update: Update, context: ContextTypes.DEFAUL
             source_group_id,
             _source_telegram_group_id,
             destination_group_id,
-            destination_telegram_group_id
+            destination_telegram_group_id,
+            show_original_author
         ) = config
 
 
         try:
+
+            if show_original_author:
+
+                await context.bot.send_message(
+                    chat_id=destination_telegram_group_id,
+                    text=format_backup_original_author(update)
+                )
 
             sent_message = await context.bot.copy_message(
                 chat_id=destination_telegram_group_id,
@@ -545,7 +1213,7 @@ async def handle_group_backup_media(update: Update, context: ContextTypes.DEFAUL
                     destination_group_id,
                     source_message_id,
                     destination_message_id,
-                    "photo",
+                    message_type,
                     "copied"
                 )
 
@@ -563,7 +1231,7 @@ async def handle_group_backup_media(update: Update, context: ContextTypes.DEFAUL
 
 
             log_event(
-                "backup_photo_copied",
+                copied_event,
                 category="backup",
                 severity="info",
                 scope="group",
@@ -571,7 +1239,7 @@ async def handle_group_backup_media(update: Update, context: ContextTypes.DEFAUL
                 telegram_group_id=source_telegram_group_id,
                 actor_user_id=update.effective_user.id if update.effective_user else None,
                 target_user_id=owner_user_id,
-                message="Foto copiada por backup premium.",
+                message=copied_message,
                 metadata={
                     "config_id": config_id,
                     "destination_group_id": destination_group_id,
@@ -584,31 +1252,43 @@ async def handle_group_backup_media(update: Update, context: ContextTypes.DEFAUL
 
         except TelegramError as e:
 
-            await record_group_backup_photo_failure(
+            await record_group_backup_media_failure(
                 update,
                 config,
                 source_message_id,
-                "telegram_copy_error",
-                str(e)
+                telegram_failure_type,
+                str(e),
+                message_type,
+                failed_event,
+                failed_message,
+                backup_error_message
             )
 
         except Exception as e:
 
-            await record_group_backup_photo_failure(
+            await record_group_backup_media_failure(
                 update,
                 config,
                 source_message_id,
-                "backup_photo_error",
-                str(e)
+                failure_type,
+                str(e),
+                message_type,
+                failed_event,
+                failed_message,
+                backup_error_message
             )
 
 
-async def record_group_backup_photo_failure(
+async def record_group_backup_media_failure(
     update,
     config,
     source_message_id,
     error_type,
-    error_message
+    error_message,
+    message_type,
+    failed_event,
+    failed_message,
+    backup_error_message
 ):
 
     (
@@ -617,7 +1297,8 @@ async def record_group_backup_photo_failure(
         source_group_id,
         source_telegram_group_id,
         destination_group_id,
-        destination_telegram_group_id
+        destination_telegram_group_id,
+        _show_original_author
     ) = config
 
 
@@ -632,7 +1313,7 @@ async def record_group_backup_photo_failure(
                 destination_group_id,
                 source_message_id,
                 None,
-                "photo",
+                message_type,
                 "failed",
                 error_message
             )
@@ -642,7 +1323,7 @@ async def record_group_backup_photo_failure(
                 config_id,
                 owner_user_id,
                 error_type,
-                "No se pudo copiar una foto al grupo destino.",
+                backup_error_message,
                 {
                     "source_group_id": source_group_id,
                     "destination_group_id": destination_group_id,
@@ -659,13 +1340,13 @@ async def record_group_backup_photo_failure(
         conn.rollback()
 
         print(
-            "Error registrando fallo de backup de foto:",
+            "Error registrando fallo de backup de media:",
             log_error
         )
 
 
     log_event(
-        "backup_photo_failed",
+        failed_event,
         category="backup",
         severity="warning",
         scope="group",
@@ -673,7 +1354,7 @@ async def record_group_backup_photo_failure(
         telegram_group_id=source_telegram_group_id,
         actor_user_id=update.effective_user.id if update.effective_user else None,
         target_user_id=owner_user_id,
-        message="Falló la copia de foto por backup premium.",
+        message=failed_message,
         metadata={
             "config_id": config_id,
             "destination_group_id": destination_group_id,
