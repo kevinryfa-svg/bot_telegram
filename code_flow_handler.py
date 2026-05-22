@@ -35,6 +35,11 @@ get_group_id = partial(
 )
 
 
+def is_valid_plan_duration_days(duration_days):
+
+    return 1 <= int(duration_days) <= 3650
+
+
 def get_scoped_admin_groups(context, user_id, permissions):
 
     if is_super_admin(user_id):
@@ -1195,6 +1200,15 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 await update.message.reply_text(
                     "❌ Número inválido."
+                )
+
+                return
+
+
+            if not is_valid_plan_duration_days(duration_days):
+
+                await update.message.reply_text(
+                    "⚠️ La duración debe estar entre 1 y 3650 días."
                 )
 
                 return
