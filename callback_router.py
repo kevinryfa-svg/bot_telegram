@@ -188,6 +188,17 @@ def is_legacy_callback(callback_data):
     )
 
 
+def is_numeric_group_callback(callback_data):
+
+    parts = (callback_data or "").split("_")
+
+    return (
+        len(parts) >= 2
+        and parts[0] == "group"
+        and parts[1].isdigit()
+    )
+
+
 def is_stripe_checkout_callback(callback_data):
 
     return (
@@ -12915,7 +12926,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ENTRAR A GRUPO
     # =========================
 
-    if data.startswith("group_"):
+    if is_numeric_group_callback(data):
 
         try:
             await query.message.delete()
@@ -12923,7 +12934,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-        group_id = int(data.split("_")[1])
+        group_callback_parts = data.split("_")
+        group_id = int(group_callback_parts[1])
 
 
         # =========================
@@ -14204,7 +14216,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # MENÚ INTERNO DEL GRUPO
     # =========================
 
-    if data.startswith("edit_group_") and data.split("_")[2].isdigit():
+    edit_group_parts = data.split("_")
+
+
+    if (
+        data.startswith("edit_group_")
+        and len(edit_group_parts) >= 3
+        and edit_group_parts[2].isdigit()
+    ):
 
         try:
             await query.message.delete()
@@ -14212,7 +14231,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-        group_id = int(data.split("_")[2])
+        group_id = int(edit_group_parts[2])
 
 
         if not user_has_group_permission_any(
@@ -15892,7 +15911,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("delete_plan_"):
 
-        plan_id = int(data.split("_")[2])
+        parts = data.split("_")
+
+
+        if len(parts) < 3 or not parts[2].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        plan_id = int(parts[2])
 
         group_id = get_selected_group_for_permissions(
             context,
@@ -16995,7 +17027,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("edit_plan_"):
 
-        plan_id = int(data.split("_")[2])
+        parts = data.split("_")
+
+
+        if len(parts) < 3 or not parts[2].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        plan_id = int(parts[2])
         group_id = get_selected_group_for_permissions(
             context,
             user_id,
@@ -19454,6 +19499,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # =========================
     # PAGOS STRIPE
     # =========================
+
+    if data.startswith("group_"):
+
+        log_event(
+            "callback_unknown_group_prefixed",
+            category="ui",
+            severity="warning",
+            scope="global",
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Callback con prefijo group_ no manejado por rutas específicas.",
+            metadata={
+                "callback_data": data
+            }
+        )
+
+        await query.message.reply_text(
+            "⚠️ Esta opción ya no está disponible o no está configurada.",
+            reply_markup=build_unknown_callback_keyboard()
+        )
+
+        return
+
 
     if is_legacy_callback(data):
 
