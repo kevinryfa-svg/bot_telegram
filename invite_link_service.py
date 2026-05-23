@@ -5,6 +5,64 @@ from db import conn
 from group_service import resolve_telegram_group_id
 
 
+def mask_invite_link(invite_link):
+
+    if not invite_link:
+
+        return invite_link
+
+
+    return f"{str(invite_link)[:12]}***"
+
+
+def sanitize_log_value(value, token=None):
+
+    if isinstance(value, dict):
+
+        safe = {}
+
+        for key, item in value.items():
+
+            if key == "invite_link":
+
+                safe[key] = mask_invite_link(item)
+
+            else:
+
+                safe[key] = sanitize_log_value(
+                    item,
+                    token=token
+                )
+
+
+        return safe
+
+
+    if isinstance(value, list):
+
+        return [
+            sanitize_log_value(
+                item,
+                token=token
+            )
+            for item in value
+        ]
+
+
+    text = str(value)
+
+
+    if token:
+
+        text = text.replace(
+            token,
+            "[redacted]"
+        )
+
+
+    return text
+
+
 # =========================
 # INVITE LINKS — CREATE TELEGRAM LINK
 # =========================
@@ -37,7 +95,10 @@ def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, me
 
             print(
                 "Error creando invite link:",
-                response
+                sanitize_log_value(
+                    response,
+                    token=token
+                )
             )
 
             return None
@@ -49,7 +110,10 @@ def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, me
 
         print(
             "Excepción creando invite link:",
-            e
+            sanitize_log_value(
+                e,
+                token=token
+            )
         )
 
         return None
@@ -86,7 +150,10 @@ def revoke_telegram_invite_link(token, telegram_group_id, invite_link):
 
                 print(
                     "Error real revocando link:",
-                    response
+                    sanitize_log_value(
+                        response,
+                        token=token
+                    )
                 )
 
 
@@ -96,7 +163,10 @@ def revoke_telegram_invite_link(token, telegram_group_id, invite_link):
 
         print(
             "Excepción revocando invite link:",
-            e
+            sanitize_log_value(
+                e,
+                token=token
+            )
         )
 
         return None
