@@ -12470,9 +12470,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         user_id = query.from_user.id
+        mysub_parts = data.split("_")
+
+
+        if len(mysub_parts) < 2 or not mysub_parts[1].lstrip("-").isdigit():
+
+            await reply_with_recover_navigation(
+                query,
+                "⚠️ Esta opción ya no está disponible o no está configurada."
+            )
+
+            return
 
         telegram_group_id = int(
-            data.split("_")[1]
+            mysub_parts[1]
         )
 
 
@@ -13420,6 +13431,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         parts = data.split("_")
 
+        if (
+            len(parts) < 4
+            or not parts[2].isdigit()
+            or not parts[3].isdigit()
+        ):
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
         user_id = int(parts[2])
         group_id = int(parts[3])
 
@@ -13486,6 +13510,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("deny_user_"):
 
         parts = data.split("_")
+
+        if (
+            len(parts) < 4
+            or not parts[2].isdigit()
+            or not parts[3].isdigit()
+        ):
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
 
         user_id = int(parts[2])
         group_id = int(parts[3])
