@@ -603,6 +603,39 @@ def create_tables():
 
 
         # =========================
+        # CLOSED BETA MONITOR
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS beta_monitor_events (
+
+            id SERIAL PRIMARY KEY,
+
+            event_type TEXT,
+
+            severity TEXT DEFAULT 'info',
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            telegram_group_id BIGINT,
+
+            message TEXT,
+
+            metadata JSONB,
+
+            resolved BOOLEAN DEFAULT FALSE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # BACKUP PREMIUM — FASE 1
         # =========================
 
