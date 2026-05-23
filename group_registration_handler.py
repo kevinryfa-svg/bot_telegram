@@ -196,10 +196,19 @@ async def capture_group_preview_video(update: Update, context: ContextTypes.DEFA
 
     if saved:
 
-        print(
-            "Vídeo guardado para preview dinámico:",
-            group_row["group_id"],
-            update.message.message_id
+        log_event(
+            "dynamic_preview_video_saved",
+            category="marketplace",
+            severity="info",
+            scope="group",
+            group_id=group_row["group_id"],
+            telegram_group_id=telegram_group_id,
+            actor_user_id=update.effective_user.id if update.effective_user else None,
+            target_user_id=None,
+            message="Vídeo guardado para preview dinámico.",
+            metadata={
+                "message_id": update.message.message_id
+            }
         )
 
 
@@ -1836,13 +1845,30 @@ async def leave_chat_safely(context, telegram_group_id):
             raise RuntimeError("Telegram devolvió False en leave_chat")
 
 
-        print("Bot salió del grupo por validación comercial.")
+        log_event(
+            "group_registration_leave_chat_success",
+            category="group_registration",
+            severity="info",
+            scope="group",
+            telegram_group_id=telegram_group_id,
+            message="Bot salió del grupo por validación comercial."
+        )
 
         return True
 
     except Exception as e:
 
-        print("Error saliendo del grupo con context.bot.leave_chat:", e)
+        log_event(
+            "group_registration_leave_chat_error",
+            category="group_registration",
+            severity="warning",
+            scope="group",
+            telegram_group_id=telegram_group_id,
+            message="Error saliendo del grupo con context.bot.leave_chat.",
+            metadata={
+                "error": str(e)
+            }
+        )
 
 
     try:
@@ -1853,13 +1879,35 @@ async def leave_chat_safely(context, telegram_group_id):
             timeout=10
         ).json()
 
-        print("Respuesta fallback leaveChat:", response)
+        log_event(
+            "group_registration_leave_chat_fallback",
+            category="group_registration",
+            severity="info",
+            scope="group",
+            telegram_group_id=telegram_group_id,
+            message="Respuesta fallback leaveChat recibida.",
+            metadata={
+                "ok": response.get("ok"),
+                "error_code": response.get("error_code"),
+                "description": response.get("description")
+            }
+        )
 
         return response.get("ok") is True
 
     except Exception as e:
 
-        print("Error saliendo del grupo con fallback leaveChat:", e)
+        log_event(
+            "group_registration_leave_chat_fallback_error",
+            category="group_registration",
+            severity="error",
+            scope="group",
+            telegram_group_id=telegram_group_id,
+            message="Error saliendo del grupo con fallback leaveChat.",
+            metadata={
+                "error": str(e)
+            }
+        )
 
 
     return False
@@ -2370,22 +2418,25 @@ async def verificar_admin_despues(
     added_by_first_name=None
 ):
 
-    print(
-        "group_registration_verify_start:",
-        f"chat.id={group_id}",
-        f"chat.title={group_name or '-'}",
-        f"added_by={added_by or '-'}",
-        f"username={added_by_username or '-'}",
-        f"first_name={added_by_first_name or '-'}"
+    log_event(
+        "group_registration_verify_start",
+        category="group_registration",
+        severity="info",
+        scope="group",
+        telegram_group_id=group_id,
+        actor_user_id=added_by,
+        target_user_id=added_by,
+        message="Inicio de verificación de bot añadido a grupo.",
+        metadata={
+            "chat_title": group_name,
+            "username": added_by_username,
+            "first_name": added_by_first_name
+        }
     )
-
-    print("Esperando 30 segundos antes de verificar permisos...")
 
     await asyncio.sleep(30)
 
     try:
-
-        print("Verificando permisos del bot...")
 
         r = requests.get(
 
@@ -2400,16 +2451,38 @@ async def verificar_admin_despues(
 
         ).json()
 
-        print("Respuesta completa getChatMember:", r)
-
         status = r["result"]["status"]
 
-        print("Status del bot en grupo:", status)
+        log_event(
+            "group_registration_bot_status_checked",
+            category="group_registration",
+            severity="info",
+            scope="group",
+            telegram_group_id=group_id,
+            actor_user_id=added_by,
+            target_user_id=added_by,
+            message="Estado del bot comprobado tras añadirlo al grupo.",
+            metadata={
+                "status": status
+            }
+        )
 
 
         if status not in ["administrator", "creator"]:
 
-            print("Bot NO es administrador después de 30s.")
+            log_event(
+                "group_registration_bot_not_admin",
+                category="group_registration",
+                severity="warning",
+                scope="group",
+                telegram_group_id=group_id,
+                actor_user_id=added_by,
+                target_user_id=added_by,
+                message="El bot no quedó como administrador tras 30 segundos.",
+                metadata={
+                    "status": status
+                }
+            )
 
             existing_group_id = get_existing_group(group_id)
             owner_request = None
@@ -2536,7 +2609,19 @@ async def verificar_admin_despues(
 
             return
 
-        print(f"Bot ES administrador en grupo: {group_name} ({group_id})")
+        log_event(
+            "group_registration_bot_admin_confirmed",
+            category="group_registration",
+            severity="info",
+            scope="group",
+            telegram_group_id=group_id,
+            actor_user_id=added_by,
+            target_user_id=added_by,
+            message="Bot confirmado como administrador del grupo.",
+            metadata={
+                "chat_title": group_name
+            }
+        )
 
 
         if added_by and is_super_admin(added_by):
@@ -2679,27 +2764,40 @@ async def verificar_admin_despues(
                     )
                 )
 
-                print(
-                    "group_registration_owner_confirmation_fallback:",
-                    f"chat.id={group_id}",
-                    f"added_by={added_by or '-'}",
-                    f"owner_user_id={owner_request['user_id']}",
-                    f"request_id={owner_request['id']}",
-                    f"confirmation_sent={confirmation_sent}"
+                log_event(
+                    "group_registration_owner_confirmation_fallback",
+                    category="group_registration",
+                    severity="info",
+                    scope="group",
+                    telegram_group_id=group_id,
+                    actor_user_id=added_by,
+                    target_user_id=owner_request["user_id"],
+                    message="Grupo pendiente de confirmación por owner alternativo.",
+                    metadata={
+                        "request_id": owner_request["id"],
+                        "confirmation_sent": confirmation_sent
+                    }
                 )
 
                 return
 
 
-            print(
-                "group_registration_unauthorized:",
-                f"chat.id={group_id}",
-                f"chat.title={group_name or '-'}",
-                f"added_by={added_by or '-'}",
-                f"username={added_by_username or '-'}",
-                f"first_name={added_by_first_name or '-'}",
-                f"commercial_requests.user_id={get_commercial_request_identity_summary(added_by)}",
-                f"unlinked_owner_candidate_count={candidate_count}"
+            log_event(
+                "group_registration_unauthorized",
+                category="group_registration",
+                severity="warning",
+                scope="group",
+                telegram_group_id=group_id,
+                actor_user_id=added_by,
+                target_user_id=added_by,
+                message="Bot añadido por usuario no autorizado.",
+                metadata={
+                    "chat_title": group_name,
+                    "username": added_by_username,
+                    "first_name": added_by_first_name,
+                    "commercial_requests_summary": get_commercial_request_identity_summary(added_by),
+                    "unlinked_owner_candidate_count": candidate_count
+                }
             )
 
             await reject_group_registration(
@@ -2822,7 +2920,19 @@ async def verificar_admin_despues(
 
     except Exception as e:
 
-        print("Error verificando grupo:", e)
+        log_event(
+            "group_registration_verify_error",
+            category="group_registration",
+            severity="error",
+            scope="group",
+            telegram_group_id=group_id,
+            actor_user_id=added_by,
+            target_user_id=added_by,
+            message="Error verificando grupo tras añadir el bot.",
+            metadata={
+                "error": str(e)
+            }
+        )
 
 
 # =========================
@@ -2832,16 +2942,6 @@ async def verificar_admin_despues(
 async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     effective_user = update.effective_user
-
-    print(
-        "detect_bot_added ejecutado",
-        f"effective_user.id={effective_user.id if effective_user else '-'}",
-        f"username={effective_user.username if effective_user and effective_user.username else '-'}",
-        f"first_name={effective_user.first_name if effective_user and effective_user.first_name else '-'}",
-        f"chat.id={update.effective_chat.id if update.effective_chat else '-'}",
-        f"chat.type={update.effective_chat.type if update.effective_chat else '-'}",
-        f"chat.title={update.effective_chat.title if update.effective_chat else '-'}"
-    )
 
     if not update.message:
         return
@@ -2865,12 +2965,6 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             group_id = update.message.chat.id
             group_name = update.message.chat.title
 
-            print(
-                "Bot añadido a grupo:",
-                group_name,
-                group_id
-            )
-
 
             try:
 
@@ -2886,14 +2980,21 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 added_by_first_name = None
 
 
-            print(
-                "Bot añadido por usuario:",
-                f"update.effective_user.id={effective_user.id if effective_user else '-'}",
-                f"update.message.from_user.id={added_by or '-'}",
-                f"username={added_by_username or '-'}",
-                f"first_name={added_by_first_name or '-'}",
-                f"chat.id={group_id}",
-                f"chat.title={group_name or '-'}"
+            log_event(
+                "bot_added_to_group_detected",
+                category="group_registration",
+                severity="info",
+                scope="group",
+                telegram_group_id=group_id,
+                actor_user_id=added_by,
+                target_user_id=added_by,
+                message="Bot añadido a un grupo.",
+                metadata={
+                    "effective_user_id": effective_user.id if effective_user else None,
+                    "username": added_by_username,
+                    "first_name": added_by_first_name,
+                    "chat_title": group_name
+                }
             )
 
 

@@ -21,18 +21,6 @@ def get_conn():
     return conn
 
 
-def get_conn():
-
-    conn = psycopg2.connect(
-        DATABASE_URL,
-        sslmode="require"
-    )
-
-    conn.autocommit = True
-
-    return conn
-
-
 # Mantener compatibilidad temporal
 
 conn = get_conn()
