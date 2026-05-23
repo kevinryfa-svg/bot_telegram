@@ -50,7 +50,8 @@ from warning_service import (
 )
 
 from audit_log_service import (
-    create_audit_log
+    create_audit_log,
+    log_event
 )
 
 from formatters import (
@@ -164,6 +165,222 @@ def get_commercial_expiry_job_interval_seconds():
 COMMERCIAL_EXPIRY_JOB_INTERVAL_SECONDS = (
     get_commercial_expiry_job_interval_seconds()
 )
+
+
+def sanitize_error_text(value):
+
+    text = str(value or "")
+
+
+    for env_name in (
+        "TOKEN",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "WEBHOOK_SECRET",
+        "DATABASE_URL"
+    ):
+
+        secret_value = os.environ.get(env_name)
+
+        if secret_value and len(secret_value) > 6:
+
+            text = text.replace(secret_value, "[redacted]")
+
+
+    if TOKEN and len(TOKEN) > 6:
+
+        text = text.replace(TOKEN, "[redacted]")
+
+
+    return text[:500]
+
+
+def get_update_error_context(update):
+
+    update_type = None
+    user_id = None
+    chat_id = None
+    callback_data = None
+
+
+    try:
+
+        if update is None:
+
+            return {
+                "update_type": None,
+                "user_id": None,
+                "chat_id": None,
+                "callback_data": None
+            }
+
+
+        if getattr(update, "callback_query", None):
+
+            update_type = "callback_query"
+            callback_data = update.callback_query.data
+
+        elif getattr(update, "message", None):
+
+            update_type = "message"
+
+        elif getattr(update, "edited_message", None):
+
+            update_type = "edited_message"
+
+        else:
+
+            update_type = update.__class__.__name__
+
+
+        effective_user = getattr(update, "effective_user", None)
+        effective_chat = getattr(update, "effective_chat", None)
+
+
+        if effective_user:
+
+            user_id = effective_user.id
+
+        if effective_chat:
+
+            chat_id = effective_chat.id
+
+    except Exception:
+
+        pass
+
+
+    return {
+        "update_type": update_type,
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "callback_data": callback_data
+    }
+
+
+async def notify_user_about_handler_error(update, context):
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    text = (
+        "⚠️ Ha ocurrido un error. "
+        "Vuelve a intentarlo o pulsa Inicio."
+    )
+
+
+    try:
+
+        if not update:
+
+            return
+
+
+        effective_chat = getattr(update, "effective_chat", None)
+
+        if (
+            effective_chat
+            and getattr(effective_chat, "type", None) != "private"
+        ):
+
+            return
+
+
+        if getattr(update, "callback_query", None):
+
+            query = update.callback_query
+
+            try:
+
+                await query.answer()
+
+            except Exception:
+
+                pass
+
+
+            if query.message:
+
+                await query.message.reply_text(
+                    text,
+                    reply_markup=keyboard
+                )
+
+                return
+
+
+        if getattr(update, "effective_message", None):
+
+            await update.effective_message.reply_text(
+                text,
+                reply_markup=keyboard
+            )
+
+            return
+
+
+        if effective_chat:
+
+            await context.bot.send_message(
+                chat_id=effective_chat.id,
+                text=text,
+                reply_markup=keyboard
+            )
+
+    except Exception:
+
+        pass
+
+
+async def global_error_handler(update, context):
+
+    error = getattr(context, "error", None)
+    error_context = get_update_error_context(update)
+    error_type = error.__class__.__name__ if error else "UnknownError"
+    error_message = sanitize_error_text(error)
+    severity = "critical"
+
+
+    log_event(
+        "telegram_handler_error",
+        category="telegram",
+        severity=severity,
+        scope="global",
+        actor_user_id=error_context.get("user_id"),
+        target_user_id=error_context.get("user_id"),
+        message=f"{error_type}: {error_message}",
+        metadata={
+            "update_type": error_context.get("update_type"),
+            "user_id": error_context.get("user_id"),
+            "chat_id": error_context.get("chat_id"),
+            "callback_data": error_context.get("callback_data"),
+            "error_type": error_type
+        }
+    )
+
+
+    if severity == "critical":
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "🚨 Error controlado en handler de Telegram\n"
+                    f"Tipo: {error_type}\n"
+                    f"Usuario: {error_context.get('user_id')}\n"
+                    f"Chat: {error_context.get('chat_id')}\n"
+                    f"Callback: {error_context.get('callback_data')}"
+                )
+            )
+
+        except Exception:
+
+            pass
+
+
+    await notify_user_about_handler_error(update, context)
 
 
 # =========================
@@ -1444,6 +1661,8 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
 
     create_tables()
+
+    telegram_app.add_error_handler(global_error_handler)
 
     telegram_app.add_handler(
         CommandHandler("start", start)
