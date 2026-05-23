@@ -91,6 +91,16 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_logs_security": ("can_view_logs",),
     "admin_logs_help": ("can_view_logs",),
 
+    "admin_beta_monitor": (SUPER_ADMIN_ONLY,),
+    "admin_beta_monitor_24h": (SUPER_ADMIN_ONLY,),
+    "admin_beta_monitor_critical": (SUPER_ADMIN_ONLY,),
+    "admin_beta_monitor_warning": (SUPER_ADMIN_ONLY,),
+    "admin_beta_monitor_payments": (SUPER_ADMIN_ONLY,),
+    "admin_beta_monitor_access": (SUPER_ADMIN_ONLY,),
+    "admin_beta_monitor_codes": (SUPER_ADMIN_ONLY,),
+    "admin_beta_monitor_backups": (SUPER_ADMIN_ONLY,),
+    "admin_beta_monitor_resolve_all": (SUPER_ADMIN_ONLY,),
+
     "group_admin_panel": ("can_manage_admins",),
 
     "admin_revoke_links": (SUPER_ADMIN_ONLY,),

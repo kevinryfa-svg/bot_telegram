@@ -51,7 +51,9 @@ from warning_service import (
 
 from audit_log_service import (
     create_audit_log,
-    log_event
+    is_beta_monitor_enabled,
+    log_event,
+    summarize_beta_monitor_events
 )
 
 from formatters import (
@@ -79,6 +81,7 @@ from expiration_worker import check_expirations
 from group_registration_handler import (
     capture_group_preview_video,
     detect_bot_added,
+    detect_bot_removed,
     handle_backup_destination_token_command,
     handle_group_backup_media,
     handle_group_backup_text
@@ -164,6 +167,13 @@ def get_commercial_expiry_job_interval_seconds():
 
 COMMERCIAL_EXPIRY_JOB_INTERVAL_SECONDS = (
     get_commercial_expiry_job_interval_seconds()
+)
+
+BETA_MONITOR_SUMMARY_INTERVAL_SECONDS = int(
+    os.environ.get(
+        "BETA_MONITOR_SUMMARY_INTERVAL_SECONDS",
+        str(6 * 60 * 60)
+    )
 )
 
 
@@ -452,6 +462,61 @@ def schedule_commercial_expiry_job(application):
         COMMERCIAL_EXPIRY_JOB_INTERVAL_SECONDS,
         "segundos"
     )
+
+    return True
+
+
+async def beta_monitor_summary_job(context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_beta_monitor_enabled():
+
+        return
+
+
+    try:
+
+        summary_text = summarize_beta_monitor_events(hours=6)
+
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=summary_text
+        )
+
+    except Exception as e:
+
+        print("Beta monitor: error enviando resumen:", e)
+
+
+def schedule_beta_monitor_job(application):
+
+    if not is_beta_monitor_enabled():
+
+        print("Beta monitor desactivado por configuración.")
+
+        return False
+
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Beta monitor: JobQueue no disponible. "
+            "No se programó el resumen automático."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        beta_monitor_summary_job,
+        interval=max(BETA_MONITOR_SUMMARY_INTERVAL_SECONDS, 60 * 60),
+        first=5 * 60,
+        name="closed_beta_monitor_summary"
+    )
+
+    print("Beta monitor programado.")
 
     return True
 
@@ -1786,7 +1851,16 @@ def main():
         group=1
     )
 
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.LEFT_CHAT_MEMBER,
+            detect_bot_removed
+        ),
+        group=0
+    )
+
     schedule_commercial_expiry_job(telegram_app)
+    schedule_beta_monitor_job(telegram_app)
 
     threading.Thread(
         target=check_expirations,

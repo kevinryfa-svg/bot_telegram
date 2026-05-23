@@ -23,7 +23,13 @@ from admin_permission_map import (
     is_admin_callback
 )
 from admin_menu_catalog import build_admin_menu_button_rows
-from audit_log_service import list_recent_events, log_event
+from audit_log_service import (
+    list_beta_monitor_events,
+    list_recent_events,
+    log_event,
+    mark_beta_monitor_events_resolved,
+    summarize_beta_monitor_events
+)
 from ai_handler import activate_ai_help_context
 from code_admin_handler import crear_codigo_callback
 from bot_config import ADMIN_ID
@@ -1076,6 +1082,56 @@ def build_admin_panel_keyboard(user_id):
         ]
         for row in button_rows
     ]
+
+
+def build_beta_monitor_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Últimas 24h", callback_data="admin_beta_monitor_24h")],
+        [InlineKeyboardButton("Críticos", callback_data="admin_beta_monitor_critical")],
+        [InlineKeyboardButton("Warnings", callback_data="admin_beta_monitor_warning")],
+        [InlineKeyboardButton("Pagos/accesos", callback_data="admin_beta_monitor_payments")],
+        [InlineKeyboardButton("Códigos", callback_data="admin_beta_monitor_codes")],
+        [InlineKeyboardButton("Backups", callback_data="admin_beta_monitor_backups")],
+        [InlineKeyboardButton("Marcar resueltos", callback_data="admin_beta_monitor_resolve_all")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+    ])
+
+
+def format_beta_monitor_events_text(title, rows):
+
+    if not rows:
+
+        return f"{title}\n\nSin eventos registrados."
+
+
+    text = f"{title}\n\n"
+
+
+    for (
+        event_id,
+        created_at,
+        event_type,
+        severity,
+        event_user_id,
+        event_group_id,
+        event_telegram_group_id,
+        message,
+        resolved
+    ) in rows[:30]:
+
+        status = "resuelto" if resolved else "pendiente"
+
+        text += (
+            f"#{event_id} · {event_type or '-'} · {severity or '-'} · {status}\n"
+            f"Usuario: {event_user_id or '-'}\n"
+            f"Grupo: {event_group_id or '-'} / {event_telegram_group_id or '-'}\n"
+            f"Detalle: {message or '-'}\n"
+            f"Fecha: {created_at or '-'}\n\n"
+        )
+
+
+    return text[:3900]
 
 
 def user_has_group_permission_any(user_id, group_id, permissions):
@@ -2375,6 +2431,19 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
         if not valid:
 
             context.user_data.pop("group_user_promo_waiting", None)
+
+            log_event(
+                "group_code_failed",
+                category="access",
+                severity="warning",
+                scope="global",
+                actor_user_id=update.effective_user.id,
+                target_user_id=update.effective_user.id,
+                message="Intento fallido de canje de código de grupo.",
+                metadata={
+                    "reason": error_message
+                }
+            )
 
             await update.message.reply_text(
                 error_message,
@@ -8237,6 +8306,20 @@ async def handle_user_support_message(update, context, text):
         text
     )
 
+    log_event(
+        "support_ticket_created",
+        category="support",
+        severity="info",
+        scope="global",
+        actor_user_id=user.id,
+        target_user_id=user.id,
+        message="Ticket o mensaje de soporte recibido durante beta.",
+        metadata={
+            "ticket_id": ticket.get("id"),
+            "status": ticket.get("status")
+        }
+    )
+
     context.user_data["support_mode"] = False
 
     await update.message.reply_text(
@@ -8787,6 +8870,23 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
 
             print("Error guardando verificación de ubicación rechazada:", e)
 
+
+        log_event(
+            "location_denied",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Usuario rechazado por restricción de ubicación.",
+            metadata={
+                "allowed_region": region_label,
+                "country": resolved_region.get("country"),
+                "region": resolved_region.get("spanish_autonomous_community"),
+                "province": resolved_region.get("province")
+            }
+        )
 
         clear_location_gate_state(context)
 
@@ -16718,6 +16818,99 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await query.message.reply_text(text)
+
+        return
+
+
+    if data.startswith("admin_beta_monitor"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        if data == "admin_beta_monitor_resolve_all":
+
+            affected = mark_beta_monitor_events_resolved(hours=24)
+
+            await query.message.reply_text(
+                f"✅ Eventos marcados como resueltos: {affected}",
+                reply_markup=build_beta_monitor_keyboard()
+            )
+
+            return
+
+
+        title = "📊 Monitor beta"
+        severity = None
+        event_types = None
+
+
+        if data == "admin_beta_monitor_critical":
+
+            title = "🚨 Monitor beta · Críticos"
+            severity = "critical"
+
+        elif data == "admin_beta_monitor_warning":
+
+            title = "⚠️ Monitor beta · Warnings"
+            severity = "warning"
+
+        elif data == "admin_beta_monitor_payments":
+
+            title = "💳 Monitor beta · Pagos/accesos"
+            event_types = [
+                "payment_confirmed",
+                "payment_failed",
+                "invite_link_created",
+                "invite_link_failed",
+                "access_allowed",
+                "unauthorized_access"
+            ]
+
+        elif data == "admin_beta_monitor_codes":
+
+            title = "🎟 Monitor beta · Códigos"
+            event_types = [
+                "group_code_redeemed",
+                "group_code_failed"
+            ]
+
+        elif data == "admin_beta_monitor_backups":
+
+            title = "🛡 Monitor beta · Backups"
+            event_types = [
+                "backup_message_failed",
+                "backup_permission_error"
+            ]
+
+
+        if data == "admin_beta_monitor":
+
+            text = summarize_beta_monitor_events(hours=6)
+
+        else:
+
+            rows = list_beta_monitor_events(
+                hours=24,
+                severity=severity,
+                event_types=event_types,
+                limit=50
+            )
+            text = format_beta_monitor_events_text(
+                title,
+                rows
+            )
+
+
+        await query.message.reply_text(
+            text,
+            reply_markup=build_beta_monitor_keyboard()
+        )
 
         return
 

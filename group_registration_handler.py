@@ -3053,3 +3053,38 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             return
+
+
+async def detect_bot_removed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message or not update.message.left_chat_member:
+
+        return
+
+
+    left_member = update.message.left_chat_member
+
+
+    if left_member.id != context.bot.id:
+
+        return
+
+
+    effective_user = update.effective_user
+    chat = update.effective_chat
+
+
+    log_event(
+        "bot_removed_from_group",
+        category="group_registration",
+        severity="warning",
+        scope="group",
+        telegram_group_id=chat.id if chat else None,
+        actor_user_id=effective_user.id if effective_user else None,
+        target_user_id=effective_user.id if effective_user else None,
+        message="Bot eliminado de un grupo durante beta.",
+        metadata={
+            "chat_title": chat.title if chat else None,
+            "chat_type": chat.type if chat else None
+        }
+    )
