@@ -76,6 +76,16 @@ def format_payment_amount(amount, currency):
         return f"{amount} {(currency or '').upper()}".strip()
 
 
+def mask_invite_link(invite_link):
+
+    if not invite_link:
+
+        return None
+
+
+    return f"{str(invite_link)[:12]}***"
+
+
 # =========================
 # WEBHOOK STRIPE
 # =========================
@@ -355,7 +365,14 @@ def stripe_webhook():
         )
 
 
-        print("Respuesta createChatInviteLink:", link)
+        print(
+            "Invite link creado:",
+            f"group_id={group_id}",
+            f"telegram_group_id={telegram_group_id}",
+            f"user_id={user_id}",
+            "status=created" if link else "status=failed",
+            f"link_masked={mask_invite_link(link)}"
+        )
 
 
         if not link:
