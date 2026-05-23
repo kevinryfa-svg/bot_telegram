@@ -141,6 +141,53 @@ def build_unknown_callback_keyboard():
     ])
 
 
+def build_group_recovery_keyboard(group_id, retry_callback=None):
+
+    keyboard = []
+
+    if retry_callback:
+
+        keyboard.append([InlineKeyboardButton(
+            "🔁 Reintentar",
+            callback_data=retry_callback
+        )])
+
+
+    if group_id:
+
+        keyboard.append([InlineKeyboardButton(
+            "⬅️ Volver a comunidad",
+            callback_data=f"marketplace_group_{group_id}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "🏠 Inicio",
+        callback_data="public_back_start"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+LEGACY_CALLBACK_PREFIXES = (
+    "account_",
+    "support_issue_",
+    "support_contact_",
+    "help_section_",
+    "set_language_",
+    "admin_my_groups",
+    "admin_group_"
+)
+
+
+def is_legacy_callback(callback_data):
+
+    return (
+        isinstance(callback_data, str)
+        and callback_data.startswith(LEGACY_CALLBACK_PREFIXES)
+    )
+
+
 def is_stripe_checkout_callback(callback_data):
 
     return (
@@ -8432,7 +8479,7 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text="❌ Comunidad gratuita no encontrada o no disponible.",
-                    reply_markup=ReplyKeyboardRemove()
+                    reply_markup=build_group_recovery_keyboard(group_id)
                 )
 
                 return
@@ -8489,10 +8536,22 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
 
         if not link:
 
+            log_event(
+                "free_access_invite_link_error",
+                category="access",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                telegram_group_id=telegram_group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="No se pudo crear enlace de acceso gratuito."
+            )
+
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="❌ Error creando acceso.",
-                reply_markup=ReplyKeyboardRemove()
+                reply_markup=build_group_recovery_keyboard(group_id)
             )
 
             return
@@ -8567,12 +8626,24 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
 
     except Exception as e:
 
-        print("Error concediendo acceso gratuito:", e)
+        log_event(
+            "free_access_error",
+            category="access",
+            severity="error",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Error concediendo acceso gratuito.",
+            metadata={
+                "error": str(e)
+            }
+        )
 
         await context.bot.send_message(
             chat_id=chat_id,
             text="❌ Error creando acceso gratuito.",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=build_group_recovery_keyboard(group_id)
         )
 
         return
@@ -8619,12 +8690,28 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
     except Exception as e:
 
-        print(e)
+        log_event(
+            "checkout_creation_error",
+            category="payment",
+            severity="error",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Error creando sesión de pago.",
+            metadata={
+                "price_id": price_id,
+                "error": str(e)
+            }
+        )
 
         await context.bot.send_message(
             chat_id=chat_id,
             text="❌ Error creando pago",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=build_group_recovery_keyboard(
+                group_id,
+                retry_callback=price_id if is_stripe_checkout_callback(price_id) else None
+            )
         )
 
 
@@ -13588,16 +13675,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_view_groups":
 
-        print("DEBUG: admin_view_groups pulsado")
-
         try:
             await query.message.delete()
         except:
             pass
 
         try:
-
-            print("DEBUG: consultando groups...")
 
             with conn.cursor() as cur:
 
@@ -13606,11 +13689,33 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ["can_manage_groups", "can_manage_plans"]
                 )
 
-            print("DEBUG groups:", groups)
+            log_event(
+                "admin_view_groups_loaded",
+                category="admin",
+                severity="info",
+                scope="global",
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Listado de grupos cargado desde panel admin.",
+                metadata={
+                    "groups_count": len(groups)
+                }
+            )
 
         except Exception as e:
 
-            print("ERROR cargando grupos:", e)
+            log_event(
+                "admin_view_groups_error",
+                category="admin",
+                severity="error",
+                scope="global",
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Error cargando grupos desde panel admin.",
+                metadata={
+                    "error": str(e)
+                }
+            )
 
             await query.message.reply_text(
                 f"❌ Error cargando grupos:\n{str(e)}"
@@ -15877,8 +15982,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # =========================
 
     if data == "admin_users":
-
-        print("DEBUG: admin_users pulsado")
 
         try:
 
@@ -19352,11 +19455,42 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # PAGOS STRIPE
     # =========================
 
+    if is_legacy_callback(data):
+
+        log_event(
+            "legacy_callback_blocked",
+            category="ui",
+            severity="info",
+            scope="global",
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Callback legacy bloqueado antes del fallback.",
+            metadata={
+                "callback_data": data
+            }
+        )
+
+        await query.message.reply_text(
+            "⚠️ Esta opción ya no está disponible o no está configurada.",
+            reply_markup=build_unknown_callback_keyboard()
+        )
+
+        return
+
+
     if not is_stripe_checkout_callback(data):
 
-        print(
-            "callback desconocido o no configurado:",
-            data
+        log_event(
+            "unknown_callback",
+            category="ui",
+            severity="info",
+            scope="global",
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Callback desconocido o no configurado.",
+            metadata={
+                "callback_data": data
+            }
         )
 
         await query.message.reply_text(
@@ -19374,9 +19508,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not group_id:
 
-        print(
-            "Callback de checkout sin grupo seleccionado:",
-            data
+        log_event(
+            "checkout_callback_missing_group",
+            category="payment",
+            severity="warning",
+            scope="global",
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Callback de checkout sin grupo seleccionado.",
+            metadata={
+                "callback_data": data
+            }
         )
 
         await query.message.reply_text(
