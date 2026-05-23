@@ -19,6 +19,7 @@ ADMIN_MENU_GROUP_ADMINS = "group_admins"
 ADMIN_MENU_BACKUP = "backup_premium"
 ADMIN_MENU_OWNER_COMMUNITIES = "owner_communities"
 ADMIN_MENU_BETA_MONITOR = "beta_monitor"
+ADMIN_MENU_BETA_SMOKE_TEST = "beta_smoke_test"
 
 
 ADMIN_MENU_SECTIONS = [
@@ -143,6 +144,14 @@ ADMIN_MENU_SECTIONS = [
         "permissions_any": [
             "super_admin_only"
         ]
+    },
+    {
+        "key": ADMIN_MENU_BETA_SMOKE_TEST,
+        "text": "🧪 Smoke Test Beta",
+        "callback_data": "admin_smoke_test",
+        "permissions_any": [
+            "super_admin_only"
+        ]
     }
 ]
 
@@ -165,7 +174,8 @@ ADMIN_HELP_CONTEXT_BY_CALLBACK = {
     "admin_commercial_promo_codes": "commercial_admin",
     "admin_group_user_codes": "admin_groups",
     "admin_support_tickets": "support_admin",
-    "admin_beta_monitor": "admin_logs"
+    "admin_beta_monitor": "admin_logs",
+    "admin_smoke_test": "admin_logs"
 }
 
 

@@ -101,6 +101,12 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_beta_monitor_backups": (SUPER_ADMIN_ONLY,),
     "admin_beta_monitor_resolve_all": (SUPER_ADMIN_ONLY,),
 
+    "admin_smoke_test": (SUPER_ADMIN_ONLY,),
+    "admin_smoke_run": (SUPER_ADMIN_ONLY,),
+    "admin_smoke_manual": (SUPER_ADMIN_ONLY,),
+    "admin_smoke_last": (SUPER_ADMIN_ONLY,),
+    "admin_smoke_clear": (SUPER_ADMIN_ONLY,),
+
     "group_admin_panel": ("can_manage_admins",),
 
     "admin_revoke_links": (SUPER_ADMIN_ONLY,),

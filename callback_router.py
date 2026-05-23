@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import requests
 import secrets
@@ -1132,6 +1133,485 @@ def format_beta_monitor_events_text(title, rows):
 
 
     return text[:3900]
+
+
+def build_beta_smoke_test_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Ejecutar checks automáticos", callback_data="admin_smoke_run")],
+        [InlineKeyboardButton("📋 Checklist manual", callback_data="admin_smoke_manual")],
+        [InlineKeyboardButton("📊 Último resultado", callback_data="admin_smoke_last")],
+        [InlineKeyboardButton("🧹 Limpiar resultados", callback_data="admin_smoke_clear")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+    ])
+
+
+def add_smoke_check(report, name, status, detail):
+
+    report.append({
+        "name": name,
+        "status": status,
+        "detail": str(detail or "")
+    })
+
+
+def smoke_status_icon(status):
+
+    if status == "ok":
+
+        return "✅"
+
+    if status == "fail":
+
+        return "❌"
+
+    if status == "manual":
+
+        return "🧪"
+
+    return "⚠️"
+
+
+def read_project_file(path):
+
+    try:
+
+        with open(path, "r", encoding="utf-8") as file:
+
+            return file.read()
+
+    except Exception:
+
+        return ""
+
+
+def table_exists(table_name):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema='public'
+                AND table_name=%s
+            )
+
+        """, (table_name,))
+
+        return cur.fetchone()[0] is True
+
+
+def column_exists(table_name, column_name):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema='public'
+                AND table_name=%s
+                AND column_name=%s
+            )
+
+        """, (table_name, column_name))
+
+        return cur.fetchone()[0] is True
+
+
+def count_table_rows(query):
+
+    with conn.cursor() as cur:
+
+        cur.execute(query)
+
+        row = cur.fetchone()
+
+        return row[0] if row else 0
+
+
+def run_beta_smoke_checks():
+
+    report = []
+
+    project_files = {
+        "main.py": read_project_file("main.py"),
+        "callback_router.py": read_project_file("callback_router.py"),
+        "stripe_handler.py": read_project_file("stripe_handler.py"),
+        "invite_link_service.py": read_project_file("invite_link_service.py")
+    }
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("SELECT 1")
+
+            result = cur.fetchone()
+
+        add_smoke_check(
+            report,
+            "DB responde",
+            "ok" if result and result[0] == 1 else "fail",
+            "SELECT 1 ejecutado"
+        )
+
+    except Exception as e:
+
+        add_smoke_check(report, "DB responde", "fail", e)
+
+
+    critical_tables = [
+        "groups",
+        "users",
+        "admins",
+        "plans",
+        "payments",
+        "invite_links",
+        "audit_logs",
+        "beta_monitor_events",
+        "beta_smoke_test_runs",
+        "group_user_promo_codes",
+        "group_backup_configs",
+        "support_tickets"
+    ]
+
+    for table_name in critical_tables:
+
+        try:
+
+            add_smoke_check(
+                report,
+                f"Tabla {table_name}",
+                "ok" if table_exists(table_name) else "fail",
+                "Existe" if table_exists(table_name) else "No existe"
+            )
+
+        except Exception as e:
+
+            add_smoke_check(report, f"Tabla {table_name}", "fail", e)
+
+
+    try:
+
+        add_smoke_check(
+            report,
+            "invite_links.telegram_group_id",
+            "ok" if column_exists("invite_links", "telegram_group_id") else "fail",
+            "Columna disponible para validar con ID real de Telegram"
+        )
+
+    except Exception as e:
+
+        add_smoke_check(report, "invite_links.telegram_group_id", "fail", e)
+
+
+    main_source = project_files["main.py"]
+    router_source = project_files["callback_router.py"]
+    stripe_source = project_files["stripe_handler.py"]
+    invite_source = project_files["invite_link_service.py"]
+
+    static_checks = [
+        (
+            "Global error handler registrado",
+            "add_error_handler" in main_source and "global_error_handler" in main_source,
+            "main.py contiene add_error_handler/global_error_handler"
+        ),
+        (
+            "Scheduler beta registrado",
+            "schedule_beta_monitor_job(telegram_app)" in main_source,
+            "JobQueue beta conectado en arranque"
+        ),
+        (
+            "Callbacks críticos presentes",
+            all(
+                callback_name in router_source
+                for callback_name in [
+                    "admin_beta_monitor",
+                    "admin_smoke_test",
+                    "admin_group_user_codes",
+                    "group_user_code_create",
+                    "group_user_promo_redeem_start",
+                    "free_access_",
+                    "marketplace_group_",
+                    "owner_backup_panel"
+                ]
+            ),
+            "Router contiene los callbacks críticos de beta"
+        ),
+        (
+            "group_user_code no colisiona con group_{id}",
+            "is_numeric_group_callback" in router_source
+            and 'int(data.split("_")[1])' not in router_source,
+            "El handler group_{id} valida prefijo numérico"
+        ),
+        (
+            "Sin int(data.split(...)) peligroso",
+            "int(data.split" not in router_source,
+            "No hay conversión directa insegura de callback"
+        ),
+        (
+            "BETA_MONITOR_ENABLED leído",
+            "BETA_MONITOR_ENABLED" in read_project_file("audit_log_service.py"),
+            "Monitor beta usa variable de entorno"
+        ),
+        (
+            "Sin invite links completos en logs conocidos",
+            "Respuesta createChatInviteLink" not in stripe_source
+            and "Respuesta createChatInviteLink" not in invite_source,
+            "No aparece el log antiguo con link completo"
+        )
+    ]
+
+    for name, passed, detail in static_checks:
+
+        add_smoke_check(
+            report,
+            name,
+            "ok" if passed else "fail",
+            detail
+        )
+
+
+    env_checks = [
+        ("TOKEN presente", "TOKEN", True),
+        ("STRIPE_SECRET_KEY presente", "STRIPE_SECRET_KEY", True),
+        ("STRIPE_WEBHOOK_SECRET presente", "STRIPE_WEBHOOK_SECRET", True),
+        ("SERVER_URL/WEBHOOK_URL presente", "SERVER_URL", True)
+    ]
+
+    for name, env_name, required in env_checks:
+
+        value = os.environ.get(env_name)
+
+        if env_name == "SERVER_URL":
+
+            value = os.environ.get("SERVER_URL") or os.environ.get("WEBHOOK_URL")
+
+        if value:
+
+            add_smoke_check(report, name, "ok", "Configurado sin mostrar valor")
+
+        else:
+
+            add_smoke_check(
+                report,
+                name,
+                "fail" if required else "warning",
+                "No configurado"
+            )
+
+
+    data_checks = [
+        ("Grupos activos cargables", "SELECT COUNT(*) FROM groups WHERE is_active=TRUE"),
+        ("Owners/admins cargables", "SELECT COUNT(*) FROM admins WHERE is_active=TRUE"),
+        ("Planes activos cargables", "SELECT COUNT(*) FROM plans WHERE is_active=TRUE"),
+        ("Códigos por grupo activos cargables", "SELECT COUNT(*) FROM group_user_promo_codes WHERE is_active=TRUE"),
+        ("Backups configurados cargables", "SELECT COUNT(*) FROM group_backup_configs")
+    ]
+
+    for name, query in data_checks:
+
+        try:
+
+            total = count_table_rows(query)
+
+            add_smoke_check(
+                report,
+                name,
+                "ok" if total > 0 else "warning",
+                f"Registros encontrados: {total}"
+            )
+
+        except Exception as e:
+
+            add_smoke_check(report, name, "fail", e)
+
+
+    add_smoke_check(
+        report,
+        "Checks Telegram seguros",
+        "manual",
+        (
+            "Pendiente de prueba real: getChat, getChatMember(bot), "
+            "invite link revocable y revocación requieren elegir un grupo y confirmar."
+        )
+    )
+
+    return report
+
+
+def summarize_smoke_report(report):
+
+    total_checks = len(report)
+    passed_checks = len([item for item in report if item.get("status") == "ok"])
+    failed_checks = len([item for item in report if item.get("status") == "fail"])
+    warning_checks = len([
+        item
+        for item in report
+        if item.get("status") in ("warning", "manual")
+    ])
+
+    return total_checks, passed_checks, failed_checks, warning_checks
+
+
+def save_beta_smoke_run(started_by, report):
+
+    total_checks, passed_checks, failed_checks, warning_checks = summarize_smoke_report(report)
+    status = "failed" if failed_checks else "completed"
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO beta_smoke_test_runs
+            (
+                started_by,
+                status,
+                total_checks,
+                passed_checks,
+                failed_checks,
+                warning_checks,
+                report
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+            RETURNING id, created_at
+
+        """, (
+            started_by,
+            status,
+            total_checks,
+            passed_checks,
+            failed_checks,
+            warning_checks,
+            json.dumps(report, ensure_ascii=False, default=str)
+        ))
+
+        run_id, created_at = cur.fetchone()
+        conn.commit()
+
+    return {
+        "id": run_id,
+        "created_at": created_at,
+        "status": status,
+        "total_checks": total_checks,
+        "passed_checks": passed_checks,
+        "failed_checks": failed_checks,
+        "warning_checks": warning_checks,
+        "report": report
+    }
+
+
+def get_last_beta_smoke_run():
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   created_at,
+                   status,
+                   total_checks,
+                   passed_checks,
+                   failed_checks,
+                   warning_checks,
+                   report
+            FROM beta_smoke_test_runs
+            ORDER BY created_at DESC
+            LIMIT 1
+
+        """)
+
+        row = cur.fetchone()
+
+    if not row:
+
+        return None
+
+    report = row[7] or []
+
+    return {
+        "id": row[0],
+        "created_at": row[1],
+        "status": row[2],
+        "total_checks": row[3],
+        "passed_checks": row[4],
+        "failed_checks": row[5],
+        "warning_checks": row[6],
+        "report": report
+    }
+
+
+def clear_beta_smoke_runs():
+
+    with conn.cursor() as cur:
+
+        cur.execute("DELETE FROM beta_smoke_test_runs")
+        affected = cur.rowcount
+        conn.commit()
+
+    return affected
+
+
+def format_beta_smoke_report(run):
+
+    if not run:
+
+        return "🧪 Smoke Test Beta\n\nTodavía no hay resultados guardados."
+
+
+    lines = [
+        "🧪 Smoke Test Beta",
+        "",
+        f"Ejecución: #{run['id']}",
+        f"Fecha: {run['created_at']}",
+        f"Estado: {run['status']}",
+        "",
+        f"✅ OK: {run['passed_checks']}",
+        f"⚠️ Warnings/manuales: {run['warning_checks']}",
+        f"❌ Fallos: {run['failed_checks']}",
+        f"Total: {run['total_checks']}",
+        ""
+    ]
+
+
+    for item in run.get("report", [])[:30]:
+
+        lines.append(
+            f"{smoke_status_icon(item.get('status'))} {item.get('name')}"
+        )
+
+        detail = item.get("detail")
+
+        if detail:
+
+            lines.append(f"   {detail}")
+
+
+    return "\n".join(lines)[:3900]
+
+
+def format_beta_smoke_manual_checklist():
+
+    return (
+        "📋 Checklist manual beta\n\n"
+        "🧪 Ejecutar con cuentas/grupos reales antes de abrir la beta:\n\n"
+        "1. Pago Stripe test/real y webhook confirmado.\n"
+        "2. Entrada de usuario externo con link de pago.\n"
+        "3. Acceso gratis con link único.\n"
+        "4. Canje de código por grupo.\n"
+        "5. Verificación request_location desde móvil.\n"
+        "6. Backup texto, foto y vídeo con captions.\n"
+        "7. Flujo con GroupAnonymousBot.\n"
+        "8. Ticket soporte usuario/admin.\n"
+        "9. Bot añadido a grupo por creator aprobado.\n"
+        "10. Fallback de callback inválido con mensaje amable.\n\n"
+        "Estos pasos no se ejecutan automáticamente para no crear pagos reales "
+        "ni modificar grupos sin confirmación."
+    )
 
 
 def user_has_group_permission_any(user_id, group_id, permissions):
@@ -16818,6 +17298,138 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await query.message.reply_text(text)
+
+        return
+
+
+    if data.startswith("admin_smoke"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        if data == "admin_smoke_run":
+
+            try:
+
+                report = run_beta_smoke_checks()
+                run = save_beta_smoke_run(user_id, report)
+
+                log_event(
+                    "beta_smoke_test_run",
+                    category="beta",
+                    severity="warning" if run["failed_checks"] else "info",
+                    message=(
+                        f"Smoke test beta ejecutado: "
+                        f"{run['passed_checks']} OK, "
+                        f"{run['warning_checks']} warnings/manuales, "
+                        f"{run['failed_checks']} fallos"
+                    ),
+                    actor_user_id=user_id,
+                    metadata={
+                        "run_id": run["id"],
+                        "total_checks": run["total_checks"],
+                        "passed_checks": run["passed_checks"],
+                        "failed_checks": run["failed_checks"],
+                        "warning_checks": run["warning_checks"]
+                    }
+                )
+
+                await query.message.reply_text(
+                    format_beta_smoke_report(run),
+                    reply_markup=build_beta_smoke_test_keyboard()
+                )
+
+            except Exception as e:
+
+                log_event(
+                    "beta_smoke_test_error",
+                    category="beta",
+                    severity="warning",
+                    message="Error ejecutando Smoke Test Beta",
+                    actor_user_id=user_id,
+                    metadata={"error": str(e)}
+                )
+
+                await query.message.reply_text(
+                    "⚠️ No se pudo ejecutar el Smoke Test Beta.",
+                    reply_markup=build_beta_smoke_test_keyboard()
+                )
+
+            return
+
+
+        if data == "admin_smoke_manual":
+
+            await query.message.reply_text(
+                format_beta_smoke_manual_checklist(),
+                reply_markup=build_beta_smoke_test_keyboard()
+            )
+
+            return
+
+
+        if data == "admin_smoke_last":
+
+            try:
+
+                run = get_last_beta_smoke_run()
+                text = format_beta_smoke_report(run)
+
+            except Exception as e:
+
+                text = (
+                    "🧪 Smoke Test Beta\n\n"
+                    f"⚠️ No se pudo cargar el último resultado: {e}"
+                )
+
+
+            await query.message.reply_text(
+                text,
+                reply_markup=build_beta_smoke_test_keyboard()
+            )
+
+            return
+
+
+        if data == "admin_smoke_clear":
+
+            try:
+
+                affected = clear_beta_smoke_runs()
+
+                log_event(
+                    "beta_smoke_test_results_cleared",
+                    category="beta",
+                    severity="info",
+                    message=f"Resultados Smoke Test Beta limpiados: {affected}",
+                    actor_user_id=user_id
+                )
+
+                await query.message.reply_text(
+                    f"🧹 Resultados eliminados: {affected}",
+                    reply_markup=build_beta_smoke_test_keyboard()
+                )
+
+            except Exception as e:
+
+                await query.message.reply_text(
+                    f"⚠️ No se pudieron limpiar los resultados: {e}",
+                    reply_markup=build_beta_smoke_test_keyboard()
+                )
+
+            return
+
+
+        await query.message.reply_text(
+            "🧪 Smoke Test Beta",
+            reply_markup=build_beta_smoke_test_keyboard()
+        )
 
         return
 

@@ -636,6 +636,37 @@ def create_tables():
 
 
         # =========================
+        # BETA SMOKE TEST RUNS
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS beta_smoke_test_runs (
+
+            id SERIAL PRIMARY KEY,
+
+            started_by BIGINT,
+
+            status TEXT,
+
+            total_checks INTEGER DEFAULT 0,
+
+            passed_checks INTEGER DEFAULT 0,
+
+            failed_checks INTEGER DEFAULT 0,
+
+            warning_checks INTEGER DEFAULT 0,
+
+            report JSONB,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # BACKUP PREMIUM — FASE 1
         # =========================
 
