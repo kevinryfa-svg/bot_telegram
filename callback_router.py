@@ -95,13 +95,21 @@ from payment_service import (
     build_payment_methods_admin_text,
     clear_group_payment_provider_config,
     disable_group_payment_provider_config,
+    clear_platform_payment_provider_config,
+    disable_platform_payment_provider_config,
     ensure_group_payment_provider_config,
+    ensure_platform_payment_provider_config,
+    fetch_platform_payment_provider_config,
+    is_changenow_group_checkout_available,
+    is_changenow_platform_checkout_available,
     is_paypal_group_checkout_available,
     is_revolut_group_checkout_available,
     is_stripe_payments_enabled,
     list_group_payment_provider_statuses,
-    save_group_payment_provider_encrypted_config
+    save_group_payment_provider_encrypted_config,
+    save_platform_payment_provider_encrypted_config
 )
+from payment_access_service import grant_group_access_after_payment
 from payment_secret_store import (
     encrypt_provider_config,
     has_payment_encryption_key,
@@ -138,12 +146,17 @@ get_group_id = None
 
 OWNER_PAYMENT_PROVIDER_PAYPAL = "paypal"
 OWNER_PAYMENT_PROVIDER_REVOLUT = "revolut"
+OWNER_PAYMENT_PROVIDER_CHANGENOW = "changenow"
 OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS = (
     "configuring_owner_payment_provider",
     "owner_payment_provider",
     "owner_payment_group_id",
     "owner_payment_step",
-    "owner_payment_payload"
+    "owner_payment_payload",
+    "configuring_platform_payment_provider",
+    "platform_payment_provider",
+    "platform_payment_step",
+    "platform_payment_payload"
 )
 
 
@@ -258,6 +271,62 @@ def build_owner_revolut_confirm_keyboard(group_id):
     ])
 
 
+def build_owner_changenow_cancel_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar configuración", callback_data=f"owner_payment_changenow_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_changenow_mode_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔒 Fixed", callback_data=f"owner_payment_changenow_mode_fixed_{group_id}")],
+        [InlineKeyboardButton("🌊 Floating", callback_data=f"owner_payment_changenow_mode_float_{group_id}")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_payment_changenow_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")]
+    ])
+
+
+def build_owner_changenow_confirm_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Guardar cifrado", callback_data=f"owner_payment_changenow_save_{group_id}")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_payment_changenow_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")]
+    ])
+
+
+def build_platform_changenow_cancel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar configuración", callback_data="admin_payment_changenow_cancel")],
+        [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_platform_changenow_mode_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔒 Fixed", callback_data="admin_payment_changenow_mode_fixed")],
+        [InlineKeyboardButton("🌊 Floating", callback_data="admin_payment_changenow_mode_float")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="admin_payment_changenow_cancel")],
+        [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")]
+    ])
+
+
+def build_platform_changenow_confirm_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Guardar cifrado", callback_data="admin_payment_changenow_save")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="admin_payment_changenow_cancel")],
+        [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")]
+    ])
+
+
 def is_valid_paypal_text_value(value, min_length=8):
 
     if not value:
@@ -324,6 +393,89 @@ def build_owner_revolut_safe_summary(payload):
         f"Webhook secret: {masked.get('webhook_secret') or '***'}\n"
         f"Base URL: {base_url_text}"
     )
+
+
+def build_changenow_safe_summary(payload):
+
+    safe_payload = {
+        "rate_mode": payload.get("rate_mode"),
+        "api_key": payload.get("api_key"),
+        "payout_currency": payload.get("payout_currency"),
+        "payout_network": payload.get("payout_network"),
+        "payout_wallet": payload.get("payout_wallet"),
+        "payin_currency": payload.get("payin_currency"),
+        "payin_network": payload.get("payin_network")
+    }
+    masked = mask_provider_config(safe_payload)
+
+    return (
+        f"Modo: {masked.get('rate_mode') or '-'}\n"
+        f"API key: {masked.get('api_key') or '***'}\n"
+        f"Recibe: {masked.get('payout_currency') or '-'} / {masked.get('payout_network') or '-'}\n"
+        f"Wallet destino: {mask_secret_value(payload.get('payout_wallet')) if payload.get('payout_wallet') else '-'}\n"
+        f"Paga usuario: {masked.get('payin_currency') or '-'} / {masked.get('payin_network') or '-'}\n"
+        "Revisión manual: activada"
+    )
+
+
+def build_changenow_tutorial_text(scope_label="esta comunidad"):
+
+    return (
+        "💱 ChangeNOW.io / Cripto\n\n"
+        "¿Qué es ChangeNOW.io?\n"
+        "Es un proveedor que permite aceptar pagos en criptomonedas y convertirlos hacia una moneda o wallet de destino.\n\n"
+        "¿Para qué sirve?\n"
+        f"Sirve para que compradores paguen con cripto por accesos o productos de {scope_label}.\n\n"
+        "¿Cómo funciona en este bot?\n"
+        "1. Configuras una wallet, moneda/red destino y API key.\n"
+        "2. El comprador elige pagar con cripto.\n"
+        "3. El bot registra una operación de pago.\n"
+        "4. El pago queda en revisión manual.\n"
+        "5. El acceso se activa solo cuando un superadmin confirma el pago.\n\n"
+        "¿Qué necesitas antes de configurarlo?\n"
+        "- una wallet propia;\n"
+        "- moneda y red correctas;\n"
+        "- API key de ChangeNOW si tu integración la requiere;\n"
+        "- entender que ChangeNOW no ofrece sandbox oficial dedicado;\n"
+        "- asumir que los pagos cripto pueden tardar.\n\n"
+        "Importante sobre seguridad:\n"
+        "Por ahora ChangeNOW NO activa accesos automáticamente. Los pagos quedan en revisión manual porque falta confirmación pública suficiente sobre callback/push firmado e idempotencia segura.\n\n"
+        "Fixed / Floating:\n"
+        "Fixed intenta mantener importe/tasa fija durante una ventana limitada. Floating puede variar según mercado. Para vender accesos conviene fixed si ChangeNOW lo permite."
+    )
+
+
+def build_changenow_payment_review_text(order):
+
+    lines = [
+        "💱 Pago cripto creado",
+        "",
+        "Este pago queda en revisión manual. El acceso no se activa automáticamente.",
+        "",
+        f"Referencia interna: {order.get('transaction_id')}",
+        f"Moneda/red de pago: {order.get('payin_currency') or '-'} / {order.get('payin_network') or '-'}",
+        f"Moneda/red destino: {order.get('payout_currency') or '-'} / {order.get('payout_network') or '-'}",
+        f"Modo: {order.get('rate_mode') or 'fixed'}",
+        ""
+    ]
+
+    if order.get("payin_address"):
+
+        lines.extend([
+            "Datos de pago generados por ChangeNOW:",
+            f"Dirección: {order.get('payin_address')}",
+            f"Memo/tag: {order.get('payin_extra_id') or '-'}",
+            f"Importe esperado: {order.get('expected_amount_from') or '-'}",
+            f"Válido hasta: {order.get('valid_until') or '-'}",
+            ""
+        ])
+
+    lines.extend([
+        "Cuando el pago se confirme, soporte revisará la operación y activará el acceso si todo coincide.",
+        "No envíes fondos por otra red ni a otra dirección."
+    ])
+
+    return "\n".join(lines)
 
 
 def build_group_recovery_keyboard(group_id, retry_callback=None):
@@ -1684,6 +1836,8 @@ def build_admin_global_commercial_plans_keyboard():
 def build_admin_payment_providers_keyboard():
 
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💱 ChangeNOW.io / Cripto", callback_data="admin_payment_changenow")],
+        [InlineKeyboardButton("🧪 Pagos ChangeNOW en revisión", callback_data="admin_changenow_manual_review")],
         [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
         [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
@@ -4506,6 +4660,237 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
 
 async def receive_owner_payment_provider_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    if context.user_data.get("configuring_platform_payment_provider"):
+
+        provider = context.user_data.get("platform_payment_provider")
+        step = context.user_data.get("platform_payment_step")
+        payload = context.user_data.get("platform_payment_payload") or {}
+        user_id = update.effective_user.id if update.effective_user else None
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        text = (update.message.text or "").strip() if update.message else ""
+
+
+        if provider != OWNER_PAYMENT_PROVIDER_CHANGENOW or not is_super_admin(user_id):
+
+            clear_owner_payment_provider_wizard(context)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⛔ No tienes permiso para configurar ChangeNOW plataforma.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        if text.lower() in ("cancelar", "/cancel", "cancel"):
+
+            clear_owner_payment_provider_wizard(context)
+            await delete_sensitive_user_message(update)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="✅ Configuración ChangeNOW cancelada. No se ha guardado ningún secreto.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        if not has_payment_encryption_key():
+
+            clear_owner_payment_provider_wizard(context)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Falta PAYMENT_CONFIG_ENCRYPTION_KEY. No se guardan credenciales sin cifrado.",
+                reply_markup=build_admin_payment_providers_keyboard()
+            )
+
+            return
+
+
+        if step == "api_key":
+
+            await delete_sensitive_user_message(update)
+
+            if not is_valid_paypal_text_value(text, min_length=8):
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ La API key de ChangeNOW no parece válida. Pégala otra vez o cancela.",
+                    reply_markup=build_platform_changenow_cancel_keyboard()
+                )
+
+                return
+
+
+            payload["api_key"] = text
+            context.user_data["platform_payment_payload"] = payload
+            context.user_data["platform_payment_step"] = "payout_currency"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Indica la moneda que recibirá la plataforma. Ejemplo: USDT, USDC, BTC.",
+                reply_markup=build_platform_changenow_cancel_keyboard()
+            )
+
+            return
+
+
+        if step == "payout_currency":
+
+            value = text.upper().strip()
+
+            if not value or len(value) > 12:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Moneda no válida. Ejemplo: USDT.",
+                    reply_markup=build_platform_changenow_cancel_keyboard()
+                )
+
+                return
+
+
+            payload["payout_currency"] = value.lower()
+            context.user_data["platform_payment_payload"] = payload
+            context.user_data["platform_payment_step"] = "payout_network"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Indica la red destino. Ejemplo: trx, eth, btc.",
+                reply_markup=build_platform_changenow_cancel_keyboard()
+            )
+
+            return
+
+
+        if step == "payout_network":
+
+            value = text.lower().strip()
+
+            if not value or len(value) > 20:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Red no válida. Ejemplo: trx.",
+                    reply_markup=build_platform_changenow_cancel_keyboard()
+                )
+
+                return
+
+
+            payload["payout_network"] = value
+            context.user_data["platform_payment_payload"] = payload
+            context.user_data["platform_payment_step"] = "payout_wallet"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Envía la wallet destino de la plataforma. Revísala con cuidado: una wallet incorrecta puede perder fondos.",
+                reply_markup=build_platform_changenow_cancel_keyboard()
+            )
+
+            return
+
+
+        if step == "payout_wallet":
+
+            await delete_sensitive_user_message(update)
+
+            if len(text) < 12 or len(text) > 300 or any(char.isspace() for char in text):
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ La wallet no parece válida. Pégala otra vez o cancela.",
+                    reply_markup=build_platform_changenow_cancel_keyboard()
+                )
+
+                return
+
+
+            payload["payout_wallet"] = text
+            context.user_data["platform_payment_payload"] = payload
+            context.user_data["platform_payment_step"] = "payin_currency"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Indica la moneda que pagará el comprador por defecto. Ejemplo: BTC, ETH, USDT.",
+                reply_markup=build_platform_changenow_cancel_keyboard()
+            )
+
+            return
+
+
+        if step == "payin_currency":
+
+            value = text.upper().strip()
+
+            if not value or len(value) > 12:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Moneda de pago no válida. Ejemplo: BTC.",
+                    reply_markup=build_platform_changenow_cancel_keyboard()
+                )
+
+                return
+
+
+            payload["payin_currency"] = value.lower()
+            context.user_data["platform_payment_payload"] = payload
+            context.user_data["platform_payment_step"] = "payin_network"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Indica la red de pago. Ejemplo: btc, eth, trx.",
+                reply_markup=build_platform_changenow_cancel_keyboard()
+            )
+
+            return
+
+
+        if step == "payin_network":
+
+            value = text.lower().strip()
+
+            if not value or len(value) > 20:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Red de pago no válida. Ejemplo: btc.",
+                    reply_markup=build_platform_changenow_cancel_keyboard()
+                )
+
+                return
+
+
+            payload["payin_network"] = value
+            context.user_data["platform_payment_payload"] = payload
+            context.user_data["platform_payment_step"] = "confirm"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Revisa la configuración ChangeNOW plataforma:\n\n"
+                    f"{build_changenow_safe_summary(payload)}\n\n"
+                    "El modo seguro deja todos los pagos en revisión manual. ¿Guardar cifrado?"
+                ),
+                reply_markup=build_platform_changenow_confirm_keyboard()
+            )
+
+            return
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ No sé qué dato esperaba. Vuelve a iniciar la configuración ChangeNOW.",
+            reply_markup=build_platform_changenow_cancel_keyboard()
+        )
+
+        return
+
+
     if not context.user_data.get("configuring_owner_payment_provider"):
 
         return
@@ -4519,7 +4904,7 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
     chat_id = update.effective_chat.id if update.effective_chat else None
 
 
-    if provider not in (OWNER_PAYMENT_PROVIDER_PAYPAL, OWNER_PAYMENT_PROVIDER_REVOLUT) or not group_id:
+    if provider not in (OWNER_PAYMENT_PROVIDER_PAYPAL, OWNER_PAYMENT_PROVIDER_REVOLUT, OWNER_PAYMENT_PROVIDER_CHANGENOW) or not group_id:
 
         clear_owner_payment_provider_wizard(context)
         await context.bot.send_message(
@@ -4579,6 +4964,189 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
                 [InlineKeyboardButton("⬅️ Volver al proveedor", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
+        )
+
+        return
+
+
+    if provider == OWNER_PAYMENT_PROVIDER_CHANGENOW:
+
+        if step == "api_key":
+
+            await delete_sensitive_user_message(update)
+
+            if not is_valid_paypal_text_value(text, min_length=8):
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ La API key de ChangeNOW no parece válida. Pégala otra vez o cancela.",
+                    reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["api_key"] = text
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "payout_currency"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Indica la moneda que quieres recibir. Ejemplo: USDT, USDC, BTC.",
+                reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "payout_currency":
+
+            value = text.upper().strip()
+
+            if not value or len(value) > 12:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Moneda no válida. Ejemplo: USDT.",
+                    reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["payout_currency"] = value.lower()
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "payout_network"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Indica la red destino. Ejemplo: trx, eth, btc.",
+                reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "payout_network":
+
+            value = text.lower().strip()
+
+            if not value or len(value) > 20:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Red no válida. Ejemplo: trx.",
+                    reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["payout_network"] = value
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "payout_wallet"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Envía tu wallet destino. Revísala con cuidado: una wallet incorrecta puede perder fondos.",
+                reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "payout_wallet":
+
+            await delete_sensitive_user_message(update)
+
+            if len(text) < 12 or len(text) > 300 or any(char.isspace() for char in text):
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ La wallet no parece válida. Pégala otra vez o cancela.",
+                    reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["payout_wallet"] = text
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "payin_currency"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Indica la moneda que pagará el comprador por defecto. Ejemplo: BTC, ETH, USDT.",
+                reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "payin_currency":
+
+            value = text.upper().strip()
+
+            if not value or len(value) > 12:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Moneda de pago no válida. Ejemplo: BTC.",
+                    reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["payin_currency"] = value.lower()
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "payin_network"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Indica la red de pago. Ejemplo: btc, eth, trx.",
+                reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "payin_network":
+
+            value = text.lower().strip()
+
+            if not value or len(value) > 20:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Red de pago no válida. Ejemplo: btc.",
+                    reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["payin_network"] = value
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "confirm"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Revisa la configuración ChangeNOW de tu comunidad:\n\n"
+                    f"{build_changenow_safe_summary(payload)}\n\n"
+                    "El modo seguro deja todos los pagos en revisión manual. ¿Guardar cifrado?"
+                ),
+                reply_markup=build_owner_changenow_confirm_keyboard(group_id)
+            )
+
+            return
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ No sé qué dato esperaba. Vuelve a iniciar la configuración ChangeNOW.",
+            reply_markup=build_owner_changenow_cancel_keyboard(group_id)
         )
 
         return
@@ -13063,6 +13631,72 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
         )
 
 
+async def create_changenow_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
+
+    try:
+
+        response = requests.post(
+
+            f"{SERVER_URL}/create-changenow-group-order",
+
+            json={
+
+                "telegram_id": user_id,
+                "group_id": group_id,
+                "plan_id": plan_id
+
+            },
+
+            timeout=20
+
+        )
+        response_data = response.json()
+
+
+        if response.status_code >= 400:
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=response_data.get("error") or "ChangeNOW no está disponible para esta comunidad.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=build_changenow_payment_review_text(response_data),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛟 Contactar soporte", callback_data=f"support_group_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+    except Exception as e:
+
+        log_event(
+            "changenow_group_checkout_creation_error",
+            category="payment",
+            severity="error",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Error creando orden ChangeNOW de grupo.",
+            metadata={
+                "plan_id": plan_id,
+                "error": str(e)
+            }
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Error creando pago ChangeNOW",
+            reply_markup=build_group_recovery_keyboard(group_id)
+        )
+
+
 async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.user_data.get("location_gate_pending"):
@@ -13340,6 +13974,19 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
     if action == "revolut_checkout":
 
         await create_revolut_group_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return
+
+
+    if action == "changenow_checkout":
+
+        await create_changenow_group_checkout_for_user(
             context,
             chat_id,
             user_id,
@@ -14727,6 +15374,467 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🧑‍💼 Panel de propietarios: gestiona solicitudes, trials y cupos.\n\n"
             "No se mezcla con códigos de grupo, planes de acceso ni configuración de comunidades concretas.",
             reply_markup=build_admin_owners_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_payment_changenow":
+
+        config_row = fetch_platform_payment_provider_config(OWNER_PAYMENT_PROVIDER_CHANGENOW)
+        summary = (config_row or {}).get("masked_public_summary") or "sin configuración guardada"
+        status = (config_row or {}).get("status") or "not_configured"
+        enabled = "activo" if (config_row or {}).get("is_enabled") else "inactivo"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_changenow_tutorial_text("la plataforma")
+            + "\n\nEstado plataforma:\n"
+            + f"Estado: {status} / {enabled}\n"
+            + f"Resumen seguro: {summary}\n\n"
+            + "Los pagos ChangeNOW quedan en revisión manual y no conceden acceso automáticamente.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📘 Cómo funciona", callback_data="admin_payment_changenow_help")],
+                [InlineKeyboardButton("⚙️ Configurar ChangeNOW", callback_data="admin_payment_changenow_connect")],
+                [InlineKeyboardButton("🧪 Estado / revisión", callback_data="admin_changenow_manual_review")],
+                [InlineKeyboardButton("⛔ Desactivar", callback_data="admin_payment_changenow_disable")],
+                [InlineKeyboardButton("🗑 Borrar configuración", callback_data="admin_payment_changenow_delete")],
+                [InlineKeyboardButton("⬅️ Métodos de pago", callback_data="admin_payment_providers")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_changenow_help":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_changenow_tutorial_text("la plataforma")
+            + "\n\nPaso a paso para superadmin:\n"
+            "1. Crea o revisa tu cuenta/API key de ChangeNOW.\n"
+            "2. Decide moneda y red destino.\n"
+            "3. Pega la wallet destino con cuidado.\n"
+            "4. Guarda cifrado.\n"
+            "5. Revisa manualmente cada pago antes de activar nada.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_changenow_connect":
+
+        if not has_payment_encryption_key():
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⚠️ ChangeNOW no puede configurarse todavía\n\n"
+                "Falta PAYMENT_CONFIG_ENCRYPTION_KEY. Por seguridad no se guardan credenciales reales sin cifrado.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        clear_owner_payment_provider_wizard(context)
+        context.user_data["configuring_platform_payment_provider"] = True
+        context.user_data["platform_payment_provider"] = OWNER_PAYMENT_PROVIDER_CHANGENOW
+        context.user_data["platform_payment_step"] = "mode"
+        context.user_data["platform_payment_payload"] = {}
+        ensure_platform_payment_provider_config(OWNER_PAYMENT_PROVIDER_CHANGENOW, status="pending")
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_changenow_tutorial_text("la plataforma")
+            + "\n\nElige el modo de tasa que quieres preparar.",
+            reply_markup=build_platform_changenow_mode_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("admin_payment_changenow_mode_"):
+
+        mode = data.replace("admin_payment_changenow_mode_", "", 1)
+
+        if mode not in ("fixed", "float"):
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el modo ChangeNOW.",
+                reply_markup=build_admin_payment_providers_keyboard()
+            )
+
+            return
+
+
+        context.user_data["configuring_platform_payment_provider"] = True
+        context.user_data["platform_payment_provider"] = OWNER_PAYMENT_PROVIDER_CHANGENOW
+        context.user_data["platform_payment_payload"] = {"rate_mode": mode}
+        context.user_data["platform_payment_step"] = "api_key"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            ("Modo seleccionado: fixed\n\n" if mode == "fixed" else "Modo seleccionado: floating\n\n")
+            + "Envía ahora la API key de ChangeNOW para plataforma. Intentaré borrar el mensaje después de recibirlo.",
+            reply_markup=build_platform_changenow_cancel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_payment_changenow_cancel":
+
+        clear_owner_payment_provider_wizard(context)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración ChangeNOW cancelada. No se ha guardado ningún secreto.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_changenow_save":
+
+        payload = context.user_data.get("platform_payment_payload") or {}
+        required_keys = ("rate_mode", "api_key", "payout_currency", "payout_network", "payout_wallet", "payin_currency", "payin_network")
+
+        if any(not payload.get(key) for key in required_keys):
+
+            await query.message.reply_text(
+                "⚠️ Faltan datos para guardar ChangeNOW plataforma.",
+                reply_markup=build_platform_changenow_cancel_keyboard()
+            )
+
+            return
+
+
+        safe_config = {
+            "provider": OWNER_PAYMENT_PROVIDER_CHANGENOW,
+            "rate_mode": payload.get("rate_mode"),
+            "api_key": payload.get("api_key"),
+            "payout_currency": payload.get("payout_currency"),
+            "payout_network": payload.get("payout_network"),
+            "payout_wallet": payload.get("payout_wallet"),
+            "payin_currency": payload.get("payin_currency"),
+            "payin_network": payload.get("payin_network"),
+            "manual_only": True
+        }
+
+        try:
+
+            encrypted_config = encrypt_provider_config(safe_config)
+            masked_summary = (
+                f"payin={payload.get('payin_currency')}/{payload.get('payin_network')}; "
+                f"payout={payload.get('payout_currency')}/{payload.get('payout_network')}; "
+                f"wallet={mask_secret_value(payload.get('payout_wallet'))}; "
+                "manual_review=on"
+            )
+            saved = save_platform_payment_provider_encrypted_config(
+                OWNER_PAYMENT_PROVIDER_CHANGENOW,
+                encrypted_config,
+                masked_summary,
+                public_config_json={
+                    "rate_mode": payload.get("rate_mode"),
+                    "payin_currency": payload.get("payin_currency"),
+                    "payin_network": payload.get("payin_network"),
+                    "payout_currency": payload.get("payout_currency"),
+                    "payout_network": payload.get("payout_network"),
+                    "manual_review_required": True,
+                    "checkout_enabled": True,
+                    "webhook_configured": False
+                },
+                verified_by=user_id
+            )
+
+        except Exception:
+
+            saved = False
+
+        clear_owner_payment_provider_wizard(context)
+
+        if saved:
+
+            log_event(
+                "platform_payment_provider_credentials_saved",
+                category="payment",
+                severity="info",
+                actor_user_id=user_id,
+                message="Credenciales ChangeNOW plataforma guardadas cifradas.",
+                metadata={
+                    "provider": OWNER_PAYMENT_PROVIDER_CHANGENOW,
+                    "rate_mode": payload.get("rate_mode"),
+                    "manual_review_required": True
+                }
+            )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            ("✅ ChangeNOW plataforma guardado de forma segura\n\n" if saved else "⚠️ No pude guardar ChangeNOW plataforma\n\n")
+            + (
+                f"{build_changenow_safe_summary(payload)}\n\n"
+                "Estado: activo para pagos cripto en revisión manual."
+                if saved
+                else "Revisa la configuración y vuelve a intentarlo."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+                [InlineKeyboardButton("💳 Métodos de pago", callback_data="admin_payment_providers")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_changenow_disable":
+
+        updated = disable_platform_payment_provider_config(OWNER_PAYMENT_PROVIDER_CHANGENOW)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ ChangeNOW plataforma desactivado." if updated else "⚠️ No pude desactivar ChangeNOW plataforma.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_changenow_delete":
+
+        updated = clear_platform_payment_provider_config(OWNER_PAYMENT_PROVIDER_CHANGENOW)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración ChangeNOW plataforma borrada." if updated else "⚠️ No pude borrar ChangeNOW plataforma.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_changenow_manual_review":
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       user_id,
+                       group_id,
+                       plan_id,
+                       amount,
+                       currency,
+                       status,
+                       external_payment_id,
+                       created_at
+                FROM payment_transactions
+                WHERE provider=%s
+                AND status=%s
+                ORDER BY created_at DESC
+                LIMIT 20
+
+            """, (
+                OWNER_PAYMENT_PROVIDER_CHANGENOW,
+                "manual_review"
+            ))
+
+            rows = cur.fetchall()
+
+        lines = [
+            "🧪 Pagos ChangeNOW en revisión",
+            "",
+            "Estos pagos NO conceden acceso automático. Revisa wallet, importe y estado antes de confirmar."
+        ]
+        keyboard = []
+
+        if not rows:
+
+            lines.append("\nNo hay pagos ChangeNOW pendientes de revisión.")
+
+        for row in rows:
+
+            transaction_id, tx_user_id, tx_group_id, tx_plan_id, amount, currency, status, external_payment_id, created_at = row
+            lines.extend([
+                "",
+                f"#{transaction_id} Usuario: {tx_user_id}",
+                f"Grupo: {tx_group_id or '-'} Plan: {tx_plan_id or '-'}",
+                f"Importe: {amount or '-'} {currency or ''}",
+                f"Estado: {status}",
+                f"Provider id: {external_payment_id or '-'}",
+                f"Fecha: {created_at}"
+            ])
+            keyboard.append([
+                InlineKeyboardButton(f"✅ Confirmar #{transaction_id}", callback_data=f"admin_changenow_mark_paid_{transaction_id}"),
+                InlineKeyboardButton(f"❌ Rechazar #{transaction_id}", callback_data=f"admin_changenow_reject_{transaction_id}")
+            ])
+
+        keyboard.extend([
+            [InlineKeyboardButton("⬅️ ChangeNOW", callback_data="admin_payment_changenow")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data.startswith("admin_changenow_reject_"):
+
+        transaction_id = extract_commercial_request_id(data, "admin_changenow_reject_")
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE payment_transactions
+                SET status='failed',
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=%s
+                AND provider=%s
+                RETURNING id
+
+            """, (
+                transaction_id,
+                OWNER_PAYMENT_PROVIDER_CHANGENOW
+            ))
+            updated = cur.fetchone()
+
+        conn.commit()
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Pago ChangeNOW rechazado." if updated else "⚠️ No encontré ese pago ChangeNOW.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🧪 Volver a revisión", callback_data="admin_changenow_manual_review")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_changenow_mark_paid_"):
+
+        transaction_id = extract_commercial_request_id(data, "admin_changenow_mark_paid_")
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       user_id,
+                       group_id,
+                       plan_id,
+                       amount,
+                       currency,
+                       external_payment_id,
+                       external_checkout_id,
+                       status
+                FROM payment_transactions
+                WHERE id=%s
+                AND provider=%s
+                LIMIT 1
+
+            """, (
+                transaction_id,
+                OWNER_PAYMENT_PROVIDER_CHANGENOW
+            ))
+            row = cur.fetchone()
+
+        if not row:
+
+            await query.message.reply_text(
+                "⚠️ No encontré ese pago ChangeNOW.",
+                reply_markup=build_admin_payment_providers_keyboard()
+            )
+
+            return
+
+
+        _tx_id, tx_user_id, tx_group_id, tx_plan_id, amount, currency, external_payment_id, external_checkout_id, tx_status = row
+
+        if tx_group_id and tx_plan_id:
+
+            result = grant_group_access_after_payment(
+                OWNER_PAYMENT_PROVIDER_CHANGENOW,
+                tx_user_id,
+                tx_group_id,
+                tx_plan_id,
+                external_payment_id=external_payment_id,
+                external_checkout_id=external_checkout_id,
+                amount=amount,
+                currency=currency,
+                transaction_id=transaction_id
+            )
+            new_status = "paid" if result.get("ok") else "manual_review"
+
+        else:
+
+            result = {"ok": True, "reason": "platform_manual_mark_paid"}
+            new_status = "paid"
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE payment_transactions
+                SET status=%s,
+                    metadata_json=COALESCE(metadata_json, '{}'::jsonb) || %s::jsonb,
+                    metadata=COALESCE(metadata, '{}'::jsonb) || %s::jsonb,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=%s
+
+            """, (
+                new_status,
+                json.dumps({"manual_confirmed_by": user_id, "manual_result": result}),
+                json.dumps({"manual_confirmed_by": user_id, "manual_result": result}),
+                transaction_id
+            ))
+
+        conn.commit()
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Pago ChangeNOW confirmado manualmente." if result.get("ok") else "⚠️ No pude conceder el acceso. El pago sigue en revisión.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🧪 Volver a revisión", callback_data="admin_changenow_manual_review")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return
@@ -18270,6 +19378,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         paypal_available = is_paypal_group_checkout_available(group_id)
         revolut_available = is_revolut_group_checkout_available(group_id)
+        changenow_available = is_changenow_group_checkout_available(group_id)
 
 
         for plan_id, name, price_id, amount, currency in plans:
@@ -18320,6 +19429,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"🏦 Revolut — {button_text}",
 
                         callback_data=f"revolut_group_plan_{group_id}_{plan_id}"
+
+                    )
+
+                ])
+
+
+            if changenow_available:
+
+                keyboard.append([
+
+                    InlineKeyboardButton(
+
+                        f"💱 Cripto / ChangeNOW — {button_text}",
+
+                        callback_data=f"changenow_group_plan_{group_id}_{plan_id}"
 
                     )
 
@@ -20249,6 +21373,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
+        if provider == OWNER_PAYMENT_PROVIDER_CHANGENOW:
+
+            if not has_payment_encryption_key():
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "⚠️ ChangeNOW no puede configurarse todavía\n\n"
+                    "Falta PAYMENT_CONFIG_ENCRYPTION_KEY en la configuración segura del bot.\n\n"
+                    "Por seguridad no se piden ni se guardan credenciales reales sin cifrado.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                    ])
+                )
+
+                return
+
+
+            clear_owner_payment_provider_wizard(context)
+            context.user_data["configuring_owner_payment_provider"] = True
+            context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_CHANGENOW
+            context.user_data["owner_payment_group_id"] = group_id
+            context.user_data["owner_payment_step"] = "mode"
+            context.user_data["owner_payment_payload"] = {}
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_changenow_tutorial_text("esta comunidad")
+                + "\n\nPulsa el modo de tasa que quieres preparar para esta comunidad.",
+                reply_markup=build_owner_changenow_mode_keyboard(group_id)
+            )
+
+            return
+
+
         await send_clean_message(
             context,
             query.message.chat_id,
@@ -20261,6 +21422,65 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("⬅️ Volver al proveedor", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_changenow_mode_"):
+
+        payload = data.replace("owner_payment_changenow_mode_", "", 1)
+        mode, _, group_text = payload.partition("_")
+
+
+        if mode not in ("fixed", "float") or not group_text.isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el modo de ChangeNOW.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(group_text)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⛔ No tienes permiso para configurar ChangeNOW en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not context.user_data.get("configuring_owner_payment_provider"):
+
+            context.user_data["configuring_owner_payment_provider"] = True
+            context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_CHANGENOW
+            context.user_data["owner_payment_group_id"] = group_id
+            context.user_data["owner_payment_payload"] = {}
+
+
+        owner_payload = context.user_data.get("owner_payment_payload") or {}
+        owner_payload["rate_mode"] = mode
+        context.user_data["owner_payment_payload"] = owner_payload
+        context.user_data["owner_payment_step"] = "api_key"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "Modo seleccionado: fixed\n\n"
+                if mode == "fixed"
+                else "Modo seleccionado: floating\n\n"
+            )
+            + "Envía ahora la API key de ChangeNOW. Intentaré borrar el mensaje después de recibirlo.",
+            reply_markup=build_owner_changenow_cancel_keyboard(group_id)
         )
 
         return
@@ -20386,6 +21606,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("owner_payment_changenow_cancel_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_changenow_cancel_"
+        )
+        clear_owner_payment_provider_wizard(context)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración de ChangeNOW cancelada. No se ha guardado ningún secreto.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
     if data.startswith("owner_payment_paypal_cancel_"):
 
         group_id = extract_commercial_request_id(
@@ -20421,6 +21662,152 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ Configuración de Revolut cancelada. No se ha guardado ningún secreto.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Volver a Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_changenow_save_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_changenow_save_"
+        )
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group_id or (not is_super_admin(user_id) and owner_user_id != user_id):
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⛔ No tienes permiso para guardar ChangeNOW en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        provider = context.user_data.get("owner_payment_provider")
+        payload = context.user_data.get("owner_payment_payload") or {}
+
+
+        if provider != OWNER_PAYMENT_PROVIDER_CHANGENOW or context.user_data.get("owner_payment_group_id") != group_id:
+
+            await query.message.reply_text(
+                "⚠️ No hay una configuración de ChangeNOW lista para guardar.",
+                reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        required_keys = ("rate_mode", "api_key", "payout_currency", "payout_network", "payout_wallet", "payin_currency", "payin_network")
+
+
+        if any(not payload.get(key) for key in required_keys):
+
+            await query.message.reply_text(
+                "⚠️ Faltan datos para guardar ChangeNOW. Vuelve a iniciar la conexión.",
+                reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if not has_payment_encryption_key():
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⚠️ Falta PAYMENT_CONFIG_ENCRYPTION_KEY. No se guardan credenciales sin cifrado.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        safe_config = {
+            "provider": OWNER_PAYMENT_PROVIDER_CHANGENOW,
+            "rate_mode": payload.get("rate_mode"),
+            "api_key": payload.get("api_key"),
+            "payout_currency": payload.get("payout_currency"),
+            "payout_network": payload.get("payout_network"),
+            "payout_wallet": payload.get("payout_wallet"),
+            "payin_currency": payload.get("payin_currency"),
+            "payin_network": payload.get("payin_network"),
+            "manual_only": True
+        }
+
+
+        try:
+
+            encrypted_config = encrypt_provider_config(safe_config)
+            masked_summary = (
+                f"payin={payload.get('payin_currency')}/{payload.get('payin_network')}; "
+                f"payout={payload.get('payout_currency')}/{payload.get('payout_network')}; "
+                f"wallet={mask_secret_value(payload.get('payout_wallet'))}; "
+                "manual_review=on"
+            )
+            saved = save_group_payment_provider_encrypted_config(
+                owner_user_id or user_id,
+                group_id,
+                OWNER_PAYMENT_PROVIDER_CHANGENOW,
+                encrypted_config,
+                masked_summary,
+                public_config_json={
+                    "rate_mode": payload.get("rate_mode"),
+                    "payin_currency": payload.get("payin_currency"),
+                    "payin_network": payload.get("payin_network"),
+                    "payout_currency": payload.get("payout_currency"),
+                    "payout_network": payload.get("payout_network"),
+                    "manual_review_required": True,
+                    "checkout_enabled": True,
+                    "webhook_configured": False
+                },
+                verified_by=user_id
+            )
+
+        except Exception:
+
+            saved = False
+
+        clear_owner_payment_provider_wizard(context)
+
+
+        if saved:
+
+            log_event(
+                "group_payment_provider_credentials_saved",
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Credenciales ChangeNOW de grupo guardadas cifradas.",
+                metadata={
+                    "provider": OWNER_PAYMENT_PROVIDER_CHANGENOW,
+                    "rate_mode": payload.get("rate_mode"),
+                    "manual_review_required": True,
+                    "status": "active"
+                }
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            ("✅ ChangeNOW guardado de forma segura\n\n" if saved else "⚠️ No pude guardar ChangeNOW\n\n")
+            + (
+                f"{build_changenow_safe_summary(payload)}\n\n"
+                "Estado: activo para pagos cripto en revisión manual.\n"
+                "El acceso NO se concede automáticamente."
+                if saved
+                else "Revisa la configuración y vuelve a intentarlo."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")],
+                [InlineKeyboardButton("💳 Métodos del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
@@ -20703,6 +22090,58 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("owner_payment_changenow_confirm_delete_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_changenow_confirm_delete_"
+        )
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group_id or (not is_super_admin(user_id) and owner_user_id != user_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para borrar ChangeNOW en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        updated = clear_group_payment_provider_config(
+            group_id,
+            OWNER_PAYMENT_PROVIDER_CHANGENOW
+        )
+
+
+        if updated:
+
+            log_event(
+                "group_payment_provider_config_deleted",
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Configuración ChangeNOW de grupo borrada.",
+                metadata={"provider": OWNER_PAYMENT_PROVIDER_CHANGENOW}
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración ChangeNOW borrada." if updated else "⚠️ No pude borrar la configuración ChangeNOW.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a métodos de pago", callback_data=f"owner_group_payment_methods_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
     if data.startswith("owner_payment_paypal_confirm_delete_"):
 
         group_id = extract_commercial_request_id(
@@ -20835,6 +22274,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "⛔ No tienes permiso para modificar este método de pago.",
                 reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if deleting and provider == OWNER_PAYMENT_PROVIDER_CHANGENOW:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🗑 Borrar configuración ChangeNOW\n\n"
+                "Esto eliminará las credenciales cifradas guardadas para esta comunidad. "
+                "No afecta a Stripe, PayPal ni Revolut.\n\n"
+                "¿Confirmas el borrado?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Confirmar borrado", callback_data=f"owner_payment_changenow_confirm_delete_{group_id}")],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
             )
 
             return
@@ -20987,6 +22445,26 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 rows = cur.fetchall()
 
+                cur.execute("""
+
+                    SELECT user_id,
+                           plan_id,
+                           amount,
+                           currency,
+                           status,
+                           created_at,
+                           provider,
+                           id
+                    FROM payment_transactions
+                    WHERE group_id=%s
+                    AND provider='changenow'
+                    ORDER BY created_at DESC
+                    LIMIT 20
+
+                """, (group_id,))
+
+                changenow_rows = cur.fetchall()
+
         except Exception as e:
 
             print("Error cargando pagos de grupo:", e)
@@ -21009,7 +22487,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
 
-        if not rows:
+        if not rows and not changenow_rows:
 
             await send_clean_message(
                 context,
@@ -21032,6 +22510,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Importe: {amount or '-'} {currency or ''}\n"
                 f"Estado: {status or '-'}\n"
                 f"Fecha: {payment_date or '-'}\n\n"
+            )
+
+
+        if changenow_rows:
+
+            text += "💱 ChangeNOW en revisión/manual\n\n"
+
+
+        for payment_user_id, plan_id, amount, currency, status, payment_date, provider, transaction_id in changenow_rows:
+
+            text += (
+                f"Referencia: #{transaction_id}\n"
+                f"Usuario: {payment_user_id}\n"
+                f"Plan ID: {plan_id or '-'}\n"
+                f"Importe plan: {amount or '-'} {currency or ''}\n"
+                f"Estado: {status or '-'}\n"
+                f"Fecha: {payment_date or '-'}\n"
+                "Acceso: pendiente de revisión manual\n\n"
             )
 
 
@@ -27509,6 +29005,61 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await create_revolut_group_checkout_for_user(
+            context,
+            query.message.chat_id,
+            user_id,
+            group_id,
+            plan_id
+        )
+
+        return
+
+
+    if data.startswith("changenow_group_plan_"):
+
+        payload = data.replace("changenow_group_plan_", "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el plan ChangeNOW.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        plan_id = int(parts[1])
+        context.user_data["selected_group"] = group_id
+
+
+        if not is_changenow_group_checkout_available(group_id):
+
+            await query.message.reply_text(
+                "ChangeNOW todavía no está configurado para esta comunidad.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        if group_requires_location_gate(group_id):
+
+            await request_location_verification(
+                context,
+                query.message.chat_id,
+                group_id,
+                "changenow_checkout",
+                price_id=plan_id
+            )
+
+            return
+
+
+        await create_changenow_group_checkout_for_user(
             context,
             query.message.chat_id,
             user_id,

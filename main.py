@@ -800,7 +800,10 @@ async def handle_text(update, context):
         await receive_group_user_promo_code(update, context)
         return
 
-    if context.user_data.get("configuring_owner_payment_provider"):
+    if (
+        context.user_data.get("configuring_owner_payment_provider")
+        or context.user_data.get("configuring_platform_payment_provider")
+    ):
         await receive_owner_payment_provider_text(update, context)
         return
 

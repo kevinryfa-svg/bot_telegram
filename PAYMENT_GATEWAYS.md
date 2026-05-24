@@ -566,3 +566,101 @@ Sigue pendiente para una fase posterior:
 3. Renovaciones recurrentes si se implementan suscripciones PayPal/Revolut.
 4. PayPal/Revolut propios por owner para productos que no sean acceso de grupo.
 5. Cripto y Bizum reales.
+
+## ChangeNOW.io / Cripto en modo seguro
+
+ChangeNOW queda preparado como proveedor cripto configurable desde el bot para dos scopes:
+
+- `payment_scope=platform`: pagos de plataforma configurados por superadmin.
+- `payment_scope=group`: pagos de comunidades configurados por owner/superadmin.
+
+### Estado de esta fase
+
+Esta fase activa ChangeNOW en modo controlado:
+
+- la configuracion se hace desde Telegram, no desde Railway;
+- los secretos se guardan cifrados con `PAYMENT_CONFIG_ENCRYPTION_KEY`;
+- el comprador puede iniciar un pago cripto si el metodo esta activo;
+- la transaccion se guarda en `payment_transactions` con `provider=changenow`;
+- el estado queda en `manual_review`;
+- el acceso NO se concede automaticamente.
+
+La razon es la indicada en `CHANGE_NOW_RESEARCH.md`: la documentacion publica no confirma de forma suficiente el contrato de callback/push firmado, payload e idempotencia fuerte. Por tanto, cualquier callback de ChangeNOW se trata como pista y deja el pago en revision manual.
+
+### Configuracion plataforma
+
+Ruta interna:
+
+`Panel global -> Metodos de pago -> ChangeNOW.io / Cripto`
+
+El superadmin configura:
+
+- API key de ChangeNOW;
+- moneda/red que recibe la plataforma;
+- wallet destino;
+- moneda/red que paga el comprador por defecto;
+- modo fixed/floating;
+- revision manual siempre activa.
+
+No se piden seeds ni private keys de wallet. La wallet se muestra enmascarada.
+
+### Configuracion owner/grupo
+
+Ruta owner:
+
+`Mis comunidades -> Comunidad -> Planes y pagos -> Metodos de pago del grupo -> ChangeNOW.io / Cripto`
+
+El owner configura:
+
+- API key de ChangeNOW del owner/comercio;
+- moneda/red destino;
+- wallet destino;
+- moneda/red que pagara el comprador por defecto;
+- fixed/floating;
+- revision manual.
+
+El owner solo puede configurar sus propios grupos. El superadmin puede configurar cualquier grupo.
+
+### Endpoints
+
+- `POST /create-changenow-platform-order`: crea una transaccion ChangeNOW de plataforma en revision manual.
+- `POST /create-changenow-group-order`: crea una transaccion ChangeNOW de grupo en revision manual.
+- `POST /webhook/changenow`: recibe eventos ChangeNOW y actualiza a revision manual cuando corresponda. No concede acceso automatico.
+
+### Revision manual
+
+El superadmin tiene una vista minima:
+
+`Panel global -> Metodos de pago -> Pagos ChangeNOW en revision`
+
+Desde ahi puede:
+
+- ver pagos `manual_review`;
+- rechazar un pago;
+- marcar como pagado y conceder acceso si la transaccion corresponde a un grupo/plan.
+
+Antes de confirmar manualmente hay que revisar en ChangeNOW o en soporte externo:
+
+- importe;
+- moneda/red;
+- wallet destino;
+- estado final;
+- usuario/grupo/plan interno;
+- si hay hold/verifying/expired/refunded.
+
+### Pendiente antes de acceso automatico
+
+- Confirmar payload oficial de callback/push.
+- Confirmar firma o mecanismo de verificacion.
+- Confirmar endpoint de estado v2 y contrato de respuesta.
+- Confirmar uso de `payload` o `userId` para `payment_transaction_id`.
+- Confirmar fixed-rate/rateId y minimos por moneda/red.
+- Activar polling/verificacion server-side antes de conceder acceso automatico.
+
+### Nota sobre activación automática ChangeNOW
+
+Se evaluó activar acceso automático cuando llega callback de ChangeNOW. No se activa todavía.
+
+El callback no puede ser fuente de verdad. Para conceder acceso automáticamente, el backend debe consultar el estado oficial de ChangeNOW por `transaction_id`/`order_id` y validar estado final, importe, moneda, red, wallet, usuario, grupo y plan.
+
+Mientras el endpoint oficial de consulta de estado y su contrato no estén confirmados en la documentación/API habilitada para la cuenta, ChangeNOW sigue operando en `manual_review`.

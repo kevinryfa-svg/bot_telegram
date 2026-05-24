@@ -1727,6 +1727,83 @@ def create_tables():
 
         cur.execute("""
 
+        CREATE TABLE IF NOT EXISTS platform_payment_provider_configs (
+
+            id SERIAL PRIMARY KEY,
+
+            provider TEXT NOT NULL UNIQUE,
+
+            is_enabled BOOLEAN DEFAULT FALSE,
+
+            status TEXT DEFAULT 'not_configured',
+
+            provider_config_scope TEXT DEFAULT 'platform',
+
+            destination_type TEXT DEFAULT 'platform_account',
+
+            destination_ref TEXT,
+
+            public_config_json JSONB DEFAULT '{}'::jsonb,
+
+            metadata_json JSONB DEFAULT '{}'::jsonb,
+
+            encrypted_config_json TEXT,
+
+            secret_ref TEXT,
+
+            secret_status TEXT DEFAULT 'not_configured',
+
+            last_verified_at TIMESTAMP,
+
+            verified_by BIGINT,
+
+            verification_error TEXT,
+
+            masked_public_summary TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        platform_payment_provider_columns = [
+
+            ("provider_config_scope", "TEXT DEFAULT 'platform'"),
+            ("destination_type", "TEXT DEFAULT 'platform_account'"),
+            ("destination_ref", "TEXT"),
+            ("metadata_json", "JSONB DEFAULT '{}'::jsonb"),
+            ("encrypted_config_json", "TEXT"),
+            ("secret_status", "TEXT DEFAULT 'not_configured'"),
+            ("last_verified_at", "TIMESTAMP"),
+            ("verified_by", "BIGINT"),
+            ("verification_error", "TEXT"),
+            ("masked_public_summary", "TEXT")
+
+        ]
+
+
+        for column_name, column_type in platform_payment_provider_columns:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE platform_payment_provider_configs
+                    ADD COLUMN IF NOT EXISTS {column_name} {column_type}
+
+                """)
+
+            except Exception:
+
+                pass
+
+
+        cur.execute("""
+
         CREATE TABLE IF NOT EXISTS group_payment_provider_configs (
 
             id SERIAL PRIMARY KEY,

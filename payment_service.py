@@ -202,6 +202,7 @@ from payment_gateway_config import (
     PAYMENT_DESTINATION_GROUP_CONFIG,
     PAYMENT_DESTINATION_OWNER_ACCOUNT,
     PAYMENT_DESTINATION_PLATFORM_ACCOUNT,
+    PAYMENT_PROVIDER_CHANGENOW,
     PAYMENT_PROVIDER_CRYPTO,
     PAYMENT_PROVIDER_PAYPAL,
     PAYMENT_PROVIDER_REVOLUT,
@@ -389,6 +390,18 @@ def is_provider_available_for_scope(provider, scope, group_id=None, owner_user_i
 
     if normalized_scope == PAYMENT_SCOPE_PLATFORM:
 
+        if provider == PAYMENT_PROVIDER_CHANGENOW:
+
+            config_row = fetch_platform_payment_provider_config(PAYMENT_PROVIDER_CHANGENOW)
+
+            return bool(
+                config_row
+                and config_row.get("is_enabled") is True
+                and config_row.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+                and config_row.get("encrypted_config_json")
+            )
+
+
         return not provider_status.get("missing_env")
 
 
@@ -407,7 +420,8 @@ def is_provider_available_for_scope(provider, scope, group_id=None, owner_user_i
 
     if provider in (
         PAYMENT_PROVIDER_PAYPAL,
-        PAYMENT_PROVIDER_REVOLUT
+        PAYMENT_PROVIDER_REVOLUT,
+        PAYMENT_PROVIDER_CHANGENOW
     ):
 
         return (
@@ -434,6 +448,18 @@ def get_available_payment_methods_for_platform_purchase(purchase_type=None, incl
         provider = provider_config.get("provider")
         enabled = provider_config.get("enabled") is True
         configured = not provider_config.get("missing_env")
+
+        if provider == PAYMENT_PROVIDER_CHANGENOW:
+
+            platform_config = fetch_platform_payment_provider_config(PAYMENT_PROVIDER_CHANGENOW)
+            configured = bool(
+                platform_config
+                and platform_config.get("is_enabled") is True
+                and platform_config.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+                and platform_config.get("encrypted_config_json")
+            )
+
+
         available = enabled and configured
         methods.append({
             "provider": provider,
@@ -465,7 +491,8 @@ def get_available_payment_methods_for_group_purchase(group_id, user_id=None, inc
 
         if provider.get("provider") in (
             PAYMENT_PROVIDER_PAYPAL,
-            PAYMENT_PROVIDER_REVOLUT
+            PAYMENT_PROVIDER_REVOLUT,
+            PAYMENT_PROVIDER_CHANGENOW
         ):
 
             available = (
@@ -520,6 +547,15 @@ def is_revolut_group_checkout_available(group_id):
 
     return is_provider_available_for_scope(
         PAYMENT_PROVIDER_REVOLUT,
+        PAYMENT_SCOPE_GROUP,
+        group_id=group_id
+    )
+
+
+def is_changenow_group_checkout_available(group_id):
+
+    return is_provider_available_for_scope(
+        PAYMENT_PROVIDER_CHANGENOW,
         PAYMENT_SCOPE_GROUP,
         group_id=group_id
     )
@@ -688,7 +724,7 @@ def build_payment_methods_admin_text():
         "Stripe sigue siendo el proveedor activo para compras de acceso a grupos.",
         "PayPal ya puede usarse en sandbox/live para pagos de plataforma si sus credenciales globales están completas.",
         "Revolut ya puede usarse en sandbox/live para pagos de plataforma si sus credenciales globales están completas.",
-        "Cripto continúa como método preparado pero no activo para cobros reales.",
+        "ChangeNOW.io queda preparado para pagos cripto en revisión manual. No concede acceso automáticamente hasta confirmar verificación oficial segura.",
         ""
     ]
 
@@ -727,7 +763,7 @@ def build_payment_methods_admin_text():
 def build_payment_gateway_architecture_notes():
 
     return {
-        "provider": "stripe/paypal/revolut/crypto",
+        "provider": "stripe/paypal/revolut/changenow/crypto",
         "status": PAYMENT_STATUS_PENDING,
         "payment_scope": "platform/group",
         "destination_type": "platform_account/owner_account/group_config",
@@ -736,6 +772,301 @@ def build_payment_gateway_architecture_notes():
         "crypto_recommendation": "Coinbase Commerce para fase inicial alojada o BTCPay Server si se quiere autocustodia y más control."
     }
 
+
+
+# =========================
+# PAYMENT SERVICE — PLATFORM PROVIDER SETTINGS
+# =========================
+
+def fetch_platform_payment_provider_config(provider):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       provider,
+                       is_enabled,
+                       status,
+                       provider_config_scope,
+                       destination_type,
+                       destination_ref,
+                       public_config_json,
+                       secret_ref,
+                       encrypted_config_json,
+                       secret_status,
+                       last_verified_at,
+                       verified_by,
+                       verification_error,
+                       masked_public_summary,
+                       updated_at
+                FROM platform_payment_provider_configs
+                WHERE provider=%s
+                LIMIT 1
+
+            """, (provider,))
+
+            row = cur.fetchone()
+
+
+            if not row:
+
+                return None
+
+
+            return {
+                "id": row[0],
+                "provider": row[1],
+                "is_enabled": row[2],
+                "status": row[3],
+                "provider_config_scope": row[4],
+                "destination_type": row[5],
+                "destination_ref": row[6],
+                "public_config_json": row[7],
+                "secret_ref": row[8],
+                "encrypted_config_json": row[9],
+                "secret_status": row[10],
+                "last_verified_at": row[11],
+                "verified_by": row[12],
+                "verification_error": row[13],
+                "masked_public_summary": row[14],
+                "updated_at": row[15]
+            }
+
+    except Exception as e:
+
+        print("Error obteniendo configuración de proveedor de plataforma:", e)
+
+        return None
+
+
+def ensure_platform_payment_provider_config(provider, status="not_configured"):
+
+    valid_providers = [
+        provider_config.get("provider")
+        for provider_config in list_payment_provider_configs()
+    ]
+
+
+    if provider not in valid_providers:
+
+        return None
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO platform_payment_provider_configs
+                (
+                    provider,
+                    is_enabled,
+                    status,
+                    provider_config_scope,
+                    destination_type,
+                    public_config_json,
+                    metadata_json
+                )
+                VALUES (%s, FALSE, %s, %s, %s, '{}'::jsonb, '{}'::jsonb)
+                ON CONFLICT (provider)
+                DO UPDATE SET provider_config_scope=EXCLUDED.provider_config_scope,
+                              destination_type=EXCLUDED.destination_type,
+                              updated_at=CURRENT_TIMESTAMP
+                RETURNING id
+
+            """, (
+                provider,
+                status,
+                PROVIDER_CONFIG_SCOPE_PLATFORM,
+                PAYMENT_DESTINATION_PLATFORM_ACCOUNT
+            ))
+
+            row = cur.fetchone()
+
+        conn.commit()
+
+        return row[0] if row else None
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error preparando configuración de proveedor de plataforma:", e)
+
+        return None
+
+
+def save_platform_payment_provider_encrypted_config(
+    provider,
+    encrypted_config_json,
+    masked_public_summary,
+    public_config_json=None,
+    verified_by=None
+):
+
+    ensure_platform_payment_provider_config(provider, status=GROUP_PAYMENT_PROVIDER_STATUS_PENDING)
+
+    safe_public_config = public_config_json or {}
+    manual_review_provider = (
+        provider == PAYMENT_PROVIDER_CHANGENOW
+        and safe_public_config.get("manual_review_required") is True
+        and safe_public_config.get("checkout_enabled") is True
+    )
+    target_status = (
+        GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+        if manual_review_provider or safe_public_config.get("webhook_configured") is True
+        else GROUP_PAYMENT_PROVIDER_STATUS_PENDING
+    )
+    target_secret_status = (
+        SECRET_STATUS_ACTIVE
+        if target_status == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+        else SECRET_STATUS_PENDING
+    )
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE platform_payment_provider_configs
+                SET is_enabled=%s,
+                    status=%s,
+                    provider_config_scope=%s,
+                    destination_type=%s,
+                    public_config_json=%s::jsonb,
+                    encrypted_config_json=%s,
+                    secret_ref=NULL,
+                    secret_status=%s,
+                    last_verified_at=NULL,
+                    verified_by=%s,
+                    verification_error=NULL,
+                    masked_public_summary=%s,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE provider=%s
+
+            """, (
+                target_status == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE,
+                target_status,
+                PROVIDER_CONFIG_SCOPE_PLATFORM,
+                PAYMENT_DESTINATION_PLATFORM_ACCOUNT,
+                json.dumps(safe_public_config),
+                encrypted_config_json,
+                target_secret_status,
+                verified_by,
+                masked_public_summary,
+                provider
+            ))
+
+        conn.commit()
+
+        return True
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error guardando configuración cifrada de proveedor de plataforma:", e)
+
+        return False
+
+
+def disable_platform_payment_provider_config(provider):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE platform_payment_provider_configs
+                SET is_enabled=FALSE,
+                    status=%s,
+                    secret_status=%s,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE provider=%s
+
+            """, (
+                GROUP_PAYMENT_PROVIDER_STATUS_DISABLED,
+                SECRET_STATUS_DISABLED,
+                provider
+            ))
+
+        conn.commit()
+
+        return True
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error desactivando proveedor de pago de plataforma:", e)
+
+        return False
+
+
+def clear_platform_payment_provider_config(provider):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE platform_payment_provider_configs
+                SET is_enabled=FALSE,
+                    status=%s,
+                    encrypted_config_json=NULL,
+                    secret_ref=NULL,
+                    secret_status=%s,
+                    last_verified_at=NULL,
+                    verified_by=NULL,
+                    verification_error=NULL,
+                    masked_public_summary=NULL,
+                    public_config_json='{}'::jsonb,
+                    metadata_json='{}'::jsonb,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE provider=%s
+
+            """, (
+                GROUP_PAYMENT_PROVIDER_STATUS_NOT_CONFIGURED,
+                SECRET_STATUS_NOT_CONFIGURED,
+                provider
+            ))
+
+        conn.commit()
+
+        return True
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error borrando configuración de proveedor de plataforma:", e)
+
+        return False
+
+
+def is_changenow_platform_checkout_available():
+
+    if not is_payment_provider_enabled(PAYMENT_PROVIDER_CHANGENOW):
+
+        return False
+
+
+    config_row = fetch_platform_payment_provider_config(PAYMENT_PROVIDER_CHANGENOW)
+
+    return bool(
+        config_row
+        and config_row.get("is_enabled") is True
+        and config_row.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+        and config_row.get("encrypted_config_json")
+    )
 
 
 # =========================
@@ -1018,7 +1349,8 @@ def list_group_payment_provider_statuses(group_id):
 
         if provider in (
             PAYMENT_PROVIDER_PAYPAL,
-            PAYMENT_PROVIDER_REVOLUT
+            PAYMENT_PROVIDER_REVOLUT,
+            PAYMENT_PROVIDER_CHANGENOW
         ):
 
             provider_missing_env = []
@@ -1100,7 +1432,7 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
         "Aquí se prepara la configuración de métodos de pago propios de esta comunidad.",
         "Estos pagos usan payment_scope=group y destino owner/grupo cuando el proveedor esté activo.",
         "Las credenciales propias del owner se configurarán desde el bot, no desde Railway.",
-        "PayPal y Revolut pueden crear checkout real si tienen credenciales cifradas, webhook secreto y estado activo.",
+        "PayPal y Revolut pueden crear checkout real si tienen credenciales cifradas, webhook secreto y estado activo. ChangeNOW puede crear pagos cripto controlados, siempre en revisión manual.",
         "Los métodos siempre respetan los flags globales de la plataforma.",
         f"Cifrado de credenciales: {'preparado' if has_payment_encryption_key() else 'pendiente de PAYMENT_CONFIG_ENCRYPTION_KEY'}.",
         ""
@@ -1123,7 +1455,7 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
 
     lines.extend([
         "Qué falta para activar pagos propios en próximas fases:",
-        "- Cripto y otros proveedores siguen pendientes.",
+        "- ChangeNOW queda en revisión manual; otros proveedores cripto siguen pendientes.",
         "- PayPal y Revolut owner/grupo conceden acceso solo tras webhook verificado.",
         "",
         "Stripe global sigue funcionando como hasta ahora."
@@ -1186,6 +1518,29 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
             "- REVOLUT_BASE_URL opcional",
             "",
             "Los secretos se guardan cifrados si PAYMENT_CONFIG_ENCRYPTION_KEY está configurada. Revolut queda disponible para checkout real de grupo cuando está activo."
+        ])
+
+
+    if provider == PAYMENT_PROVIDER_CHANGENOW:
+
+        lines.extend([
+            "",
+            "¿Qué es ChangeNOW.io?",
+            "Permite aceptar pagos en criptomonedas y convertirlos hacia una moneda/wallet destino.",
+            "",
+            "Cómo funciona en este bot:",
+            "1. Configuras API key, wallet, moneda y red destino.",
+            "2. El comprador elige pagar con cripto.",
+            "3. Se registra una operación y se muestran instrucciones de pago.",
+            "4. El pago queda en revisión manual.",
+            "5. El acceso solo se activa cuando un superadmin lo confirma.",
+            "",
+            "Seguridad: ChangeNOW no concede acceso automático en esta fase porque falta confirmación pública suficiente sobre firma/verificación de callbacks.",
+            "",
+            "Fixed / Floating:",
+            "- fixed intenta mantener importe/tasa fija durante una ventana limitada.",
+            "- floating puede variar según mercado.",
+            "Para vender accesos conviene fixed si ChangeNOW lo permite y está habilitado."
         ])
 
 
@@ -1292,17 +1647,22 @@ def save_group_payment_provider_encrypted_config(
 
     safe_public_config = public_config_json or {}
     webhook_configured = safe_public_config.get("webhook_configured") is True
+    manual_review_provider = (
+        provider == PAYMENT_PROVIDER_CHANGENOW
+        and safe_public_config.get("manual_review_required") is True
+        and safe_public_config.get("checkout_enabled") is True
+    )
     target_status = (
         GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
-        if webhook_configured
+        if webhook_configured or manual_review_provider
         else GROUP_PAYMENT_PROVIDER_STATUS_PENDING
     )
     target_secret_status = (
         SECRET_STATUS_ACTIVE
-        if webhook_configured
+        if target_status == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
         else SECRET_STATUS_PENDING
     )
-    target_is_enabled = webhook_configured is True
+    target_is_enabled = target_status == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
 
 
     try:
