@@ -21,6 +21,7 @@ from payment_service import (
 from payment_providers.paypal_provider import (
     cancel_paypal_order,
     capture_paypal_order,
+    create_group_paypal_order,
     create_platform_paypal_order,
     process_paypal_webhook
 )
@@ -149,6 +150,56 @@ def register_checkout_routes(app):
     # =========================
     # PAYPAL PLATFORM CHECKOUT
     # =========================
+
+    @app.route("/create-paypal-group-order", methods=["POST"])
+    def create_paypal_group_order():
+
+        data = request.json or {}
+
+        try:
+
+            user_id = int(data.get("user_id") or data.get("telegram_id"))
+            group_id = int(data.get("group_id"))
+            plan_id = int(data.get("plan_id"))
+
+        except Exception:
+
+            return jsonify({"error": "Datos de pago inválidos"}), 400
+
+
+        try:
+
+            order = create_group_paypal_order(
+                user_id=user_id,
+                group_id=group_id,
+                plan_id=plan_id,
+                metadata={
+                    "source": "create_paypal_group_order"
+                }
+            )
+
+        except PaymentProviderUnavailable as e:
+
+            return jsonify({"error": str(e)}), 503
+
+        except ValueError as e:
+
+            return jsonify({"error": str(e)}), 400
+
+        except Exception as e:
+
+            print("Error creando orden PayPal de grupo:", e)
+
+            return jsonify({"error": "Error creando orden PayPal"}), 500
+
+
+        return jsonify({
+            "provider": PAYMENT_PROVIDER_PAYPAL,
+            "payment_scope": "group",
+            "order_id": order.get("order_id"),
+            "url": order.get("approval_url")
+        })
+
 
     @app.route("/create-paypal-platform-order", methods=["POST"])
     def create_paypal_platform_order():
