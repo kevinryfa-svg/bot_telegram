@@ -448,6 +448,47 @@ def create_tables():
 
 
         # =========================
+        # TABLA TRANSACCIONES MULTIGATEWAY
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS payment_transactions (
+
+            id SERIAL PRIMARY KEY,
+
+            provider TEXT NOT NULL DEFAULT 'stripe',
+
+            status TEXT NOT NULL DEFAULT 'pending',
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            plan_id INTEGER,
+
+            amount INTEGER,
+
+            currency TEXT,
+
+            external_payment_id TEXT,
+
+            external_checkout_id TEXT,
+
+            idempotency_key TEXT UNIQUE,
+
+            metadata JSONB DEFAULT '{}'::jsonb,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA BANEADOS (MULTI-GRUPO)
         # =========================
 
