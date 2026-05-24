@@ -96,6 +96,7 @@ from payment_service import (
     clear_group_payment_provider_config,
     disable_group_payment_provider_config,
     ensure_group_payment_provider_config,
+    is_paypal_group_checkout_available,
     is_stripe_payments_enabled,
     list_group_payment_provider_statuses,
     save_group_payment_provider_encrypted_config
@@ -12762,6 +12763,73 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
         )
 
 
+async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
+
+    try:
+
+        response = requests.post(
+
+            f"{SERVER_URL}/create-paypal-group-order",
+
+            json={
+
+                "telegram_id": user_id,
+                "group_id": group_id,
+                "plan_id": plan_id
+
+            },
+
+            timeout=20
+
+        )
+        response_data = response.json()
+
+
+        if response.status_code >= 400 or not response_data.get("url"):
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=response_data.get("error") or "PayPal no está disponible para esta comunidad.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "🅿️ Paga con PayPal aquí:\n"
+                f"{response_data['url']}\n\n"
+                "El acceso se enviará cuando PayPal confirme el pago por webhook verificado."
+            ),
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+    except Exception as e:
+
+        log_event(
+            "paypal_group_checkout_creation_error",
+            category="payment",
+            severity="error",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Error creando orden PayPal de grupo.",
+            metadata={
+                "plan_id": plan_id,
+                "error": str(e)
+            }
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Error creando pago PayPal",
+            reply_markup=build_group_recovery_keyboard(group_id)
+        )
+
+
 async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.user_data.get("location_gate_pending"):
@@ -13013,6 +13081,19 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
     if action == "checkout":
 
         await create_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return
+
+
+    if action == "paypal_checkout":
+
+        await create_paypal_group_checkout_for_user(
             context,
             chat_id,
             user_id,
@@ -17870,7 +17951,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
-                    SELECT name,
+                    SELECT id,
+                           name,
                            price_id,
                            amount,
                            currency
@@ -17940,9 +18022,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         keyboard = []
+        paypal_available = is_paypal_group_checkout_available(group_id)
 
 
-        for name, price_id, amount, currency in plans:
+        for plan_id, name, price_id, amount, currency in plans:
 
             if amount and currency:
 
@@ -17957,13 +18040,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 InlineKeyboardButton(
 
-                    button_text,
+                    f"💳 Tarjeta — {button_text}",
 
                     callback_data=price_id
 
                 )
 
             ])
+
+
+            if paypal_available:
+
+                keyboard.append([
+
+                    InlineKeyboardButton(
+
+                        f"🅿️ PayPal — {button_text}",
+
+                        callback_data=f"paypal_group_plan_{group_id}_{plan_id}"
+
+                    )
+
+                ])
 
 
         keyboard.append([
@@ -26708,6 +26806,65 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "El pago automático comercial todavía está pendiente de conectar."
+        )
+
+        return
+
+
+    # =========================
+    # PAGOS PAYPAL DE GRUPO
+    # =========================
+
+    if data.startswith("paypal_group_plan_"):
+
+        payload = data.replace("paypal_group_plan_", "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el plan PayPal.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        plan_id = int(parts[1])
+        context.user_data["selected_group"] = group_id
+
+
+        if not is_paypal_group_checkout_available(group_id):
+
+            await query.message.reply_text(
+                "PayPal todavía no está configurado para esta comunidad.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        if group_requires_location_gate(group_id):
+
+            await request_location_verification(
+                context,
+                query.message.chat_id,
+                group_id,
+                "paypal_checkout",
+                price_id=plan_id
+            )
+
+            return
+
+
+        await create_paypal_group_checkout_for_user(
+            context,
+            query.message.chat_id,
+            user_id,
+            group_id,
+            plan_id
         )
 
         return

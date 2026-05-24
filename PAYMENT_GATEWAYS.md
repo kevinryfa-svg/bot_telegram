@@ -369,19 +369,57 @@ Seguridad aplicada:
 - cifra la configuración con `payment_secret_store.py`;
 - guarda el secreto en `encrypted_config_json`;
 - guarda solo resumen enmascarado en `masked_public_summary`;
-- deja `status=pending`, `secret_status=pending` e `is_enabled=false`;
+- si hay `webhook_id`, deja `status=active`, `secret_status=active` e `is_enabled=true`;
+- si falta `webhook_id`, deja la configuración pendiente y no se muestra como checkout real;
 - no muestra `client_secret` completo;
 - no registra secretos en logs.
 
-La configuración PayPal de grupo queda preparada, pero todavía no activa cobros reales ni concede accesos a compradores.
+## Fase 1G: checkout PayPal real para compradores de grupo
 
-### PayPal owner/grupo futuro real
+PayPal de owner/grupo puede crear checkout real cuando:
 
-Para activar cobros reales por owner/grupo todavía falta:
+- `ENABLE_PAYPAL_PAYMENTS=true`;
+- el grupo tiene configuración PayPal cifrada;
+- la configuración incluye `client_id`, `client_secret`, `webhook_id` y modo `sandbox/live`;
+- la fila de `group_payment_provider_configs` está activa.
 
-1. Verificar credenciales PayPal del owner contra PayPal.
-2. Activar `secret_status=active`.
-3. Crear checkout con `payment_scope=group` y `provider_config_id`.
-4. Añadir webhook PayPal por configuración owner/grupo.
-5. Validar evento, importe, moneda, `group_id`, `owner_user_id` e idempotencia.
-6. Conceder acceso solo tras webhook verificado.
+El checkout se crea en:
+
+`POST /create-paypal-group-order`
+
+El endpoint recibe `telegram_id`, `group_id` y `plan_id`, valida que el plan pertenece al grupo y crea una orden PayPal con las credenciales cifradas del owner/grupo. No usa `PAYPAL_CLIENT_ID` ni `PAYPAL_CLIENT_SECRET` de Railway.
+
+La transacción se guarda en `payment_transactions` con:
+
+- `provider=paypal`;
+- `payment_scope=group`;
+- `purchase_type=group_access`;
+- `group_id`;
+- `plan_id`;
+- `provider_config_scope=group`;
+- `provider_config_id`;
+- `status=pending`.
+
+El webhook `POST /webhook/paypal` se reutiliza de forma segura:
+
+- transacciones `payment_scope=platform` verifican firma con `PAYPAL_WEBHOOK_ID` de Railway;
+- transacciones `payment_scope=group` verifican firma con el `webhook_id` cifrado/configurado del grupo;
+- el acceso se concede solo si el evento PayPal es verificado, `COMPLETED`, con importe/moneda correctos;
+- el flujo es idempotente: si la transacción ya está `paid`, no vuelve a conceder acceso.
+
+Al confirmarse el pago de grupo:
+
+- se marca la transacción como pagada;
+- se crea el invite link real del grupo;
+- se guarda `users`, `payments` e `invite_links`;
+- se notifica al comprador, super admin y owner;
+- se registran logs sin secretos ni invite links completos.
+
+### PayPal owner/grupo pendiente
+
+Sigue pendiente para una fase posterior:
+
+1. Panel avanzado de verificación/diagnóstico PayPal por owner.
+2. Renovaciones recurrentes si se implementan suscripciones PayPal.
+3. PayPal propio por owner para productos que no sean acceso de grupo.
+4. Revolut, cripto y Bizum reales.

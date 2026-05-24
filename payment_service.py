@@ -216,6 +216,7 @@ from payment_gateway_config import (
     list_payment_provider_configs
 )
 from payment_secret_store import (
+    SECRET_STATUS_ACTIVE,
     SECRET_STATUS_DISABLED,
     SECRET_STATUS_NOT_CONFIGURED,
     SECRET_STATUS_PENDING,
@@ -404,6 +405,15 @@ def is_provider_available_for_scope(provider, scope, group_id=None, owner_user_i
         return False
 
 
+    if provider == PAYMENT_PROVIDER_PAYPAL:
+
+        return (
+            config_row.get("is_enabled") is True
+            and config_row.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+            and bool(config_row.get("encrypted_config_json"))
+        )
+
+
     return (
         not provider_status.get("missing_env")
         and config_row.get("is_enabled") is True
@@ -450,12 +460,23 @@ def get_available_payment_methods_for_group_purchase(group_id, user_id=None, inc
 
     for provider in list_group_payment_provider_statuses(group_id):
 
-        available = (
-            provider.get("global_enabled") is True
-            and not provider.get("missing_env")
-            and provider.get("group_enabled") is True
-            and provider.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
-        )
+        if provider.get("provider") == PAYMENT_PROVIDER_PAYPAL:
+
+            available = (
+                provider.get("global_enabled") is True
+                and provider.get("group_enabled") is True
+                and provider.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+                and provider.get("has_encrypted_config") is True
+            )
+
+        else:
+
+            available = (
+                provider.get("global_enabled") is True
+                and not provider.get("missing_env")
+                and provider.get("group_enabled") is True
+                and provider.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+            )
 
         methods.append({
             "provider": provider.get("provider"),
@@ -478,6 +499,15 @@ def get_available_payment_methods_for_group_purchase(group_id, user_id=None, inc
 
 
     return [method for method in methods if method.get("available")]
+
+
+def is_paypal_group_checkout_available(group_id):
+
+    return is_provider_available_for_scope(
+        PAYMENT_PROVIDER_PAYPAL,
+        PAYMENT_SCOPE_GROUP,
+        group_id=group_id
+    )
 
 
 def create_payment_transaction(
@@ -970,6 +1000,15 @@ def list_group_payment_provider_statuses(group_id):
             destination_ref = None
 
 
+        if provider == PAYMENT_PROVIDER_PAYPAL:
+
+            provider_missing_env = []
+
+        else:
+
+            provider_missing_env = provider_config.get("missing_env") or []
+
+
         if not global_enabled:
 
             effective_status = GROUP_PAYMENT_PROVIDER_STATUS_DISABLED
@@ -1012,7 +1051,7 @@ def list_group_payment_provider_statuses(group_id):
             "verification_error": verification_error,
             "masked_public_summary": masked_public_summary,
             "encryption_ready": has_payment_encryption_key(),
-            "missing_env": provider_config.get("missing_env") or [],
+            "missing_env": provider_missing_env,
             "can_be_enabled": can_be_enabled,
             "updated_at": updated_at
         })
@@ -1040,9 +1079,9 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
     lines.extend([
         "",
         "Aquí se prepara la configuración de métodos de pago propios de esta comunidad.",
-        "Estos pagos tendrán payment_scope=group y destino owner/grupo cuando se activen en fases futuras.",
+        "Estos pagos usan payment_scope=group y destino owner/grupo cuando el proveedor esté activo.",
         "Las credenciales propias del owner se configurarán desde el bot, no desde Railway.",
-        "En esta fase todavía no se activan cobros reales por owner/grupo.",
+        "PayPal puede crear checkout real si tiene credenciales cifradas, webhook_id y estado activo.",
         "Los métodos siempre respetan los flags globales de la plataforma.",
         f"Cifrado de credenciales: {'preparado' if has_payment_encryption_key() else 'pendiente de PAYMENT_CONFIG_ENCRYPTION_KEY'}.",
         ""
@@ -1065,10 +1104,8 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
 
     lines.extend([
         "Qué falta para activar pagos propios en próximas fases:",
-        "- Verificación segura de credenciales por owner/grupo.",
-        "- Webhooks verificados por owner/grupo.",
-        "- Idempotencia por proveedor y evento externo.",
-        "- Concesión de acceso solo tras confirmación real del pago.",
+        "- Revolut, cripto y otros proveedores siguen pendientes.",
+        "- PayPal owner/grupo concede acceso solo tras webhook verificado.",
         "",
         "Stripe global sigue funcionando como hasta ahora."
     ])
@@ -1101,7 +1138,7 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
         "",
         "Railway solo guarda credenciales globales de plataforma. Las credenciales propias de owners/grupos se configurarán desde el bot y se guardarán cifradas.",
         "",
-        "En esta fase no se crean checkouts reales con métodos owner/grupo."
+        "PayPal de grupo crea checkout real solo si está activo y tiene webhook_id. Otros proveedores siguen preparados como fase futura."
     ]
 
 
@@ -1115,7 +1152,7 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
             "- webhook_id opcional",
             "- modo sandbox/live",
             "",
-            "Los secretos se guardan cifrados si PAYMENT_CONFIG_ENCRYPTION_KEY está configurada. La configuración queda pendiente de verificación y no activa cobros reales todavía."
+            "Los secretos se guardan cifrados si PAYMENT_CONFIG_ENCRYPTION_KEY está configurada. Si incluye webhook_id, PayPal queda disponible para checkout real de grupo."
         ])
 
 
@@ -1221,6 +1258,18 @@ def save_group_payment_provider_encrypted_config(
 
 
     safe_public_config = public_config_json or {}
+    webhook_configured = safe_public_config.get("webhook_configured") is True
+    target_status = (
+        GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+        if webhook_configured
+        else GROUP_PAYMENT_PROVIDER_STATUS_PENDING
+    )
+    target_secret_status = (
+        SECRET_STATUS_ACTIVE
+        if webhook_configured
+        else SECRET_STATUS_PENDING
+    )
+    target_is_enabled = webhook_configured is True
 
 
     try:
@@ -1231,7 +1280,7 @@ def save_group_payment_provider_encrypted_config(
 
                 UPDATE group_payment_provider_configs
                 SET owner_user_id=%s,
-                    is_enabled=FALSE,
+                    is_enabled=%s,
                     status=%s,
                     provider_config_scope=%s,
                     destination_type=%s,
@@ -1249,12 +1298,13 @@ def save_group_payment_provider_encrypted_config(
 
             """, (
                 owner_user_id,
-                GROUP_PAYMENT_PROVIDER_STATUS_PENDING,
+                target_is_enabled,
+                target_status,
                 PROVIDER_CONFIG_SCOPE_GROUP,
                 PAYMENT_DESTINATION_GROUP_CONFIG,
                 json.dumps(safe_public_config),
                 encrypted_config_json,
-                SECRET_STATUS_PENDING,
+                target_secret_status,
                 verified_by,
                 masked_public_summary,
                 group_id,
