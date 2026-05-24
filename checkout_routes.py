@@ -7,6 +7,7 @@ from flask import request, jsonify, redirect
 from db import conn
 from payment_gateway_config import (
     PAYMENT_PROVIDER_PAYPAL,
+    PAYMENT_PROVIDER_REVOLUT,
     PAYMENT_PROVIDER_STRIPE,
     PAYMENT_SCOPE_PLATFORM,
     PAYMENT_STATUS_PENDING,
@@ -24,6 +25,10 @@ from payment_providers.paypal_provider import (
     create_group_paypal_order,
     create_platform_paypal_order,
     process_paypal_webhook
+)
+from payment_providers.revolut_provider import (
+    create_platform_revolut_order,
+    process_revolut_webhook
 )
 
 
@@ -257,6 +262,104 @@ def register_checkout_routes(app):
         })
 
 
+    # =========================
+    # REVOLUT PLATFORM CHECKOUT
+    # =========================
+
+    @app.route("/create-revolut-platform-order", methods=["POST"])
+    def create_revolut_platform_order():
+
+        data = request.json or {}
+
+        try:
+
+            user_id = int(data.get("user_id") or data.get("telegram_id"))
+            purchase_type = data.get("purchase_type") or PURCHASE_TYPE_COMMERCIAL_SUBSCRIPTION
+            amount_value = data.get("amount")
+
+
+            if amount_value is None and purchase_type == PURCHASE_TYPE_GROUP_ACCESS:
+
+                amount_value = 1
+
+
+            amount = int(amount_value)
+            currency = (data.get("currency") or "EUR").upper()
+            platform_product_key = data.get("platform_product_key")
+            group_id = data.get("group_id")
+            plan_id = data.get("plan_id")
+            description = data.get("description") or "Pago de plataforma"
+
+
+            if group_id is not None:
+
+                group_id = int(group_id)
+
+
+            if plan_id is not None:
+
+                plan_id = int(plan_id)
+
+        except Exception:
+
+            return jsonify({"error": "Datos de pago inválidos"}), 400
+
+
+        try:
+
+            order = create_platform_revolut_order(
+                user_id=user_id,
+                amount=amount,
+                currency=currency,
+                purchase_type=purchase_type,
+                platform_product_key=platform_product_key,
+                group_id=group_id,
+                plan_id=plan_id,
+                description=description,
+                metadata={
+                    "source": "create_revolut_platform_order"
+                }
+            )
+
+        except PaymentProviderUnavailable as e:
+
+            return jsonify({"error": str(e)}), 503
+
+        except ValueError as e:
+
+            return jsonify({"error": str(e)}), 400
+
+        except Exception as e:
+
+            print("Error creando orden Revolut plataforma:", e)
+
+            return jsonify({"error": "Error creando orden Revolut"}), 500
+
+
+        return jsonify({
+            "provider": PAYMENT_PROVIDER_REVOLUT,
+            "payment_scope": PAYMENT_SCOPE_PLATFORM,
+            "order_id": order.get("order_id"),
+            "url": order.get("checkout_url")
+        })
+
+
+    @app.route("/revolut/return", methods=["GET"])
+    def revolut_return():
+
+        return redirect(
+            os.environ.get("REVOLUT_SUCCESS_REDIRECT") or "https://t.me/TheStarVipBOT"
+        )
+
+
+    @app.route("/revolut/cancel", methods=["GET"])
+    def revolut_cancel():
+
+        return redirect(
+            os.environ.get("REVOLUT_CANCEL_REDIRECT") or "https://t.me/TheStarVipBOT"
+        )
+
+
     @app.route("/paypal/return", methods=["GET"])
     def paypal_return():
 
@@ -308,6 +411,30 @@ def register_checkout_routes(app):
         except Exception as e:
 
             print("Error procesando webhook PayPal:", e)
+
+            return "Error", 500
+
+
+        return result.get("message", "OK"), result.get("status_code", 200)
+
+
+    @app.route("/webhook/revolut", methods=["POST"])
+    def revolut_webhook():
+
+        raw_body = request.get_data(as_text=True)
+        event_body = request.get_json(silent=True) or {}
+
+        try:
+
+            result = process_revolut_webhook(
+                event_body,
+                request.headers,
+                raw_body
+            )
+
+        except Exception as e:
+
+            print("Error procesando webhook Revolut:", e)
 
             return "Error", 500
 
