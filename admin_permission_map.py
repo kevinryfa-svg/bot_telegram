@@ -139,6 +139,8 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_commercial_subscriptions": (SUPER_ADMIN_ONLY,),
     "admin_commercial_group_limits": (SUPER_ADMIN_ONLY,),
     "admin_commercial_owner_tools": (SUPER_ADMIN_ONLY,),
+    "admin_commercial_owner_summary": (SUPER_ADMIN_ONLY,),
+    "admin_commercial_reassign_owner_group": (SUPER_ADMIN_ONLY,),
 
     "group_admin_panel": ("can_manage_admins",),
 

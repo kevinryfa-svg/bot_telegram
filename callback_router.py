@@ -1292,7 +1292,7 @@ def build_admin_owners_panel_keyboard():
         [InlineKeyboardButton("📁 Archivados", callback_data="admin_commercial_archived_requests")],
         [InlineKeyboardButton("🔎 Buscar propietario", callback_data="admin_commercial_owner_tools")],
         [InlineKeyboardButton("📊 Resumen propietarios", callback_data="admin_commercial_owner_summary")],
-        [InlineKeyboardButton("🔁 Reasignar owner/grupo", callback_data="admin_commercial_owner_tools")],
+        [InlineKeyboardButton("🔁 Reasignar owner/grupo", callback_data="admin_commercial_reassign_owner_group")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_owners_panel")],
         [InlineKeyboardButton("👑 Panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
@@ -12910,7 +12910,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "admin_commercial_trials_active",
         "admin_commercial_subscriptions",
         "admin_commercial_group_limits",
-        "admin_commercial_owner_tools"
+        "admin_commercial_owner_tools",
+        "admin_commercial_reassign_owner_group"
     ):
 
         if data == "admin_commercial_active_requests":
@@ -12957,7 +12958,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title = (
                 "🔢 Cupos de grupos"
                 if data == "admin_commercial_group_limits"
-                else "🔁 Reasignar owner/grupo"
+                else (
+                    "🔁 Reasignar owner/grupo"
+                    if data == "admin_commercial_reassign_owner_group"
+                    else "🔎 Buscar propietario"
+                )
             )
 
 
@@ -12968,6 +12973,47 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(
                 build_commercial_status_list_keyboard(requests)
             )
+        )
+
+        return
+
+
+    if data == "admin_commercial_owner_summary":
+
+        pending_requests = fetch_pending_commercial_requests()
+        active_requests = fetch_commercial_requests_by_statuses([
+            "approved",
+            "awaiting_creator_setup",
+            "setup_in_progress",
+            "setup_ready",
+            "active"
+        ])
+        trial_requests = fetch_commercial_requests_by_statuses([
+            "trial_active"
+        ])
+        subscription_requests = fetch_commercial_requests_by_statuses([
+            "active",
+            "trial_expired",
+            "expired_pending_reactivation"
+        ])
+        archived_requests = fetch_archived_commercial_requests()
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📊 Resumen propietarios\n\n"
+            f"🕓 Solicitudes pendientes: {len(pending_requests)}\n"
+            f"✅ Propietarios activos/configurando: {len(active_requests)}\n"
+            f"🧪 Trials activos: {len(trial_requests)}\n"
+            f"💳 Suscripciones/recoveries: {len(subscription_requests)}\n"
+            f"📁 Archivados: {len(archived_requests)}\n\n"
+            "Usa los botones del panel de propietarios para abrir cada vista y revisar casos concretos.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🕓 Solicitudes pendientes", callback_data="admin_commercial_requests")],
+                [InlineKeyboardButton("✅ Propietarios activos", callback_data="admin_commercial_active_requests")],
+                [InlineKeyboardButton("🧑‍💼 Propietarios", callback_data="admin_owners_panel")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return
