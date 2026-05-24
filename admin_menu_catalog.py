@@ -18,11 +18,29 @@ ADMIN_MENU_SUPPORT = "support"
 ADMIN_MENU_GROUP_ADMINS = "group_admins"
 ADMIN_MENU_BACKUP = "backup_premium"
 ADMIN_MENU_OWNER_COMMUNITIES = "owner_communities"
+ADMIN_MENU_GLOBAL_PANEL = "global_panel"
+ADMIN_MENU_OWNERS_PANEL = "owners_panel"
 ADMIN_MENU_BETA_MONITOR = "beta_monitor"
 ADMIN_MENU_BETA_SMOKE_TEST = "beta_smoke_test"
 
 
 ADMIN_MENU_SECTIONS = [
+    {
+        "key": ADMIN_MENU_GLOBAL_PANEL,
+        "text": "👑 Panel global del bot",
+        "callback_data": "admin_global_panel",
+        "permissions_any": [
+            "super_admin_only"
+        ]
+    },
+    {
+        "key": ADMIN_MENU_OWNERS_PANEL,
+        "text": "🧑‍💼 Panel de propietarios",
+        "callback_data": "admin_owners_panel",
+        "permissions_any": [
+            "super_admin_only"
+        ]
+    },
     {
         "key": ADMIN_MENU_USERS,
         "text": "👥 Gestión Usuarios",
@@ -34,7 +52,7 @@ ADMIN_MENU_SECTIONS = [
     },
     {
         "key": ADMIN_MENU_CODES,
-        "text": "🎟️ Gestión Accesos",
+        "text": "🎟 Códigos comerciales globales",
         "callback_data": "menu_codes",
         "permissions_any": [
             "super_admin_only"
@@ -66,7 +84,7 @@ ADMIN_MENU_SECTIONS = [
     },
     {
         "key": ADMIN_MENU_PAYMENTS,
-        "text": "💳 Gestión Pagos",
+        "text": "💳 Planes comerciales del bot",
         "callback_data": "menu_payments",
         "permissions_any": [
             "can_view_payments",
@@ -115,8 +133,8 @@ ADMIN_MENU_SECTIONS = [
     },
     {
         "key": ADMIN_MENU_COMMERCIAL,
-        "text": "📩 Solicitudes comerciales",
-        "callback_data": "admin_commercial_requests",
+        "text": "🧑‍💼 Panel de propietarios",
+        "callback_data": "admin_owners_panel",
         "permissions_any": [
             "super_admin_only"
         ]

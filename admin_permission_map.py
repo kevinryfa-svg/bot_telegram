@@ -113,6 +113,18 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_smoke_last": (SUPER_ADMIN_ONLY,),
     "admin_smoke_clear": (SUPER_ADMIN_ONLY,),
 
+    "admin_global_panel": (SUPER_ADMIN_ONLY,),
+    "admin_global_marketplace": (SUPER_ADMIN_ONLY,),
+    "admin_global_commercial_plans": (SUPER_ADMIN_ONLY,),
+    "admin_global_config": (SUPER_ADMIN_ONLY,),
+    "admin_global_tools": (SUPER_ADMIN_ONLY,),
+    "admin_owners_panel": (SUPER_ADMIN_ONLY,),
+    "admin_commercial_active_requests": (SUPER_ADMIN_ONLY,),
+    "admin_commercial_trials_active": (SUPER_ADMIN_ONLY,),
+    "admin_commercial_subscriptions": (SUPER_ADMIN_ONLY,),
+    "admin_commercial_group_limits": (SUPER_ADMIN_ONLY,),
+    "admin_commercial_owner_tools": (SUPER_ADMIN_ONLY,),
+
     "group_admin_panel": ("can_manage_admins",),
 
     "owner_panel_users": (
