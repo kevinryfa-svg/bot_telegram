@@ -199,3 +199,76 @@ No se guardan claves PayPal, Revolut, cripto ni Stripe owner en claro.
 - Mapeo de eventos PayPal a `payment_transactions`.
 - Concesión de acceso idempotente reutilizando la lógica actual de Stripe.
 - Pruebas sandbox con compra, webhook repetido, cancelación y fallo.
+
+## Fase 1D: PayPal real para pagos de plataforma
+
+Esta fase activa PayPal solo para `payment_scope=platform`. No activa PayPal propio por owner/grupo ni concede accesos de comunidades mediante PayPal de grupo.
+
+### Variables necesarias
+
+- `ENABLE_PAYPAL_PAYMENTS=true`
+- `PAYPAL_CLIENT_ID`
+- `PAYPAL_CLIENT_SECRET`
+- `PAYPAL_WEBHOOK_ID`
+- `PAYPAL_MODE=sandbox` o `PAYPAL_MODE=live`
+
+Opcionales:
+
+- `PAYPAL_RETURN_URL`: URL a la que PayPal devuelve al comprador tras aprobar la orden. Si no existe, se usa `SERVER_URL/paypal/return`.
+- `PAYPAL_CANCEL_URL`: URL de cancelación. Si no existe, se usa `SERVER_URL/paypal/cancel`.
+- `PAYPAL_SUCCESS_REDIRECT`: destino final del navegador tras capturar la orden.
+- `PAYPAL_CANCEL_REDIRECT`: destino final tras cancelar.
+
+### Endpoints añadidos
+
+- `POST /create-paypal-platform-order`: crea una orden PayPal para productos de plataforma.
+- `GET /paypal/return`: captura la orden aprobada y deja la transacción esperando webhook verificado.
+- `GET /paypal/cancel`: marca la transacción como cancelada si seguía pendiente.
+- `POST /webhook/paypal`: verifica firma con PayPal y procesa eventos confirmados.
+
+### Flujo sandbox
+
+1. El sistema crea una orden con `create_platform_paypal_order(...)`.
+2. Se registra una fila en `payment_transactions` con:
+   - `provider=paypal`
+   - `payment_scope=platform`
+   - `status=pending`
+   - `purchase_type=commercial_subscription`, `platform_product` u `owner_upgrade`
+   - `destination_type=platform_account`
+3. PayPal devuelve `approval_url`.
+4. El comprador aprueba en PayPal sandbox.
+5. `GET /paypal/return` captura la orden mediante API server-to-server.
+6. PayPal envía `PAYMENT.CAPTURE.COMPLETED` a `/webhook/paypal`.
+7. El webhook se verifica con `PAYPAL_WEBHOOK_ID` y el endpoint oficial de PayPal.
+8. Se valida importe, moneda, scope y tipo de compra.
+9. La transacción pasa a `paid` de forma idempotente.
+
+### Idempotencia y seguridad
+
+- La referencia interna usa `paypal_platform_<uuid>` como `idempotency_key`.
+- El `order_id` queda en `external_checkout_id`.
+- El `capture_id` queda en `external_payment_id`.
+- Si el webhook llega repetido y la transacción ya está `paid`, se devuelve OK sin reprocesar.
+- No se guarda `PAYPAL_CLIENT_SECRET` en base de datos.
+- No se imprimen tokens ni secretos.
+- No se concede ningún producto hasta confirmación real. En esta fase los productos de plataforma quedan como `paid_pending_platform_fulfillment` para activación manual o futura.
+
+### Configurar webhook en PayPal Developer
+
+En la app PayPal sandbox/live, crear un webhook apuntando a:
+
+`https://TU_DOMINIO/webhook/paypal`
+
+Eventos mínimos:
+
+- `PAYMENT.CAPTURE.COMPLETED`
+
+Guardar el Webhook ID en `PAYPAL_WEBHOOK_ID`.
+
+### Limitaciones de esta fase
+
+- PayPal solo se usa para pagos de plataforma.
+- PayPal por grupo/owner sigue preparado, pero no crea checkouts reales.
+- No se implementa Revolut real.
+- No se implementa cripto real.
+- La activación automática de productos de plataforma queda para una fase posterior por tipo de producto.
