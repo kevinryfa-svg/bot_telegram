@@ -8,7 +8,13 @@ ACCEPTED_DUPLICATE_CALLBACKS = {
     "admin_beta_monitor",
     "admin_customer_satisfaction",
     "admin_global_marketplace",
+    "admin_global_config",
+    "admin_global_tools",
+    "admin_global_commercial_plans",
     "admin_owners_panel",
+    "admin_support_tickets",
+    "admin_commercial_promo_codes",
+    "admin_commercial_subscriptions",
     "menu_logs"
 }
 
@@ -94,10 +100,16 @@ def callback_has_handler(callback_data, handler_source):
 
     for index in range(len(parts), 1, -1):
 
-        prefix = "_".join(parts[:index]) + "_"
+        base_prefix = "_".join(parts[:index])
+        prefix = base_prefix + "_"
 
 
         if f'data.startswith("{prefix}")' in handler_source:
+
+            return True
+
+
+        if f'data.startswith("{base_prefix}")' in handler_source:
 
             return True
 
@@ -242,15 +254,27 @@ def audit_admin_button_menus(menu_specs, permission_checker):
                 observations.append("parece volver al mismo menú")
 
 
+            duplicate_menus = [
+                menu
+                for menu in occurrences.get(callback_data, [])
+                if menu != menu_name
+            ]
+
+
             if len(occurrences.get(callback_data, [])) > 1:
 
                 repeated_callbacks += 1
                 duplicate_kind = classify_duplicate(callback_data)
+                duplicate_text = (
+                    "También aparece en: " + ", ".join(sorted(set(duplicate_menus)))
+                    if duplicate_menus
+                    else "Repetido dentro del mismo menú"
+                )
 
 
-                if duplicate_kind == "accepted":
+                if duplicate_kind == "accepted" and duplicate_menus:
 
-                    observations.append("duplicación aceptable como acceso rápido")
+                    observations.append(f"duplicación aceptable como acceso rápido. {duplicate_text}")
 
                 else:
 
@@ -260,7 +284,7 @@ def audit_admin_button_menus(menu_specs, permission_checker):
 
 
                     suspicious_duplicates += 1
-                    observations.append("callback repetido en varios menús")
+                    observations.append(f"callback repetido de forma sospechosa. {duplicate_text}")
 
 
             detail_rows.append({
@@ -268,7 +292,8 @@ def audit_admin_button_menus(menu_specs, permission_checker):
                 "text": button.get("text"),
                 "callback_data": callback_data,
                 "state": state,
-                "observation": "; ".join(observations) or "sin observaciones"
+                "observation": "; ".join(observations) or "sin observaciones",
+                "duplicate_menus": sorted(set(duplicate_menus))
             })
 
 
@@ -363,11 +388,20 @@ def format_admin_button_audit_detail(report, limit=70):
 
     for index, detail in enumerate(details[:limit], start=1):
 
+        duplicate_menus = detail.get("duplicate_menus") or []
+        duplicate_text = (
+            f"Repetido en: {', '.join(duplicate_menus)}"
+            if duplicate_menus
+            else "Repetición: no detectada en otros menús"
+        )
+
+
         lines.extend([
             f"{index}. {detail.get('state')} {detail.get('menu')}",
             f"Botón: {detail.get('text')}",
             f"Callback: {detail.get('callback_data')}",
             f"Observación: {detail.get('observation')}",
+            duplicate_text,
             ""
         ])
 
