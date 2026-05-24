@@ -758,6 +758,10 @@ async def handle_media(update, context):
         await receive_admin_inputs(update, context)
         return
 
+    if context.user_data.get("support_mode"):
+        await receive_support_message(update, context)
+        return
+
     return
 
 
