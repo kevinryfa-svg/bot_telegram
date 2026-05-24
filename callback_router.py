@@ -95,7 +95,9 @@ from rbac_helpers import (
 from start_handler import start, send_start_menu
 from telegram_group_actions import kick_chat_member
 from ui_menu_helpers import (
+    delete_pending_preview_messages,
     make_button,
+    remember_preview_message,
     send_clean_message
 )
 
@@ -1138,10 +1140,36 @@ def build_admin_global_panel_keyboard():
         [InlineKeyboardButton("👥 Propietarios / solicitudes comerciales", callback_data="admin_owners_panel")],
         [InlineKeyboardButton("💳 Planes comerciales del bot", callback_data="admin_global_commercial_plans")],
         [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
+        [InlineKeyboardButton("🛟 Solicitudes de soporte", callback_data="admin_support_tickets")],
         [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
         [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
         [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_admin_global_config_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
+        [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
+        [InlineKeyboardButton("😊 Satisfacción de clientes", callback_data="admin_customer_satisfaction")],
+        [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
+        [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_admin_global_tools_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
+        [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
+        [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
+        [InlineKeyboardButton("🛟 Solicitudes de soporte", callback_data="admin_support_tickets")],
+        [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
+        [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
 
@@ -4660,6 +4688,17 @@ def build_group_settings_keyboard(user_id, group_id):
     if user_has_group_permission_any(
         user_id,
         group_id,
+        ["can_respond_group_support"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("🛟 Solicitudes de soporte", callback_data="owner_panel_support")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
         ["can_manage_groups"]
     ):
 
@@ -4793,6 +4832,13 @@ def build_owner_section_keyboard(user_id, group_id, section):
             [InlineKeyboardButton("🛡 Backups / errores", callback_data="admin_logs_security")]
         ])
 
+    elif section == "support":
+
+        keyboard.extend([
+            [InlineKeyboardButton("🛟 Ver solicitudes de soporte", callback_data="owner_support_tickets")],
+            [InlineKeyboardButton("💬 Abrir soporte", callback_data="public_support")]
+        ])
+
     elif section == "backup":
 
         keyboard.extend([
@@ -4861,6 +4907,12 @@ OWNER_PANEL_SECTIONS = {
         "Consulta accesos, pagos, códigos, backups y errores de esta comunidad.",
         ["can_view_logs"],
         "logs"
+    ),
+    "owner_panel_support": (
+        "🛟 Solicitudes de soporte",
+        "Revisa el acceso al soporte de esta comunidad sin mezclar tickets globales.",
+        ["can_respond_group_support"],
+        "support"
     ),
     "owner_panel_backup": (
         "🛡 Backup premium",
@@ -6832,24 +6884,26 @@ async def send_marketplace_group_card(context, chat_id, group, user_id=None):
 
     if preview_mode in ("manual", "hybrid") and group.get("preview_video_file_id"):
 
-        await context.bot.send_video(
+        message = await context.bot.send_video(
             chat_id=chat_id,
             video=group.get("preview_video_file_id"),
             caption=caption,
             reply_markup=keyboard
         )
+        remember_preview_message(context, chat_id, message)
 
         return
 
 
     if preview_mode in ("manual", "hybrid") and group.get("preview_image_file_id"):
 
-        await context.bot.send_photo(
+        message = await context.bot.send_photo(
             chat_id=chat_id,
             photo=group.get("preview_image_file_id"),
             caption=caption,
             reply_markup=keyboard
         )
+        remember_preview_message(context, chat_id, message)
 
         return
 
@@ -6886,24 +6940,26 @@ async def send_marketplace_preview(context, chat_id, group, user_id=None):
 
     if preview_mode in ("manual", "hybrid") and group.get("preview_video_file_id"):
 
-        await context.bot.send_video(
+        message = await context.bot.send_video(
             chat_id=chat_id,
             video=group.get("preview_video_file_id"),
             caption=caption,
             reply_markup=keyboard
         )
+        remember_preview_message(context, chat_id, message)
 
         return
 
 
     if preview_mode in ("manual", "hybrid") and group.get("preview_image_file_id"):
 
-        await context.bot.send_photo(
+        message = await context.bot.send_photo(
             chat_id=chat_id,
             photo=group.get("preview_image_file_id"),
             caption=caption,
             reply_markup=keyboard
         )
+        remember_preview_message(context, chat_id, message)
 
         return
 
@@ -6912,12 +6968,13 @@ async def send_marketplace_preview(context, chat_id, group, user_id=None):
 
         try:
 
-            await context.bot.send_photo(
+            message = await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=group.get("preview_file_id"),
                 caption=caption,
                 reply_markup=keyboard
             )
+            remember_preview_message(context, chat_id, message)
 
             return
 
@@ -6925,12 +6982,13 @@ async def send_marketplace_preview(context, chat_id, group, user_id=None):
 
             try:
 
-                await context.bot.send_video(
+                message = await context.bot.send_video(
                     chat_id=chat_id,
                     video=group.get("preview_file_id"),
                     caption=caption,
                     reply_markup=keyboard
                 )
+                remember_preview_message(context, chat_id, message)
 
                 return
 
@@ -11256,6 +11314,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
 
+    callback_chat_id = getattr(query.message, "chat_id", None) if query.message else None
+
+    try:
+
+        is_private_callback_chat = callback_chat_id and int(callback_chat_id) > 0
+
+    except Exception:
+
+        is_private_callback_chat = False
+
+
+    if is_private_callback_chat:
+
+        await delete_pending_preview_messages(
+            context,
+            callback_chat_id
+        )
+
+
     if data.startswith("retry_creator_group_verification_"):
 
         try:
@@ -11842,7 +11919,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else None
             )
 
-            await context.bot.send_video(
+            message = await context.bot.send_video(
                 chat_id=query.message.chat_id,
                 video=video.get("video_file_id"),
                 caption=format_dynamic_preview_video_caption(
@@ -11852,6 +11929,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     total
                 ),
                 reply_markup=reply_markup
+            )
+            remember_preview_message(
+                context,
+                query.message.chat_id,
+                message
             )
 
         return
@@ -12512,19 +12594,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             "admin_global_config": (
                 "⚙️ Configuración global\n\n"
-                "Sirve para revisar ajustes generales de la plataforma sin entrar en comunidades concretas."
+                "Aquí puedes revisar ajustes operativos generales y entrar en monitor, smoke test, satisfacción o logs del sistema."
             ),
             "admin_global_tools": (
                 "🛠 Herramientas internas\n\n"
-                "Sirve para tareas de diagnóstico, mantenimiento y operaciones de beta."
+                "Accesos rápidos para diagnóstico, ciclo beta, soporte y revisión de actividad interna."
             )
+        }
+        reply_markups = {
+            "admin_global_config": build_admin_global_config_keyboard(),
+            "admin_global_tools": build_admin_global_tools_keyboard()
         }
 
         await send_clean_message(
             context,
             query.message.chat_id,
             info_texts[data],
-            reply_markup=build_admin_global_panel_keyboard()
+            reply_markup=reply_markups.get(data, build_admin_global_panel_keyboard())
         )
 
         return
@@ -17251,6 +17337,53 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 group_id,
                 section
             )
+        )
+
+        return
+
+
+    if data == "owner_support_tickets":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_respond_group_support"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver soporte de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        keyboard = [
+            [InlineKeyboardButton("⬅️ Volver al apartado soporte", callback_data="owner_panel_support")],
+            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ]
+
+
+        if is_super_admin(user_id):
+
+            keyboard.insert(
+                0,
+                [InlineKeyboardButton("🛟 Abrir bandeja global", callback_data="admin_support_tickets")]
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🛟 Solicitudes de soporte\n\n"
+            "Esta sección pertenece a la comunidad seleccionada. "
+            "La bandeja de tickets actual es global para proteger conversaciones privadas; "
+            "por eso solo el super admin puede abrir el listado completo desde aquí.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
