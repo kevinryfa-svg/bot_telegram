@@ -139,6 +139,13 @@ from ui_menu_helpers import (
     remember_preview_message,
     send_clean_message
 )
+from user_activity_logger import (
+    fetch_recent_user_events,
+    fetch_tracking_overview,
+    fetch_user_activity_profile,
+    log_user_event,
+    log_user_event_by_ids
+)
 
 
 TOKEN = os.environ.get("TOKEN")
@@ -2775,6 +2782,161 @@ def build_customer_satisfaction_delivery_status_text(audience="global", group_id
     )
 
 
+def format_tracking_time(value):
+
+    if not value:
+        return "-"
+
+    try:
+        return value.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(value)[:16]
+
+
+def build_user_tracking_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Resumen general", callback_data="admin_user_tracking")],
+        [InlineKeyboardButton("👤 Buscar usuario", callback_data="admin_user_tracking_search")],
+        [InlineKeyboardButton("🕒 Última actividad", callback_data="admin_user_tracking_latest")],
+        [InlineKeyboardButton("🏪 Actividad por comunidad", callback_data="admin_user_tracking_groups")],
+        [InlineKeyboardButton("💳 Actividad de pagos", callback_data="admin_user_tracking_payments")],
+        [InlineKeyboardButton("🎟 Códigos canjeados", callback_data="admin_user_tracking_codes")],
+        [InlineKeyboardButton("🛟 Soporte", callback_data="admin_user_tracking_support")],
+        [InlineKeyboardButton("😊 Encuestas", callback_data="admin_user_tracking_surveys")],
+        [InlineKeyboardButton("📍 Ubicaciones", callback_data="admin_user_tracking_locations")],
+        [InlineKeyboardButton("📋 Detalle de encuestas", callback_data="satisfaction_detail")],
+        [InlineKeyboardButton("⬅️ Herramientas internas", callback_data="admin_global_tools")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def format_user_tracking_event_rows(rows):
+
+    if not rows:
+        return "Sin actividad registrada todavía."
+
+    lines = []
+
+    for row in rows[:25]:
+        user_id, username, first_name, event_type, event_key, group_id, plan_id, provider, created_at = row
+        user_label = f"@{username}" if username else (first_name or str(user_id))
+        group_text = f" · grupo {group_id}" if group_id else ""
+        plan_text = f" · plan {plan_id}" if plan_id else ""
+        provider_text = f" · {provider}" if provider else ""
+        lines.append(
+            f"- {format_tracking_time(created_at)} · {event_type} · {user_label} ({user_id})\n"
+            f"  {event_key or '-'}{group_text}{plan_text}{provider_text}"
+        )
+
+    return "\n".join(lines)
+
+
+def build_user_tracking_overview_text():
+
+    overview = fetch_tracking_overview()
+
+    top_events = "\n".join(
+        f"- {event_key}: {count}"
+        for event_key, count in overview.get("top_events", [])
+    ) or "Sin datos."
+
+    top_groups = "\n".join(
+        f"- {name} ({group_id}): {count}"
+        for group_id, name, count in overview.get("top_groups", [])
+    ) or "Sin datos."
+
+    return (
+        "👁 Seguimiento de usuarios\n\n"
+        "Este panel muestra actividad registrada dentro del bot y comunidades gestionadas por el bot. "
+        "No muestra grupos externos de Telegram donde el bot no participa.\n\n"
+        f"Usuarios que iniciaron bot: {overview.get('started_users', 0)}\n"
+        f"Usuarios activos 24h: {overview.get('active_24h', 0)}\n"
+        f"Usuarios activos 7 días: {overview.get('active_7d', 0)}\n"
+        f"Eventos 24h: {overview.get('events_24h', 0)}\n"
+        f"Pagos iniciados 7 días: {overview.get('payments_started', 0)}\n"
+        f"Pagos completados 7 días: {overview.get('payments_completed', 0)}\n"
+        f"Soportes abiertos 7 días: {overview.get('support_opened', 0)}\n"
+        f"Encuestas completadas 7 días: {overview.get('surveys_completed', 0)}\n\n"
+        "Top botones/comandos 7 días:\n"
+        f"{top_events}\n\n"
+        "Top comunidades 7 días:\n"
+        f"{top_groups}"
+    )
+
+
+def build_user_tracking_events_text(title, event_type=None):
+
+    rows = fetch_recent_user_events(limit=25, event_type=event_type)
+
+    return f"{title}\n\n{format_user_tracking_event_rows(rows)}"
+
+
+def build_user_tracking_groups_text():
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT e.group_id,
+                       COALESCE(g.name, 'Grupo ' || e.group_id::text),
+                       COUNT(DISTINCT e.user_id),
+                       COUNT(*)
+                FROM bot_user_events e
+                LEFT JOIN groups g ON g.id=e.group_id
+                WHERE e.group_id IS NOT NULL
+                GROUP BY e.group_id, g.name
+                ORDER BY COUNT(*) DESC
+                LIMIT 20
+            """)
+            rows = cur.fetchall()
+    except Exception:
+        rows = []
+
+    if not rows:
+        body = "Sin actividad por comunidad registrada todavía."
+    else:
+        body = "\n".join(
+            f"- {name} ({group_id}): {users} usuarios · {events} eventos"
+            for group_id, name, users, events in rows
+        )
+
+    return f"🏪 Actividad por comunidad\n\n{body}"
+
+
+def build_user_tracking_user_profile_text(profile_data):
+
+    if not profile_data:
+        return "👤 Buscar usuario\n\nNo encontré actividad registrada para ese usuario."
+
+    profile = profile_data["profile"]
+    user_id, username, first_name, last_name, first_seen, last_seen, total_events = profile
+    username_text = f"@{username}" if username else "Sin username"
+    name_text = " ".join(part for part in (first_name, last_name) if part).strip() or "Sin nombre disponible"
+    groups_text = "\n".join(
+        f"- {name} ({group_id})"
+        for group_id, name in profile_data.get("groups", [])
+    ) or "Sin comunidades del bot registradas."
+
+    return (
+        f"👤 {name_text}\n"
+        f"Username: {username_text}\n"
+        f"ID: {user_id}\n"
+        f"Primera actividad: {format_tracking_time(first_seen)}\n"
+        f"Última actividad: {format_tracking_time(last_seen)}\n"
+        f"Eventos: {total_events}\n\n"
+        f"Compras iniciadas: {profile_data.get('checkout_count', 0)}\n"
+        f"Pagos completados: {profile_data.get('payment_count', 0)}\n"
+        f"Pagos fallidos: {profile_data.get('payment_failed_count', 0)}\n"
+        f"Soporte: {profile_data.get('support_count', 0)}\n"
+        f"Encuestas recibidas: {profile_data.get('survey_sent_count', 0)}\n"
+        f"Encuestas completadas: {profile_data.get('survey_completed_count', 0)}\n\n"
+        "Comunidades del bot con actividad:\n"
+        f"{groups_text}\n\n"
+        "Últimas acciones:\n"
+        f"{format_user_tracking_event_rows(profile_data.get('events', []))}"
+    )
+
+
 def get_customer_satisfaction_role(user_id):
 
     if is_super_admin(user_id):
@@ -3106,6 +3268,12 @@ async def send_customer_satisfaction_question(context, chat_id, response_id):
             severity="info",
             user_id=chat_id,
             message="Encuesta de satisfacción completada."
+        )
+        log_user_event_by_ids(
+            chat_id,
+            "survey_completed",
+            event_key="customer_satisfaction",
+            metadata={"response_id": response_id}
         )
         return
 
@@ -13804,6 +13972,14 @@ async def handle_user_support_message(update, context, text):
     group_id = context.user_data.get("support_group_id")
     ticket = get_or_create_support_ticket(user, group_id=group_id)
 
+    log_user_event(
+        update,
+        "support_message",
+        event_key="support_text",
+        group_id=group_id,
+        metadata={"ticket_id": ticket.get("id")}
+    )
+
     create_support_message(
         ticket.get("id"),
         "user",
@@ -13872,6 +14048,14 @@ async def handle_user_support_photo(update, context):
     group_id = context.user_data.get("support_group_id")
     ticket = get_or_create_support_ticket(user, group_id=group_id)
     stored_text = "📷 Captura recibida."
+
+    log_user_event(
+        update,
+        "support_message",
+        event_key="support_photo",
+        group_id=group_id,
+        metadata={"ticket_id": ticket.get("id"), "has_caption": bool(original_caption)}
+    )
 
 
     if original_caption:
@@ -14798,6 +14982,14 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
 
     location = update.message.location
 
+    log_user_event(
+        update,
+        "location_shared",
+        event_key="location_gate",
+        group_id=group_id,
+        metadata={"action": action, "has_location": True}
+    )
+
 
     try:
 
@@ -15077,6 +15269,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
 
         is_private_callback_chat = False
+
+
+    log_user_event(
+        update,
+        "callback",
+        event_key=data,
+        metadata={"chat_id": callback_chat_id}
+    )
 
 
     if is_private_callback_chat:
@@ -17795,6 +17995,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ])
                 )
                 sent_count += 1
+                log_user_event_by_ids(
+                    recipient_id,
+                    "survey_sent",
+                    event_key="customer_satisfaction",
+                    group_id=survey["group_id"],
+                    metadata={
+                        "survey_id": survey_id,
+                        "campaign_id": survey["campaign_id"],
+                        "send_mode": survey["send_mode"]
+                    }
+                )
             except Exception as e:
                 failed_count += 1
                 mark_customer_satisfaction_delivery_failed(
@@ -22639,6 +22850,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ])
                 )
                 sent_count += 1
+                log_user_event_by_ids(
+                    recipient_id,
+                    "survey_sent",
+                    event_key="customer_satisfaction_group",
+                    group_id=survey["group_id"],
+                    metadata={
+                        "survey_id": survey_id,
+                        "campaign_id": survey["campaign_id"],
+                        "send_mode": survey["send_mode"]
+                    }
+                )
             except Exception as e:
                 failed_count += 1
                 mark_customer_satisfaction_delivery_failed(

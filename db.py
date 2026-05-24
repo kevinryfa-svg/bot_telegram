@@ -507,6 +507,63 @@ def create_tables():
 
 
         # =========================
+        # AUDITORÍA DE ACTIVIDAD DE USUARIOS EN EL BOT
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS bot_user_events (
+
+            id BIGSERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            username TEXT,
+
+            first_name TEXT,
+
+            last_name TEXT,
+
+            event_type TEXT,
+
+            event_key TEXT,
+
+            group_id BIGINT,
+
+            plan_id BIGINT,
+
+            payment_provider TEXT,
+
+            payment_scope TEXT,
+
+            metadata_json JSONB DEFAULT '{}'::jsonb,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        for index_sql in (
+            "CREATE INDEX IF NOT EXISTS idx_bot_user_events_user_id ON bot_user_events (user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bot_user_events_group_id ON bot_user_events (group_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bot_user_events_event_type ON bot_user_events (event_type)",
+            "CREATE INDEX IF NOT EXISTS idx_bot_user_events_created_at ON bot_user_events (created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_bot_user_events_event_key ON bot_user_events (event_key)",
+            "CREATE INDEX IF NOT EXISTS idx_bot_user_events_payment_provider ON bot_user_events (payment_provider)"
+        ):
+
+            try:
+
+                cur.execute(index_sql)
+
+            except Exception:
+
+                pass
+
+
+        # =========================
         # TABLA BANEADOS (MULTI-GRUPO)
         # =========================
 

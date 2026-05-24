@@ -88,6 +88,7 @@ from group_registration_handler import (
     handle_group_backup_text
 )
 from user_join_handler import detect_user_join
+from user_activity_logger import log_user_event
 from ai_handler import (
     ia_command,
     asistente_command,
@@ -764,6 +765,22 @@ async def handle_media(update, context):
         return
 
     return
+
+
+async def track_command_event(update, context):
+
+    command_text = None
+
+    if update.message and update.message.text:
+
+        command_text = update.message.text.split()[0]
+
+
+    log_user_event(
+        update,
+        "command",
+        event_key=command_text
+    )
 
 
 async def handle_text(update, context):
@@ -1870,6 +1887,11 @@ def main():
     create_tables()
 
     telegram_app.add_error_handler(global_error_handler)
+
+    telegram_app.add_handler(
+        MessageHandler(filters.COMMAND, track_command_event),
+        group=-1
+    )
 
     telegram_app.add_handler(
         CommandHandler("start", start)
