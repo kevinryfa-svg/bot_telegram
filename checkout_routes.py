@@ -27,6 +27,7 @@ from payment_providers.paypal_provider import (
     process_paypal_webhook
 )
 from payment_providers.revolut_provider import (
+    create_group_revolut_order,
     create_platform_revolut_order,
     process_revolut_webhook
 )
@@ -203,6 +204,56 @@ def register_checkout_routes(app):
             "payment_scope": "group",
             "order_id": order.get("order_id"),
             "url": order.get("approval_url")
+        })
+
+
+    @app.route("/create-revolut-group-order", methods=["POST"])
+    def create_revolut_group_order():
+
+        data = request.json or {}
+
+        try:
+
+            user_id = int(data.get("user_id") or data.get("telegram_id"))
+            group_id = int(data.get("group_id"))
+            plan_id = int(data.get("plan_id"))
+
+        except Exception:
+
+            return jsonify({"error": "Datos de pago inválidos"}), 400
+
+
+        try:
+
+            order = create_group_revolut_order(
+                user_id=user_id,
+                group_id=group_id,
+                plan_id=plan_id,
+                metadata={
+                    "source": "create_revolut_group_order"
+                }
+            )
+
+        except PaymentProviderUnavailable as e:
+
+            return jsonify({"error": str(e)}), 503
+
+        except ValueError as e:
+
+            return jsonify({"error": str(e)}), 400
+
+        except Exception as e:
+
+            print("Error creando orden Revolut de grupo:", e)
+
+            return jsonify({"error": "Error creando orden Revolut"}), 500
+
+
+        return jsonify({
+            "provider": PAYMENT_PROVIDER_REVOLUT,
+            "payment_scope": "group",
+            "order_id": order.get("order_id"),
+            "url": order.get("checkout_url")
         })
 
 

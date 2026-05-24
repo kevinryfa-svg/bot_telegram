@@ -405,7 +405,10 @@ def is_provider_available_for_scope(provider, scope, group_id=None, owner_user_i
         return False
 
 
-    if provider == PAYMENT_PROVIDER_PAYPAL:
+    if provider in (
+        PAYMENT_PROVIDER_PAYPAL,
+        PAYMENT_PROVIDER_REVOLUT
+    ):
 
         return (
             config_row.get("is_enabled") is True
@@ -460,7 +463,10 @@ def get_available_payment_methods_for_group_purchase(group_id, user_id=None, inc
 
     for provider in list_group_payment_provider_statuses(group_id):
 
-        if provider.get("provider") == PAYMENT_PROVIDER_PAYPAL:
+        if provider.get("provider") in (
+            PAYMENT_PROVIDER_PAYPAL,
+            PAYMENT_PROVIDER_REVOLUT
+        ):
 
             available = (
                 provider.get("global_enabled") is True
@@ -505,6 +511,15 @@ def is_paypal_group_checkout_available(group_id):
 
     return is_provider_available_for_scope(
         PAYMENT_PROVIDER_PAYPAL,
+        PAYMENT_SCOPE_GROUP,
+        group_id=group_id
+    )
+
+
+def is_revolut_group_checkout_available(group_id):
+
+    return is_provider_available_for_scope(
+        PAYMENT_PROVIDER_REVOLUT,
         PAYMENT_SCOPE_GROUP,
         group_id=group_id
     )
@@ -1001,7 +1016,10 @@ def list_group_payment_provider_statuses(group_id):
             destination_ref = None
 
 
-        if provider == PAYMENT_PROVIDER_PAYPAL:
+        if provider in (
+            PAYMENT_PROVIDER_PAYPAL,
+            PAYMENT_PROVIDER_REVOLUT
+        ):
 
             provider_missing_env = []
 
@@ -1082,7 +1100,7 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
         "Aquí se prepara la configuración de métodos de pago propios de esta comunidad.",
         "Estos pagos usan payment_scope=group y destino owner/grupo cuando el proveedor esté activo.",
         "Las credenciales propias del owner se configurarán desde el bot, no desde Railway.",
-        "PayPal puede crear checkout real si tiene credenciales cifradas, webhook_id y estado activo.",
+        "PayPal y Revolut pueden crear checkout real si tienen credenciales cifradas, webhook secreto y estado activo.",
         "Los métodos siempre respetan los flags globales de la plataforma.",
         f"Cifrado de credenciales: {'preparado' if has_payment_encryption_key() else 'pendiente de PAYMENT_CONFIG_ENCRYPTION_KEY'}.",
         ""
@@ -1105,8 +1123,8 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
 
     lines.extend([
         "Qué falta para activar pagos propios en próximas fases:",
-        "- Revolut, cripto y otros proveedores siguen pendientes.",
-        "- PayPal owner/grupo concede acceso solo tras webhook verificado.",
+        "- Cripto y otros proveedores siguen pendientes.",
+        "- PayPal y Revolut owner/grupo conceden acceso solo tras webhook verificado.",
         "",
         "Stripe global sigue funcionando como hasta ahora."
     ])
@@ -1139,7 +1157,7 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
         "",
         "Railway solo guarda credenciales globales de plataforma. Las credenciales propias de owners/grupos se configurarán desde el bot y se guardarán cifradas.",
         "",
-        "PayPal de grupo crea checkout real solo si está activo y tiene webhook_id. Otros proveedores siguen preparados como fase futura."
+        "PayPal y Revolut de grupo crean checkout real solo si están activos y tienen credenciales cifradas completas. Otros proveedores siguen preparados como fase futura."
     ]
 
 
@@ -1154,6 +1172,20 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
             "- modo sandbox/live",
             "",
             "Los secretos se guardan cifrados si PAYMENT_CONFIG_ENCRYPTION_KEY está configurada. Si incluye webhook_id, PayPal queda disponible para checkout real de grupo."
+        ])
+
+
+    if provider == PAYMENT_PROVIDER_REVOLUT:
+
+        lines.extend([
+            "",
+            "Conectar Revolut pide estos datos dentro del bot:",
+            "- REVOLUT_API_KEY del comercio/owner",
+            "- REVOLUT_WEBHOOK_SECRET del comercio/owner",
+            "- modo sandbox/live",
+            "- REVOLUT_BASE_URL opcional",
+            "",
+            "Los secretos se guardan cifrados si PAYMENT_CONFIG_ENCRYPTION_KEY está configurada. Revolut queda disponible para checkout real de grupo cuando está activo."
         ])
 
 
