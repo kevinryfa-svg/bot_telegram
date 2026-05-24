@@ -5251,7 +5251,7 @@ def build_owner_section_keyboard(user_id, group_id, section):
     if section == "users":
 
         if user_has_group_permission_any(user_id, group_id, ["can_view_users", "can_manage_users"]):
-            keyboard.append([InlineKeyboardButton("📋 Ver usuarios", callback_data="admin_users")])
+            keyboard.append([InlineKeyboardButton("📋 Ver usuarios de esta comunidad", callback_data=f"owner_group_users_{group_id}")])
 
         if user_has_group_permission_any(user_id, group_id, ["can_kick_users", "can_manage_users"]):
             keyboard.append([InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")])
@@ -5355,7 +5355,7 @@ def build_owner_section_keyboard(user_id, group_id, section):
         keyboard.extend([
             [InlineKeyboardButton("✏️ Nombre comunidad", callback_data="edit_group_name")],
             [InlineKeyboardButton("📝 Descripción", callback_data="edit_group_name")],
-            [InlineKeyboardButton("🔓 Tipo gratis/pago", callback_data="owner_panel_access_type_info")],
+            [InlineKeyboardButton("🔓 Tipo gratis/pago", callback_data="owner_panel_commercial_config")],
             [InlineKeyboardButton("🔢 Cupo/configuración", callback_data="owner_panel_general_info")],
             [InlineKeyboardButton("🧹 Reiniciar configuración segura", callback_data="owner_panel_general_info")]
         ])
@@ -5627,6 +5627,180 @@ def build_owner_security_keyboard(group_id):
     ])
 
 
+def build_owner_users_panel_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+
+    return (
+        "👥 Usuarios y accesos\n\n"
+        f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
+        "Desde aquí puedes revisar usuarios de esta comunidad y abrir acciones de acceso. "
+        "Las acciones usan el grupo seleccionado para evitar mezclar usuarios de otras comunidades.\n\n"
+        "Acciones disponibles según permisos:\n"
+        "- Ver usuarios de esta comunidad.\n"
+        "- Expulsar, banear o desbanear usuarios.\n"
+        "- Gestionar warnings si tu rol lo permite.\n"
+        "- Reenviar o recuperar enlaces de acceso."
+    )
+
+
+def build_owner_backup_panel_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+
+    return (
+        "🛡 Backup premium\n\n"
+        f"Comunidad actual: {group_name or f'Grupo {group_id}'}\n\n"
+        "El backup premium copia mensajes nuevos que el bot recibe, usando solo Telegram Bot API. "
+        "No descarga archivos y no usa cuentas de usuario.\n\n"
+        "Desde aquí puedes abrir el panel real de backup, configurar origen/destino con código, "
+        "cambiar modo, revisar mensajes copiados y ver errores."
+    )
+
+
+def build_owner_general_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    telegram_group_id = group[2] if group else None
+    access_type = "No configurado"
+    public_visibility = "-"
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT is_free_group,
+                       public_visibility
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+
+        if row:
+
+            access_type = "Gratis" if row[0] else "Pago"
+            public_visibility = row[1] or "-"
+
+    except Exception as e:
+
+        print("Error cargando configuración general owner:", e)
+
+
+    return (
+        "⚙️ Configuración de la comunidad\n\n"
+        f"Nombre: {group_name or f'Grupo {group_id}'}\n"
+        f"ID interno: {group_id}\n"
+        f"Telegram ID: {telegram_group_id or '-'}\n"
+        f"Tipo de acceso: {access_type}\n"
+        f"Visibilidad marketplace: {public_visibility}\n\n"
+        "Esta pantalla agrupa rutas seguras de configuración. Los cambios sensibles, como pagos o visibilidad, "
+        "se abren en pantallas específicas para evitar tocar checkout o accesos por accidente."
+    )
+
+
+def build_owner_general_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏️ Nombre / descripción", callback_data="edit_group_name")],
+        [InlineKeyboardButton("🔓 Configuración comercial", callback_data="owner_panel_commercial_config")],
+        [InlineKeyboardButton("🖼 Marketplace y preview", callback_data="owner_panel_marketplace")],
+        [InlineKeyboardButton("📍 Ubicación permitida", callback_data="owner_panel_location_info")],
+        [InlineKeyboardButton("🛡 Seguridad del grupo", callback_data="owner_panel_security")],
+        [InlineKeyboardButton("💳 Métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_general")],
+        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_commercial_config_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    is_free_group = None
+    active_plans = 0
+    active_payment_methods = 0
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT is_free_group
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+            is_free_group = row[0] if row else None
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM plans
+                WHERE group_id=%s
+                AND is_active=TRUE
+
+            """, (group_id,))
+            active_plans = cur.fetchone()[0]
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM group_payment_provider_configs
+                WHERE group_id=%s
+                AND is_enabled=TRUE
+                AND status='active'
+
+            """, (group_id,))
+            active_payment_methods = cur.fetchone()[0]
+
+    except Exception as e:
+
+        print("Error cargando configuración comercial owner:", e)
+
+
+    access_type = "Gratis" if is_free_group is True else "Pago" if is_free_group is False else "No configurado"
+
+    return (
+        "🔓 Configuración comercial de la comunidad\n\n"
+        f"Comunidad: {group_name or f'Grupo {group_id}'}\n"
+        f"Tipo de acceso actual: {access_type}\n"
+        f"Planes activos: {active_plans}\n"
+        f"Métodos de pago del grupo activos: {active_payment_methods}\n\n"
+        "Cambiar de gratis a pago o de pago a gratis puede afectar ventas, accesos y mensajes del marketplace. "
+        "Por seguridad, esta pantalla no cambia el tipo con un solo toque.\n\n"
+        "Usa las rutas de abajo para revisar planes, métodos de pago y ficha pública antes de hacer cambios sensibles."
+    )
+
+
+def build_owner_commercial_config_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Planes y pagos del grupo", callback_data="owner_panel_payments")],
+        [InlineKeyboardButton("💳 Métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
+        [InlineKeyboardButton("🖼 Marketplace y preview", callback_data="owner_panel_marketplace")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_payments")],
+        [InlineKeyboardButton("⬅️ Volver a configuración", callback_data="owner_panel_general")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
 def build_owner_panel_help_text(section):
 
     help_texts = {
@@ -5683,10 +5857,15 @@ def build_owner_panel_audit_report(user_id, group_id):
 
     placeholder_callbacks = {
         "owner_panel_general_info": "solo informativo: configuración general avanzada pendiente",
-        "owner_panel_access_type_info": "solo informativo: cambio gratis/pago requiere flujo comercial seguro",
         "edit_group_stripe": "solo informativo: Stripe propio por grupo pendiente"
     }
     editable_callbacks = {
+        "owner_panel_users",
+        "owner_panel_security",
+        "owner_panel_backup",
+        "owner_panel_general",
+        "owner_panel_commercial_config",
+        "owner_panel_access_type_info",
         "owner_panel_location_info",
         "owner_panel_security_info",
         "owner_support_tickets",
@@ -5736,7 +5915,7 @@ def build_owner_panel_audit_report(user_id, group_id):
             observations.append(placeholder_callbacks[callback_data])
 
 
-        if callback_data in editable_callbacks or callback_data.startswith("owner_location_") or callback_data.startswith("owner_group_logs_"):
+        if callback_data in editable_callbacks or callback_data.startswith("owner_location_") or callback_data.startswith("owner_group_logs_") or callback_data.startswith("owner_group_users_"):
 
             editable += 1
             observations.append("funcional para esta comunidad")
@@ -18664,6 +18843,233 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             build_owner_panel_help_text(section),
             reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return
+
+
+    if data in (
+        "owner_panel_users",
+        "owner_panel_security",
+        "owner_panel_backup",
+        "owner_panel_general"
+    ):
+
+        title, description, required_permissions, section = OWNER_PANEL_SECTIONS[data]
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            required_permissions
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para abrir esta sección de la comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+
+        if data == "owner_panel_users":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_users_panel_text(group_id),
+                reply_markup=build_owner_section_keyboard(
+                    user_id,
+                    group_id,
+                    section
+                )
+            )
+
+            return
+
+
+        if data == "owner_panel_security":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_security_text(group_id),
+                reply_markup=build_owner_security_keyboard(group_id)
+            )
+
+            return
+
+
+        if data == "owner_panel_backup":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_backup_panel_text(group_id),
+                reply_markup=build_owner_section_keyboard(
+                    user_id,
+                    group_id,
+                    section
+                )
+            )
+
+            return
+
+
+        if data == "owner_panel_general":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_general_text(group_id),
+                reply_markup=build_owner_general_keyboard(group_id)
+            )
+
+            return
+
+
+    if data == "owner_panel_commercial_config" or data == "owner_panel_access_type_info":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_manage_plans", "can_view_payments", "can_manage_payments"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para abrir la configuración comercial de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_commercial_config_text(group_id),
+            reply_markup=build_owner_commercial_config_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_group_users_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_group_users_"
+        )
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_view_users", "can_manage_users"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver usuarios de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        group = fetch_group_basic_info(group_id)
+        group_name = group[1] if group else f"Grupo {group_id}"
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT user_id,
+                           username,
+                           first_name,
+                           expiration,
+                           subscription_active
+                    FROM users
+                    WHERE group_id=%s
+                    ORDER BY expiration DESC NULLS LAST,
+                             created_at DESC
+                    LIMIT 50
+
+                """, (group_id,))
+
+                rows = cur.fetchall()
+
+        except Exception as e:
+
+            print("Error cargando usuarios de comunidad:", e)
+
+            await query.message.reply_text(
+                "❌ No he podido cargar usuarios de esta comunidad ahora mismo.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Volver a usuarios y accesos", callback_data="owner_panel_users")],
+            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+
+
+        if not rows:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                f"👥 Usuarios de esta comunidad\n\nComunidad: {group_name or f'Grupo {group_id}'}\n\nTodavía no hay usuarios activos registrados en esta comunidad.",
+                reply_markup=keyboard
+            )
+
+            return
+
+
+        text = f"👥 Usuarios de esta comunidad\n\nComunidad: {group_name or f'Grupo {group_id}'}\nUsuarios mostrados: {len(rows)}\n\n"
+
+
+        for member_user_id, username, first_name, expiration, subscription_active in rows:
+
+            name = first_name or "Sin nombre"
+
+            if username:
+
+                name += f" (@{username})"
+
+
+            expiration_text = expiration.strftime("%Y-%m-%d") if expiration else "♾️ Permanente"
+            active_text = "activo" if subscription_active else "registrado"
+
+            text += (
+                f"Usuario: {member_user_id}\n"
+                f"Nombre: {name}\n"
+                f"Acceso: {active_text}\n"
+                f"Expira: {expiration_text}\n\n"
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            text,
+            reply_markup=keyboard
         )
 
         return
