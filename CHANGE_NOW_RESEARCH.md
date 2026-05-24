@@ -455,3 +455,43 @@ Solo despues de confirmar callback/status verification e idempotencia completa s
 - polling/verificacion;
 - concesion automatica con `payment_access_service.py`;
 - logs y alertas beta.
+
+## Decision de implementacion segura añadida
+
+Tras esta investigacion, ChangeNOW se puede poner en marcha solo en modo seguro/manual:
+
+- configurable desde el bot para plataforma y grupos;
+- secretos cifrados;
+- transacciones registradas en `payment_transactions`;
+- pagos en `manual_review`;
+- sin acceso automatico por callback.
+
+La implementacion automatica queda bloqueada hasta confirmar con ChangeNOW el payload de callback/push, verificacion/firma, endpoint de estado oficial y estrategia de idempotencia fuerte.
+
+## Revisión de activación automática verificada
+
+Se revisó la petición de pasar ChangeNOW a activación automática tras callback. El criterio seguro exige consultar a ChangeNOW por `transaction_id`/`order_id` y usar el estado oficial devuelto por API como única fuente de verdad antes de marcar `paid` o conceder acceso.
+
+Resultado: no se implementa activación automática en esta fase.
+
+Motivo técnico:
+
+- La documentación pública revisada confirma creación de exchange con `POST /v2/exchange`.
+- La documentación pública revisada confirma estados operativos como `awaiting deposit`, `confirming`, `exchanging`, `sending`, `finished`, `failed`, `expired`, `refunded`, `verifying` y `hold`.
+- La documentación pública menciona tracking/status, pero el research no confirma un endpoint oficial estable con contrato completo para consultar estado por `transaction_id`/`order_id`, autenticación, payload de respuesta, firma/callback e idempotencia.
+- Sin ese endpoint confirmado, automatizar acceso sería confiar en callback o suposiciones, que queda expresamente descartado.
+
+Decisión actual:
+
+- El callback/webhook `POST /webhook/changenow` puede registrar eventos y mover pagos a revisión.
+- El acceso automático queda desactivado.
+- `manual_review` sigue siendo el comportamiento correcto hasta confirmar con ChangeNOW el endpoint oficial de status y su contrato.
+
+Condición para activar automático en una fase futura:
+
+1. Confirmar endpoint oficial de consulta de estado por exchange id.
+2. Confirmar autenticación requerida.
+3. Confirmar campos devueltos: estado, importes, monedas, redes, wallet destino y expiración.
+4. Confirmar cómo enlazar de forma segura `payment_transaction_id` con la transacción ChangeNOW.
+5. Implementar webhook como disparador, no como fuente de verdad.
+6. Conceder acceso solo si la consulta oficial devuelve estado final `finished` o equivalente y todos los datos coinciden.
