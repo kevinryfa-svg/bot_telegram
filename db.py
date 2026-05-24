@@ -7,6 +7,38 @@ import psycopg2
 # =========================
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+VERBOSE_DB_MIGRATIONS = os.environ.get(
+    "VERBOSE_DB_MIGRATIONS",
+    "false"
+).lower() in ("1", "true", "yes", "on")
+
+DB_MIGRATION_SUMMARY = {
+    "checked": 0,
+    "created": 0,
+    "errors": 0
+}
+
+
+def migration_print(message, status="checked"):
+
+    if status in DB_MIGRATION_SUMMARY:
+
+        DB_MIGRATION_SUMMARY[status] += 1
+
+
+    if VERBOSE_DB_MIGRATIONS:
+
+        print(message)
+
+
+def print_db_migration_summary():
+
+    print(
+        "Base de datos preparada:",
+        f"{DB_MIGRATION_SUMMARY['checked']} columnas verificadas,",
+        f"{DB_MIGRATION_SUMMARY['created']} creadas,",
+        f"{DB_MIGRATION_SUMMARY['errors']} errores"
+    )
 
 
 def get_conn():
@@ -31,6 +63,10 @@ conn = get_conn()
 # =========================
 
 def create_tables():
+
+    DB_MIGRATION_SUMMARY["checked"] = 0
+    DB_MIGRATION_SUMMARY["created"] = 0
+    DB_MIGRATION_SUMMARY["errors"] = 0
 
     with conn.cursor() as cur:
 
@@ -146,11 +182,11 @@ def create_tables():
 
             """)
 
-            print("PRIMARY KEY users corregida")
+            migration_print("PRIMARY KEY users corregida", "created")
 
         except Exception as e:
 
-            print("PK users ya correcta:", e)
+            migration_print(f"PK users ya correcta: {e}")
 
 
         # =========================
@@ -176,11 +212,11 @@ def create_tables():
 
                 """)
 
-                print(f"Columna añadida en users: {column_name}")
+                migration_print(f"Columna añadida en users: {column_name}", "created")
 
             except Exception:
 
-                print(f"Columna ya existe en users: {column_name}")
+                migration_print(f"Columna ya existe en users: {column_name}")
 
 
         # =========================
@@ -484,11 +520,11 @@ def create_tables():
 
                 """)
 
-                print(f"Columna añadida en invite_links: {column_name}")
+                migration_print(f"Columna añadida en invite_links: {column_name}", "created")
 
             except Exception:
 
-                print(f"Columna ya existe en invite_links: {column_name}")
+                migration_print(f"Columna ya existe en invite_links: {column_name}")
 
 
         try:
@@ -660,6 +696,41 @@ def create_tables():
             report JSONB,
 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
+        # BETA CYCLES
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS beta_cycles (
+
+            id SERIAL PRIMARY KEY,
+
+            name TEXT,
+
+            status TEXT DEFAULT 'active',
+
+            phase TEXT,
+
+            starts_at TIMESTAMP,
+
+            ends_at TIMESTAMP,
+
+            created_by BIGINT,
+
+            completed_at TIMESTAMP,
+
+            notes TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
         );
 
@@ -1537,11 +1608,11 @@ def create_tables():
 
                 """)
 
-                print(f"Columna añadida en commercial_requests: {column_name}")
+                migration_print(f"Columna añadida en commercial_requests: {column_name}", "created")
 
             except Exception:
 
-                print(f"Columna ya existe en commercial_requests: {column_name}")
+                migration_print(f"Columna ya existe en commercial_requests: {column_name}")
 
 
         # =========================
@@ -1684,11 +1755,11 @@ def create_tables():
 
                 """)
 
-                print(f"Columna añadida en admins: {column_name}")
+                migration_print(f"Columna añadida en admins: {column_name}", "created")
 
             except Exception:
 
-                print(f"Columna ya existe en admins: {column_name}")
+                migration_print(f"Columna ya existe en admins: {column_name}")
 
 
         try:
@@ -1852,11 +1923,11 @@ def create_tables():
 
                 """)
 
-                print(f"Columna añadida en {tabla}: {columna}")
+                migration_print(f"Columna añadida en {tabla}: {columna}", "created")
 
             except Exception:
 
-                print(f"Columna ya existe en {tabla}")
+                migration_print(f"Columna ya existe en {tabla}")
 
 
-    print("Base de datos FULL preparada 🚀")
+    print_db_migration_summary()

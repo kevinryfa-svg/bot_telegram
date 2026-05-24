@@ -439,6 +439,289 @@ def mark_beta_monitor_events_resolved(hours=24):
         return 0
 
 
+def get_active_beta_cycle():
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       name,
+                       status,
+                       phase,
+                       starts_at,
+                       ends_at,
+                       created_by,
+                       completed_at,
+                       notes
+                FROM beta_cycles
+                WHERE status='active'
+                ORDER BY starts_at DESC
+                LIMIT 1
+
+            """)
+
+            return cur.fetchone()
+
+    except Exception as e:
+
+        print("Error cargando ciclo beta activo:", e)
+
+        return None
+
+
+def get_latest_beta_cycle():
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       name,
+                       status,
+                       phase,
+                       starts_at,
+                       ends_at,
+                       created_by,
+                       completed_at,
+                       notes
+                FROM beta_cycles
+                ORDER BY created_at DESC
+                LIMIT 1
+
+            """)
+
+            return cur.fetchone()
+
+    except Exception as e:
+
+        print("Error cargando último ciclo beta:", e)
+
+        return None
+
+
+def create_beta_cycle(created_by, phase="beta_1", duration_days=7, notes=None):
+
+    active_cycle = get_active_beta_cycle()
+
+    if active_cycle:
+
+        return None, active_cycle
+
+
+    name_by_phase = {
+        "beta_1": "Beta cerrada",
+        "beta_2": "Beta 2.0",
+        "final_review": "Revisión final"
+    }
+
+    cycle_name = name_by_phase.get(phase, "Beta cerrada")
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO beta_cycles
+                (
+                    name,
+                    status,
+                    phase,
+                    starts_at,
+                    ends_at,
+                    created_by,
+                    notes,
+                    updated_at
+                )
+                VALUES (
+                    %s,
+                    'active',
+                    %s,
+                    NOW(),
+                    NOW() + (%s || ' days')::interval,
+                    %s,
+                    %s,
+                    NOW()
+                )
+                RETURNING id,
+                          name,
+                          status,
+                          phase,
+                          starts_at,
+                          ends_at,
+                          created_by,
+                          completed_at,
+                          notes
+
+            """, (
+                cycle_name,
+                phase,
+                duration_days,
+                created_by,
+                notes
+            ))
+
+            row = cur.fetchone()
+            conn.commit()
+
+            return row, None
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error creando ciclo beta:", e)
+
+        return None, None
+
+
+def complete_active_beta_cycle(notes=None):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE beta_cycles
+                SET status='completed',
+                    completed_at=NOW(),
+                    notes=COALESCE(%s, notes),
+                    updated_at=NOW()
+                WHERE status='active'
+                RETURNING id,
+                          name,
+                          status,
+                          phase,
+                          starts_at,
+                          ends_at,
+                          created_by,
+                          completed_at,
+                          notes
+
+            """, (notes,))
+
+            row = cur.fetchone()
+            conn.commit()
+
+            return row
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error finalizando ciclo beta:", e)
+
+        return None
+
+
+def complete_expired_beta_cycles():
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE beta_cycles
+                SET status='completed',
+                    completed_at=NOW(),
+                    notes=COALESCE(notes, 'Finalizado automáticamente por fecha.'),
+                    updated_at=NOW()
+                WHERE status='active'
+                AND ends_at <= NOW()
+                RETURNING id,
+                          name,
+                          status,
+                          phase,
+                          starts_at,
+                          ends_at,
+                          created_by,
+                          completed_at,
+                          notes
+
+            """)
+
+            rows = cur.fetchall()
+            conn.commit()
+
+            return rows
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error cerrando ciclos beta vencidos:", e)
+
+        return []
+
+
+def get_beta_cycle_monitor_counts(hours=24):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE severity='critical'
+                        AND resolved=FALSE
+                    ) AS critical_open,
+                    COUNT(*) FILTER (
+                        WHERE severity='warning'
+                        AND resolved=FALSE
+                    ) AS warning_open,
+                    COUNT(*) FILTER (
+                        WHERE event_type='payment_confirmed'
+                    ) AS payments,
+                    COUNT(*) FILTER (
+                        WHERE event_type='access_allowed'
+                    ) AS access_allowed,
+                    COUNT(*) FILTER (
+                        WHERE event_type='group_code_redeemed'
+                    ) AS codes,
+                    COUNT(*) FILTER (
+                        WHERE event_type='backup_message_failed'
+                    ) AS backup_failed,
+                    COUNT(*) FILTER (
+                        WHERE event_type='support_ticket_created'
+                    ) AS support_tickets
+                FROM beta_monitor_events
+                WHERE created_at >= NOW() - (%s || ' hours')::interval
+
+            """, (hours,))
+
+            row = cur.fetchone()
+
+            if not row:
+
+                return {}
+
+            return {
+                "critical_open": row[0] or 0,
+                "warning_open": row[1] or 0,
+                "payments": row[2] or 0,
+                "access_allowed": row[3] or 0,
+                "codes": row[4] or 0,
+                "backup_failed": row[5] or 0,
+                "support_tickets": row[6] or 0
+            }
+
+    except Exception as e:
+
+        print("Error calculando estado ciclo beta:", e)
+
+        return {}
+
+
 # =========================
 # AUDIT LOG — CENTRAL EVENT
 # =========================

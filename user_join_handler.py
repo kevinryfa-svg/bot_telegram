@@ -44,9 +44,19 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        print(
-            "Usuario detectado entrando:",
-            user_id
+        log_event(
+            "user_join_detected",
+            category="access",
+            severity="info",
+            scope="group",
+            telegram_group_id=telegram_group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Entrada de usuario registrada.",
+            metadata={
+                "username": username,
+                "first_name": first_name
+            }
         )
 
 

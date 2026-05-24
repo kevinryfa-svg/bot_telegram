@@ -25,6 +25,12 @@ from admin_permission_map import (
 )
 from admin_menu_catalog import build_admin_menu_button_rows
 from audit_log_service import (
+    complete_active_beta_cycle,
+    complete_expired_beta_cycles,
+    create_beta_cycle,
+    get_active_beta_cycle,
+    get_beta_cycle_monitor_counts,
+    get_latest_beta_cycle,
     list_beta_monitor_events,
     list_recent_events,
     log_event,
@@ -1094,6 +1100,12 @@ def build_beta_monitor_keyboard():
         [InlineKeyboardButton("Pagos/accesos", callback_data="admin_beta_monitor_payments")],
         [InlineKeyboardButton("Códigos", callback_data="admin_beta_monitor_codes")],
         [InlineKeyboardButton("Backups", callback_data="admin_beta_monitor_backups")],
+        [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
+        [InlineKeyboardButton("▶️ Iniciar beta 1 semana", callback_data="admin_beta_cycle_start_beta_1")],
+        [InlineKeyboardButton("🔁 Iniciar beta 2.0", callback_data="admin_beta_cycle_start_beta_2")],
+        [InlineKeyboardButton("✅ Finalizar beta", callback_data="admin_beta_cycle_finish")],
+        [InlineKeyboardButton("📋 Ver estado beta", callback_data="admin_beta_cycle_status")],
+        [InlineKeyboardButton("🚀 Preparar lanzamiento final", callback_data="admin_beta_cycle_final_review")],
         [InlineKeyboardButton("Marcar resueltos", callback_data="admin_beta_monitor_resolve_all")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
     ])
@@ -1133,6 +1145,78 @@ def format_beta_monitor_events_text(title, rows):
 
 
     return text[:3900]
+
+
+def format_beta_cycle_row(row):
+
+    if not row:
+
+        return "Sin ciclo beta registrado."
+
+
+    (
+        cycle_id,
+        name,
+        status,
+        phase,
+        starts_at,
+        ends_at,
+        created_by,
+        completed_at,
+        notes
+    ) = row
+
+    return (
+        f"#{cycle_id} · {name or '-'}\n"
+        f"Estado: {status or '-'}\n"
+        f"Fase: {phase or '-'}\n"
+        f"Inicio: {starts_at or '-'}\n"
+        f"Fin previsto: {ends_at or '-'}\n"
+        f"Creado por: {created_by or '-'}\n"
+        f"Completado: {completed_at or '-'}\n"
+        f"Notas: {notes or '-'}"
+    )
+
+
+def format_beta_cycle_status_text():
+
+    active_cycle = get_active_beta_cycle()
+    latest_cycle = active_cycle or get_latest_beta_cycle()
+    counts = get_beta_cycle_monitor_counts(hours=24)
+
+    lines = [
+        "🗓 Ciclo beta",
+        "",
+        format_beta_cycle_row(latest_cycle),
+        "",
+        "📊 Estado últimas 24h",
+        f"Críticos abiertos: {counts.get('critical_open', 0)}",
+        f"Warnings abiertos: {counts.get('warning_open', 0)}",
+        f"Pagos: {counts.get('payments', 0)}",
+        f"Accesos permitidos: {counts.get('access_allowed', 0)}",
+        f"Códigos canjeados: {counts.get('codes', 0)}",
+        f"Backups fallidos: {counts.get('backup_failed', 0)}",
+        f"Tickets soporte: {counts.get('support_tickets', 0)}"
+    ]
+
+    return "\n".join(lines)
+
+
+def format_final_launch_checklist():
+
+    return (
+        "🚀 Preparar lanzamiento final\n\n"
+        "Antes de abrir comercialmente, revisa:\n\n"
+        "☐ Bugs P0 cerrados\n"
+        "☐ Bugs P1 cerrados o aceptados\n"
+        "☐ Smoke test OK\n"
+        "☐ Railway estable\n"
+        "☐ Stripe probado\n"
+        "☐ Backups probados\n"
+        "☐ Soporte probado\n"
+        "☐ Logs limpios\n\n"
+        "Este checklist no cambia pagos, grupos ni datos de usuarios."
+    )
 
 
 def build_beta_smoke_test_keyboard():
@@ -1274,6 +1358,7 @@ def run_beta_smoke_checks():
         "audit_logs",
         "beta_monitor_events",
         "beta_smoke_test_runs",
+        "beta_cycles",
         "group_user_promo_codes",
         "group_backup_configs",
         "support_tickets"
@@ -4415,17 +4500,32 @@ async def process_expired_commercial_retention(context):
             summary["send_errors"] += 1
             print("Error avisando borrado definitivo comercial:", e)
 
-    print(
-        "Commercial expiry scheduler:",
-        f"newly_expired={summary['newly_expired']}",
-        f"expiry_notices_sent={summary['expiry_notices_sent']}",
-        f"reminders_due={summary['reminders_due']}",
-        f"reminders_sent={summary['reminders_sent']}",
-        f"finalized={summary['finalized']}",
-        f"admin_notices_sent={summary['admin_notices_sent']}",
-        f"skipped_without_user={summary['skipped_without_user']}",
-        f"send_errors={summary['send_errors']}"
+    active_count = sum(
+        int(summary.get(key, 0) or 0)
+        for key in (
+            "newly_expired",
+            "expiry_notices_sent",
+            "reminders_due",
+            "reminders_sent",
+            "finalized",
+            "admin_notices_sent",
+            "send_errors"
+        )
     )
+
+    if active_count > 0:
+
+        print(
+            "Commercial expiry scheduler:",
+            f"newly_expired={summary['newly_expired']}",
+            f"expiry_notices_sent={summary['expiry_notices_sent']}",
+            f"reminders_due={summary['reminders_due']}",
+            f"reminders_sent={summary['reminders_sent']}",
+            f"finalized={summary['finalized']}",
+            f"admin_notices_sent={summary['admin_notices_sent']}",
+            f"skipped_without_user={summary['skipped_without_user']}",
+            f"send_errors={summary['send_errors']}"
+        )
 
     return summary
 
@@ -17300,6 +17400,147 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(text)
 
         return
+
+
+    if data.startswith("admin_beta_cycle"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        if data in (
+            "admin_beta_cycle",
+            "admin_beta_cycle_status"
+        ):
+
+            await query.message.reply_text(
+                format_beta_cycle_status_text(),
+                reply_markup=build_beta_monitor_keyboard()
+            )
+
+            return
+
+
+        if data in (
+            "admin_beta_cycle_start_beta_1",
+            "admin_beta_cycle_start_beta_2"
+        ):
+
+            complete_expired_beta_cycles()
+
+            phase = (
+                "beta_2"
+                if data == "admin_beta_cycle_start_beta_2"
+                else "beta_1"
+            )
+
+            cycle, active_cycle = create_beta_cycle(
+                created_by=user_id,
+                phase=phase,
+                duration_days=7
+            )
+
+            if active_cycle:
+
+                await query.message.reply_text(
+                    (
+                        "⚠️ Ya hay un ciclo beta activo.\n\n"
+                        f"{format_beta_cycle_row(active_cycle)}"
+                    ),
+                    reply_markup=build_beta_monitor_keyboard()
+                )
+
+                return
+
+
+            if not cycle:
+
+                await query.message.reply_text(
+                    "⚠️ No se pudo iniciar el ciclo beta.",
+                    reply_markup=build_beta_monitor_keyboard()
+                )
+
+                return
+
+
+            phase_label = "Beta 2.0" if phase == "beta_2" else "Beta cerrada"
+
+            log_event(
+                "beta_cycle_started",
+                category="beta",
+                severity="info",
+                message=f"{phase_label} iniciada",
+                actor_user_id=user_id,
+                metadata={
+                    "cycle_id": cycle[0],
+                    "phase": phase,
+                    "ends_at": str(cycle[5])
+                }
+            )
+
+            await query.message.reply_text(
+                (
+                    f"✅ {phase_label} iniciada hasta {cycle[5]}.\n\n"
+                    f"{format_beta_cycle_row(cycle)}"
+                ),
+                reply_markup=build_beta_monitor_keyboard()
+            )
+
+            return
+
+
+        if data == "admin_beta_cycle_finish":
+
+            cycle = complete_active_beta_cycle(
+                notes="Finalizada manualmente desde el panel beta."
+            )
+
+            if not cycle:
+
+                await query.message.reply_text(
+                    "⚠️ No hay una beta activa para finalizar.",
+                    reply_markup=build_beta_monitor_keyboard()
+                )
+
+                return
+
+
+            log_event(
+                "beta_cycle_completed",
+                category="beta",
+                severity="info",
+                message="Ciclo beta finalizado manualmente",
+                actor_user_id=user_id,
+                metadata={
+                    "cycle_id": cycle[0],
+                    "phase": cycle[3]
+                }
+            )
+
+            await query.message.reply_text(
+                (
+                    "✅ Beta finalizada.\n\n"
+                    f"{format_beta_cycle_row(cycle)}"
+                ),
+                reply_markup=build_beta_monitor_keyboard()
+            )
+
+            return
+
+
+        if data == "admin_beta_cycle_final_review":
+
+            await query.message.reply_text(
+                format_final_launch_checklist(),
+                reply_markup=build_beta_monitor_keyboard()
+            )
+
+            return
 
 
     if data.startswith("admin_smoke"):

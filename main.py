@@ -50,6 +50,7 @@ from warning_service import (
 )
 
 from audit_log_service import (
+    complete_expired_beta_cycles,
     create_audit_log,
     is_beta_monitor_enabled,
     log_event,
@@ -417,22 +418,55 @@ def run_flask():
 
 async def commercial_expiry_job(context: ContextTypes.DEFAULT_TYPE):
 
-    print("Commercial expiry scheduler: iniciando revisión periódica")
-
     try:
 
         summary = await callback_router_module.process_expired_commercial_retention(
             context
         )
 
-        print(
-            "Commercial expiry scheduler: revisión finalizada",
-            summary
+        active_count = sum(
+            int(summary.get(key, 0) or 0)
+            for key in (
+                "newly_expired",
+                "expiry_notices_sent",
+                "reminders_due",
+                "reminders_sent",
+                "finalized",
+                "admin_notices_sent",
+                "send_errors"
+            )
         )
+
+        if active_count > 0:
+
+            print(
+                "Commercial expiry scheduler:",
+                summary
+            )
+
+            log_event(
+                "commercial_expiry_scheduler_activity",
+                category="commercial",
+                severity=(
+                    "warning"
+                    if int(summary.get("send_errors", 0) or 0) > 0
+                    else "info"
+                ),
+                message="Revisión comercial periódica con actividad",
+                metadata=summary
+            )
 
     except Exception as e:
 
         print("Commercial expiry scheduler: error en revisión periódica:", e)
+
+        log_event(
+            "commercial_expiry_scheduler_error",
+            category="commercial",
+            severity="warning",
+            message="Error en revisión comercial periódica",
+            metadata={"error": str(e)}
+        )
 
 
 def schedule_commercial_expiry_job(application):
@@ -517,6 +551,93 @@ def schedule_beta_monitor_job(application):
     )
 
     print("Beta monitor programado.")
+
+    return True
+
+
+async def beta_cycle_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_beta_monitor_enabled():
+
+        return
+
+
+    try:
+
+        completed_cycles = complete_expired_beta_cycles()
+
+        for cycle in completed_cycles:
+
+            log_event(
+                "beta_cycle_completed",
+                category="beta",
+                severity="warning",
+                message="Ciclo beta finalizado automáticamente",
+                actor_user_id=ADMIN_ID,
+                metadata={
+                    "cycle_id": cycle[0],
+                    "phase": cycle[3],
+                    "ends_at": str(cycle[5])
+                }
+            )
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "⏰ Ha terminado la beta cerrada.\n\n"
+                    "Revisa resultados, prepara beta 2.0 o lanzamiento final."
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📊 Ver monitor beta",
+                        callback_data="admin_beta_monitor"
+                    )],
+                    [InlineKeyboardButton(
+                        "🔁 Iniciar beta 2.0",
+                        callback_data="admin_beta_cycle_start_beta_2"
+                    )],
+                    [InlineKeyboardButton(
+                        "🚀 Preparar lanzamiento final",
+                        callback_data="admin_beta_cycle_final_review"
+                    )]
+                ])
+            )
+
+    except Exception as e:
+
+        print("Beta cycle: error revisando ciclos:", e)
+
+
+def schedule_beta_cycle_job(application):
+
+    if not is_beta_monitor_enabled():
+
+        print("Beta cycle: monitor desactivado por configuración.")
+
+        return False
+
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Beta cycle: JobQueue no disponible. "
+            "No se programó la revisión automática."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        beta_cycle_reminder_job,
+        interval=max(BETA_MONITOR_SUMMARY_INTERVAL_SECONDS, 60 * 60),
+        first=10 * 60,
+        name="closed_beta_cycle_reminders"
+    )
+
+    print("Beta cycle reminders programados.")
 
     return True
 
@@ -1861,6 +1982,7 @@ def main():
 
     schedule_commercial_expiry_job(telegram_app)
     schedule_beta_monitor_job(telegram_app)
+    schedule_beta_cycle_job(telegram_app)
 
     threading.Thread(
         target=check_expirations,
