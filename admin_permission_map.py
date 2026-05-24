@@ -190,6 +190,7 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "owner_panel_general_info": ("can_manage_groups", "can_edit_group_texts"),
     "owner_panel_audit": ("can_manage_groups", "can_view_logs"),
     "owner_panel_audit_detail": ("can_manage_groups", "can_view_logs"),
+    "owner_panel_commercial_config": ("can_manage_groups", "can_manage_plans", "can_view_payments", "can_manage_payments"),
 
     "admin_revoke_links": (SUPER_ADMIN_ONLY,),
     "admin_resend_links": (SUPER_ADMIN_ONLY,)
@@ -222,6 +223,7 @@ ADMIN_CALLBACK_PREFIX_PERMISSION_MAP = (
     ("owner_group_payment_methods_", ("can_manage_groups", "can_manage_plans", "can_view_payments", "can_manage_payments")),
     ("owner_group_payments_", ("can_view_payments", "can_manage_payments")),
     ("owner_group_subscriptions_", ("can_view_payments", "can_manage_payments")),
+    ("owner_group_users_", ("can_view_users", "can_manage_users")),
     ("owner_group_logs_", ("can_view_logs",)),
     ("owner_location_", ("can_manage_groups",)),
     ("owner_support_ticket_", ("can_respond_group_support",)),
@@ -254,6 +256,7 @@ ADMIN_CALLBACK_PREFIXES = (
     "owner_group_payment_methods_",
     "owner_group_payments_",
     "owner_group_subscriptions_",
+    "owner_group_users_",
     "owner_group_logs_",
     "owner_location_",
     "owner_support_ticket_",
