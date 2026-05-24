@@ -10,6 +10,13 @@ from audit_log_service import log_event
 from db import conn
 from invite_link_service import create_telegram_invite_link
 from notification_service import notify_super_admins, send_telegram_message
+from payment_gateway_config import (
+    PAYMENT_PROVIDER_STRIPE,
+    PAYMENT_SCOPE_PLATFORM,
+    PAYMENT_STATUS_PAID,
+    PURCHASE_TYPE_GROUP_ACCESS
+)
+from payment_service import create_payment_transaction
 from rbac_helpers import get_group_owner_user_id
 
 
@@ -170,6 +177,24 @@ def stripe_webhook():
 
         metadata_group_id = int(
             session["metadata"]["group_id"]
+        )
+
+        create_payment_transaction(
+            PAYMENT_PROVIDER_STRIPE,
+            status=PAYMENT_STATUS_PAID,
+            payment_scope=PAYMENT_SCOPE_PLATFORM,
+            purchase_type=PURCHASE_TYPE_GROUP_ACCESS,
+            user_id=user_id,
+            group_id=metadata_group_id,
+            amount=amount_total,
+            currency=currency,
+            external_payment_id=stripe_payment_id,
+            external_checkout_id=stripe_session_id,
+            idempotency_key=stripe_session_id,
+            metadata={
+                "price_id": price_id,
+                "source": "stripe_webhook"
+            }
         )
 
         # =========================

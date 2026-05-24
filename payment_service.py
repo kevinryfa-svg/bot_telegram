@@ -1,3 +1,5 @@
+import json
+
 from datetime import datetime, timedelta
 
 from db import conn
@@ -197,11 +199,19 @@ def list_recent_payments(limit=50, group_id=None):
 # =========================
 
 from payment_gateway_config import (
+    PAYMENT_DESTINATION_GROUP_CONFIG,
+    PAYMENT_DESTINATION_OWNER_ACCOUNT,
+    PAYMENT_DESTINATION_PLATFORM_ACCOUNT,
     PAYMENT_PROVIDER_CRYPTO,
     PAYMENT_PROVIDER_PAYPAL,
     PAYMENT_PROVIDER_REVOLUT,
     PAYMENT_PROVIDER_STRIPE,
+    PAYMENT_SCOPE_GROUP,
+    PAYMENT_SCOPE_PLATFORM,
     PAYMENT_STATUS_PENDING,
+    PROVIDER_CONFIG_SCOPE_GROUP,
+    PROVIDER_CONFIG_SCOPE_PLATFORM,
+    PURCHASE_TYPE_GROUP_ACCESS,
     is_payment_provider_enabled,
     list_payment_provider_configs
 )
@@ -234,6 +244,370 @@ def is_stripe_payments_enabled():
     return is_payment_provider_enabled(PAYMENT_PROVIDER_STRIPE)
 
 
+def normalize_payment_scope(scope):
+
+    normalized = (scope or PAYMENT_SCOPE_PLATFORM).strip().lower()
+
+
+    if normalized == PAYMENT_SCOPE_GROUP:
+
+        return PAYMENT_SCOPE_GROUP
+
+
+    return PAYMENT_SCOPE_PLATFORM
+
+
+def sanitize_payment_metadata(metadata=None):
+
+    metadata = metadata or {}
+
+
+    if not isinstance(metadata, dict):
+
+        return {}
+
+
+    blocked_terms = (
+        "secret",
+        "token",
+        "password",
+        "key",
+        "invite_link",
+        "webhook_secret"
+    )
+
+
+    sanitized = {}
+
+
+    for key, value in metadata.items():
+
+        key_text = str(key)
+
+
+        if any(term in key_text.lower() for term in blocked_terms):
+
+            sanitized[key_text] = "[redacted]"
+
+        else:
+
+            sanitized[key_text] = value
+
+
+    return sanitized
+
+
+def build_payment_metadata(metadata=None, **context):
+
+    merged = {}
+    merged.update(metadata or {})
+    merged.update({
+        key: value
+        for key, value in context.items()
+        if value is not None
+    })
+
+    return sanitize_payment_metadata(merged)
+
+
+def get_payment_provider_status(provider):
+
+    for provider_config in list_payment_provider_configs():
+
+        if provider_config.get("provider") == provider:
+
+            return provider_config
+
+
+    return None
+
+
+def get_payment_destination_context(scope, provider, group_id=None, owner_user_id=None):
+
+    normalized_scope = normalize_payment_scope(scope)
+
+
+    if normalized_scope == PAYMENT_SCOPE_GROUP:
+
+        config_row = fetch_group_payment_provider_config(group_id, provider)
+
+
+        if config_row:
+
+            return {
+                "payment_scope": PAYMENT_SCOPE_GROUP,
+                "provider_config_scope": PROVIDER_CONFIG_SCOPE_GROUP,
+                "provider_config_id": config_row.get("id"),
+                "destination_type": config_row.get("destination_type") or PAYMENT_DESTINATION_GROUP_CONFIG,
+                "destination_ref": config_row.get("destination_ref"),
+                "owner_user_id": config_row.get("owner_user_id") or owner_user_id,
+                "group_id": group_id
+            }
+
+
+        return {
+            "payment_scope": PAYMENT_SCOPE_GROUP,
+            "provider_config_scope": PROVIDER_CONFIG_SCOPE_GROUP,
+            "provider_config_id": None,
+            "destination_type": PAYMENT_DESTINATION_GROUP_CONFIG,
+            "destination_ref": None,
+            "owner_user_id": owner_user_id,
+            "group_id": group_id
+        }
+
+
+    return {
+        "payment_scope": PAYMENT_SCOPE_PLATFORM,
+        "provider_config_scope": PROVIDER_CONFIG_SCOPE_PLATFORM,
+        "provider_config_id": None,
+        "destination_type": PAYMENT_DESTINATION_PLATFORM_ACCOUNT,
+        "destination_ref": "platform",
+        "owner_user_id": owner_user_id,
+        "group_id": group_id
+    }
+
+
+def is_provider_available_for_scope(provider, scope, group_id=None, owner_user_id=None):
+
+    provider_status = get_payment_provider_status(provider)
+
+
+    if not provider_status or not provider_status.get("enabled"):
+
+        return False
+
+
+    normalized_scope = normalize_payment_scope(scope)
+
+
+    if normalized_scope == PAYMENT_SCOPE_PLATFORM:
+
+        return not provider_status.get("missing_env")
+
+
+    config_row = fetch_group_payment_provider_config(group_id, provider)
+
+
+    if not config_row:
+
+        return False
+
+
+    if owner_user_id and config_row.get("owner_user_id") != owner_user_id:
+
+        return False
+
+
+    return (
+        not provider_status.get("missing_env")
+        and config_row.get("is_enabled") is True
+        and config_row.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+    )
+
+
+def get_available_payment_methods_for_platform_purchase(purchase_type=None, include_disabled=False):
+
+    methods = []
+
+
+    for provider_config in list_payment_provider_configs():
+
+        provider = provider_config.get("provider")
+        enabled = provider_config.get("enabled") is True
+        configured = not provider_config.get("missing_env")
+        available = enabled and configured
+        methods.append({
+            "provider": provider,
+            "label": provider_config.get("label"),
+            "payment_scope": PAYMENT_SCOPE_PLATFORM,
+            "purchase_type": purchase_type,
+            "provider_config_scope": PROVIDER_CONFIG_SCOPE_PLATFORM,
+            "destination_type": PAYMENT_DESTINATION_PLATFORM_ACCOUNT,
+            "available": available,
+            "reason": "activo para plataforma" if available else ("faltan credenciales" if enabled else "deshabilitado globalmente"),
+            "missing_env": provider_config.get("missing_env") or []
+        })
+
+
+    if include_disabled:
+
+        return methods
+
+
+    return [method for method in methods if method.get("available")]
+
+
+def get_available_payment_methods_for_group_purchase(group_id, user_id=None, include_unavailable=False):
+
+    methods = []
+
+
+    for provider in list_group_payment_provider_statuses(group_id):
+
+        available = (
+            provider.get("global_enabled") is True
+            and not provider.get("missing_env")
+            and provider.get("group_enabled") is True
+            and provider.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+        )
+
+        methods.append({
+            "provider": provider.get("provider"),
+            "label": provider.get("label"),
+            "payment_scope": PAYMENT_SCOPE_GROUP,
+            "purchase_type": PURCHASE_TYPE_GROUP_ACCESS,
+            "provider_config_scope": PROVIDER_CONFIG_SCOPE_GROUP,
+            "destination_type": PAYMENT_DESTINATION_GROUP_CONFIG,
+            "available": available,
+            "reason": provider.get("status_label"),
+            "missing_env": provider.get("missing_env") or [],
+            "user_id": user_id,
+            "group_id": group_id
+        })
+
+
+    if include_unavailable:
+
+        return methods
+
+
+    return [method for method in methods if method.get("available")]
+
+
+def create_payment_transaction(
+    provider,
+    status=PAYMENT_STATUS_PENDING,
+    payment_scope=PAYMENT_SCOPE_PLATFORM,
+    purchase_type=None,
+    user_id=None,
+    owner_user_id=None,
+    group_id=None,
+    plan_id=None,
+    platform_product_key=None,
+    amount=None,
+    currency=None,
+    external_payment_id=None,
+    external_checkout_id=None,
+    idempotency_key=None,
+    provider_config_id=None,
+    provider_config_scope=None,
+    destination_type=None,
+    destination_ref=None,
+    metadata=None
+):
+
+    normalized_scope = normalize_payment_scope(payment_scope)
+    destination_context = get_payment_destination_context(
+        normalized_scope,
+        provider,
+        group_id=group_id,
+        owner_user_id=owner_user_id
+    )
+    metadata_json = build_payment_metadata(
+        metadata,
+        provider=provider,
+        payment_scope=normalized_scope,
+        purchase_type=purchase_type
+    )
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO payment_transactions
+                (
+                    provider,
+                    status,
+                    payment_scope,
+                    purchase_type,
+                    user_id,
+                    owner_user_id,
+                    group_id,
+                    plan_id,
+                    platform_product_key,
+                    provider_config_id,
+                    provider_config_scope,
+                    destination_type,
+                    destination_ref,
+                    amount,
+                    currency,
+                    external_payment_id,
+                    external_checkout_id,
+                    idempotency_key,
+                    metadata,
+                    metadata_json
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s::jsonb, %s::jsonb
+                )
+                ON CONFLICT (idempotency_key) DO UPDATE
+                SET status=EXCLUDED.status,
+                    payment_scope=EXCLUDED.payment_scope,
+                    purchase_type=EXCLUDED.purchase_type,
+                    owner_user_id=EXCLUDED.owner_user_id,
+                    group_id=EXCLUDED.group_id,
+                    plan_id=EXCLUDED.plan_id,
+                    platform_product_key=EXCLUDED.platform_product_key,
+                    provider_config_id=EXCLUDED.provider_config_id,
+                    provider_config_scope=EXCLUDED.provider_config_scope,
+                    destination_type=EXCLUDED.destination_type,
+                    destination_ref=EXCLUDED.destination_ref,
+                    amount=COALESCE(EXCLUDED.amount, payment_transactions.amount),
+                    currency=COALESCE(EXCLUDED.currency, payment_transactions.currency),
+                    external_payment_id=COALESCE(EXCLUDED.external_payment_id, payment_transactions.external_payment_id),
+                    external_checkout_id=COALESCE(EXCLUDED.external_checkout_id, payment_transactions.external_checkout_id),
+                    metadata=EXCLUDED.metadata,
+                    metadata_json=EXCLUDED.metadata_json,
+                    updated_at=CURRENT_TIMESTAMP
+                RETURNING id
+
+            """, (
+                provider,
+                status,
+                normalized_scope,
+                purchase_type,
+                user_id,
+                owner_user_id or destination_context.get("owner_user_id"),
+                group_id,
+                plan_id,
+                platform_product_key,
+                provider_config_id or destination_context.get("provider_config_id"),
+                provider_config_scope or destination_context.get("provider_config_scope"),
+                destination_type or destination_context.get("destination_type"),
+                destination_ref or destination_context.get("destination_ref"),
+                amount,
+                currency,
+                external_payment_id,
+                external_checkout_id,
+                idempotency_key,
+                json.dumps(metadata_json),
+                json.dumps(metadata_json)
+            ))
+
+            row = cur.fetchone()
+
+        conn.commit()
+
+        return row[0] if row else None
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print(
+            "Error creando transacción de pago:",
+            e
+        )
+
+        return None
+
+
 def create_placeholder_checkout(provider, **kwargs):
 
     if provider in (
@@ -257,7 +631,9 @@ def build_payment_methods_admin_text():
     lines = [
         "💳 Métodos de pago",
         "",
-        "Estado de proveedores automáticos preparados para el bot.",
+        "Pagos de plataforma: el dinero entra en la cuenta del dueño del bot.",
+        "Sirven para mensualidades de owners, publicar comunidades, bots personalizados, upgrades y módulos premium.",
+        "",
         "Stripe sigue siendo el proveedor activo para checkout real. PayPal, Revolut y cripto quedan preparados pero desactivados hasta configurar credenciales reales.",
         ""
     ]
@@ -271,6 +647,8 @@ def build_payment_methods_admin_text():
 
         lines.extend([
             f"{provider.get('label')}",
+            f"Scope: platform",
+            f"Destino: cuenta de plataforma",
             f"Estado: {enabled}",
             f"Flag: {provider.get('flag')}",
             f"Variables pendientes: {missing_text}",
@@ -280,6 +658,8 @@ def build_payment_methods_admin_text():
 
     lines.extend([
         "Seguridad fase 1:",
+        "- payment_scope=platform identifica cobros de la plataforma.",
+        "- payment_scope=group queda reservado para cobros propios de owners/grupos.",
         "- No se concede acceso por PayPal, Revolut ni cripto.",
         "- Ningún webhook nuevo está activo todavía.",
         "- No se guardan secretos en logs ni en el repo.",
@@ -295,6 +675,8 @@ def build_payment_gateway_architecture_notes():
     return {
         "provider": "stripe/paypal/revolut/crypto",
         "status": PAYMENT_STATUS_PENDING,
+        "payment_scope": "platform/group",
+        "destination_type": "platform_account/owner_account/group_config",
         "idempotency": "external_checkout_id + provider + event id",
         "access_rule": "no conceder acceso hasta webhook confirmado",
         "crypto_recommendation": "Coinbase Commerce para fase inicial alojada o BTCPay Server si se quiere autocustodia y más control."
@@ -330,9 +712,15 @@ def fetch_group_payment_provider_config(group_id, provider):
 
             cur.execute("""
 
-                SELECT provider,
+                SELECT id,
+                       owner_user_id,
+                       group_id,
+                       provider,
                        is_enabled,
                        status,
+                       provider_config_scope,
+                       destination_type,
+                       destination_ref,
                        public_config_json,
                        secret_ref,
                        updated_at
@@ -346,7 +734,28 @@ def fetch_group_payment_provider_config(group_id, provider):
                 provider
             ))
 
-            return cur.fetchone()
+            row = cur.fetchone()
+
+
+            if not row:
+
+                return None
+
+
+            return {
+                "id": row[0],
+                "owner_user_id": row[1],
+                "group_id": row[2],
+                "provider": row[3],
+                "is_enabled": row[4],
+                "status": row[5],
+                "provider_config_scope": row[6],
+                "destination_type": row[7],
+                "destination_ref": row[8],
+                "public_config_json": row[9],
+                "secret_ref": row[10],
+                "updated_at": row[11]
+            }
 
     except Exception as e:
 
@@ -378,10 +787,22 @@ def ensure_group_payment_provider_config(owner_user_id, group_id, provider, stat
             cur.execute("""
 
                 INSERT INTO group_payment_provider_configs
-                (owner_user_id, group_id, provider, is_enabled, status, public_config_json)
-                VALUES (%s, %s, %s, FALSE, %s, '{}'::jsonb)
+                (
+                    owner_user_id,
+                    group_id,
+                    provider,
+                    is_enabled,
+                    status,
+                    provider_config_scope,
+                    destination_type,
+                    public_config_json,
+                    metadata_json
+                )
+                VALUES (%s, %s, %s, FALSE, %s, %s, %s, '{}'::jsonb, '{}'::jsonb)
                 ON CONFLICT (group_id, provider)
                 DO UPDATE SET owner_user_id=EXCLUDED.owner_user_id,
+                              provider_config_scope=EXCLUDED.provider_config_scope,
+                              destination_type=EXCLUDED.destination_type,
                               updated_at=CURRENT_TIMESTAMP
                 RETURNING id,
                           owner_user_id,
@@ -395,7 +816,9 @@ def ensure_group_payment_provider_config(owner_user_id, group_id, provider, stat
                 owner_user_id,
                 group_id,
                 provider,
-                status
+                status,
+                PROVIDER_CONFIG_SCOPE_GROUP,
+                PAYMENT_DESTINATION_GROUP_CONFIG
             ))
 
             row = cur.fetchone()
@@ -427,9 +850,15 @@ def list_group_payment_provider_statuses(group_id):
 
             cur.execute("""
 
-                SELECT provider,
+                SELECT id,
+                       owner_user_id,
+                       group_id,
+                       provider,
                        is_enabled,
                        status,
+                       provider_config_scope,
+                       destination_type,
+                       destination_ref,
                        public_config_json,
                        secret_ref,
                        updated_at
@@ -439,7 +868,20 @@ def list_group_payment_provider_statuses(group_id):
             """, (group_id,))
 
             saved_rows = {
-                row[0]: row
+                row[3]: {
+                    "id": row[0],
+                    "owner_user_id": row[1],
+                    "group_id": row[2],
+                    "provider": row[3],
+                    "is_enabled": row[4],
+                    "status": row[5],
+                    "provider_config_scope": row[6],
+                    "destination_type": row[7],
+                    "destination_ref": row[8],
+                    "public_config_json": row[9],
+                    "secret_ref": row[10],
+                    "updated_at": row[11]
+                }
                 for row in cur.fetchall()
             }
 
@@ -463,7 +905,14 @@ def list_group_payment_provider_statuses(group_id):
 
         if saved:
 
-            _provider, is_enabled, status, _public_config, secret_ref, updated_at = saved
+            is_enabled = saved.get("is_enabled")
+            status = saved.get("status")
+            secret_ref = saved.get("secret_ref")
+            updated_at = saved.get("updated_at")
+            provider_config_id = saved.get("id")
+            provider_config_scope = saved.get("provider_config_scope") or PROVIDER_CONFIG_SCOPE_GROUP
+            destination_type = saved.get("destination_type") or PAYMENT_DESTINATION_GROUP_CONFIG
+            destination_ref = saved.get("destination_ref")
 
         else:
 
@@ -471,6 +920,10 @@ def list_group_payment_provider_statuses(group_id):
             status = GROUP_PAYMENT_PROVIDER_STATUS_NOT_CONFIGURED
             secret_ref = None
             updated_at = None
+            provider_config_id = None
+            provider_config_scope = PROVIDER_CONFIG_SCOPE_GROUP
+            destination_type = PAYMENT_DESTINATION_GROUP_CONFIG
+            destination_ref = None
 
 
         if not global_enabled:
@@ -503,6 +956,10 @@ def list_group_payment_provider_statuses(group_id):
             "group_enabled": is_enabled is True,
             "status": effective_status,
             "status_label": effective_label,
+            "provider_config_id": provider_config_id,
+            "provider_config_scope": provider_config_scope,
+            "destination_type": destination_type,
+            "destination_ref": destination_ref,
             "has_secret_ref": bool(secret_ref),
             "missing_env": provider_config.get("missing_env") or [],
             "can_be_enabled": can_be_enabled,
@@ -532,6 +989,7 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
     lines.extend([
         "",
         "Aquí se prepara la configuración de métodos de pago propios de esta comunidad.",
+        "Estos pagos tendrán payment_scope=group y destino owner/grupo cuando se activen en fases futuras.",
         "En esta fase todavía no se activan cobros reales por owner/grupo ni se piden credenciales.",
         "Los métodos siempre respetan los flags globales de la plataforma.",
         ""
@@ -542,6 +1000,8 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
 
         lines.extend([
             provider.get("label") or provider.get("provider"),
+            "Scope: group",
+            f"Destino futuro: {provider.get('destination_type') or PAYMENT_DESTINATION_GROUP_CONFIG}",
             f"Estado global: {'activo' if provider.get('global_enabled') else 'deshabilitado'}",
             f"Estado del grupo: {provider.get('status_label')}",
             f"Flag: {provider.get('flag')}",

@@ -461,11 +461,27 @@ def create_tables():
 
             status TEXT NOT NULL DEFAULT 'pending',
 
+            payment_scope TEXT DEFAULT 'platform',
+
+            purchase_type TEXT,
+
             user_id BIGINT,
+
+            owner_user_id BIGINT,
 
             group_id INTEGER,
 
             plan_id INTEGER,
+
+            platform_product_key TEXT,
+
+            provider_config_id INTEGER,
+
+            provider_config_scope TEXT DEFAULT 'platform',
+
+            destination_type TEXT DEFAULT 'platform_account',
+
+            destination_ref TEXT,
 
             amount INTEGER,
 
@@ -479,6 +495,8 @@ def create_tables():
 
             metadata JSONB DEFAULT '{}'::jsonb,
 
+            metadata_json JSONB DEFAULT '{}'::jsonb,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -491,6 +509,37 @@ def create_tables():
         # =========================
         # TABLA BANEADOS (MULTI-GRUPO)
         # =========================
+
+        payment_transaction_columns = [
+
+            ("payment_scope", "TEXT DEFAULT 'platform'"),
+            ("purchase_type", "TEXT"),
+            ("owner_user_id", "BIGINT"),
+            ("platform_product_key", "TEXT"),
+            ("provider_config_id", "INTEGER"),
+            ("provider_config_scope", "TEXT DEFAULT 'platform'"),
+            ("destination_type", "TEXT DEFAULT 'platform_account'"),
+            ("destination_ref", "TEXT"),
+            ("metadata_json", "JSONB DEFAULT '{}'::jsonb")
+
+        ]
+
+
+        for column_name, column_type in payment_transaction_columns:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE payment_transactions
+                    ADD COLUMN IF NOT EXISTS {column_name} {column_type}
+
+                """)
+
+            except Exception:
+
+                pass
+
 
         cur.execute("""
 
@@ -1662,7 +1711,15 @@ def create_tables():
 
             status TEXT DEFAULT 'not_configured',
 
+            provider_config_scope TEXT DEFAULT 'group',
+
+            destination_type TEXT DEFAULT 'group_config',
+
+            destination_ref TEXT,
+
             public_config_json JSONB DEFAULT '{}'::jsonb,
+
+            metadata_json JSONB DEFAULT '{}'::jsonb,
 
             secret_ref TEXT,
 
@@ -1675,6 +1732,32 @@ def create_tables():
         );
 
         """)
+
+
+        group_payment_provider_columns = [
+
+            ("provider_config_scope", "TEXT DEFAULT 'group'"),
+            ("destination_type", "TEXT DEFAULT 'group_config'"),
+            ("destination_ref", "TEXT"),
+            ("metadata_json", "JSONB DEFAULT '{}'::jsonb")
+
+        ]
+
+
+        for column_name, column_type in group_payment_provider_columns:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE group_payment_provider_configs
+                    ADD COLUMN IF NOT EXISTS {column_name} {column_type}
+
+                """)
+
+            except Exception:
+
+                pass
 
 
         # =========================
