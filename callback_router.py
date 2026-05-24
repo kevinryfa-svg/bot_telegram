@@ -23,6 +23,11 @@ from admin_permission_map import (
     get_required_permissions_for_callback,
     is_admin_callback
 )
+from admin_button_audit import (
+    audit_admin_button_menus,
+    format_admin_button_audit_detail,
+    format_admin_button_audit_summary
+)
 from admin_menu_catalog import build_admin_menu_button_rows
 from audit_log_service import (
     complete_active_beta_cycle,
@@ -1163,6 +1168,7 @@ def build_admin_global_tools_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
         [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
+        [InlineKeyboardButton("🧪 Auditoría de botones", callback_data="admin_button_audit")],
         [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_tools")],
@@ -1192,6 +1198,87 @@ def build_admin_global_commercial_plans_keyboard():
         [InlineKeyboardButton("⬅️ Volver a configuración global", callback_data="admin_global_config")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
+
+
+def build_admin_button_audit_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Ver detalle", callback_data="admin_button_audit_detail")],
+        [InlineKeyboardButton("🔁 Repetir auditoría", callback_data="admin_button_audit_refresh")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_button_audit")],
+        [InlineKeyboardButton("⬅️ Herramientas internas", callback_data="admin_global_tools")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_admin_button_audit_menu_specs():
+
+    return [
+        {
+            "name": "Panel global",
+            "callback_data": "admin_global_panel",
+            "keyboard": build_admin_global_panel_keyboard(),
+            "requires_help": True,
+            "requires_navigation": True
+        },
+        {
+            "name": "Configuración global",
+            "callback_data": "admin_global_config",
+            "keyboard": build_admin_global_config_keyboard(),
+            "requires_help": True,
+            "requires_navigation": True
+        },
+        {
+            "name": "Herramientas internas",
+            "callback_data": "admin_global_tools",
+            "keyboard": build_admin_global_tools_keyboard(),
+            "requires_help": True,
+            "requires_navigation": True
+        },
+        {
+            "name": "Propietarios / solicitudes comerciales",
+            "callback_data": "admin_owners_panel",
+            "keyboard": build_admin_owners_panel_keyboard(),
+            "requires_help": True,
+            "requires_navigation": True
+        },
+        {
+            "name": "Satisfacción de clientes",
+            "callback_data": "admin_customer_satisfaction",
+            "keyboard": build_customer_satisfaction_panel_keyboard(),
+            "requires_help": True,
+            "requires_navigation": True
+        },
+        {
+            "name": "Solicitudes de soporte",
+            "callback_data": "admin_support_tickets",
+            "keyboard": InlineKeyboardMarkup(build_support_tickets_keyboard([])),
+            "requires_help": True,
+            "requires_navigation": True
+        },
+        {
+            "name": "Marketplace global",
+            "callback_data": "admin_global_marketplace",
+            "keyboard": build_admin_global_marketplace_keyboard(),
+            "requires_help": True,
+            "requires_navigation": True
+        },
+        {
+            "name": "Planes comerciales del bot",
+            "callback_data": "admin_global_commercial_plans",
+            "keyboard": build_admin_global_commercial_plans_keyboard(),
+            "requires_help": False,
+            "requires_navigation": True
+        }
+    ]
+
+
+def build_admin_button_audit_report():
+
+    return audit_admin_button_menus(
+        build_admin_button_audit_menu_specs(),
+        get_required_permissions_for_callback
+    )
 
 
 def build_admin_owners_panel_keyboard():
@@ -1258,6 +1345,7 @@ ADMIN_CONTEXT_HELP_TEXTS = {
         "Este menú es para operar y diagnosticar el bot.\n\n"
         "🧪 Smoke Test Beta: ejecuta comprobaciones seguras antes de probar en real.\n"
         "🗓 Ciclo beta: controla semanas de beta, cierre y preparación de lanzamiento.\n"
+        "🧪 Auditoría de botones: revisa menús, callbacks, permisos y navegación sin pulsar todo a mano.\n"
         "📜 Logs del sistema: revisa actividad técnica y eventos importantes.\n"
         "📊 Monitor beta: mira alertas y resumen de las últimas horas.\n\n"
         "Si buscas cambiar catálogo, planes o encuestas, usa Configuración global."
@@ -1302,6 +1390,14 @@ ADMIN_CONTEXT_HELP_TEXTS = {
         "⚙️ Configuración global: vuelve a ajustes de catálogo, planes comerciales y encuestas.\n"
         "👥 Propietarios / comunidades: revisa owners y solicitudes que alimentan el marketplace.\n\n"
         "Úsalo para comprobar si el escaparate del bot está claro antes de abrir la beta."
+    ),
+    "button_audit": (
+        "❓ Ayuda — Auditoría de botones\n\n"
+        "Esta herramienta revisa menús importantes sin pulsar botón por botón en Telegram.\n\n"
+        "El resumen te dice si un menú está OK, si conviene revisarlo o si tiene un problema.\n"
+        "📋 Ver detalle muestra cada botón con su callback y observación.\n"
+        "🔁 Repetir auditoría vuelve a generar el informe con el estado actual.\n\n"
+        "Es una revisión automática: ayuda a encontrar errores, pero las pruebas reales de pagos, soporte y grupos siguen siendo necesarias."
     )
 }
 
@@ -1312,7 +1408,8 @@ ADMIN_CONTEXT_HELP_BACK_CALLBACKS = {
     "owners_panel": "admin_owners_panel",
     "customer_satisfaction": "admin_customer_satisfaction",
     "support_tickets": "admin_support_tickets",
-    "global_marketplace": "admin_global_marketplace"
+    "global_marketplace": "admin_global_marketplace",
+    "button_audit": "admin_button_audit"
 }
 
 
@@ -12709,6 +12806,45 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             build_admin_context_help_text(help_key),
             reply_markup=build_admin_context_help_keyboard(help_key)
+        )
+
+        return
+
+
+    if data in (
+        "admin_button_audit",
+        "admin_button_audit_refresh"
+    ):
+
+        report = build_admin_button_audit_report()
+        context.user_data["admin_button_audit_report"] = report
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            format_admin_button_audit_summary(report),
+            reply_markup=build_admin_button_audit_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_button_audit_detail":
+
+        report = context.user_data.get("admin_button_audit_report")
+
+
+        if not report:
+
+            report = build_admin_button_audit_report()
+            context.user_data["admin_button_audit_report"] = report
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            format_admin_button_audit_detail(report),
+            reply_markup=build_admin_button_audit_keyboard()
         )
 
         return
