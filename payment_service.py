@@ -203,6 +203,7 @@ from payment_gateway_config import (
     PAYMENT_DESTINATION_OWNER_ACCOUNT,
     PAYMENT_DESTINATION_PLATFORM_ACCOUNT,
     PAYMENT_PROVIDER_CHANGENOW,
+    PAYMENT_PROVIDER_GUARDARIAN,
     PAYMENT_PROVIDER_CRYPTO,
     PAYMENT_PROVIDER_PAYPAL,
     PAYMENT_PROVIDER_REVOLUT,
@@ -390,9 +391,9 @@ def is_provider_available_for_scope(provider, scope, group_id=None, owner_user_i
 
     if normalized_scope == PAYMENT_SCOPE_PLATFORM:
 
-        if provider == PAYMENT_PROVIDER_CHANGENOW:
+        if provider in (PAYMENT_PROVIDER_CHANGENOW, PAYMENT_PROVIDER_GUARDARIAN):
 
-            config_row = fetch_platform_payment_provider_config(PAYMENT_PROVIDER_CHANGENOW)
+            config_row = fetch_platform_payment_provider_config(provider)
 
             return bool(
                 config_row
@@ -421,7 +422,8 @@ def is_provider_available_for_scope(provider, scope, group_id=None, owner_user_i
     if provider in (
         PAYMENT_PROVIDER_PAYPAL,
         PAYMENT_PROVIDER_REVOLUT,
-        PAYMENT_PROVIDER_CHANGENOW
+        PAYMENT_PROVIDER_CHANGENOW,
+        PAYMENT_PROVIDER_GUARDARIAN
     ):
 
         return (
@@ -449,9 +451,9 @@ def get_available_payment_methods_for_platform_purchase(purchase_type=None, incl
         enabled = provider_config.get("enabled") is True
         configured = not provider_config.get("missing_env")
 
-        if provider == PAYMENT_PROVIDER_CHANGENOW:
+        if provider in (PAYMENT_PROVIDER_CHANGENOW, PAYMENT_PROVIDER_GUARDARIAN):
 
-            platform_config = fetch_platform_payment_provider_config(PAYMENT_PROVIDER_CHANGENOW)
+            platform_config = fetch_platform_payment_provider_config(provider)
             configured = bool(
                 platform_config
                 and platform_config.get("is_enabled") is True
@@ -492,7 +494,8 @@ def get_available_payment_methods_for_group_purchase(group_id, user_id=None, inc
         if provider.get("provider") in (
             PAYMENT_PROVIDER_PAYPAL,
             PAYMENT_PROVIDER_REVOLUT,
-            PAYMENT_PROVIDER_CHANGENOW
+            PAYMENT_PROVIDER_CHANGENOW,
+            PAYMENT_PROVIDER_GUARDARIAN
         ):
 
             available = (
@@ -556,6 +559,15 @@ def is_changenow_group_checkout_available(group_id):
 
     return is_provider_available_for_scope(
         PAYMENT_PROVIDER_CHANGENOW,
+        PAYMENT_SCOPE_GROUP,
+        group_id=group_id
+    )
+
+
+def is_guardarian_group_checkout_available(group_id):
+
+    return is_provider_available_for_scope(
+        PAYMENT_PROVIDER_GUARDARIAN,
         PAYMENT_SCOPE_GROUP,
         group_id=group_id
     )
@@ -916,9 +928,14 @@ def save_platform_payment_provider_encrypted_config(
         and safe_public_config.get("manual_review_required") is True
         and safe_public_config.get("checkout_enabled") is True
     )
+    auto_verified_provider = (
+        provider == PAYMENT_PROVIDER_GUARDARIAN
+        and safe_public_config.get("checkout_enabled") is True
+        and safe_public_config.get("auto_verified_status") == "finished"
+    )
     target_status = (
         GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
-        if manual_review_provider or safe_public_config.get("webhook_configured") is True
+        if manual_review_provider or auto_verified_provider or safe_public_config.get("webhook_configured") is True
         else GROUP_PAYMENT_PROVIDER_STATUS_PENDING
     )
     target_secret_status = (
@@ -1060,6 +1077,23 @@ def is_changenow_platform_checkout_available():
 
 
     config_row = fetch_platform_payment_provider_config(PAYMENT_PROVIDER_CHANGENOW)
+
+    return bool(
+        config_row
+        and config_row.get("is_enabled") is True
+        and config_row.get("status") == GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
+        and config_row.get("encrypted_config_json")
+    )
+
+
+def is_guardarian_platform_checkout_available():
+
+    if not is_payment_provider_enabled(PAYMENT_PROVIDER_GUARDARIAN):
+
+        return False
+
+
+    config_row = fetch_platform_payment_provider_config(PAYMENT_PROVIDER_GUARDARIAN)
 
     return bool(
         config_row
@@ -1350,7 +1384,8 @@ def list_group_payment_provider_statuses(group_id):
         if provider in (
             PAYMENT_PROVIDER_PAYPAL,
             PAYMENT_PROVIDER_REVOLUT,
-            PAYMENT_PROVIDER_CHANGENOW
+            PAYMENT_PROVIDER_CHANGENOW,
+            PAYMENT_PROVIDER_GUARDARIAN
         ):
 
             provider_missing_env = []
@@ -1432,7 +1467,7 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
         "Aquí se prepara la configuración de métodos de pago propios de esta comunidad.",
         "Estos pagos usan payment_scope=group y destino owner/grupo cuando el proveedor esté activo.",
         "Las credenciales propias del owner se configurarán desde el bot, no desde Railway.",
-        "PayPal y Revolut pueden crear checkout real si tienen credenciales cifradas, webhook secreto y estado activo. ChangeNOW puede crear pagos cripto controlados, siempre en revisión manual.",
+        "PayPal y Revolut pueden crear checkout real si tienen credenciales cifradas, webhook secreto y estado activo. ChangeNOW puede crear pagos cripto controlados, siempre en revisión manual. Guardarian permite pagos EUR con tarjeta y liquidación USDT con activación automática solo si GET /v1/transaction/{id} devuelve finished.",
         "Los métodos siempre respetan los flags globales de la plataforma.",
         f"Cifrado de credenciales: {'preparado' if has_payment_encryption_key() else 'pendiente de PAYMENT_CONFIG_ENCRYPTION_KEY'}.",
         ""
@@ -1455,7 +1490,7 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
 
     lines.extend([
         "Qué falta para activar pagos propios en próximas fases:",
-        "- ChangeNOW queda en revisión manual; otros proveedores cripto siguen pendientes.",
+        "- ChangeNOW queda en revisión manual; Guardarian se activa solo con verificación oficial finished.",
         "- PayPal y Revolut owner/grupo conceden acceso solo tras webhook verificado.",
         "",
         "Stripe global sigue funcionando como hasta ahora."
@@ -1541,6 +1576,25 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
             "- fixed intenta mantener importe/tasa fija durante una ventana limitada.",
             "- floating puede variar según mercado.",
             "Para vender accesos conviene fixed si ChangeNOW lo permite y está habilitado."
+        ])
+
+
+    if provider == PAYMENT_PROVIDER_GUARDARIAN:
+
+        lines.extend([
+            "",
+            "¿Qué es Guardarian?",
+            "Permite que el comprador pague con tarjeta en EUR y que el owner reciba USDT en su wallet.",
+            "",
+            "Cómo funciona en este bot:",
+            "1. Configuras API key, wallet USDT y red destino.",
+            "2. El comprador paga con tarjeta en euros.",
+            "3. El webhook solo dispara una revisión automática.",
+            "4. El bot consulta GET /v1/transaction/{id} en Guardarian.",
+            "5. El acceso se concede automáticamente solo si status == finished.",
+            "",
+            "Seguridad: no se promete anonimato total. Se ofrece privacidad frente al comprador y liquidación en USDT.",
+            "Pagos hold/KYC/review/unknown quedan en revisión manual."
         ])
 
 
@@ -1652,9 +1706,14 @@ def save_group_payment_provider_encrypted_config(
         and safe_public_config.get("manual_review_required") is True
         and safe_public_config.get("checkout_enabled") is True
     )
+    auto_verified_provider = (
+        provider == PAYMENT_PROVIDER_GUARDARIAN
+        and safe_public_config.get("checkout_enabled") is True
+        and safe_public_config.get("auto_verified_status") == "finished"
+    )
     target_status = (
         GROUP_PAYMENT_PROVIDER_STATUS_ACTIVE
-        if webhook_configured or manual_review_provider
+        if webhook_configured or manual_review_provider or auto_verified_provider
         else GROUP_PAYMENT_PROVIDER_STATUS_PENDING
     )
     target_secret_status = (

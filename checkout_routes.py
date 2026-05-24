@@ -7,6 +7,7 @@ from flask import request, jsonify, redirect
 from db import conn
 from payment_gateway_config import (
     PAYMENT_PROVIDER_CHANGENOW,
+    PAYMENT_PROVIDER_GUARDARIAN,
     PAYMENT_PROVIDER_PAYPAL,
     PAYMENT_PROVIDER_REVOLUT,
     PAYMENT_PROVIDER_STRIPE,
@@ -36,6 +37,11 @@ from payment_providers.changenow_provider import (
     create_group_changenow_order,
     create_platform_changenow_order,
     process_changenow_webhook
+)
+from payment_providers.guardarian_provider import (
+    create_group_guardarian_order,
+    create_platform_guardarian_order,
+    process_guardarian_webhook
 )
 
 
@@ -312,6 +318,56 @@ def register_checkout_routes(app):
         })
 
 
+    @app.route("/create-guardarian-group-order", methods=["POST"])
+    def create_guardarian_group_order():
+
+        data = request.json or {}
+
+        try:
+
+            user_id = int(data.get("user_id") or data.get("telegram_id"))
+            group_id = int(data.get("group_id"))
+            plan_id = int(data.get("plan_id"))
+
+        except Exception:
+
+            return jsonify({"error": "Datos de pago inválidos"}), 400
+
+
+        try:
+
+            order = create_group_guardarian_order(
+                user_id=user_id,
+                group_id=group_id,
+                plan_id=plan_id,
+                metadata={
+                    "source": "create_guardarian_group_order"
+                }
+            )
+
+        except PaymentProviderUnavailable as e:
+
+            return jsonify({"error": str(e)}), 503
+
+        except ValueError as e:
+
+            return jsonify({"error": str(e)}), 400
+
+        except Exception as e:
+
+            print("Error creando orden Guardarian de grupo:", e)
+            print(traceback.format_exc())
+
+            return jsonify({"error": "Error creando orden Guardarian"}), 500
+
+
+        return jsonify({
+            "provider": PAYMENT_PROVIDER_GUARDARIAN,
+            "payment_scope": "group",
+            **order
+        })
+
+
     @app.route("/create-paypal-platform-order", methods=["POST"])
     def create_paypal_platform_order():
 
@@ -419,6 +475,62 @@ def register_checkout_routes(app):
 
         return jsonify({
             "provider": PAYMENT_PROVIDER_CHANGENOW,
+            "payment_scope": PAYMENT_SCOPE_PLATFORM,
+            **order
+        })
+
+
+    @app.route("/create-guardarian-platform-order", methods=["POST"])
+    def create_guardarian_platform_order():
+
+        data = request.json or {}
+
+        try:
+
+            user_id = int(data.get("user_id") or data.get("telegram_id"))
+            amount = int(data.get("amount"))
+            currency = (data.get("currency") or "EUR").upper()
+            purchase_type = data.get("purchase_type") or PURCHASE_TYPE_COMMERCIAL_SUBSCRIPTION
+            platform_product_key = data.get("platform_product_key")
+            description = data.get("description") or "Pago EUR a USDT de plataforma"
+
+        except Exception:
+
+            return jsonify({"error": "Datos de pago inválidos"}), 400
+
+
+        try:
+
+            order = create_platform_guardarian_order(
+                user_id=user_id,
+                amount=amount,
+                currency=currency,
+                purchase_type=purchase_type,
+                platform_product_key=platform_product_key,
+                description=description,
+                metadata={
+                    "source": "create_guardarian_platform_order"
+                }
+            )
+
+        except PaymentProviderUnavailable as e:
+
+            return jsonify({"error": str(e)}), 503
+
+        except ValueError as e:
+
+            return jsonify({"error": str(e)}), 400
+
+        except Exception as e:
+
+            print("Error creando orden Guardarian plataforma:", e)
+            print(traceback.format_exc())
+
+            return jsonify({"error": "Error creando orden Guardarian"}), 500
+
+
+        return jsonify({
+            "provider": PAYMENT_PROVIDER_GUARDARIAN,
             "payment_scope": PAYMENT_SCOPE_PLATFORM,
             **order
         })
@@ -616,6 +728,26 @@ def register_checkout_routes(app):
         except Exception as e:
 
             print("Error procesando webhook ChangeNOW:", e)
+
+            return "Error", 500
+
+
+        return result.get("message", "OK"), result.get("status_code", 200)
+
+
+    @app.route("/webhook/guardarian", methods=["POST"])
+    def guardarian_webhook():
+
+        event_body = request.get_json(silent=True) or {}
+
+        try:
+
+            result = process_guardarian_webhook(event_body)
+
+        except Exception as e:
+
+            print("Error procesando webhook Guardarian:", e)
+            print(traceback.format_exc())
 
             return "Error", 500
 
