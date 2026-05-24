@@ -269,9 +269,85 @@ Guardar el Webhook ID en `PAYPAL_WEBHOOK_ID`.
 
 - PayPal solo se usa para pagos de plataforma.
 - PayPal por grupo/owner sigue preparado, pero no crea checkouts reales.
-- No se implementa Revolut real.
+- Revolut queda preparado, pero no crea checkouts reales en esta fase.
 - No se implementa cripto real.
 - La activación automática de productos de plataforma queda para una fase posterior por tipo de producto.
+
+## Fase 1D.2: Revolut real para pagos de plataforma
+
+Esta fase activa Revolut solo para `payment_scope=platform`. No activa Revolut propio por owner/grupo ni guarda API keys de propietarios en base de datos.
+
+### Variables necesarias
+
+- `ENABLE_REVOLUT_PAYMENTS=true`
+- `REVOLUT_API_KEY`
+- `REVOLUT_WEBHOOK_SECRET`
+- `REVOLUT_MODE=sandbox` o `REVOLUT_MODE=live`
+
+Opcionales:
+
+- `REVOLUT_BASE_URL`: permite cambiar la URL base si Revolut actualiza endpoints o si se usa un entorno específico.
+- `REVOLUT_API_VERSION`: por defecto `2024-09-01`.
+- `REVOLUT_RETURN_URL`: URL a la que vuelve el navegador tras el pago. Si no existe, se usa `SERVER_URL/revolut/return`.
+- `REVOLUT_CANCEL_URL`: URL de cancelación. Si no existe, se usa `SERVER_URL/revolut/cancel`.
+- `REVOLUT_SUCCESS_REDIRECT`: destino final del navegador tras volver de Revolut.
+- `REVOLUT_CANCEL_REDIRECT`: destino final tras cancelar.
+
+### Endpoints añadidos
+
+- `POST /create-revolut-platform-order`: crea una orden Revolut para productos de plataforma.
+- `GET /revolut/return`: redirige al comprador tras volver de Revolut.
+- `GET /revolut/cancel`: redirige al comprador tras cancelar.
+- `POST /webhook/revolut`: verifica firma HMAC y procesa eventos confirmados.
+
+### Flujo sandbox/live
+
+1. El sistema crea una orden con `create_platform_revolut_order(...)`.
+2. Se registra una fila en `payment_transactions` con:
+   - `provider=revolut`;
+   - `payment_scope=platform`;
+   - `status=pending`;
+   - `purchase_type=commercial_subscription`, `platform_product`, `owner_upgrade` o `group_access`;
+   - `destination_type=platform_account`.
+3. Revolut devuelve `checkout_url`.
+4. El comprador paga en Revolut.
+5. Revolut envía el evento a `/webhook/revolut`.
+6. El webhook valida `Revolut-Signature` con `REVOLUT_WEBHOOK_SECRET`.
+7. Se valida importe, moneda, scope y tipo de compra.
+8. La transacción pasa a `paid`, `failed` o `cancelled` de forma idempotente.
+
+### Idempotencia y seguridad
+
+- La referencia interna usa `revolut_platform_<uuid>` como `idempotency_key`.
+- El `order_id` queda en `external_checkout_id`.
+- El evento/order id queda en `external_payment_id`.
+- Si el webhook llega repetido y la transacción ya está `paid`, se devuelve OK sin reprocesar.
+- No se guarda `REVOLUT_API_KEY` ni `REVOLUT_WEBHOOK_SECRET` en base de datos.
+- No se imprimen tokens ni secretos.
+- Si el pago Revolut plataforma corresponde a `purchase_type=group_access` y tiene `group_id`/`plan_id`, se reutiliza el flujo común de concesión de acceso después de webhook verificado.
+- Para otros productos de plataforma, el pago queda como `paid_pending_platform_fulfillment` para activación manual o futura.
+
+### Configurar webhook en Revolut
+
+En Revolut Merchant, crear un webhook apuntando a:
+
+`https://TU_DOMINIO/webhook/revolut`
+
+Eventos esperados para esta fase:
+
+- `ORDER_COMPLETED`
+- `ORDER_CANCELLED`
+- `ORDER_FAILED`
+
+Guardar el secreto de firma en `REVOLUT_WEBHOOK_SECRET`.
+
+### Limitaciones de esta fase
+
+- Revolut solo se usa con credenciales globales de plataforma.
+- Revolut owner/grupo sigue como placeholder seguro.
+- No se capturan credenciales Revolut de owners.
+- No se implementan suscripciones recurrentes Revolut.
+- Cripto y Bizum siguen pendientes.
 
 ## Fase 1E: credenciales seguras por owner/grupo
 
@@ -346,7 +422,7 @@ En `💳 Métodos de pago del grupo`, cada proveedor puede mostrar:
 - desactivar,
 - borrar configuración.
 
-En esta fase, PayPal ya tiene un wizard seguro de configuración. Revolut y cripto siguen como placeholders seguros hasta tener integración real.
+En esta fase, PayPal ya tiene un wizard seguro de configuración. Revolut plataforma ya existe con credenciales globales, pero Revolut owner/grupo y cripto siguen como placeholders seguros hasta tener integración real.
 
 ## Fase 1F: wizard PayPal owner/grupo
 
@@ -422,4 +498,4 @@ Sigue pendiente para una fase posterior:
 1. Panel avanzado de verificación/diagnóstico PayPal por owner.
 2. Renovaciones recurrentes si se implementan suscripciones PayPal.
 3. PayPal propio por owner para productos que no sean acceso de grupo.
-4. Revolut, cripto y Bizum reales.
+4. Revolut owner/grupo, cripto y Bizum reales.
