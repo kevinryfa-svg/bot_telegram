@@ -37,7 +37,7 @@ from payment_service import (
 
 GUARDARIAN_DEFAULT_BASE_URL = "https://api-payments.guardarian.com"
 GUARDARIAN_FINAL_STATUSES = {"finished"}
-GUARDARIAN_PENDING_STATUSES = {"new", "waitingfordeposit", "depositreceived", "depositcaptured", "paymentsubmitted", "cryptosent"}
+GUARDARIAN_PENDING_STATUSES = {"new", "pending", "waiting", "waitingfordeposit", "depositreceived", "depositcaptured", "paymentsubmitted", "processing", "processed", "cryptosent"}
 GUARDARIAN_FAILED_STATUSES = {"failed", "depositfailed", "kycfailed"}
 GUARDARIAN_CANCELLED_STATUSES = {"canceled", "cancelled"}
 GUARDARIAN_EXPIRED_STATUSES = {"expired"}
@@ -186,7 +186,7 @@ def get_platform_guardarian_config():
 
         raise PaymentProviderUnavailable(error)
 
-    if config_row.get("is_enabled") is not True:
+    if config_row.get("is_enabled") is not True or config_row.get("status") != "active":
 
         raise PaymentProviderUnavailable("Guardarian plataforma está desactivado.")
 
@@ -208,7 +208,7 @@ def get_group_guardarian_config(group_id):
 
         raise PaymentProviderUnavailable(error)
 
-    if config_row.get("is_enabled") is not True:
+    if config_row.get("is_enabled") is not True or config_row.get("status") != "active":
 
         raise PaymentProviderUnavailable("Guardarian está desactivado para esta comunidad.")
 
@@ -531,6 +531,50 @@ def update_guardarian_transaction_status(transaction_id, status, external_paymen
         return False
 
 
+
+def mark_guardarian_paid_once(transaction_id, external_payment_id=None, metadata=None):
+
+    metadata = sanitize_payment_metadata(metadata or {})
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE payment_transactions
+                SET status=%s,
+                    external_payment_id=COALESCE(%s, external_payment_id),
+                    metadata_json=COALESCE(metadata_json, '{}'::jsonb) || %s::jsonb,
+                    metadata=COALESCE(metadata, '{}'::jsonb) || %s::jsonb,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=%s
+                AND provider=%s
+                AND status<>%s
+                RETURNING id
+
+            """, (
+                PAYMENT_STATUS_PAID,
+                external_payment_id,
+                json.dumps(metadata),
+                json.dumps(metadata),
+                transaction_id,
+                PAYMENT_PROVIDER_GUARDARIAN,
+                PAYMENT_STATUS_PAID
+            ))
+            row = cur.fetchone()
+
+        conn.commit()
+
+        return bool(row)
+
+    except Exception as e:
+
+        conn.rollback()
+        print("Error marcando pago Guardarian como paid:", e)
+        return False
+
+
 def create_platform_guardarian_order(user_id, amount, currency="EUR", purchase_type=PURCHASE_TYPE_COMMERCIAL_SUBSCRIPTION, platform_product_key=None, description=None, metadata=None):
 
     if str(currency or "").upper() != "EUR":
@@ -559,7 +603,9 @@ def create_platform_guardarian_order(user_id, amount, currency="EUR", purchase_t
             **(metadata or {}),
             "description": description,
             "source": "create_guardarian_platform_order",
-            "auto_rule": "status_finished_only"
+            "auto_rule": "status_finished_only",
+            "payout_network": config.get("payout_network"),
+            "payout_currency": "USDT"
         }
     )
 
@@ -641,7 +687,9 @@ def create_group_guardarian_order(user_id, group_id, plan_id, metadata=None):
             "source": "create_guardarian_group_order",
             "auto_rule": "status_finished_only",
             "plan_name": plan.get("plan_name"),
-            "group_name": plan.get("group_name")
+            "group_name": plan.get("group_name"),
+            "payout_network": config.get("payout_network"),
+            "payout_currency": "USDT"
         }
     )
 
@@ -725,6 +773,14 @@ def load_config_for_transaction(transaction):
 
         raise PaymentProviderUnavailable("No se encontró configuración cifrada de Guardarian.")
 
+    if transaction.get("provider_config_id") and config_row.get("id") != transaction.get("provider_config_id"):
+
+        raise PaymentProviderUnavailable("La configuración Guardarian no coincide con la transacción.")
+
+    if config_row.get("is_enabled") is not True or config_row.get("status") != "active":
+
+        raise PaymentProviderUnavailable("La configuración Guardarian está desactivada.")
+
     config = decrypt_provider_config(config_row.get("encrypted_config_json"))
     is_valid, error = validate_guardarian_config(config)
 
@@ -768,6 +824,41 @@ def validate_guardarian_official_status(transaction, official_transaction):
         except Exception:
 
             return PAYMENT_STATUS_MANUAL_REVIEW, "amount_unreadable"
+
+    official_id = str(
+        official_transaction.get("id")
+        or official_transaction.get("transaction_id")
+        or official_transaction.get("order_id")
+        or ""
+    )
+    expected_order_id = str(transaction.get("external_checkout_id") or "")
+
+    if official_id and expected_order_id and official_id != expected_order_id:
+
+        return PAYMENT_STATUS_MANUAL_REVIEW, "transaction_id_mismatch"
+
+    payout_currency = str(
+        official_transaction.get("to_currency")
+        or official_transaction.get("toCurrency")
+        or official_transaction.get("payout_currency")
+        or ""
+    ).upper()
+
+    if payout_currency and payout_currency != "USDT":
+
+        return PAYMENT_STATUS_MANUAL_REVIEW, "payout_currency_mismatch"
+
+    payout_network = str(
+        official_transaction.get("to_network")
+        or official_transaction.get("toNetwork")
+        or official_transaction.get("payout_network")
+        or ""
+    ).upper()
+    expected_network = str((transaction.get("metadata_json") or {}).get("payout_network") or "").upper()
+
+    if payout_network and expected_network and payout_network != expected_network:
+
+        return PAYMENT_STATUS_MANUAL_REVIEW, "payout_network_mismatch"
 
     return mapped_status, None
 
@@ -847,6 +938,21 @@ def process_guardarian_webhook(event_body):
 
     if new_status == PAYMENT_STATUS_PAID:
 
+        paid_marked = mark_guardarian_paid_once(
+            transaction.get("id"),
+            external_payment_id=provider_order_id,
+            metadata={
+                "guardarian_status": official_status,
+                "guardarian_transaction_id": provider_order_id,
+                "status_source": "GET /v1/transaction/{id}",
+                "auto_verified_status": "finished"
+            }
+        )
+
+        if not paid_marked:
+
+            return {"status_code": 200, "message": "Already processed"}
+
         if (
             transaction.get("payment_scope") == PAYMENT_SCOPE_GROUP
             and transaction.get("purchase_type") == PURCHASE_TYPE_GROUP_ACCESS
@@ -899,18 +1005,20 @@ def process_guardarian_webhook(event_body):
 
         activation_status = "payment_not_successful"
 
-    update_guardarian_transaction_status(
-        transaction.get("id"),
-        new_status,
-        external_payment_id=provider_order_id,
-        metadata={
-            "guardarian_status": official_status,
-            "guardarian_transaction_id": provider_order_id,
-            "activation_status": activation_status,
-            "status_source": "GET /v1/transaction/{id}",
-            "review_reason": review_reason
-        }
-    )
+    if new_status != PAYMENT_STATUS_PAID:
+
+        update_guardarian_transaction_status(
+            transaction.get("id"),
+            new_status,
+            external_payment_id=provider_order_id,
+            metadata={
+                "guardarian_status": official_status,
+                "guardarian_transaction_id": provider_order_id,
+                "activation_status": activation_status,
+                "status_source": "GET /v1/transaction/{id}",
+                "review_reason": review_reason
+            }
+        )
 
     log_event(
         "guardarian_payment_processed",

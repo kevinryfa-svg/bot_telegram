@@ -1593,7 +1593,7 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
             "4. El bot consulta GET /v1/transaction/{id} en Guardarian.",
             "5. El acceso se concede automáticamente solo si status == finished.",
             "",
-            "Seguridad: no se promete anonimato total. Se ofrece privacidad frente al comprador y liquidación en USDT.",
+            "Seguridad: no se promete ocultación total de identidad ni ausencia de verificación. Se ofrece privacidad frente al comprador y liquidación en USDT.",
             "Pagos hold/KYC/review/unknown quedan en revisión manual."
         ])
 

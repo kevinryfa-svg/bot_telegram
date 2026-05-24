@@ -112,6 +112,7 @@ from payment_service import (
     save_platform_payment_provider_encrypted_config
 )
 from payment_access_service import grant_group_access_after_payment
+from payment_providers.guardarian_provider import process_guardarian_webhook
 from payment_secret_store import (
     encrypt_provider_config,
     has_payment_encryption_key,
@@ -489,7 +490,7 @@ def build_guardarian_tutorial_text(scope_label="esta comunidad"):
         "¿Qué es Guardarian?\n"
         "Es una pasarela fiat a cripto: el comprador paga con tarjeta en euros y Guardarian liquida en USDT hacia la wallet configurada.\n\n"
         "¿Para qué sirve?\n"
-        f"Sirve para vender accesos o productos de {scope_label} con tarjeta, manteniendo privacidad frente al comprador y liquidación en USDT. No es anonimato total.\n\n"
+        f"Sirve para vender accesos o productos de {scope_label} con tarjeta, manteniendo privacidad frente al comprador y liquidación en USDT. No oculta obligaciones KYC/AML ni sustituye una revisión de cumplimiento.\n\n"
         "¿Cómo funciona en este bot?\n"
         "1. Configuras API key, wallet USDT y red correcta.\n"
         "2. El comprador paga con tarjeta en EUR.\n"
@@ -502,6 +503,8 @@ def build_guardarian_tutorial_text(scope_label="esta comunidad"):
         "- red correcta: TRC20, ERC20, Polygon, BEP20 u otra soportada;\n"
         "- webhook secret si tu cuenta lo ofrece;\n"
         "- revisar límites, KYC/AML y riesgos de tarjeta.\n\n"
+        "Qué es la red USDT:\n"
+        "USDT puede existir en varias redes. TRC20 suele ser económica, ERC20 usa Ethereum y puede ser más cara, Polygon/BEP20 suelen tener comisiones más bajas. La red elegida debe coincidir exactamente con la wallet.\n\n"
         "Importante:\n"
         "Una wallet o red incorrecta puede perder fondos. Algunos pagos pueden requerir verificación o revisión por importe, país o riesgo."
     )
@@ -613,7 +616,7 @@ def build_guardarian_payment_text(order):
 
     lines.extend([
         "Algunos pagos pueden tardar por verificación bancaria, KYC/AML o revisión de riesgo.",
-        "No promete anonimato total: ofrece privacidad frente al comprador y liquidación en USDT."
+        "Ofrece privacidad frente al comprador y liquidación en USDT, sin ocultar posibles revisiones KYC/AML."
     ])
 
     return "\n".join(lines)
@@ -16223,7 +16226,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             + "Automático: sí, únicamente cuando Guardarian devuelve status finished al consultar GET /v1/transaction/{id}.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📘 Cómo funciona", callback_data="admin_payment_guardarian_help")],
+                [InlineKeyboardButton("🧾 Qué necesitas", callback_data="admin_payment_guardarian_help")],
+                [InlineKeyboardButton("🧪 Estado de configuración", callback_data="admin_payment_guardarian")],
                 [InlineKeyboardButton("⚙️ Configurar Guardarian", callback_data="admin_payment_guardarian_connect")],
+                [InlineKeyboardButton("✅ Activar / reconectar método", callback_data="admin_payment_guardarian_connect")],
+                [InlineKeyboardButton("🔁 Reconsultar pagos pendientes", callback_data="admin_guardarian_recheck_pending")],
                 [InlineKeyboardButton("🧪 Estado / revisión", callback_data="admin_guardarian_manual_review")],
                 [InlineKeyboardButton("⛔ Desactivar", callback_data="admin_payment_guardarian_disable")],
                 [InlineKeyboardButton("🗑 Borrar configuración", callback_data="admin_payment_guardarian_delete")],
@@ -16532,6 +16539,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
 
         keyboard.extend([
+            [InlineKeyboardButton("🔁 Reconsultar pagos pendientes", callback_data="admin_guardarian_recheck_pending")],
             [InlineKeyboardButton("⬅️ Guardarian", callback_data="admin_payment_guardarian")],
             [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
         ])
@@ -16541,6 +16549,54 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             "\n".join(lines),
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data == "admin_guardarian_recheck_pending":
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT external_checkout_id
+                FROM payment_transactions
+                WHERE provider=%s
+                AND status IN (%s, %s)
+                AND external_checkout_id IS NOT NULL
+                ORDER BY created_at ASC
+                LIMIT 20
+
+            """, (
+                OWNER_PAYMENT_PROVIDER_GUARDARIAN,
+                "pending",
+                "manual_review"
+            ))
+            rows = cur.fetchall()
+
+        checked = 0
+
+        for row in rows:
+
+            provider_order_id = row[0]
+
+            if not provider_order_id:
+
+                continue
+
+            process_guardarian_webhook({"id": provider_order_id})
+            checked += 1
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"🔁 Reconsulta Guardarian terminada. Pagos revisados: {checked}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🧪 Ver revisión", callback_data="admin_guardarian_manual_review")],
+                [InlineKeyboardButton("⬅️ Guardarian", callback_data="admin_payment_guardarian")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return
