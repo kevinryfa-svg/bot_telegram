@@ -344,7 +344,7 @@ Guardar el secreto de firma en `REVOLUT_WEBHOOK_SECRET`.
 ### Limitaciones de esta fase
 
 - Revolut solo se usa con credenciales globales de plataforma.
-- Revolut owner/grupo sigue como placeholder seguro.
+- Revolut owner/grupo ya tiene checkout real si el owner configura credenciales cifradas desde el bot.
 - No se capturan credenciales Revolut de owners.
 - No se implementan suscripciones recurrentes Revolut.
 - Cripto y Bizum siguen pendientes.
@@ -422,7 +422,7 @@ En `💳 Métodos de pago del grupo`, cada proveedor puede mostrar:
 - desactivar,
 - borrar configuración.
 
-En esta fase, PayPal ya tiene un wizard seguro de configuración. Revolut plataforma ya existe con credenciales globales, pero Revolut owner/grupo y cripto siguen como placeholders seguros hasta tener integración real.
+En esta fase, PayPal y Revolut ya tienen wizard seguro de configuración. Revolut plataforma usa credenciales globales, mientras que Revolut owner/grupo usa credenciales cifradas configuradas desde el bot. Cripto sigue como placeholder seguro hasta tener integración real.
 
 ## Fase 1F: wizard PayPal owner/grupo
 
@@ -491,11 +491,78 @@ Al confirmarse el pago de grupo:
 - se notifica al comprador, super admin y owner;
 - se registran logs sin secretos ni invite links completos.
 
-### PayPal owner/grupo pendiente
+## Fase 1H: Revolut owner/grupo configurable desde el bot
+
+Revolut de owner/grupo ya puede configurarse desde:
+
+`🏪 Mis comunidades → Comunidad → 💳 Planes y pagos del grupo → 💳 Métodos de pago del grupo → Revolut → Configurar / conectar`
+
+El wizard pide:
+
+- modo `sandbox` o `live`;
+- `REVOLUT_API_KEY` del comercio/owner;
+- `REVOLUT_WEBHOOK_SECRET` del comercio/owner;
+- `REVOLUT_BASE_URL` opcional.
+
+Las variables Railway `REVOLUT_API_KEY` y `REVOLUT_WEBHOOK_SECRET` siguen siendo solo para `payment_scope=platform`.
+
+Para comunidades, las credenciales:
+
+- se introducen desde el bot;
+- se intentan borrar del chat después de recibirlas;
+- se cifran con `payment_secret_store.py`;
+- se guardan en `group_payment_provider_configs.encrypted_config_json`;
+- se muestran solo mediante `masked_public_summary`;
+- no se imprimen en logs ni mensajes.
+
+El checkout real de grupo se crea en:
+
+`POST /create-revolut-group-order`
+
+El endpoint recibe `telegram_id`, `group_id` y `plan_id`, valida que el plan pertenece al grupo y crea una orden Revolut con las credenciales cifradas del owner/grupo. No usa las credenciales Revolut de Railway.
+
+La transacción se guarda en `payment_transactions` con:
+
+- `provider=revolut`;
+- `payment_scope=group`;
+- `purchase_type=group_access`;
+- `group_id`;
+- `plan_id`;
+- `provider_config_scope=group`;
+- `provider_config_id`;
+- `status=pending`.
+
+El webhook `POST /webhook/revolut` se reutiliza de forma segura:
+
+- transacciones `payment_scope=platform` verifican firma con `REVOLUT_WEBHOOK_SECRET` de Railway;
+- transacciones `payment_scope=group` buscan la transacción por `order_id`/referencia interna y verifican firma con el `webhook_secret` cifrado del grupo;
+- el acceso se concede solo si el evento Revolut es verificado, `ORDER_COMPLETED`, con importe/moneda correctos;
+- el flujo es idempotente: si la transacción ya está `paid`, no vuelve a conceder acceso.
+
+Al confirmarse el pago de grupo:
+
+- se marca la transacción como pagada;
+- se crea el invite link real del grupo;
+- se guarda `users`, `payments` e `invite_links`;
+- se notifica al comprador, super admin y owner;
+- se registran logs sin secretos ni invite links completos.
+
+Pruebas sandbox recomendadas:
+
+1. Configurar Revolut sandbox desde el panel de una comunidad.
+2. Confirmar que el resumen muestra API key y webhook secret enmascarados.
+3. Comprar un plan de esa comunidad con Revolut.
+4. Confirmar que `/create-revolut-group-order` devuelve `checkout_url`.
+5. Enviar webhook `ORDER_COMPLETED` firmado con el secreto del grupo.
+6. Confirmar que se crea acceso e invite link una sola vez aunque el webhook se repita.
+7. Confirmar que Revolut plataforma sigue usando las variables Railway.
+
+### PayPal/Revolut owner/grupo pendiente
 
 Sigue pendiente para una fase posterior:
 
 1. Panel avanzado de verificación/diagnóstico PayPal por owner.
-2. Renovaciones recurrentes si se implementan suscripciones PayPal.
-3. PayPal propio por owner para productos que no sean acceso de grupo.
-4. Revolut owner/grupo, cripto y Bizum reales.
+2. Panel avanzado de verificación/diagnóstico Revolut por owner.
+3. Renovaciones recurrentes si se implementan suscripciones PayPal/Revolut.
+4. PayPal/Revolut propios por owner para productos que no sean acceso de grupo.
+5. Cripto y Bizum reales.

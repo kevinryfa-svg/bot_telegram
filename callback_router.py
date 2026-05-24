@@ -97,6 +97,7 @@ from payment_service import (
     disable_group_payment_provider_config,
     ensure_group_payment_provider_config,
     is_paypal_group_checkout_available,
+    is_revolut_group_checkout_available,
     is_stripe_payments_enabled,
     list_group_payment_provider_statuses,
     save_group_payment_provider_encrypted_config
@@ -136,6 +137,7 @@ revoke_link = None
 get_group_id = None
 
 OWNER_PAYMENT_PROVIDER_PAYPAL = "paypal"
+OWNER_PAYMENT_PROVIDER_REVOLUT = "revolut"
 OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS = (
     "configuring_owner_payment_provider",
     "owner_payment_provider",
@@ -209,6 +211,15 @@ def build_owner_paypal_cancel_keyboard(group_id):
     ])
 
 
+def build_owner_revolut_cancel_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar configuración", callback_data=f"owner_payment_revolut_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
 def build_owner_paypal_mode_keyboard(group_id):
 
     return InlineKeyboardMarkup([
@@ -219,12 +230,31 @@ def build_owner_paypal_mode_keyboard(group_id):
     ])
 
 
+def build_owner_revolut_mode_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧪 Sandbox", callback_data=f"owner_payment_revolut_mode_sandbox_{group_id}")],
+        [InlineKeyboardButton("🚀 Live", callback_data=f"owner_payment_revolut_mode_live_{group_id}")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_payment_revolut_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")]
+    ])
+
+
 def build_owner_paypal_confirm_keyboard(group_id):
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Guardar cifrado", callback_data=f"owner_payment_paypal_save_{group_id}")],
         [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_payment_paypal_cancel_{group_id}")],
         [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")]
+    ])
+
+
+def build_owner_revolut_confirm_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Guardar cifrado", callback_data=f"owner_payment_revolut_save_{group_id}")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_payment_revolut_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")]
     ])
 
 
@@ -274,6 +304,25 @@ def build_owner_paypal_safe_summary(payload):
         f"Client ID: {mask_secret_value(masked.get('client_id')) if masked.get('client_id') else '-'}\n"
         f"Client secret: {masked.get('client_secret') or '***'}\n"
         f"Webhook ID configurado: {webhook_text}"
+    )
+
+
+def build_owner_revolut_safe_summary(payload):
+
+    safe_payload = {
+        "mode": payload.get("mode"),
+        "api_key": payload.get("api_key"),
+        "webhook_secret": payload.get("webhook_secret"),
+        "base_url": payload.get("base_url")
+    }
+    masked = mask_provider_config(safe_payload)
+    base_url_text = payload.get("base_url") or "por defecto"
+
+    return (
+        f"Modo: {masked.get('mode') or '-'}\n"
+        f"API key: {masked.get('api_key') or '***'}\n"
+        f"Webhook secret: {masked.get('webhook_secret') or '***'}\n"
+        f"Base URL: {base_url_text}"
     )
 
 
@@ -4470,12 +4519,12 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
     chat_id = update.effective_chat.id if update.effective_chat else None
 
 
-    if provider != OWNER_PAYMENT_PROVIDER_PAYPAL or not group_id:
+    if provider not in (OWNER_PAYMENT_PROVIDER_PAYPAL, OWNER_PAYMENT_PROVIDER_REVOLUT) or not group_id:
 
         clear_owner_payment_provider_wizard(context)
         await context.bot.send_message(
             chat_id=chat_id,
-            text="⚠️ No he podido recuperar la configuración de PayPal. Vuelve a empezar desde Métodos de pago del grupo.",
+            text="⚠️ No he podido recuperar la configuración del método de pago. Vuelve a empezar desde Métodos de pago del grupo.",
             reply_markup=build_unknown_callback_keyboard()
         )
 
@@ -4490,7 +4539,7 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
         clear_owner_payment_provider_wizard(context)
         await context.bot.send_message(
             chat_id=chat_id,
-            text="⛔ No tienes permiso para configurar PayPal en esta comunidad.",
+            text="⛔ No tienes permiso para configurar este método de pago en esta comunidad.",
             reply_markup=build_owner_panel_nav_keyboard()
         )
 
@@ -4503,12 +4552,12 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
-                "⚠️ No se puede guardar PayPal todavía.\n\n"
+                "⚠️ No se puede guardar este método de pago todavía.\n\n"
                 "Falta PAYMENT_CONFIG_ENCRYPTION_KEY en la configuración segura del bot. "
                 "Por seguridad no se guardan credenciales sin cifrado."
             ),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+                [InlineKeyboardButton("⬅️ Volver al proveedor", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
@@ -4525,11 +4574,128 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
         await delete_sensitive_user_message(update)
         await context.bot.send_message(
             chat_id=chat_id,
-            text="✅ Configuración de PayPal cancelada. No se ha guardado ningún secreto.",
+            text="✅ Configuración cancelada. No se ha guardado ningún secreto.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+                [InlineKeyboardButton("⬅️ Volver al proveedor", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
+        )
+
+        return
+
+
+    if provider == OWNER_PAYMENT_PROVIDER_REVOLUT:
+
+        if step == "api_key":
+
+            await delete_sensitive_user_message(update)
+
+
+            if not is_valid_paypal_text_value(text, min_length=16):
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ La API key de Revolut no parece válida. Pégala otra vez o cancela la configuración.",
+                    reply_markup=build_owner_revolut_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["api_key"] = text
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "webhook_secret"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Ahora envía el REVOLUT_WEBHOOK_SECRET.\n\n"
+                    "Lo borraré del chat si Telegram lo permite y nunca se mostrará completo."
+                ),
+                reply_markup=build_owner_revolut_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "webhook_secret":
+
+            await delete_sensitive_user_message(update)
+
+
+            if not is_valid_paypal_text_value(text, min_length=16):
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ El webhook secret de Revolut no parece válido. Pégalo otra vez o cancela la configuración.",
+                    reply_markup=build_owner_revolut_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["webhook_secret"] = text
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "base_url"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Envía REVOLUT_BASE_URL solo si usas una URL personalizada.\n\n"
+                    "Si no lo necesitas, escribe: saltar"
+                ),
+                reply_markup=build_owner_revolut_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "base_url":
+
+            await delete_sensitive_user_message(update)
+
+            lowered = text.lower()
+
+
+            if lowered in ("saltar", "skip", "no", "-"):
+
+                payload["base_url"] = None
+
+            elif text.startswith("https://") and len(text) <= 300:
+
+                payload["base_url"] = text.rstrip("/")
+
+            else:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ La URL no parece válida. Debe empezar por https:// o escribe saltar.",
+                    reply_markup=build_owner_revolut_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "confirm"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Revisa la configuración segura de Revolut:\n\n"
+                    f"{build_owner_revolut_safe_summary(payload)}\n\n"
+                    "Se guardará cifrada. Revolut quedará disponible para compradores del grupo cuando el webhook confirme pagos reales."
+                ),
+                reply_markup=build_owner_revolut_confirm_keyboard(group_id)
+            )
+
+            return
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Usa los botones del asistente para continuar con Revolut.",
+            reply_markup=build_owner_revolut_cancel_keyboard(group_id)
         )
 
         return
@@ -12830,6 +12996,73 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
         )
 
 
+async def create_revolut_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
+
+    try:
+
+        response = requests.post(
+
+            f"{SERVER_URL}/create-revolut-group-order",
+
+            json={
+
+                "telegram_id": user_id,
+                "group_id": group_id,
+                "plan_id": plan_id
+
+            },
+
+            timeout=20
+
+        )
+        response_data = response.json()
+
+
+        if response.status_code >= 400 or not response_data.get("url"):
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=response_data.get("error") or "Revolut no está disponible para esta comunidad.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "🏦 Paga con Revolut aquí:\n"
+                f"{response_data['url']}\n\n"
+                "El acceso se enviará cuando Revolut confirme el pago por webhook verificado."
+            ),
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+    except Exception as e:
+
+        log_event(
+            "revolut_group_checkout_creation_error",
+            category="payment",
+            severity="error",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Error creando orden Revolut de grupo.",
+            metadata={
+                "plan_id": plan_id,
+                "error": str(e)
+            }
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Error creando pago Revolut",
+            reply_markup=build_group_recovery_keyboard(group_id)
+        )
+
+
 async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.user_data.get("location_gate_pending"):
@@ -13094,6 +13327,19 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
     if action == "paypal_checkout":
 
         await create_paypal_group_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return
+
+
+    if action == "revolut_checkout":
+
+        await create_revolut_group_checkout_for_user(
             context,
             chat_id,
             user_id,
@@ -18023,6 +18269,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = []
         paypal_available = is_paypal_group_checkout_available(group_id)
+        revolut_available = is_revolut_group_checkout_available(group_id)
 
 
         for plan_id, name, price_id, amount, currency in plans:
@@ -18058,6 +18305,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"🅿️ PayPal — {button_text}",
 
                         callback_data=f"paypal_group_plan_{group_id}_{plan_id}"
+
+                    )
+
+                ])
+
+
+            if revolut_available:
+
+                keyboard.append([
+
+                    InlineKeyboardButton(
+
+                        f"🏦 Revolut — {button_text}",
+
+                        callback_data=f"revolut_group_plan_{group_id}_{plan_id}"
 
                     )
 
@@ -19945,6 +20207,48 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
+        if provider == OWNER_PAYMENT_PROVIDER_REVOLUT:
+
+            if not has_payment_encryption_key():
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "⚠️ Revolut no puede configurarse todavía\n\n"
+                    "Falta PAYMENT_CONFIG_ENCRYPTION_KEY en la configuración segura del bot.\n\n"
+                    "Por seguridad no se piden ni se guardan credenciales reales sin cifrado.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⬅️ Volver a Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                    ])
+                )
+
+                return
+
+
+            clear_owner_payment_provider_wizard(context)
+            context.user_data["configuring_owner_payment_provider"] = True
+            context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_REVOLUT
+            context.user_data["owner_payment_group_id"] = group_id
+            context.user_data["owner_payment_step"] = "mode"
+            context.user_data["owner_payment_payload"] = {}
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🔌 Conectar Revolut al grupo\n\n"
+                "Necesitarás estos datos de tu cuenta Revolut Merchant:\n"
+                "- REVOLUT_API_KEY\n"
+                "- REVOLUT_WEBHOOK_SECRET\n"
+                "- modo sandbox o live\n"
+                "- REVOLUT_BASE_URL opcional\n\n"
+                "Las claves se cifran antes de guardarse, no se muestran completas y no deben enviarse por soporte.\n\n"
+                "Importante: estas credenciales son del owner/grupo y no usan las variables Railway de la plataforma.",
+                reply_markup=build_owner_revolut_mode_keyboard(group_id)
+            )
+
+            return
+
         await send_clean_message(
             context,
             query.message.chat_id,
@@ -20022,6 +20326,66 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("owner_payment_revolut_mode_"):
+
+        payload = data.replace("owner_payment_revolut_mode_", "", 1)
+        mode, _, group_text = payload.partition("_")
+
+
+        if mode not in ("sandbox", "live") or not group_text.isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el modo de Revolut.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(group_text)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⛔ No tienes permiso para configurar Revolut en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not context.user_data.get("configuring_owner_payment_provider"):
+
+            context.user_data["configuring_owner_payment_provider"] = True
+            context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_REVOLUT
+            context.user_data["owner_payment_group_id"] = group_id
+            context.user_data["owner_payment_payload"] = {}
+
+
+        owner_payload = context.user_data.get("owner_payment_payload") or {}
+        owner_payload["mode"] = mode
+        context.user_data["owner_payment_payload"] = owner_payload
+        context.user_data["owner_payment_step"] = "api_key"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "Modo seleccionado: sandbox\n\n"
+                if mode == "sandbox"
+                else "Modo seleccionado: live\n\n"
+            )
+            + "Envía ahora la REVOLUT_API_KEY del comercio.\n\n"
+            + "Intentaré borrar el mensaje del chat después de recibirlo para no dejar datos sensibles visibles.",
+            reply_markup=build_owner_revolut_cancel_keyboard(group_id)
+        )
+
+        return
+
+
     if data.startswith("owner_payment_paypal_cancel_"):
 
         group_id = extract_commercial_request_id(
@@ -20036,6 +20400,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ Configuración de PayPal cancelada. No se ha guardado ningún secreto.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_revolut_cancel_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_revolut_cancel_"
+        )
+        clear_owner_payment_provider_wizard(context)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración de Revolut cancelada. No se ha guardado ningún secreto.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
@@ -20180,6 +20565,144 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("owner_payment_revolut_save_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_revolut_save_"
+        )
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group_id or (not is_super_admin(user_id) and owner_user_id != user_id):
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⛔ No tienes permiso para guardar Revolut en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        provider = context.user_data.get("owner_payment_provider")
+        payload = context.user_data.get("owner_payment_payload") or {}
+
+
+        if provider != OWNER_PAYMENT_PROVIDER_REVOLUT or context.user_data.get("owner_payment_group_id") != group_id:
+
+            await query.message.reply_text(
+                "⚠️ No hay una configuración de Revolut lista para guardar.",
+                reply_markup=build_owner_revolut_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        required_keys = ("mode", "api_key", "webhook_secret")
+
+
+        if any(not payload.get(key) for key in required_keys):
+
+            await query.message.reply_text(
+                "⚠️ Faltan datos para guardar Revolut. Vuelve a iniciar la conexión.",
+                reply_markup=build_owner_revolut_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if not has_payment_encryption_key():
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⚠️ Falta PAYMENT_CONFIG_ENCRYPTION_KEY. No se guardan credenciales sin cifrado.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        safe_config = {
+            "provider": OWNER_PAYMENT_PROVIDER_REVOLUT,
+            "mode": payload.get("mode"),
+            "api_key": payload.get("api_key"),
+            "webhook_secret": payload.get("webhook_secret"),
+            "base_url": payload.get("base_url")
+        }
+
+
+        try:
+
+            encrypted_config = encrypt_provider_config(safe_config)
+            masked_config = mask_provider_config(safe_config)
+            masked_summary = (
+                f"mode={masked_config.get('mode')}; "
+                f"api_key={masked_config.get('api_key')}; "
+                f"webhook_secret=configured"
+            )
+            saved = save_group_payment_provider_encrypted_config(
+                owner_user_id or user_id,
+                group_id,
+                OWNER_PAYMENT_PROVIDER_REVOLUT,
+                encrypted_config,
+                masked_summary,
+                public_config_json={
+                    "mode": payload.get("mode"),
+                    "webhook_configured": True,
+                    "checkout_enabled": True,
+                    "base_url_configured": bool(payload.get("base_url"))
+                },
+                verified_by=user_id
+            )
+
+        except Exception:
+
+            saved = False
+
+        clear_owner_payment_provider_wizard(context)
+
+
+        if saved:
+
+            log_event(
+                "group_payment_provider_credentials_saved",
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Credenciales Revolut de grupo guardadas cifradas.",
+                metadata={
+                    "provider": OWNER_PAYMENT_PROVIDER_REVOLUT,
+                    "mode": payload.get("mode"),
+                    "webhook_configured": True,
+                    "status": "active"
+                }
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            ("✅ Revolut guardado de forma segura\n\n" if saved else "⚠️ No pude guardar Revolut\n\n")
+            + (
+                f"{build_owner_revolut_safe_summary(payload)}\n\n"
+                "Estado: activo para checkout de grupo.\n"
+                "El acceso solo se concede cuando Revolut confirme el pago por webhook verificado."
+                if saved
+                else "Revisa la configuración y vuelve a intentarlo."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")],
+                [InlineKeyboardButton("💳 Métodos del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
     if data.startswith("owner_payment_paypal_confirm_delete_"):
 
         group_id = extract_commercial_request_id(
@@ -20223,6 +20746,58 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "✅ Configuración PayPal borrada." if updated else "⚠️ No pude borrar la configuración PayPal.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a métodos de pago", callback_data=f"owner_group_payment_methods_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_revolut_confirm_delete_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_revolut_confirm_delete_"
+        )
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group_id or (not is_super_admin(user_id) and owner_user_id != user_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para borrar Revolut en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        updated = clear_group_payment_provider_config(
+            group_id,
+            OWNER_PAYMENT_PROVIDER_REVOLUT
+        )
+
+
+        if updated:
+
+            log_event(
+                "group_payment_provider_config_deleted",
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Configuración Revolut de grupo borrada.",
+                metadata={"provider": OWNER_PAYMENT_PROVIDER_REVOLUT}
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración Revolut borrada." if updated else "⚠️ No pude borrar la configuración Revolut.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Volver a métodos de pago", callback_data=f"owner_group_payment_methods_{group_id}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
@@ -20276,6 +20851,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "¿Confirmas el borrado?",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("✅ Confirmar borrado", callback_data=f"owner_payment_paypal_confirm_delete_{group_id}")],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        if deleting and provider == OWNER_PAYMENT_PROVIDER_REVOLUT:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🗑 Borrar configuración Revolut\n\n"
+                "Esto eliminará las credenciales cifradas guardadas para esta comunidad. "
+                "No afecta a Revolut plataforma, PayPal ni Stripe.\n\n"
+                "¿Confirmas el borrado?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Confirmar borrado", callback_data=f"owner_payment_revolut_confirm_delete_{group_id}")],
                     [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
                     [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
                 ])
@@ -26860,6 +27454,61 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await create_paypal_group_checkout_for_user(
+            context,
+            query.message.chat_id,
+            user_id,
+            group_id,
+            plan_id
+        )
+
+        return
+
+
+    if data.startswith("revolut_group_plan_"):
+
+        payload = data.replace("revolut_group_plan_", "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el plan Revolut.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        plan_id = int(parts[1])
+        context.user_data["selected_group"] = group_id
+
+
+        if not is_revolut_group_checkout_available(group_id):
+
+            await query.message.reply_text(
+                "Revolut todavía no está configurado para esta comunidad.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        if group_requires_location_gate(group_id):
+
+            await request_location_verification(
+                context,
+                query.message.chat_id,
+                group_id,
+                "revolut_checkout",
+                price_id=plan_id
+            )
+
+            return
+
+
+        await create_revolut_group_checkout_for_user(
             context,
             query.message.chat_id,
             user_id,
