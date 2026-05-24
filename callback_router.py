@@ -5,6 +5,7 @@ import requests
 import secrets
 import string
 import time
+import unicodedata
 
 from datetime import datetime, timedelta
 
@@ -318,6 +319,106 @@ SPANISH_AUTONOMOUS_COMMUNITIES = [
 
 SPANISH_AUTONOMOUS_COMMUNITY_LABELS = dict(SPANISH_AUTONOMOUS_COMMUNITIES)
 
+
+def normalize_location_text(value):
+
+    if value is None:
+
+        return ""
+
+
+    text = unicodedata.normalize(
+        "NFKD",
+        str(value).strip().lower()
+    )
+    text = "".join(
+        char
+        for char in text
+        if not unicodedata.combining(char)
+    )
+
+    return "".join(
+        char
+        for char in text
+        if char.isalnum()
+    )
+
+
+def resolve_country_code_alias(value):
+
+    normalized_value = normalize_location_text(value)
+
+
+    if not normalized_value:
+
+        return None
+
+
+    for country_code, country_label in HISPANIC_COUNTRY_LABELS.items():
+
+        if normalized_value in (
+            normalize_location_text(country_code),
+            normalize_location_text(country_label)
+        ):
+
+            return country_code
+
+
+    country_aliases = {
+        "spain": "ES",
+        "mexico": "MX",
+        "dominicanrepublic": "DO",
+        "republicadominicana": "DO",
+        "equatorialguinea": "GQ",
+        "guineaecuatorial": "GQ"
+    }
+
+    return country_aliases.get(normalized_value)
+
+
+def resolve_spanish_autonomous_community_alias(value):
+
+    normalized_value = normalize_location_text(value)
+
+
+    if not normalized_value:
+
+        return None
+
+
+    community_aliases = {
+        "todaespana": "all_spain",
+        "espana": "all_spain",
+        "spain": "all_spain",
+        "comunidadvalenciana": COMUNIDAD_VALENCIANA_REGION,
+        "comunitatvalenciana": COMUNIDAD_VALENCIANA_REGION,
+        "valenciancommunity": COMUNIDAD_VALENCIANA_REGION,
+        "valencia": COMUNIDAD_VALENCIANA_REGION,
+        "alicante": COMUNIDAD_VALENCIANA_REGION,
+        "castellon": COMUNIDAD_VALENCIANA_REGION,
+        "castello": COMUNIDAD_VALENCIANA_REGION,
+        "paisvalencia": COMUNIDAD_VALENCIANA_REGION
+    }
+
+
+    if normalized_value in community_aliases:
+
+        return community_aliases[normalized_value]
+
+
+    for community_slug, community_label in SPANISH_AUTONOMOUS_COMMUNITY_LABELS.items():
+
+        if normalized_value in (
+            normalize_location_text(community_slug),
+            normalize_location_text(community_label)
+        ):
+
+            return community_slug
+
+
+    return None
+
+
 SPANISH_AUTONOMOUS_COMMUNITY_BOXES = [
     ("ceuta", None, 35.86, 35.92, -5.38, -5.27),
     ("melilla", None, 35.24, 35.35, -3.05, -2.88),
@@ -401,25 +502,39 @@ def resolve_location_region(lat, lon):
 
 def normalize_allowed_region_type(region_type, allowed_region):
 
+    country_code = resolve_country_code_alias(allowed_region)
+    community_slug = resolve_spanish_autonomous_community_alias(allowed_region)
+
+
     if region_type:
+
+        if (
+            region_type == LOCATION_REGION_TYPE_COUNTRY
+            and community_slug
+            and community_slug != "all_spain"
+            and not country_code
+        ):
+
+            return LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY
+
+
+        if (
+            region_type == LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY
+            and community_slug == "all_spain"
+        ):
+
+            return LOCATION_REGION_TYPE_COUNTRY
+
 
         return region_type
 
 
-    if allowed_region in HISPANIC_COUNTRY_LABELS:
+    if country_code or community_slug == "all_spain":
 
         return LOCATION_REGION_TYPE_COUNTRY
 
 
-    if allowed_region in (
-        COMUNIDAD_VALENCIANA_REGION,
-        COMUNIDAD_VALENCIANA_LABEL
-    ):
-
-        return LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY
-
-
-    if allowed_region in SPANISH_AUTONOMOUS_COMMUNITY_LABELS:
+    if community_slug:
 
         return LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY
 
@@ -429,22 +544,20 @@ def normalize_allowed_region_type(region_type, allowed_region):
 
 def normalize_allowed_region(region_type, allowed_region):
 
-    if allowed_region == COMUNIDAD_VALENCIANA_LABEL:
+    if region_type == LOCATION_REGION_TYPE_COUNTRY:
+
+        return resolve_country_code_alias(allowed_region) or "ES"
+
+
+    community_slug = resolve_spanish_autonomous_community_alias(allowed_region)
+
+
+    if community_slug == "all_spain":
 
         return COMUNIDAD_VALENCIANA_REGION
 
 
-    if region_type == LOCATION_REGION_TYPE_COUNTRY:
-
-        return allowed_region or "ES"
-
-
-    if allowed_region in SPANISH_AUTONOMOUS_COMMUNITY_LABELS:
-
-        return allowed_region
-
-
-    return allowed_region or COMUNIDAD_VALENCIANA_REGION
+    return community_slug or allowed_region or COMUNIDAD_VALENCIANA_REGION
 
 
 def format_allowed_region(region_type, allowed_region):
@@ -476,14 +589,140 @@ def location_matches_allowed_region(resolved_region, region_type, allowed_region
 
     if region_type == LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY:
 
+        detected_community_slug = resolve_spanish_autonomous_community_alias(
+            resolved_region.get("spanish_autonomous_community")
+        )
+
         return (
             resolved_region.get("country") == "ES"
-            and resolved_region.get("spanish_autonomous_community")
-            == SPANISH_AUTONOMOUS_COMMUNITY_LABELS.get(allowed_region)
+            and detected_community_slug == allowed_region
         )
 
 
     return False
+
+
+def format_detected_location_region(resolved_region):
+
+    resolved_region = resolved_region or {}
+
+
+    if not resolved_region.get("country"):
+
+        return "región no identificada"
+
+
+    if resolved_region.get("country") == "ES":
+
+        detected_parts = []
+
+
+        if resolved_region.get("spanish_autonomous_community"):
+
+            detected_parts.append(resolved_region.get("spanish_autonomous_community"))
+
+
+        if resolved_region.get("province"):
+
+            detected_parts.append(resolved_region.get("province"))
+
+
+        detected_parts.append("España")
+
+        return ", ".join(detected_parts)
+
+
+    return resolved_region.get("country_name") or resolved_region.get("country")
+
+
+def get_location_rejection_reason(resolved_region, region_type, allowed_region):
+
+    region_type = normalize_allowed_region_type(region_type, allowed_region)
+    allowed_region = normalize_allowed_region(region_type, allowed_region)
+    detected_label = format_detected_location_region(resolved_region)
+
+
+    if not resolved_region or not resolved_region.get("country"):
+
+        return (
+            "location_geocode_failed",
+            "No he podido identificar el país o la región de la ubicación recibida.",
+            detected_label
+        )
+
+
+    if region_type == LOCATION_REGION_TYPE_COUNTRY:
+
+        expected_country = HISPANIC_COUNTRY_LABELS.get(allowed_region, allowed_region)
+
+        return (
+            "location_region_mismatch",
+            f"La ubicación detectada es {detected_label}, pero esta comunidad permite {expected_country}.",
+            detected_label
+        )
+
+
+    if region_type == LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY:
+
+        if resolved_region.get("country") != "ES":
+
+            return (
+                "location_region_mismatch",
+                f"La ubicación detectada es {detected_label}, pero esta comunidad permite una comunidad autónoma de España.",
+                detected_label
+            )
+
+
+        if not resolved_region.get("spanish_autonomous_community"):
+
+            return (
+                "location_geocode_failed",
+                "He detectado España, pero no he podido identificar la comunidad autónoma con suficiente seguridad.",
+                detected_label
+            )
+
+
+        expected_region = SPANISH_AUTONOMOUS_COMMUNITY_LABELS.get(allowed_region, allowed_region)
+
+        return (
+            "location_region_mismatch",
+            f"La ubicación detectada es {detected_label}, pero esta comunidad permite {expected_region}, España.",
+            detected_label
+        )
+
+
+    return (
+        "location_check_failed",
+        "No he podido validar esta ubicación con la regla configurada.",
+        detected_label
+    )
+
+
+def build_location_log_metadata(region_type, allowed_region, region_label, resolved_region, reason, location=None, action=None):
+
+    resolved_region = resolved_region or {}
+    metadata = {
+        "rule_type": normalize_allowed_region_type(region_type, allowed_region),
+        "allowed_region": region_label,
+        "allowed_region_raw": allowed_region,
+        "detected_country": resolved_region.get("country"),
+        "detected_country_name": resolved_region.get("country_name"),
+        "detected_region": resolved_region.get("spanish_autonomous_community"),
+        "detected_province": resolved_region.get("province"),
+        "detected_label": format_detected_location_region(resolved_region),
+        "reason": reason,
+        "action": action
+    }
+
+
+    if location:
+
+        metadata["telegram_location_received"] = True
+        metadata["lat_approx"] = round(location.latitude, 1)
+        metadata["lon_approx"] = round(location.longitude, 1)
+
+
+    return metadata
 
 
 def build_location_denied_keyboard():
@@ -720,7 +959,9 @@ async def request_location_verification(
         text=(
             "📍 Esta comunidad requiere verificar tu ubicación.\n\n"
             f"Región permitida: {region_label}\n\n"
-            "Usaremos tu ubicación solo para comprobar la región y no guardaremos tus coordenadas exactas."
+            "Pulsa el botón de Telegram “📍 Enviar ubicación”. No escribas tu ciudad manualmente.\n\n"
+            "Usaremos tu ubicación solo para comprobar la región y no guardaremos tus coordenadas exactas.\n\n"
+            "Si estás dentro de la zona permitida y te rechaza, contacta con soporte."
         ),
         reply_markup=keyboard
     )
@@ -11428,13 +11669,46 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
 
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+    group_id = context.user_data.get("location_gate_group_id")
+    action = context.user_data.get("location_gate_action")
+    price_id = context.user_data.get("location_gate_price_id")
+    _enabled, allowed_region, region_type = get_group_location_gate(group_id)
+    region_label = format_allowed_region(region_type, allowed_region)
 
 
     if not update.message or not update.message.location:
 
+        metadata = build_location_log_metadata(
+            region_type,
+            allowed_region,
+            region_label,
+            {},
+            "telegram_location_missing",
+            action=action
+        )
+        metadata["message_type"] = "text_or_non_location"
+
+        log_event(
+            "location_missing_permission",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="El usuario no compartió ubicación real de Telegram durante una verificación regional.",
+            metadata=metadata
+        )
+
         await context.bot.send_message(
             chat_id=chat_id,
-            text="📍 Para continuar debes pulsar el botón de ubicación.",
+            text=(
+                "📍 Para verificar tu ubicación debes pulsar el botón de Telegram "
+                "“📍 Enviar ubicación”.\n\n"
+                "No escribas tu ciudad manualmente: el bot solo puede validar una ubicación real compartida desde Telegram.\n\n"
+                f"Región permitida: {region_label}\n\n"
+                "Si estás dentro de la zona permitida y te sigue rechazando, contacta con soporte."
+            ),
             reply_markup=ReplyKeyboardMarkup(
                 [[KeyboardButton(
                     "📍 Enviar ubicación",
@@ -11448,16 +11722,53 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
 
-    group_id = context.user_data.get("location_gate_group_id")
-    action = context.user_data.get("location_gate_action")
-    price_id = context.user_data.get("location_gate_price_id")
     location = update.message.location
-    resolved_region = resolve_location_region(
-        location.latitude,
-        location.longitude
-    )
-    _enabled, allowed_region, region_type = get_group_location_gate(group_id)
-    region_label = format_allowed_region(region_type, allowed_region)
+
+
+    try:
+
+        resolved_region = resolve_location_region(
+            location.latitude,
+            location.longitude
+        )
+
+    except Exception as e:
+
+        resolved_region = {}
+
+        log_event(
+            "location_geocode_failed",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Error interno resolviendo ubicación regional.",
+            metadata=build_location_log_metadata(
+                region_type,
+                allowed_region,
+                region_label,
+                resolved_region,
+                f"resolve_error:{e}",
+                location=location,
+                action=action
+            )
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "⚠️ No he podido validar la ubicación ahora mismo.\n\n"
+                "Vuelve a intentarlo pulsando el botón de ubicación. "
+                "Si el problema continúa, contacta con soporte."
+            ),
+            reply_markup=build_location_denied_keyboard()
+        )
+
+        return
+
+
     is_allowed = location_matches_allowed_region(
         resolved_region,
         region_type,
@@ -11466,6 +11777,22 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
 
 
     if not is_allowed:
+
+        reason_event, reason_message, detected_label = get_location_rejection_reason(
+            resolved_region,
+            region_type,
+            allowed_region
+        )
+        metadata = build_location_log_metadata(
+            region_type,
+            allowed_region,
+            region_label,
+            resolved_region,
+            reason_message,
+            location=location,
+            action=action
+        )
+
 
         try:
 
@@ -11482,7 +11809,7 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
 
 
         log_event(
-            "location_denied",
+            reason_event,
             category="access",
             severity="warning",
             scope="group",
@@ -11490,25 +11817,34 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
             actor_user_id=user_id,
             target_user_id=user_id,
             message="Usuario rechazado por restricción de ubicación.",
-            metadata={
-                "allowed_region": region_label,
-                "country": resolved_region.get("country"),
-                "region": resolved_region.get("spanish_autonomous_community"),
-                "province": resolved_region.get("province")
-            }
+            metadata=metadata
+        )
+
+        context.user_data["support_context"] = (
+            "Rechazo de ubicación. "
+            f"Grupo: {group_id}. "
+            f"Región permitida: {region_label}. "
+            f"Detectado: {detected_label}. "
+            f"Motivo: {reason_message}"
         )
 
         clear_location_gate_state(context)
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"⛔ Esta comunidad solo admite usuarios verificados en: {region_label}.",
+            text=(
+                "⛔ No he podido validar tu ubicación para esta comunidad.\n\n"
+                f"Región permitida: {region_label}\n"
+                f"Detectado: {detected_label}\n"
+                f"Motivo: {reason_message}\n\n"
+                "Asegúrate de pulsar el botón de ubicación de Telegram, no escribir la ciudad manualmente."
+            ),
             reply_markup=ReplyKeyboardRemove()
         )
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Puedes contactar con soporte si crees que es un error.",
+            text="Si estás dentro de la zona permitida y crees que es un error, contacta con soporte.",
             reply_markup=build_location_denied_keyboard()
         )
 
@@ -11528,6 +11864,26 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
 
         print("Error guardando verificación de ubicación:", e)
 
+
+    log_event(
+        "location_check_passed",
+        category="access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        message="Usuario verificado correctamente por restricción de ubicación.",
+        metadata=build_location_log_metadata(
+            region_type,
+            allowed_region,
+            region_label,
+            resolved_region,
+            "allowed",
+            location=location,
+            action=action
+        )
+    )
 
     clear_location_gate_state(context)
 
