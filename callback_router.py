@@ -5036,8 +5036,8 @@ def build_owner_section_keyboard(user_id, group_id, section):
             keyboard.append([InlineKeyboardButton("💳 Métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")])
 
         if user_has_group_permission_any(user_id, group_id, ["can_view_payments", "can_manage_payments"]):
-            keyboard.append([InlineKeyboardButton("💳 Pagos recibidos", callback_data="admin_view_payments")])
-            keyboard.append([InlineKeyboardButton("📌 Suscripciones activas", callback_data="admin_view_payments")])
+            keyboard.append([InlineKeyboardButton("💳 Pagos recibidos", callback_data=f"owner_group_payments_{group_id}")])
+            keyboard.append([InlineKeyboardButton("📌 Suscripciones activas", callback_data=f"owner_group_subscriptions_{group_id}")])
 
     elif section == "security":
 
@@ -17780,6 +17780,270 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("owner_group_payments_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_group_payments_"
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar la comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group = fetch_group_basic_info(group_id)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group:
+
+            await query.message.reply_text(
+                "⚠️ Comunidad no encontrada.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver pagos de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+        _group_id, group_name, _telegram_group_id = group
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT user_id,
+                           plan,
+                           amount,
+                           currency,
+                           status,
+                           payment_date
+                    FROM payments
+                    WHERE group_id=%s
+                    ORDER BY payment_date DESC
+                    LIMIT 30
+
+                """, (group_id,))
+
+                rows = cur.fetchall()
+
+        except Exception as e:
+
+            print("Error cargando pagos de grupo:", e)
+
+            await query.message.reply_text(
+                "❌ No he podido cargar los pagos de esta comunidad ahora mismo.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver a planes y pagos", callback_data="owner_panel_payments")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Volver a planes y pagos", callback_data="owner_panel_payments")],
+            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+
+
+        if not rows:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                f"💳 Pagos recibidos\n\nComunidad: {group_name or f'Grupo {group_id}'}\n\nTodavía no hay pagos recibidos para esta comunidad.",
+                reply_markup=keyboard
+            )
+
+            return
+
+
+        text = f"💳 Pagos recibidos\n\nComunidad: {group_name or f'Grupo {group_id}'}\n\n"
+
+
+        for payment_user_id, plan_name, amount, currency, status, payment_date in rows:
+
+            text += (
+                f"Usuario: {payment_user_id}\n"
+                f"Plan: {plan_name or '-'}\n"
+                f"Importe: {amount or '-'} {currency or ''}\n"
+                f"Estado: {status or '-'}\n"
+                f"Fecha: {payment_date or '-'}\n\n"
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            text[:3900],
+            reply_markup=keyboard
+        )
+
+        return
+
+
+    if data.startswith("owner_group_subscriptions_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_group_subscriptions_"
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar la comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group = fetch_group_basic_info(group_id)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group:
+
+            await query.message.reply_text(
+                "⚠️ Comunidad no encontrada.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver suscripciones de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+        _group_id, group_name, _telegram_group_id = group
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT user_id,
+                           username,
+                           first_name,
+                           expiration,
+                           subscription_active,
+                           created_at
+                    FROM users
+                    WHERE group_id=%s
+                    AND COALESCE(subscription_active, FALSE)=TRUE
+                    AND (
+                        expiration IS NULL
+                        OR expiration > NOW()
+                    )
+                    ORDER BY expiration ASC NULLS LAST,
+                             created_at DESC
+                    LIMIT 30
+
+                """, (group_id,))
+
+                rows = cur.fetchall()
+
+        except Exception as e:
+
+            print("Error cargando suscripciones de grupo:", e)
+
+            await query.message.reply_text(
+                "❌ No he podido cargar las suscripciones de esta comunidad ahora mismo.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver a planes y pagos", callback_data="owner_panel_payments")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Volver a planes y pagos", callback_data="owner_panel_payments")],
+            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+
+
+        if not rows:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                f"📌 Suscripciones activas\n\nComunidad: {group_name or f'Grupo {group_id}'}\n\nTodavía no hay suscripciones activas para esta comunidad.",
+                reply_markup=keyboard
+            )
+
+            return
+
+
+        text = f"📌 Suscripciones activas\n\nComunidad: {group_name or f'Grupo {group_id}'}\n\n"
+
+
+        for subscriber_user_id, username, first_name, expiration, _subscription_active, created_at in rows:
+
+            name = first_name or "Sin nombre"
+
+            if username:
+
+                name += f" (@{username})"
+
+
+            expiration_text = "permanente" if expiration is None else str(expiration)
+
+            text += (
+                f"Usuario: {subscriber_user_id}\n"
+                f"Nombre: {name}\n"
+                f"Acceso: {expiration_text}\n"
+                f"Alta: {created_at or '-'}\n\n"
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            text[:3900],
+            reply_markup=keyboard
+        )
+
+        return
+
+
     if data == "owner_support_tickets":
 
         group_id = get_selected_group_for_permissions(
@@ -18027,8 +18291,33 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if data == "edit_group_stripe":
+
+            group = fetch_group_basic_info(group_id)
+            group_name = group[1] if group else f"Grupo {group_id}"
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🔗 Stripe/configuración pagos\n\n"
+                f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
+                "Stripe global sigue funcionando para los pagos actuales del bot.\n\n"
+                "La configuración de Stripe propio por grupo todavía no está disponible. "
+                "Se activará en una fase posterior, con almacenamiento seguro y validación de webhooks por comunidad.\n\n"
+                "Por seguridad, todavía no se piden ni se guardan credenciales Stripe del owner desde este panel.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💳 Ver métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
+                    [InlineKeyboardButton("⬅️ Volver a planes y pagos", callback_data="owner_panel_payments")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
         await query.message.reply_text(
-            "⚠️ Esta acción todavía no tiene un flujo seguro disponible."
+            "⚠️ Esta acción todavía no tiene un flujo seguro disponible.",
+            reply_markup=build_owner_panel_nav_keyboard()
         )
 
         return
