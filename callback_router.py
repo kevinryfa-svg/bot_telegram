@@ -90,9 +90,14 @@ from invite_link_service import (
     revoke_telegram_invite_link
 )
 from payment_service import (
+    build_group_payment_provider_detail_text,
     build_group_payment_methods_text,
     build_payment_methods_admin_text,
-    is_stripe_payments_enabled
+    clear_group_payment_provider_config,
+    disable_group_payment_provider_config,
+    ensure_group_payment_provider_config,
+    is_stripe_payments_enabled,
+    list_group_payment_provider_statuses
 )
 from rbac_helpers import (
     assign_group_owner_permissions,
@@ -19255,11 +19260,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         group_id, group_name, telegram_group_id = group
 
-        keyboard = InlineKeyboardMarkup([
+        keyboard_rows = []
+
+
+        for provider_status in list_group_payment_provider_statuses(group_id):
+
+            provider = provider_status.get("provider")
+            label = provider_status.get("label") or provider
+
+            keyboard_rows.append([
+                InlineKeyboardButton(
+                    f"⚙️ {label}",
+                    callback_data=f"owner_group_payment_provider_{group_id}_{provider}"
+                )
+            ])
+
+
+        keyboard_rows.extend([
             [InlineKeyboardButton("⬅️ Volver a planes y pagos", callback_data="owner_panel_payments")],
             [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
             [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
         ])
+
+        keyboard = InlineKeyboardMarkup(keyboard_rows)
 
         await send_clean_message(
             context,
@@ -19271,6 +19294,225 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 owner_user_id
             ),
             reply_markup=keyboard
+        )
+
+        return
+
+
+    if data.startswith("owner_group_payment_provider_"):
+
+        payload = data.replace("owner_group_payment_provider_", "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[0].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el método de pago.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        provider = parts[1]
+        group = fetch_group_basic_info(group_id)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group:
+
+            await query.message.reply_text(
+                "⚠️ Comunidad no encontrada.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver este método de pago.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        provider_statuses = {
+            item.get("provider"): item
+            for item in list_group_payment_provider_statuses(group_id)
+        }
+        provider_status = provider_statuses.get(provider)
+
+
+        if not provider_status:
+
+            await query.message.reply_text(
+                "⚠️ Proveedor no disponible.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+        _group_id, group_name, _telegram_group_id = group
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔌 Configurar / conectar", callback_data=f"owner_group_payment_connect_{group_id}_{provider}")],
+            [InlineKeyboardButton("🚫 Desactivar", callback_data=f"owner_group_payment_disable_{group_id}_{provider}")],
+            [InlineKeyboardButton("🗑 Borrar configuración", callback_data=f"owner_group_payment_delete_{group_id}_{provider}")],
+            [InlineKeyboardButton("⬅️ Volver a métodos de pago", callback_data=f"owner_group_payment_methods_{group_id}")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_group_payment_provider_detail_text(
+                group_id,
+                group_name,
+                provider_status
+            ),
+            reply_markup=keyboard
+        )
+
+        return
+
+
+    if data.startswith("owner_group_payment_connect_"):
+
+        payload = data.replace("owner_group_payment_connect_", "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[0].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el método de pago.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        provider = parts[1]
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para configurar este método de pago.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        ensure_group_payment_provider_config(
+            owner_user_id or user_id,
+            group_id,
+            provider,
+            status="pending"
+        )
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        provider_name = provider.upper()
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🔌 Configurar método de pago del grupo\n\n"
+            f"Proveedor: {provider_name}\n\n"
+            "Las credenciales propias del owner se introducirán desde el bot, no en Railway.\n\n"
+            "Por seguridad, todavía no se piden secretos en esta fase. Antes de guardar credenciales reales debe existir PAYMENT_CONFIG_ENCRYPTION_KEY y el wizard debe borrar/ocultar mensajes sensibles.\n\n"
+            "Para PayPal se necesitará client_id, client_secret, webhook_id y modo sandbox/live. No se mostrarán secretos completos en Telegram.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver al proveedor", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_group_payment_disable_") or data.startswith("owner_group_payment_delete_"):
+
+        deleting = data.startswith("owner_group_payment_delete_")
+        prefix = "owner_group_payment_delete_" if deleting else "owner_group_payment_disable_"
+        payload = data.replace(prefix, "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[0].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el método de pago.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        provider = parts[1]
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para modificar este método de pago.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if deleting:
+
+            updated = clear_group_payment_provider_config(group_id, provider)
+            event_type = "group_payment_provider_config_deleted"
+            message = "Configuración de método de pago del grupo borrada."
+
+        else:
+
+            updated = disable_group_payment_provider_config(group_id, provider)
+            event_type = "group_payment_provider_config_disabled"
+            message = "Método de pago del grupo desactivado."
+
+
+        if updated:
+
+            log_event(
+                event_type,
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message=message,
+                metadata={"provider": provider}
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            ("✅ " if updated else "⚠️ ") + (
+                "Configuración borrada." if deleting else "Método desactivado."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a métodos de pago", callback_data=f"owner_group_payment_methods_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return

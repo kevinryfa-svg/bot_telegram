@@ -215,6 +215,11 @@ from payment_gateway_config import (
     is_payment_provider_enabled,
     list_payment_provider_configs
 )
+from payment_secret_store import (
+    SECRET_STATUS_DISABLED,
+    SECRET_STATUS_NOT_CONFIGURED,
+    has_payment_encryption_key
+)
 
 
 class PaymentProviderUnavailable(Exception):
@@ -725,6 +730,12 @@ def fetch_group_payment_provider_config(group_id, provider):
                        destination_ref,
                        public_config_json,
                        secret_ref,
+                       encrypted_config_json,
+                       secret_status,
+                       last_verified_at,
+                       verified_by,
+                       verification_error,
+                       masked_public_summary,
                        updated_at
                 FROM group_payment_provider_configs
                 WHERE group_id=%s
@@ -756,7 +767,13 @@ def fetch_group_payment_provider_config(group_id, provider):
                 "destination_ref": row[8],
                 "public_config_json": row[9],
                 "secret_ref": row[10],
-                "updated_at": row[11]
+                "encrypted_config_json": row[11],
+                "secret_status": row[12],
+                "last_verified_at": row[13],
+                "verified_by": row[14],
+                "verification_error": row[15],
+                "masked_public_summary": row[16],
+                "updated_at": row[17]
             }
 
     except Exception as e:
@@ -863,6 +880,12 @@ def list_group_payment_provider_statuses(group_id):
                        destination_ref,
                        public_config_json,
                        secret_ref,
+                       encrypted_config_json,
+                       secret_status,
+                       last_verified_at,
+                       verified_by,
+                       verification_error,
+                       masked_public_summary,
                        updated_at
                 FROM group_payment_provider_configs
                 WHERE group_id=%s
@@ -882,7 +905,13 @@ def list_group_payment_provider_statuses(group_id):
                     "destination_ref": row[8],
                     "public_config_json": row[9],
                     "secret_ref": row[10],
-                    "updated_at": row[11]
+                    "encrypted_config_json": row[11],
+                    "secret_status": row[12],
+                    "last_verified_at": row[13],
+                    "verified_by": row[14],
+                    "verification_error": row[15],
+                    "masked_public_summary": row[16],
+                    "updated_at": row[17]
                 }
                 for row in cur.fetchall()
             }
@@ -910,6 +939,12 @@ def list_group_payment_provider_statuses(group_id):
             is_enabled = saved.get("is_enabled")
             status = saved.get("status")
             secret_ref = saved.get("secret_ref")
+            encrypted_config_json = saved.get("encrypted_config_json")
+            secret_status = saved.get("secret_status") or SECRET_STATUS_NOT_CONFIGURED
+            last_verified_at = saved.get("last_verified_at")
+            verified_by = saved.get("verified_by")
+            verification_error = saved.get("verification_error")
+            masked_public_summary = saved.get("masked_public_summary")
             updated_at = saved.get("updated_at")
             provider_config_id = saved.get("id")
             provider_config_scope = saved.get("provider_config_scope") or PROVIDER_CONFIG_SCOPE_GROUP
@@ -921,6 +956,12 @@ def list_group_payment_provider_statuses(group_id):
             is_enabled = False
             status = GROUP_PAYMENT_PROVIDER_STATUS_NOT_CONFIGURED
             secret_ref = None
+            encrypted_config_json = None
+            secret_status = SECRET_STATUS_NOT_CONFIGURED
+            last_verified_at = None
+            verified_by = None
+            verification_error = None
+            masked_public_summary = None
             updated_at = None
             provider_config_id = None
             provider_config_scope = PROVIDER_CONFIG_SCOPE_GROUP
@@ -963,6 +1004,13 @@ def list_group_payment_provider_statuses(group_id):
             "destination_type": destination_type,
             "destination_ref": destination_ref,
             "has_secret_ref": bool(secret_ref),
+            "has_encrypted_config": bool(encrypted_config_json),
+            "secret_status": secret_status,
+            "last_verified_at": last_verified_at,
+            "verified_by": verified_by,
+            "verification_error": verification_error,
+            "masked_public_summary": masked_public_summary,
+            "encryption_ready": has_payment_encryption_key(),
             "missing_env": provider_config.get("missing_env") or [],
             "can_be_enabled": can_be_enabled,
             "updated_at": updated_at
@@ -992,8 +1040,10 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
         "",
         "Aquí se prepara la configuración de métodos de pago propios de esta comunidad.",
         "Estos pagos tendrán payment_scope=group y destino owner/grupo cuando se activen en fases futuras.",
-        "En esta fase todavía no se activan cobros reales por owner/grupo ni se piden credenciales.",
+        "Las credenciales propias del owner se configurarán desde el bot, no desde Railway.",
+        "En esta fase todavía no se activan cobros reales por owner/grupo.",
         "Los métodos siempre respetan los flags globales de la plataforma.",
+        f"Cifrado de credenciales: {'preparado' if has_payment_encryption_key() else 'pendiente de PAYMENT_CONFIG_ENCRYPTION_KEY'}.",
         ""
     ])
 
@@ -1006,6 +1056,7 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
             f"Destino futuro: {provider.get('destination_type') or PAYMENT_DESTINATION_GROUP_CONFIG}",
             f"Estado global: {'activo' if provider.get('global_enabled') else 'deshabilitado'}",
             f"Estado del grupo: {provider.get('status_label')}",
+            f"Credenciales owner: {provider.get('secret_status') or SECRET_STATUS_NOT_CONFIGURED}",
             f"Flag: {provider.get('flag')}",
             ""
         ])
@@ -1013,7 +1064,7 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
 
     lines.extend([
         "Qué falta para activar pagos propios en próximas fases:",
-        "- Captura segura de credenciales por proveedor.",
+        "- Wizard seguro para introducir credenciales dentro del bot.",
         "- Webhooks verificados por owner/grupo.",
         "- Idempotencia por proveedor y evento externo.",
         "- Concesión de acceso solo tras confirmación real del pago.",
@@ -1023,3 +1074,128 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
 
 
     return "\n".join(lines)
+
+
+def build_group_payment_provider_detail_text(group_id, group_name, provider_status):
+
+    provider = provider_status.get("provider")
+    label = provider_status.get("label") or provider
+    encryption_text = "lista" if provider_status.get("encryption_ready") else "pendiente"
+    global_text = "activo" if provider_status.get("global_enabled") else "deshabilitado"
+    secret_summary = provider_status.get("masked_public_summary") or "sin credenciales guardadas"
+    verification_error = provider_status.get("verification_error") or "-"
+
+    lines = [
+        f"{label}",
+        "",
+        f"Comunidad: {group_name or f'Grupo {group_id}'}",
+        "Scope: group",
+        "Destino futuro: cuenta/configuración del owner.",
+        f"Estado global: {global_text}",
+        f"Estado del grupo: {provider_status.get('status_label')}",
+        f"Credenciales: {provider_status.get('secret_status') or SECRET_STATUS_NOT_CONFIGURED}",
+        f"Cifrado: {encryption_text}",
+        f"Resumen público: {secret_summary}",
+        f"Último error: {verification_error}",
+        "",
+        "Railway solo guarda credenciales globales de plataforma. Las credenciales propias de owners/grupos se configurarán desde el bot y se guardarán cifradas.",
+        "",
+        "En esta fase no se crean checkouts reales con métodos owner/grupo."
+    ]
+
+
+    if provider == PAYMENT_PROVIDER_PAYPAL:
+
+        lines.extend([
+            "",
+            "Conectar PayPal necesitará en una fase posterior:",
+            "- client_id",
+            "- client_secret",
+            "- webhook_id",
+            "- modo sandbox/live",
+            "",
+            "No se pedirá ni guardará ningún secreto si PAYMENT_CONFIG_ENCRYPTION_KEY no está configurada."
+        ])
+
+
+    return "\n".join(lines)
+
+
+def disable_group_payment_provider_config(group_id, provider):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE group_payment_provider_configs
+                SET is_enabled=FALSE,
+                    status=%s,
+                    secret_status=%s,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE group_id=%s
+                AND provider=%s
+
+            """, (
+                GROUP_PAYMENT_PROVIDER_STATUS_DISABLED,
+                SECRET_STATUS_DISABLED,
+                group_id,
+                provider
+            ))
+
+        conn.commit()
+
+        return True
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error desactivando proveedor de pago de grupo:", e)
+
+        return False
+
+
+def clear_group_payment_provider_config(group_id, provider):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE group_payment_provider_configs
+                SET is_enabled=FALSE,
+                    status=%s,
+                    encrypted_config_json=NULL,
+                    secret_ref=NULL,
+                    secret_status=%s,
+                    last_verified_at=NULL,
+                    verified_by=NULL,
+                    verification_error=NULL,
+                    masked_public_summary=NULL,
+                    public_config_json='{}'::jsonb,
+                    metadata_json='{}'::jsonb,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE group_id=%s
+                AND provider=%s
+
+            """, (
+                GROUP_PAYMENT_PROVIDER_STATUS_NOT_CONFIGURED,
+                SECRET_STATUS_NOT_CONFIGURED,
+                group_id,
+                provider
+            ))
+
+        conn.commit()
+
+        return True
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error borrando configuración de proveedor de grupo:", e)
+
+        return False
