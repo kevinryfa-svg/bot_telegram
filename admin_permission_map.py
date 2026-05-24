@@ -115,6 +115,39 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
 
     "group_admin_panel": ("can_manage_admins",),
 
+    "owner_panel_users": (
+        "can_view_users",
+        "can_manage_users",
+        "can_kick_users",
+        "can_ban_users",
+        "can_unban_users",
+        "can_warn_users",
+        "can_reset_warnings",
+        "can_resend_links",
+        "can_recover_access"
+    ),
+    "owner_panel_codes": ("can_manage_codes",),
+    "owner_panel_payments": (
+        "can_manage_plans",
+        "can_manage_groups",
+        "can_view_payments",
+        "can_manage_payments"
+    ),
+    "owner_panel_security": ("can_manage_groups", "can_view_logs"),
+    "owner_panel_marketplace": (
+        "can_manage_groups",
+        "can_edit_group_texts",
+        "can_edit_marketplace_preview"
+    ),
+    "owner_panel_admins": ("can_manage_admins",),
+    "owner_panel_logs": ("can_view_logs",),
+    "owner_panel_backup": ("can_manage_groups",),
+    "owner_panel_general": ("can_manage_groups", "can_edit_group_texts"),
+    "owner_panel_security_info": ("can_manage_groups", "can_view_logs"),
+    "owner_panel_location_info": ("can_manage_groups",),
+    "owner_panel_access_type_info": ("can_manage_groups",),
+    "owner_panel_general_info": ("can_manage_groups", "can_edit_group_texts"),
+
     "admin_revoke_links": (SUPER_ADMIN_ONLY,),
     "admin_resend_links": (SUPER_ADMIN_ONLY,)
 
