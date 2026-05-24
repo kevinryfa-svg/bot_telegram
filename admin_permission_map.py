@@ -116,6 +116,7 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_global_panel": (SUPER_ADMIN_ONLY,),
     "admin_global_marketplace": (SUPER_ADMIN_ONLY,),
     "admin_global_commercial_plans": (SUPER_ADMIN_ONLY,),
+    "admin_payment_providers": (SUPER_ADMIN_ONLY,),
     "admin_global_config": (SUPER_ADMIN_ONLY,),
     "admin_global_tools": (SUPER_ADMIN_ONLY,),
     "admin_button_audit": (SUPER_ADMIN_ONLY,),

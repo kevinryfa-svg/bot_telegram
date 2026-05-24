@@ -85,6 +85,10 @@ from invite_link_service import (
     create_telegram_invite_link,
     revoke_telegram_invite_link
 )
+from payment_service import (
+    build_payment_methods_admin_text,
+    is_stripe_payments_enabled
+)
 from rbac_helpers import (
     assign_group_owner_permissions,
     get_creator_group_quota_source,
@@ -1155,6 +1159,7 @@ def build_admin_global_config_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🏪 Marketplace / catálogo", callback_data="admin_global_marketplace")],
         [InlineKeyboardButton("💳 Planes comerciales del bot", callback_data="admin_global_commercial_plans")],
+        [InlineKeyboardButton("💳 Métodos de pago", callback_data="admin_payment_providers")],
         [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
         [InlineKeyboardButton("😊 Encuestas y satisfacción", callback_data="admin_customer_satisfaction")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_config")],
@@ -1196,6 +1201,15 @@ def build_admin_global_commercial_plans_keyboard():
         [InlineKeyboardButton("💳 Suscripciones comerciales", callback_data="admin_commercial_subscriptions")],
         [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
         [InlineKeyboardButton("⬅️ Volver a configuración global", callback_data="admin_global_config")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_admin_payment_providers_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
+        [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
 
@@ -1337,6 +1351,7 @@ ADMIN_CONTEXT_HELP_TEXTS = {
         "🏪 Marketplace / catálogo: abre la vista global del catálogo y sus opciones disponibles.\n"
         "💳 Planes comerciales del bot: revisa la zona de planes que pagan los owners para publicar.\n"
         "🎟 Códigos comerciales globales: crea códigos para owners, no para usuarios finales de grupos.\n"
+        "💳 Métodos de pago: revisa Stripe activo y proveedores futuros sin activar accesos inseguros.\n"
         "😊 Encuestas y satisfacción: configura preguntas y envíos de encuestas.\n\n"
         "No incluye logs ni pruebas técnicas; eso vive en Herramientas internas."
     ),
@@ -11337,6 +11352,17 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
 
 async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id):
 
+    if not is_stripe_payments_enabled():
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Este método de pago aún no está disponible.",
+            reply_markup=build_group_recovery_keyboard(group_id)
+        )
+
+        return
+
+
     try:
 
         response = requests.post(
@@ -12866,6 +12892,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data in (
         "admin_global_marketplace",
         "admin_global_commercial_plans",
+        "admin_payment_providers",
         "admin_global_config",
         "admin_global_tools"
     ):
@@ -12879,6 +12906,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "💳 Planes comerciales del bot\n\n"
                 "Zona informativa para revisar suscripciones comerciales, códigos globales y gestión de owners. No se mezcla con planes de acceso de cada grupo."
             ),
+            "admin_payment_providers": build_payment_methods_admin_text(),
             "admin_global_config": (
                 "⚙️ Configuración global\n\n"
                 "Opciones de plataforma y configuración comercial. No incluye herramientas técnicas ni logs operativos para mantener el menú claro."
@@ -12891,6 +12919,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markups = {
             "admin_global_marketplace": build_admin_global_marketplace_keyboard(),
             "admin_global_commercial_plans": build_admin_global_commercial_plans_keyboard(),
+            "admin_payment_providers": build_admin_payment_providers_keyboard(),
             "admin_global_config": build_admin_global_config_keyboard(),
             "admin_global_tools": build_admin_global_tools_keyboard()
         }

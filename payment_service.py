@@ -190,3 +190,112 @@ def list_recent_payments(limit=50, group_id=None):
         )
 
         return []
+
+
+# =========================
+# PAYMENT SERVICE — MULTIGATEWAY PHASE 1
+# =========================
+
+from payment_gateway_config import (
+    PAYMENT_PROVIDER_CRYPTO,
+    PAYMENT_PROVIDER_PAYPAL,
+    PAYMENT_PROVIDER_REVOLUT,
+    PAYMENT_PROVIDER_STRIPE,
+    PAYMENT_STATUS_PENDING,
+    is_payment_provider_enabled,
+    list_payment_provider_configs
+)
+
+
+class PaymentProviderUnavailable(Exception):
+
+    pass
+
+
+def get_enabled_payment_providers(include_disabled=False):
+
+    providers = list_payment_provider_configs()
+
+
+    if include_disabled:
+
+        return providers
+
+
+    return [
+        provider
+        for provider in providers
+        if provider.get("enabled")
+    ]
+
+
+def is_stripe_payments_enabled():
+
+    return is_payment_provider_enabled(PAYMENT_PROVIDER_STRIPE)
+
+
+def create_placeholder_checkout(provider, **kwargs):
+
+    if provider in (
+        PAYMENT_PROVIDER_PAYPAL,
+        PAYMENT_PROVIDER_REVOLUT,
+        PAYMENT_PROVIDER_CRYPTO
+    ):
+
+        raise PaymentProviderUnavailable(
+            "Este método de pago aún no está disponible."
+        )
+
+
+    raise PaymentProviderUnavailable(
+        "Proveedor de pago no soportado en esta fase."
+    )
+
+
+def build_payment_methods_admin_text():
+
+    lines = [
+        "💳 Métodos de pago",
+        "",
+        "Estado de proveedores automáticos preparados para el bot.",
+        "Stripe sigue siendo el proveedor activo para checkout real. PayPal, Revolut y cripto quedan preparados pero desactivados hasta configurar credenciales reales.",
+        ""
+    ]
+
+
+    for provider in list_payment_provider_configs():
+
+        enabled = "activo" if provider.get("enabled") else "desactivado"
+        missing = provider.get("missing_env") or []
+        missing_text = "ninguna" if not missing else ", ".join(missing)
+
+        lines.extend([
+            f"{provider.get('label')}",
+            f"Estado: {enabled}",
+            f"Flag: {provider.get('flag')}",
+            f"Variables pendientes: {missing_text}",
+            ""
+        ])
+
+
+    lines.extend([
+        "Seguridad fase 1:",
+        "- No se concede acceso por PayPal, Revolut ni cripto.",
+        "- Ningún webhook nuevo está activo todavía.",
+        "- No se guardan secretos en logs ni en el repo.",
+        "- El acceso se concede solo cuando el proveedor confirma pago por webhook verificado."
+    ])
+
+
+    return "\n".join(lines)
+
+
+def build_payment_gateway_architecture_notes():
+
+    return {
+        "provider": "stripe/paypal/revolut/crypto",
+        "status": PAYMENT_STATUS_PENDING,
+        "idempotency": "external_checkout_id + provider + event id",
+        "access_rule": "no conceder acceso hasta webhook confirmado",
+        "crypto_recommendation": "Coinbase Commerce para fase inicial alojada o BTCPay Server si se quiere autocustodia y más control."
+    }

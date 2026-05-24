@@ -3,6 +3,7 @@ import stripe
 from flask import request, jsonify
 
 from db import conn
+from payment_service import is_stripe_payments_enabled
 
 
 def register_checkout_routes(app):
@@ -13,6 +14,11 @@ def register_checkout_routes(app):
 
     @app.route("/create-checkout-session", methods=["POST"])
     def create_checkout_session():
+
+        if not is_stripe_payments_enabled():
+
+            return jsonify({"error": "Stripe no está habilitado"}), 503
+
 
         data = request.json
 
