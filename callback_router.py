@@ -10401,6 +10401,79 @@ async def notify_support_admin(context, ticket, message_text):
         return False
 
 
+def build_support_photo_admin_caption(ticket, user, original_caption, context_text=None):
+
+    username = user.username if user and user.username else "-"
+
+    if username != "-" and not username.startswith("@"):
+
+        username = f"@{username}"
+
+
+    caption_parts = [
+        "🛟 Captura recibida en soporte",
+        "",
+        f"Ticket: #{ticket.get('id')}",
+        f"Usuario ID: {user.id if user else '-'}",
+        f"Nombre: {user.first_name if user and user.first_name else '-'}",
+        f"Username: {username}"
+    ]
+
+
+    if context_text:
+
+        caption_parts.extend([
+            "",
+            f"Contexto: {context_text}"
+        ])
+
+
+    caption_parts.extend([
+        "",
+        "Mensaje del usuario:",
+        original_caption or "Sin caption."
+    ])
+
+    return "\n".join(caption_parts)[:1024]
+
+
+async def notify_support_admin_photo(context, ticket, user, photo_file_id, original_caption=None):
+
+    context_text = (
+        context.user_data.get("support_context")
+        or context.user_data.get("support_help_context")
+        or context.user_data.get("help_context")
+    )
+
+
+    try:
+
+        await context.bot.send_photo(
+            chat_id=ADMIN_ID,
+            photo=photo_file_id,
+            caption=build_support_photo_admin_caption(
+                ticket,
+                user,
+                original_caption,
+                context_text=context_text
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "📨 Abrir ticket",
+                    callback_data=f"admin_support_ticket_{ticket.get('id')}"
+                )]
+            ])
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Error avisando soporte admin con foto:", e)
+
+        return False
+
+
 async def handle_user_support_message(update, context, text):
 
     user = update.effective_user
@@ -10454,6 +10527,78 @@ async def handle_user_support_message(update, context, text):
         "✅ Mensaje enviado a soporte.\n"
         f"Tu número de ticket es #{ticket.get('id')}.\n"
         "Un administrador te responderá por aquí.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔎 Consultar ticket",
+                callback_data="user_support_lookup_start"
+            )],
+            [InlineKeyboardButton(
+                "⬅️ Volver al inicio",
+                callback_data="public_back_start"
+            )]
+        ])
+    )
+
+
+async def handle_user_support_photo(update, context):
+
+    user = update.effective_user
+    message = update.message
+
+
+    if not message or not message.photo:
+
+        return
+
+
+    photo_file_id = message.photo[-1].file_id
+    original_caption = (message.caption or "").strip()
+    ticket = get_or_create_support_ticket(user)
+    stored_text = "📷 Captura recibida."
+
+
+    if original_caption:
+
+        stored_text += f"\nCaption: {original_caption}"
+
+
+    create_support_message(
+        ticket.get("id"),
+        "user",
+        user.id,
+        stored_text
+    )
+
+    update_support_ticket_status(
+        ticket.get("id"),
+        "open"
+    )
+
+    await notify_support_admin_photo(
+        context,
+        ticket,
+        user,
+        photo_file_id,
+        original_caption=original_caption
+    )
+
+    log_event(
+        "support_ticket_created",
+        category="support",
+        severity="info",
+        scope="global",
+        actor_user_id=user.id,
+        target_user_id=user.id,
+        message="Captura de soporte recibida durante beta.",
+        metadata={
+            "ticket_id": ticket.get("id"),
+            "has_caption": bool(original_caption),
+            "content_type": "photo"
+        }
+    )
+
+    await message.reply_text(
+        "✅ Captura recibida. El soporte la revisará lo antes posible.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 "🔎 Consultar ticket",
@@ -10631,7 +10776,22 @@ async def handle_admin_support_reply(update, context, text):
 
 async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if not update.message or not update.message.text:
+    if not update.message:
+
+        return
+
+
+    if update.message.photo and context.user_data.get("support_mode"):
+
+        await handle_user_support_photo(
+            update,
+            context
+        )
+
+        return
+
+
+    if not update.message.text:
 
         return
 
