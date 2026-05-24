@@ -106,6 +106,7 @@ from callback_router import (
     receive_commercial_request_chat_message,
     receive_customer_satisfaction_text,
     receive_group_user_promo_code,
+    receive_owner_payment_provider_text,
     receive_support_message,
     receive_location_gate
 )
@@ -797,6 +798,10 @@ async def handle_text(update, context):
 
     if context.user_data.get("group_user_promo_waiting"):
         await receive_group_user_promo_code(update, context)
+        return
+
+    if context.user_data.get("configuring_owner_payment_provider"):
+        await receive_owner_payment_provider_text(update, context)
         return
 
     if (

@@ -97,7 +97,14 @@ from payment_service import (
     disable_group_payment_provider_config,
     ensure_group_payment_provider_config,
     is_stripe_payments_enabled,
-    list_group_payment_provider_statuses
+    list_group_payment_provider_statuses,
+    save_group_payment_provider_encrypted_config
+)
+from payment_secret_store import (
+    encrypt_provider_config,
+    has_payment_encryption_key,
+    mask_provider_config,
+    mask_secret_value
 )
 from rbac_helpers import (
     assign_group_owner_permissions,
@@ -126,6 +133,15 @@ SERVER_URL = os.environ.get("SERVER_URL")
 
 revoke_link = None
 get_group_id = None
+
+OWNER_PAYMENT_PROVIDER_PAYPAL = "paypal"
+OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS = (
+    "configuring_owner_payment_provider",
+    "owner_payment_provider",
+    "owner_payment_group_id",
+    "owner_payment_step",
+    "owner_payment_payload"
+)
 
 
 async def delete_query_message_safely(query):
@@ -174,6 +190,90 @@ def build_unknown_callback_keyboard():
             callback_data="public_back_start"
         )]
     ])
+
+
+def clear_owner_payment_provider_wizard(context):
+
+    for key in OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS:
+
+        context.user_data.pop(key, None)
+
+
+def build_owner_paypal_cancel_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar configuración", callback_data=f"owner_payment_paypal_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_paypal_mode_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧪 Sandbox", callback_data=f"owner_payment_paypal_mode_sandbox_{group_id}")],
+        [InlineKeyboardButton("🚀 Live", callback_data=f"owner_payment_paypal_mode_live_{group_id}")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_payment_paypal_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")]
+    ])
+
+
+def build_owner_paypal_confirm_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Guardar cifrado", callback_data=f"owner_payment_paypal_save_{group_id}")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_payment_paypal_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")]
+    ])
+
+
+def is_valid_paypal_text_value(value, min_length=8):
+
+    if not value:
+
+        return False
+
+
+    text = value.strip()
+
+    if len(text) < min_length or len(text) > 300:
+
+        return False
+
+
+    return not any(char.isspace() for char in text)
+
+
+async def delete_sensitive_user_message(update):
+
+    try:
+
+        if update.message:
+
+            await update.message.delete()
+
+    except Exception:
+
+        pass
+
+
+def build_owner_paypal_safe_summary(payload):
+
+    safe_payload = {
+        "mode": payload.get("mode"),
+        "client_id": payload.get("client_id"),
+        "client_secret": payload.get("client_secret"),
+        "webhook_id": payload.get("webhook_id")
+    }
+    masked = mask_provider_config(safe_payload)
+    webhook_text = "sí" if payload.get("webhook_id") else "no"
+
+    return (
+        f"Modo: {masked.get('mode') or '-'}\n"
+        f"Client ID: {mask_secret_value(masked.get('client_id')) if masked.get('client_id') else '-'}\n"
+        f"Client secret: {masked.get('client_secret') or '***'}\n"
+        f"Webhook ID configurado: {webhook_text}"
+    )
 
 
 def build_group_recovery_keyboard(group_id, retry_callback=None):
@@ -4275,6 +4375,201 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
         ])
+    )
+
+
+async def receive_owner_payment_provider_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not context.user_data.get("configuring_owner_payment_provider"):
+
+        return
+
+
+    provider = context.user_data.get("owner_payment_provider")
+    group_id = context.user_data.get("owner_payment_group_id")
+    step = context.user_data.get("owner_payment_step")
+    payload = context.user_data.get("owner_payment_payload") or {}
+    user_id = update.effective_user.id if update.effective_user else None
+    chat_id = update.effective_chat.id if update.effective_chat else None
+
+
+    if provider != OWNER_PAYMENT_PROVIDER_PAYPAL or not group_id:
+
+        clear_owner_payment_provider_wizard(context)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ No he podido recuperar la configuración de PayPal. Vuelve a empezar desde Métodos de pago del grupo.",
+            reply_markup=build_unknown_callback_keyboard()
+        )
+
+        return
+
+
+    owner_user_id = get_group_owner_user_id(group_id)
+
+
+    if not is_super_admin(user_id) and owner_user_id != user_id:
+
+        clear_owner_payment_provider_wizard(context)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⛔ No tienes permiso para configurar PayPal en esta comunidad.",
+            reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return
+
+
+    if not has_payment_encryption_key():
+
+        clear_owner_payment_provider_wizard(context)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "⚠️ No se puede guardar PayPal todavía.\n\n"
+                "Falta PAYMENT_CONFIG_ENCRYPTION_KEY en la configuración segura del bot. "
+                "Por seguridad no se guardan credenciales sin cifrado."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    text = (update.message.text or "").strip() if update.message else ""
+
+
+    if text.lower() in ("cancelar", "/cancel", "cancel"):
+
+        clear_owner_payment_provider_wizard(context)
+        await delete_sensitive_user_message(update)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="✅ Configuración de PayPal cancelada. No se ha guardado ningún secreto.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if step == "client_id":
+
+        await delete_sensitive_user_message(update)
+
+
+        if not is_valid_paypal_text_value(text, min_length=12):
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ El Client ID no parece válido. Pégalo otra vez o cancela la configuración.",
+                reply_markup=build_owner_paypal_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        payload["client_id"] = text
+        context.user_data["owner_payment_payload"] = payload
+        context.user_data["owner_payment_step"] = "client_secret"
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "Ahora envía el PAYPAL_CLIENT_SECRET.\n\n"
+                "Lo borraré del chat si Telegram lo permite y nunca se mostrará completo."
+            ),
+            reply_markup=build_owner_paypal_cancel_keyboard(group_id)
+        )
+
+        return
+
+
+    if step == "client_secret":
+
+        await delete_sensitive_user_message(update)
+
+
+        if not is_valid_paypal_text_value(text, min_length=16):
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ El Client Secret no parece válido. Pégalo otra vez o cancela la configuración.",
+                reply_markup=build_owner_paypal_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        payload["client_secret"] = text
+        context.user_data["owner_payment_payload"] = payload
+        context.user_data["owner_payment_step"] = "webhook_id"
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "Envía el PAYPAL_WEBHOOK_ID si ya lo tienes.\n\n"
+                "Si todavía no lo tienes, escribe: saltar\n\n"
+                "En esta fase el webhook por grupo queda preparado, pero no activa cobros reales."
+            ),
+            reply_markup=build_owner_paypal_cancel_keyboard(group_id)
+        )
+
+        return
+
+
+    if step == "webhook_id":
+
+        await delete_sensitive_user_message(update)
+
+        lowered = text.lower()
+
+
+        if lowered in ("saltar", "skip", "no", "-"):
+
+            payload["webhook_id"] = None
+
+        elif is_valid_paypal_text_value(text, min_length=8):
+
+            payload["webhook_id"] = text
+
+        else:
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ El Webhook ID no parece válido. Envíalo otra vez o escribe saltar.",
+                reply_markup=build_owner_paypal_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        context.user_data["owner_payment_payload"] = payload
+        context.user_data["owner_payment_step"] = "confirm"
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "Revisa la configuración segura de PayPal:\n\n"
+                f"{build_owner_paypal_safe_summary(payload)}\n\n"
+                "Se guardará cifrada y quedará pendiente de verificación. "
+                "Todavía no activará cobros PayPal reales para compradores del grupo."
+            ),
+            reply_markup=build_owner_paypal_confirm_keyboard(group_id)
+        )
+
+        return
+
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="Usa los botones del asistente para continuar con PayPal.",
+        reply_markup=build_owner_paypal_cancel_keyboard(group_id)
     )
 
 
@@ -19426,6 +19721,49 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         provider_name = provider.upper()
 
+
+        if provider == OWNER_PAYMENT_PROVIDER_PAYPAL:
+
+            if not has_payment_encryption_key():
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "⚠️ PayPal no puede configurarse todavía\n\n"
+                    "Falta PAYMENT_CONFIG_ENCRYPTION_KEY en la configuración segura del bot.\n\n"
+                    "Por seguridad no se piden ni se guardan credenciales reales sin cifrado.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                    ])
+                )
+
+                return
+
+
+            clear_owner_payment_provider_wizard(context)
+            context.user_data["configuring_owner_payment_provider"] = True
+            context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_PAYPAL
+            context.user_data["owner_payment_group_id"] = group_id
+            context.user_data["owner_payment_step"] = "mode"
+            context.user_data["owner_payment_payload"] = {}
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🔌 Conectar PayPal al grupo\n\n"
+                "Necesitarás estos datos de tu cuenta PayPal Developer:\n"
+                "- PAYPAL_CLIENT_ID\n"
+                "- PAYPAL_CLIENT_SECRET\n"
+                "- PAYPAL_WEBHOOK_ID opcional, para una fase posterior\n"
+                "- modo sandbox o live\n\n"
+                "Las claves se cifran antes de guardarse, no se muestran completas y no deben enviarse por soporte.\n\n"
+                "Importante: esto solo prepara la configuración. Todavía no activa cobros PayPal reales para compradores del grupo.",
+                reply_markup=build_owner_paypal_mode_keyboard(group_id)
+            )
+
+            return
+
         await send_clean_message(
             context,
             query.message.chat_id,
@@ -19436,6 +19774,276 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Para PayPal se necesitará client_id, client_secret, webhook_id y modo sandbox/live. No se mostrarán secretos completos en Telegram.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Volver al proveedor", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_paypal_mode_"):
+
+        payload = data.replace("owner_payment_paypal_mode_", "", 1)
+        mode, _, group_text = payload.partition("_")
+
+
+        if mode not in ("sandbox", "live") or not group_text.isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el modo de PayPal.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(group_text)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⛔ No tienes permiso para configurar PayPal en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not context.user_data.get("configuring_owner_payment_provider"):
+
+            context.user_data["configuring_owner_payment_provider"] = True
+            context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_PAYPAL
+            context.user_data["owner_payment_group_id"] = group_id
+            context.user_data["owner_payment_payload"] = {}
+
+
+        owner_payload = context.user_data.get("owner_payment_payload") or {}
+        owner_payload["mode"] = mode
+        context.user_data["owner_payment_payload"] = owner_payload
+        context.user_data["owner_payment_step"] = "client_id"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "Modo seleccionado: sandbox\n\n"
+                if mode == "sandbox"
+                else "Modo seleccionado: live\n\n"
+            )
+            + "Envía ahora el PAYPAL_CLIENT_ID.\n\n"
+            + "Intentaré borrar el mensaje del chat después de recibirlo para no dejar datos sensibles visibles.",
+            reply_markup=build_owner_paypal_cancel_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_paypal_cancel_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_paypal_cancel_"
+        )
+        clear_owner_payment_provider_wizard(context)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración de PayPal cancelada. No se ha guardado ningún secreto.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_paypal_save_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_paypal_save_"
+        )
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group_id or (not is_super_admin(user_id) and owner_user_id != user_id):
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⛔ No tienes permiso para guardar PayPal en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        provider = context.user_data.get("owner_payment_provider")
+        payload = context.user_data.get("owner_payment_payload") or {}
+
+
+        if provider != OWNER_PAYMENT_PROVIDER_PAYPAL or context.user_data.get("owner_payment_group_id") != group_id:
+
+            await query.message.reply_text(
+                "⚠️ No hay una configuración de PayPal lista para guardar.",
+                reply_markup=build_owner_paypal_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        required_keys = ("mode", "client_id", "client_secret")
+
+
+        if any(not payload.get(key) for key in required_keys):
+
+            await query.message.reply_text(
+                "⚠️ Faltan datos para guardar PayPal. Vuelve a iniciar la conexión.",
+                reply_markup=build_owner_paypal_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if not has_payment_encryption_key():
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⚠️ Falta PAYMENT_CONFIG_ENCRYPTION_KEY. No se guardan credenciales sin cifrado.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        safe_config = {
+            "provider": OWNER_PAYMENT_PROVIDER_PAYPAL,
+            "mode": payload.get("mode"),
+            "client_id": payload.get("client_id"),
+            "client_secret": payload.get("client_secret"),
+            "webhook_id": payload.get("webhook_id")
+        }
+
+
+        try:
+
+            encrypted_config = encrypt_provider_config(safe_config)
+            masked_config = mask_provider_config(safe_config)
+            masked_summary = (
+                f"mode={masked_config.get('mode')}; "
+                f"client_id={mask_secret_value(masked_config.get('client_id'))}; "
+                f"webhook_id={'configured' if payload.get('webhook_id') else 'pending'}"
+            )
+            saved = save_group_payment_provider_encrypted_config(
+                owner_user_id or user_id,
+                group_id,
+                OWNER_PAYMENT_PROVIDER_PAYPAL,
+                encrypted_config,
+                masked_summary,
+                public_config_json={
+                    "mode": payload.get("mode"),
+                    "webhook_configured": bool(payload.get("webhook_id")),
+                    "checkout_enabled": False
+                },
+                verified_by=user_id
+            )
+
+        except Exception:
+
+            saved = False
+
+        clear_owner_payment_provider_wizard(context)
+
+
+        if saved:
+
+            log_event(
+                "group_payment_provider_credentials_saved",
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Credenciales PayPal de grupo guardadas cifradas.",
+                metadata={
+                    "provider": OWNER_PAYMENT_PROVIDER_PAYPAL,
+                    "mode": payload.get("mode"),
+                    "webhook_configured": bool(payload.get("webhook_id")),
+                    "status": "pending"
+                }
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            ("✅ PayPal guardado de forma segura\n\n" if saved else "⚠️ No pude guardar PayPal\n\n")
+            + (
+                f"{build_owner_paypal_safe_summary(payload)}\n\n"
+                "Estado: pendiente de verificación.\n"
+                "Los cobros PayPal reales para compradores del grupo siguen desactivados hasta una fase posterior."
+                if saved
+                else "Revisa la configuración y vuelve a intentarlo."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+                [InlineKeyboardButton("💳 Métodos del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_paypal_confirm_delete_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_paypal_confirm_delete_"
+        )
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group_id or (not is_super_admin(user_id) and owner_user_id != user_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para borrar PayPal en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        updated = clear_group_payment_provider_config(
+            group_id,
+            OWNER_PAYMENT_PROVIDER_PAYPAL
+        )
+
+
+        if updated:
+
+            log_event(
+                "group_payment_provider_config_deleted",
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Configuración PayPal de grupo borrada.",
+                metadata={"provider": OWNER_PAYMENT_PROVIDER_PAYPAL}
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración PayPal borrada." if updated else "⚠️ No pude borrar la configuración PayPal.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a métodos de pago", callback_data=f"owner_group_payment_methods_{group_id}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
@@ -19471,6 +20079,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "⛔ No tienes permiso para modificar este método de pago.",
                 reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if deleting and provider == OWNER_PAYMENT_PROVIDER_PAYPAL:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🗑 Borrar configuración PayPal\n\n"
+                "Esto eliminará las credenciales cifradas guardadas para esta comunidad. "
+                "No afecta a PayPal plataforma ni a Stripe global.\n\n"
+                "¿Confirmas el borrado?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Confirmar borrado", callback_data=f"owner_payment_paypal_confirm_delete_{group_id}")],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
             )
 
             return
