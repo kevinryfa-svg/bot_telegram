@@ -3,7 +3,16 @@ import stripe
 from flask import request, jsonify
 
 from db import conn
-from payment_service import is_stripe_payments_enabled
+from payment_gateway_config import (
+    PAYMENT_PROVIDER_STRIPE,
+    PAYMENT_SCOPE_PLATFORM,
+    PAYMENT_STATUS_PENDING,
+    PURCHASE_TYPE_GROUP_ACCESS
+)
+from payment_service import (
+    create_payment_transaction,
+    is_stripe_payments_enabled
+)
 
 
 def register_checkout_routes(app):
@@ -92,6 +101,21 @@ def register_checkout_routes(app):
 
             return jsonify({"error": "Error creando sesión"}), 500
 
+
+        create_payment_transaction(
+            PAYMENT_PROVIDER_STRIPE,
+            status=PAYMENT_STATUS_PENDING,
+            payment_scope=PAYMENT_SCOPE_PLATFORM,
+            purchase_type=PURCHASE_TYPE_GROUP_ACCESS,
+            user_id=telegram_id,
+            group_id=group_id,
+            external_checkout_id=session.get("id"),
+            idempotency_key=session.get("id"),
+            metadata={
+                "price_id": price_id,
+                "source": "create_checkout_session"
+            }
+        )
 
         return jsonify({
             "url": session.url

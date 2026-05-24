@@ -112,3 +112,90 @@ Pendiente para activar cobros reales por owner/grupo:
 - Idempotencia por evento externo.
 - Conciliación de pagos por proveedor.
 - Activación de acceso únicamente después de webhook confirmado.
+
+## Fase 1C: scopes de pago platform y group
+
+La arquitectura queda preparada para distinguir dos tipos de cobro sin activar proveedores nuevos todavía.
+
+### `payment_scope=platform`
+
+El dinero va a la plataforma o dueño del bot. Este scope se usa para productos comerciales del bot:
+
+- mensualidades de owners para publicar comunidades,
+- bots personalizados,
+- upgrades,
+- módulos premium,
+- servicios comerciales,
+- productos futuros de la plataforma.
+
+Stripe global actual sigue funcionando como pago de plataforma. Aunque el pago compre acceso a una comunidad, la configuración de cobro usada es la de la plataforma mientras no se active la configuración propia del owner/grupo.
+
+### `payment_scope=group`
+
+El dinero pertenece al owner o a la configuración propia de una comunidad. Este scope queda preparado para vender acceso o suscripción a una comunidad concreta usando métodos configurados por ese grupo.
+
+Para que un proveedor pueda usarse en un grupo deberán cumplirse todas estas reglas:
+
+1. El proveedor está habilitado globalmente por feature flag.
+2. El grupo tiene una fila activa en `group_payment_provider_configs`.
+3. La configuración del grupo está en estado `active`.
+4. El destino de cobro está definido como `owner_account` o `group_config`.
+5. El webhook futuro confirma el pago antes de conceder acceso.
+
+### Nuevas columnas en `payment_transactions`
+
+Se añaden columnas seguras para preparar idempotencia, destino y contexto:
+
+- `payment_scope`: `platform` o `group`.
+- `purchase_type`: tipo de compra, por ejemplo `group_access`, `commercial_subscription`, `platform_product` u `owner_upgrade`.
+- `owner_user_id`: owner relacionado si aplica.
+- `platform_product_key`: clave interna para productos de plataforma.
+- `provider_config_id`: configuración de proveedor usada si aplica.
+- `provider_config_scope`: `platform` o `group`.
+- `destination_type`: `platform_account`, `owner_account` o `group_config`.
+- `destination_ref`: referencia no sensible del destino.
+- `metadata_json`: metadata sanitizada, sin secretos ni invite links completos.
+
+La columna legacy `metadata` se mantiene por compatibilidad.
+
+### Cambios en `group_payment_provider_configs`
+
+La tabla de configuración por grupo queda preparada con:
+
+- `provider_config_scope`: normalmente `group`.
+- `destination_type`: normalmente `group_config` en esta fase.
+- `destination_ref`: referencia futura no sensible a la cuenta/configuración.
+- `metadata_json`: datos no sensibles de configuración.
+
+No se guardan claves PayPal, Revolut, cripto ni Stripe owner en claro.
+
+### Flujo futuro PayPal global
+
+1. Super admin activa `ENABLE_PAYPAL_PAYMENTS=true` y configura credenciales globales.
+2. Una compra de plataforma crea una `payment_transaction` con `payment_scope=platform`.
+3. PayPal redirige al checkout externo.
+4. Webhook PayPal verificado marca la transacción como `paid`.
+5. Solo entonces se activa el producto o acceso correspondiente.
+
+### Flujo futuro PayPal por grupo
+
+1. El owner configura PayPal desde `💳 Métodos de pago del grupo`.
+2. La configuración se guarda como referencia segura en `group_payment_provider_configs`.
+3. Una compra de comunidad usa `payment_scope=group` y `provider_config_id` del grupo.
+4. El webhook PayPal del flujo por grupo valida evento, owner/grupo e idempotencia.
+5. Solo entonces se crea acceso, usuario e invite link.
+
+### Decisión de destino de cobro
+
+`payment_service.get_payment_destination_context(...)` define el destino:
+
+- platform: `destination_type=platform_account`.
+- group: `destination_type=group_config` o `owner_account` cuando exista configuración real.
+
+### Pendiente antes de PayPal real
+
+- Pantalla segura para credenciales o conexión OAuth/partner.
+- Webhook PayPal verificado.
+- Mapeo de eventos PayPal a `payment_transactions`.
+- Concesión de acceso idempotente reutilizando la lógica actual de Stripe.
+- Pruebas sandbox con compra, webhook repetido, cancelación y fallo.
