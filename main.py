@@ -88,6 +88,7 @@ from group_registration_handler import (
     handle_group_backup_text
 )
 from user_join_handler import detect_user_join
+from user_activity_logger import log_user_event
 from ai_handler import (
     ia_command,
     asistente_command,
@@ -105,6 +106,7 @@ from callback_router import (
     button,
     receive_commercial_request_chat_message,
     receive_customer_satisfaction_text,
+    receive_user_tracking_search_text,
     receive_group_user_promo_code,
     receive_owner_payment_provider_text,
     receive_support_message,
@@ -766,6 +768,22 @@ async def handle_media(update, context):
     return
 
 
+async def track_command_event(update, context):
+
+    command_text = None
+
+    if update.message and update.message.text:
+
+        command_text = update.message.text.split()[0]
+
+
+    log_user_event(
+        update,
+        "command",
+        event_key=command_text
+    )
+
+
 async def handle_text(update, context):
 
     if context.user_data.get("location_gate_pending"):
@@ -805,6 +823,12 @@ async def handle_text(update, context):
         or context.user_data.get("configuring_platform_payment_provider")
     ):
         await receive_owner_payment_provider_text(update, context)
+        return
+
+    if (
+        context.user_data.get("admin_user_tracking_search")
+    ):
+        await receive_user_tracking_search_text(update, context)
         return
 
     if (
@@ -1870,6 +1894,11 @@ def main():
     create_tables()
 
     telegram_app.add_error_handler(global_error_handler)
+
+    telegram_app.add_handler(
+        MessageHandler(filters.COMMAND, track_command_event),
+        group=-1
+    )
 
     telegram_app.add_handler(
         CommandHandler("start", start)

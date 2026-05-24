@@ -21,6 +21,7 @@ from formatters import (
 )
 from rbac_helpers import is_super_admin
 from ui_menu_helpers import send_clean_message
+from user_activity_logger import log_user_event
 
 
 
@@ -1065,5 +1066,11 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    log_user_event(
+        update,
+        "start",
+        event_key="/start"
+    )
 
     await send_start_menu(update, context)
