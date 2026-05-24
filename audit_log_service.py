@@ -40,7 +40,9 @@ BETA_MONITOR_EVENT_TYPES = {
     "location_denied",
     "support_ticket_created",
     "bot_added_to_group",
-    "bot_removed_from_group"
+    "bot_removed_from_group",
+    "survey_sent",
+    "survey_completed"
 }
 
 

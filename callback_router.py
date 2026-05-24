@@ -35,6 +35,7 @@ from audit_log_service import (
     list_recent_events,
     log_event,
     mark_beta_monitor_events_resolved,
+    record_beta_event,
     summarize_beta_monitor_events
 )
 from ai_handler import activate_ai_help_context
@@ -1132,6 +1133,7 @@ def build_admin_global_panel_keyboard():
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
         [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
         [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
+        [InlineKeyboardButton("😊 Satisfacción de clientes", callback_data="admin_customer_satisfaction")],
         [InlineKeyboardButton("🏪 Marketplace global", callback_data="admin_global_marketplace")],
         [InlineKeyboardButton("👥 Propietarios / solicitudes comerciales", callback_data="admin_owners_panel")],
         [InlineKeyboardButton("💳 Planes comerciales del bot", callback_data="admin_global_commercial_plans")],
@@ -1147,19 +1149,615 @@ def build_admin_global_panel_keyboard():
 def build_admin_owners_panel_keyboard():
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📩 Solicitudes pendientes", callback_data="admin_commercial_requests")],
-        [InlineKeyboardButton("✅ Solicitudes activas", callback_data="admin_commercial_active_requests")],
-        [InlineKeyboardButton("📁 Solicitudes archivadas", callback_data="admin_commercial_archived_requests")],
-        [InlineKeyboardButton("⏳ Trials activos", callback_data="admin_commercial_trials_active")],
+        [InlineKeyboardButton("🕓 Solicitudes pendientes", callback_data="admin_commercial_requests")],
+        [InlineKeyboardButton("✅ Propietarios activos", callback_data="admin_commercial_active_requests")],
+        [InlineKeyboardButton("🧪 Trials activos", callback_data="admin_commercial_trials_active")],
         [InlineKeyboardButton("💳 Suscripciones comerciales", callback_data="admin_commercial_subscriptions")],
-        [InlineKeyboardButton("🔢 Cupos de grupos", callback_data="admin_commercial_group_limits")],
+        [InlineKeyboardButton("📦 Cupos de grupos", callback_data="admin_commercial_group_limits")],
+        [InlineKeyboardButton("📁 Archivados", callback_data="admin_commercial_archived_requests")],
+        [InlineKeyboardButton("🔎 Buscar propietario", callback_data="admin_commercial_owner_tools")],
+        [InlineKeyboardButton("📊 Resumen propietarios", callback_data="admin_commercial_owner_summary")],
         [InlineKeyboardButton("🔁 Reasignar owner/grupo", callback_data="admin_commercial_owner_tools")],
-        [InlineKeyboardButton("🏪 Ver grupos de un propietario", callback_data="admin_commercial_owner_tools")],
-        [InlineKeyboardButton("💬 Contactar propietario", callback_data="admin_commercial_requests")],
-        [InlineKeyboardButton("🗄 Finalizar/archivar solicitud", callback_data="admin_commercial_requests")],
         [InlineKeyboardButton("👑 Panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
     ])
+
+
+def build_customer_satisfaction_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 Enviar encuesta global", callback_data="admin_satisfaction_send_global")],
+        [InlineKeyboardButton("👥 Enviar solo a usuarios", callback_data="admin_satisfaction_send_users")],
+        [InlineKeyboardButton("🧑‍💼 Enviar solo a propietarios", callback_data="admin_satisfaction_send_owners")],
+        [InlineKeyboardButton("👮 Enviar solo a admins de grupo", callback_data="admin_satisfaction_send_group_admins")],
+        [InlineKeyboardButton("📊 Ver resultados", callback_data="admin_satisfaction_results")],
+        [InlineKeyboardButton("📝 Gestionar preguntas", callback_data="admin_satisfaction_questions")],
+        [InlineKeyboardButton("➕ Añadir pregunta", callback_data="admin_satisfaction_add_rating")],
+        [InlineKeyboardButton("➕ Añadir pregunta texto", callback_data="admin_satisfaction_add_text")],
+        [InlineKeyboardButton("✏️ Editar preguntas", callback_data="admin_satisfaction_edit_menu")],
+        [InlineKeyboardButton("🚫 Desactivar pregunta", callback_data="admin_satisfaction_deactivate_menu")],
+        [InlineKeyboardButton("📋 Últimas respuestas", callback_data="admin_satisfaction_latest")],
+        [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")]
+    ])
+
+
+def get_customer_satisfaction_audience_label(audience):
+
+    labels = {
+        "global": "todos los usuarios elegibles",
+        "users": "usuarios",
+        "owners": "propietarios",
+        "group_admins": "admins de grupo"
+    }
+
+    return labels.get(audience, audience)
+
+
+def fetch_customer_satisfaction_questions(active_only=True):
+
+    with conn.cursor() as cur:
+
+        if active_only:
+
+            cur.execute("""
+
+                SELECT id, question_key, question_text, category, answer_type, sort_order
+                FROM customer_satisfaction_questions
+                WHERE survey_id IS NULL
+                AND COALESCE(is_active, TRUE)=TRUE
+                ORDER BY sort_order ASC, id ASC
+
+            """)
+
+        else:
+
+            cur.execute("""
+
+                SELECT id, question_key, question_text, category, answer_type, sort_order, is_active
+                FROM customer_satisfaction_questions
+                WHERE survey_id IS NULL
+                ORDER BY sort_order ASC, id ASC
+
+            """)
+
+        return cur.fetchall()
+
+
+def fetch_customer_satisfaction_recipients(audience):
+
+    queries = []
+
+    if audience in ("global", "users"):
+        queries.append("SELECT DISTINCT user_id FROM users WHERE user_id IS NOT NULL")
+
+    if audience in ("global", "owners"):
+        queries.append("""
+            SELECT DISTINCT user_id
+            FROM admins
+            WHERE role='GROUP_OWNER'
+            AND is_active=TRUE
+            AND user_id IS NOT NULL
+        """)
+
+    if audience in ("global", "group_admins"):
+        queries.append("""
+            SELECT DISTINCT user_id
+            FROM admins
+            WHERE COALESCE(is_active, TRUE)=TRUE
+            AND COALESCE(is_super_admin, FALSE)=FALSE
+            AND COALESCE(role, '') <> 'GROUP_OWNER'
+            AND user_id IS NOT NULL
+        """)
+
+    if audience == "global":
+        queries.append("""
+            SELECT DISTINCT user_id
+            FROM commercial_requests
+            WHERE user_id IS NOT NULL
+        """)
+
+    if not queries:
+        return []
+
+    with conn.cursor() as cur:
+        cur.execute(" UNION ".join(queries))
+        return sorted({row[0] for row in cur.fetchall() if row[0]})
+
+
+def create_customer_satisfaction_survey(created_by, audience):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO customer_satisfaction_surveys
+            (
+                title,
+                description,
+                audience,
+                status,
+                created_by
+            )
+            VALUES (%s, %s, %s, 'draft', %s)
+            RETURNING id
+
+        """, (
+            "Encuesta de satisfacción beta",
+            "Encuesta rápida de satisfacción para mejorar el bot.",
+            audience,
+            created_by
+        ))
+
+        return cur.fetchone()[0]
+
+
+def update_customer_satisfaction_sent_counts(survey_id, sent_count, failed_count):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE customer_satisfaction_surveys
+            SET status='sent',
+                sent_at=NOW(),
+                sent_count=%s,
+                failed_count=%s
+            WHERE id=%s
+
+        """, (sent_count, failed_count, survey_id))
+
+
+def get_customer_satisfaction_role(user_id):
+
+    if is_super_admin(user_id):
+        return "super_admin"
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+
+                SELECT role
+                FROM admins
+                WHERE user_id=%s
+                AND is_active=TRUE
+                ORDER BY CASE WHEN role='GROUP_OWNER' THEN 0 ELSE 1 END
+                LIMIT 1
+
+            """, (user_id,))
+            row = cur.fetchone()
+    except Exception:
+        row = None
+
+    if row and row[0] == "GROUP_OWNER":
+        return "owner"
+
+    if row:
+        return "group_admin"
+
+    return "user"
+
+
+def get_or_create_customer_satisfaction_response(survey_id, user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO customer_satisfaction_responses
+            (
+                survey_id,
+                user_id,
+                role,
+                started_at
+            )
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (survey_id, user_id)
+            DO UPDATE SET started_at=COALESCE(customer_satisfaction_responses.started_at, NOW())
+            RETURNING id
+
+        """, (
+            survey_id,
+            user_id,
+            get_customer_satisfaction_role(user_id)
+        ))
+
+        return cur.fetchone()[0]
+
+
+def fetch_next_customer_satisfaction_question(response_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT q.id, q.question_text, q.answer_type, q.sort_order
+            FROM customer_satisfaction_responses r
+            JOIN customer_satisfaction_questions q
+            ON q.survey_id IS NULL
+            AND COALESCE(q.is_active, TRUE)=TRUE
+            WHERE r.id=%s
+            AND NOT EXISTS (
+                SELECT 1
+                FROM customer_satisfaction_answers a
+                WHERE a.response_id=r.id
+                AND a.question_id=q.id
+            )
+            ORDER BY q.sort_order ASC, q.id ASC
+            LIMIT 1
+
+        """, (response_id,))
+
+        return cur.fetchone()
+
+
+def save_customer_satisfaction_answer(response_id, question_id, rating=None, text_answer=None):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO customer_satisfaction_answers
+            (
+                response_id,
+                question_id,
+                rating,
+                text_answer
+            )
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (response_id, question_id)
+            DO UPDATE SET rating=EXCLUDED.rating,
+                          text_answer=EXCLUDED.text_answer
+
+        """, (response_id, question_id, rating, text_answer))
+
+
+def customer_satisfaction_response_belongs_to_user(response_id, user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT 1
+            FROM customer_satisfaction_responses
+            WHERE id=%s
+            AND user_id=%s
+            LIMIT 1
+
+        """, (response_id, user_id))
+
+        return cur.fetchone() is not None
+
+
+def complete_customer_satisfaction_response(response_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE customer_satisfaction_responses
+            SET completed_at=NOW()
+            WHERE id=%s
+
+        """, (response_id,))
+
+
+def build_customer_satisfaction_results_text():
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT COUNT(*), COALESCE(SUM(sent_count), 0), COALESCE(SUM(failed_count), 0)
+            FROM customer_satisfaction_surveys
+
+        """)
+        survey_count, sent_count, failed_count = cur.fetchone()
+
+        cur.execute("""
+
+            SELECT COUNT(*)
+            FROM customer_satisfaction_responses
+            WHERE completed_at IS NOT NULL
+
+        """)
+        completed_count = cur.fetchone()[0]
+
+        cur.execute("""
+
+            SELECT AVG(rating)
+            FROM customer_satisfaction_answers
+            WHERE rating IS NOT NULL
+
+        """)
+        average_rating = cur.fetchone()[0]
+
+        cur.execute("""
+
+            SELECT q.category, AVG(a.rating)
+            FROM customer_satisfaction_answers a
+            JOIN customer_satisfaction_questions q
+            ON q.id=a.question_id
+            WHERE a.rating IS NOT NULL
+            GROUP BY q.category
+            ORDER BY AVG(a.rating) ASC
+            LIMIT 8
+
+        """)
+        category_rows = cur.fetchall()
+
+        cur.execute("""
+
+            SELECT q.question_text, a.text_answer
+            FROM customer_satisfaction_answers a
+            JOIN customer_satisfaction_questions q
+            ON q.id=a.question_id
+            WHERE a.text_answer IS NOT NULL
+            AND LENGTH(TRIM(a.text_answer)) > 0
+            ORDER BY a.created_at DESC
+            LIMIT 5
+
+        """)
+        text_rows = cur.fetchall()
+
+    response_rate = 0
+    if sent_count:
+        response_rate = round((completed_count / sent_count) * 100, 1)
+
+    category_text = "\n".join(
+        f"- {category}: {round(float(avg), 2)}/5"
+        for category, avg in category_rows
+    ) or "Sin puntuaciones todavía."
+
+    latest_text = "\n".join(
+        f"- {question}: {answer[:120]}"
+        for question, answer in text_rows
+    ) or "Sin respuestas de texto todavía."
+
+    average_text = f"{round(float(average_rating), 2)}/5" if average_rating else "Sin datos"
+
+    return (
+        "📊 Resultados de satisfacción\n\n"
+        f"Encuestas creadas: {survey_count}\n"
+        f"Total enviados: {sent_count}\n"
+        f"Fallidos: {failed_count}\n"
+        f"Total respuestas: {completed_count}\n"
+        f"Tasa respuesta: {response_rate}%\n"
+        f"Media general: {average_text}\n\n"
+        "Media por categoría:\n"
+        f"{category_text}\n\n"
+        "Últimas respuestas texto:\n"
+        f"{latest_text}"
+    )
+
+
+def build_customer_satisfaction_questions_text():
+
+    rows = fetch_customer_satisfaction_questions(active_only=False)
+
+    if not rows:
+        return "📝 Gestionar preguntas\n\nNo hay preguntas configuradas."
+
+    lines = ["📝 Gestionar preguntas"]
+
+    for row in rows:
+        question_id, _key, text, category, answer_type, sort_order, is_active = row
+        status = "activa" if is_active else "desactivada"
+        lines.append(
+            f"\n{sort_order or question_id}. {text}\n"
+            f"Tipo: {answer_type} · Categoría: {category} · Estado: {status}"
+        )
+
+    return "\n".join(lines)
+
+
+def build_customer_satisfaction_deactivate_keyboard():
+
+    rows = fetch_customer_satisfaction_questions(active_only=True)
+    keyboard = []
+
+    for question_id, _key, text, _category, _answer_type, _sort_order in rows[:20]:
+        keyboard.append([
+            InlineKeyboardButton(
+                f"🚫 {text[:35]}",
+                callback_data=f"admin_satisfaction_deactivate_{question_id}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="admin_customer_satisfaction")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_customer_satisfaction_edit_keyboard():
+
+    rows = fetch_customer_satisfaction_questions(active_only=False)
+    keyboard = []
+
+    for question_id, _key, text, _category, _answer_type, _sort_order, _is_active in rows[:20]:
+        keyboard.append([
+            InlineKeyboardButton(
+                f"✏️ {text[:35]}",
+                callback_data=f"admin_satisfaction_edit_{question_id}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="admin_customer_satisfaction")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def send_customer_satisfaction_question(context, chat_id, response_id):
+
+    next_question = fetch_next_customer_satisfaction_question(response_id)
+
+    if not next_question:
+        complete_customer_satisfaction_response(response_id)
+        context.user_data.pop("customer_satisfaction_response_id", None)
+        context.user_data.pop("customer_satisfaction_text_question_id", None)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="✅ Gracias por tu opinión."
+        )
+        record_beta_event(
+            "survey_completed",
+            severity="info",
+            user_id=chat_id,
+            message="Encuesta de satisfacción completada."
+        )
+        return
+
+    question_id, question_text, answer_type, sort_order = next_question
+
+    if answer_type == "rating_1_5":
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Pregunta {sort_order}\n\n{question_text}\n\nResponde del 1 al 5.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("1️⃣", callback_data=f"satisfaction_rate_{response_id}_{question_id}_1"),
+                InlineKeyboardButton("2️⃣", callback_data=f"satisfaction_rate_{response_id}_{question_id}_2"),
+                InlineKeyboardButton("3️⃣", callback_data=f"satisfaction_rate_{response_id}_{question_id}_3"),
+                InlineKeyboardButton("4️⃣", callback_data=f"satisfaction_rate_{response_id}_{question_id}_4"),
+                InlineKeyboardButton("5️⃣", callback_data=f"satisfaction_rate_{response_id}_{question_id}_5")
+            ]])
+        )
+        return
+
+    context.user_data["customer_satisfaction_response_id"] = response_id
+    context.user_data["customer_satisfaction_text_question_id"] = question_id
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"Pregunta {sort_order}\n\n{question_text}\n\nResponde con texto."
+    )
+
+
+async def receive_customer_satisfaction_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    edit_question_id = context.user_data.get("customer_satisfaction_admin_edit_question_id")
+
+    if edit_question_id:
+
+        if not is_super_admin(update.effective_user.id):
+            context.user_data.pop("customer_satisfaction_admin_edit_question_id", None)
+            await update.message.reply_text("⛔ No tienes permisos para editar preguntas.")
+            return
+
+        question_text = (update.message.text or "").strip()
+
+        if len(question_text) < 5:
+            await update.message.reply_text(
+                "⚠️ La pregunta es demasiado corta.",
+                reply_markup=build_customer_satisfaction_panel_keyboard()
+            )
+            return
+
+        with conn.cursor() as cur:
+            cur.execute("""
+
+                UPDATE customer_satisfaction_questions
+                SET question_text=%s
+                WHERE id=%s
+
+            """, (question_text, edit_question_id))
+
+        context.user_data.pop("customer_satisfaction_admin_edit_question_id", None)
+
+        await update.message.reply_text(
+            "✅ Pregunta actualizada.",
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    add_question_type = context.user_data.get("customer_satisfaction_admin_add_question")
+
+    if add_question_type:
+
+        if not is_super_admin(update.effective_user.id):
+            context.user_data.pop("customer_satisfaction_admin_add_question", None)
+            await update.message.reply_text("⛔ No tienes permisos para añadir preguntas.")
+            return
+
+        question_text = (update.message.text or "").strip()
+
+        if len(question_text) < 5:
+            await update.message.reply_text(
+                "⚠️ La pregunta es demasiado corta.",
+                reply_markup=build_customer_satisfaction_panel_keyboard()
+            )
+            return
+
+        with conn.cursor() as cur:
+            cur.execute("""
+
+                SELECT COALESCE(MAX(sort_order), 0) + 1
+                FROM customer_satisfaction_questions
+                WHERE survey_id IS NULL
+
+            """)
+            sort_order = cur.fetchone()[0] or 1
+
+            cur.execute("""
+
+                INSERT INTO customer_satisfaction_questions
+                (
+                    survey_id,
+                    question_key,
+                    question_text,
+                    category,
+                    answer_type,
+                    is_active,
+                    sort_order
+                )
+                VALUES (NULL, %s, %s, 'custom', %s, TRUE, %s)
+
+            """, (
+                f"custom_{int(time.time())}",
+                question_text,
+                add_question_type,
+                sort_order
+            ))
+
+        context.user_data.pop("customer_satisfaction_admin_add_question", None)
+
+        await update.message.reply_text(
+            "✅ Pregunta añadida.",
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    response_id = context.user_data.get("customer_satisfaction_response_id")
+    question_id = context.user_data.get("customer_satisfaction_text_question_id")
+
+    if not response_id or not question_id:
+        await update.message.reply_text("No estaba esperando una respuesta de encuesta.")
+        return
+
+    if not customer_satisfaction_response_belongs_to_user(
+        response_id,
+        update.effective_user.id
+    ):
+
+        context.user_data.pop("customer_satisfaction_response_id", None)
+        context.user_data.pop("customer_satisfaction_text_question_id", None)
+        await update.message.reply_text("⛔ No puedes responder esta encuesta.")
+        return
+
+    save_customer_satisfaction_answer(
+        response_id,
+        question_id,
+        text_answer=(update.message.text or "").strip()[:2000]
+    )
+
+    context.user_data.pop("customer_satisfaction_text_question_id", None)
+    await send_customer_satisfaction_question(
+        context,
+        update.effective_chat.id,
+        response_id
+    )
 
 
 def build_admin_panel_keyboard(user_id):
@@ -3093,6 +3691,13 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
 
         promo_row = fetch_group_user_promo_by_code(update.message.text)
         valid, error_message = validate_group_user_promo_row(promo_row)
+        selected_group_id = context.user_data.get("group_user_promo_redeem_group_id")
+
+
+        if valid and selected_group_id and int(promo_row[1]) != int(selected_group_id):
+
+            valid = False
+            error_message = "❌ Este código no pertenece a esta comunidad."
 
 
         if not valid:
@@ -3115,7 +3720,12 @@ async def receive_group_user_promo_code(update: Update, context: ContextTypes.DE
             await update.message.reply_text(
                 error_message,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton(
+                        "🎟 Canjear código de esta comunidad",
+                        callback_data=f"group_user_promo_redeem_start_{selected_group_id}"
+                        if selected_group_id
+                        else "start_explore_groups"
+                    )],
                     [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
                 ])
             )
@@ -4532,6 +5142,29 @@ def format_commercial_request_type(request_type):
     return labels.get(request_type, request_type or "-")
 
 
+def format_commercial_request_status(status):
+
+    labels = {
+        "pending": "pendiente",
+        "approved": "aprobada",
+        "rejected": "rechazada",
+        "trial_active": "trial activo",
+        "trial_expired": "trial caducado",
+        "awaiting_creator_setup": "pendiente de configuración",
+        "setup_in_progress": "configuración en curso",
+        "setup_ready": "configuración lista",
+        "awaiting_payment_setup": "pendiente de cobro",
+        "awaiting_payment": "pendiente de pago",
+        "active": "activa",
+        "disabled": "desactivada",
+        "expired_pending_reactivation": "pendiente de reactivación",
+        "archived": "archivada",
+        "closed": "cerrada"
+    }
+
+    return labels.get(status, status or "-")
+
+
 def format_public_visibility(public_visibility):
 
     labels = {
@@ -5487,8 +6120,8 @@ def build_marketplace_access_keyboard(
     )])
 
     keyboard.append([InlineKeyboardButton(
-        "🎟 Tengo código de acceso",
-        callback_data="group_user_promo_redeem_start"
+        "🎟 Tengo código para esta comunidad",
+        callback_data=f"group_user_promo_redeem_start_{group_id}"
     )])
 
     keyboard.append([InlineKeyboardButton(
@@ -5529,8 +6162,8 @@ def build_marketplace_preview_keyboard(group, user_id=None):
     )])
 
     keyboard.append([InlineKeyboardButton(
-        "🎟 Tengo código de acceso",
-        callback_data="group_user_promo_redeem_start"
+        "🎟 Canjear código de esta comunidad",
+        callback_data=f"group_user_promo_redeem_start_{group_id}"
     )])
 
     keyboard.append([InlineKeyboardButton(
@@ -6028,8 +6661,8 @@ def build_marketplace_group_keyboard(group, user_id=None):
     )])
 
     keyboard.append([InlineKeyboardButton(
-        "🎟 Tengo código de acceso",
-        callback_data="group_user_promo_redeem_start"
+        "🎟 Canjear código de esta comunidad",
+        callback_data=f"group_user_promo_redeem_start_{group_id}"
     )])
 
     keyboard.append([InlineKeyboardButton(
@@ -6713,6 +7346,176 @@ def get_commercial_request_title(request_row):
     )
 
 
+def get_owner_groups_summary(user_id):
+
+    if not user_id:
+
+        return 0, "Sin grupos"
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT DISTINCT g.name
+                FROM admins a
+                JOIN groups g
+                ON g.id=a.group_id
+                WHERE a.user_id=%s
+                AND a.role='GROUP_OWNER'
+                AND a.is_active=TRUE
+                ORDER BY g.name ASC
+
+            """, (user_id,))
+
+            names = [
+                row[0] or "Sin nombre"
+                for row in cur.fetchall()
+            ]
+
+    except Exception as e:
+
+        print("Error cargando grupos del propietario:", e)
+
+        names = []
+
+
+    if not names:
+
+        return 0, "Sin grupos"
+
+
+    shown = ", ".join(names[:3])
+
+    if len(names) > 3:
+
+        shown += f" +{len(names) - 3} más"
+
+
+    return len(names), shown
+
+
+def build_owner_groups_detail_text(request_row):
+
+    user_id = request_row.get("user_id") if request_row else None
+
+    if not user_id:
+
+        return "🏪 Grupos del propietario\n\nNo hay usuario asociado a esta solicitud."
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT DISTINCT g.id, g.name, g.telegram_group_id, COALESCE(g.is_active, TRUE)
+                FROM groups g
+                JOIN admins a
+                ON a.group_id = g.id
+                WHERE a.user_id=%s
+                AND a.role='GROUP_OWNER'
+                AND a.is_active=TRUE
+                ORDER BY g.name ASC
+
+            """, (user_id,))
+
+            rows = cur.fetchall()
+
+    except Exception as e:
+
+        print("Error cargando detalle de grupos del propietario:", e)
+
+        rows = []
+
+
+    if not rows:
+
+        return "🏪 Grupos del propietario\n\nEste propietario todavía no tiene grupos vinculados."
+
+
+    lines = [
+        "🏪 Grupos del propietario",
+        "",
+        format_owner_request_card(request_row)
+    ]
+
+
+    for group_id, name, telegram_group_id, is_active in rows:
+
+        lines.append(
+            "\n"
+            f"Grupo: {name or 'Sin nombre'}\n"
+            f"ID interno: {group_id}\n"
+            f"Telegram ID: {telegram_group_id or '-'}\n"
+            f"Estado: {'activo' if is_active else 'inactivo'}"
+        )
+
+
+    return "\n".join(lines)
+
+
+def format_owner_request_card(request_row):
+
+    username = request_row.get("username") or "Sin username"
+
+    if username != "Sin username" and not username.startswith("@"):
+
+        username = f"@{username}"
+
+
+    first_name = request_row.get("first_name") or "Sin nombre disponible"
+    user_id = request_row.get("user_id")
+    status = request_row.get("status") or "-"
+    max_groups, _quota_source = get_creator_group_quota_source(user_id, request_row)
+    used_groups, group_names = get_owner_groups_summary(user_id)
+    trial_until = request_row.get("trial_ends_at")
+    subscription_until = request_row.get("commercial_subscription_until")
+    last_activity = (
+        request_row.get("last_interaction_at")
+        or request_row.get("updated_at")
+        or request_row.get("created_at")
+    )
+
+    trial_text = "inactivo"
+    if status == "trial_active":
+        trial_text = f"activo hasta {format_commercial_datetime(trial_until)}"
+
+    commercial_text = "activo" if status == "active" else "inactivo"
+    if subscription_until:
+        commercial_text = f"{commercial_text} hasta {format_commercial_datetime(subscription_until)}"
+
+    return (
+        f"👤 Nombre: {first_name} {username}\n"
+        f"🆔 Usuario: {user_id or '-'}\n"
+        f"📌 Estado: {format_commercial_request_status(status)}\n"
+        f"📦 Cupo: {used_groups}/{max_groups}\n"
+        f"🧪 Trial: {trial_text}\n"
+        f"💳 Comercial: {commercial_text}\n"
+        f"🏪 Grupos: {used_groups} · {group_names}\n"
+        f"🕒 Última actividad: {format_commercial_datetime(last_activity)}"
+    )
+
+
+def format_owner_request_button_label(request_row, prefix="👁 Ver"):
+
+    first_name = request_row.get("first_name") or "Sin nombre"
+    username = request_row.get("username") or "Sin username"
+
+    if username != "Sin username" and not username.startswith("@"):
+
+        username = f"@{username}"
+
+
+    return (
+        f"{prefix} · {first_name} {username} "
+        f"#{request_row.get('id')}"
+    )[:64]
+
+
 def fetch_pending_commercial_requests():
 
     with conn.cursor() as cur:
@@ -6794,16 +7597,7 @@ def build_commercial_status_list_text(title, requests):
 
     for request_row in requests:
 
-        lines.append(
-            "\n"
-            f"ID: {request_row.get('id')}\n"
-            f"Usuario: {request_row.get('user_id') or '-'}\n"
-            f"Estado: {request_row.get('status') or '-'}\n"
-            f"Setup: {request_row.get('creator_setup_status') or '-'}\n"
-            f"Grupo: {request_row.get('approved_group_id') or '-'}\n"
-            f"Cupo: {request_row.get('max_groups_allowed') or '-'}\n"
-            f"Fecha: {format_commercial_datetime(request_row.get('updated_at') or request_row.get('created_at'))}"
-        )
+        lines.append("\n" + format_owner_request_card(request_row))
 
 
     return "\n".join(lines)
@@ -6820,7 +7614,7 @@ def build_commercial_status_list_keyboard(requests, back_callback="admin_owners_
 
         keyboard.append([
             InlineKeyboardButton(
-                f"👁 Ver estado #{request_id}",
+                format_owner_request_button_label(request_row, "👁 Ver estado"),
                 callback_data=f"admin_commercial_review_{request_id}"
             )
         ])
@@ -7701,28 +8495,19 @@ def build_commercial_requests_text(requests):
 
 
     lines = [
-        "📩 Solicitudes comerciales pendientes"
+        "🕓 Solicitudes pendientes\n\n"
+        "Gestiona aquí a los dueños de comunidades: solicitudes, pruebas, cupos, grupos y estado comercial."
     ]
 
 
     for request_row in requests:
 
-        username = request_row.get("username") or "-"
-
-        if username != "-" and not username.startswith("@"):
-
-            username = f"@{username}"
-
-
         lines.append(
             "\n"
-            f"ID: {request_row.get('id')}\n"
+            f"{format_owner_request_card(request_row)}\n"
             f"Tipo: {format_commercial_request_type(request_row.get('request_type'))}\n"
-            f"Usuario: {request_row.get('user_id') or '-'}\n"
-            f"Username: {username}\n"
-            f"Nombre: {get_commercial_request_title(request_row)}\n"
-            f"Contacto: {request_row.get('contact_text') or '-'}\n"
-            f"Fecha: {format_commercial_datetime(request_row.get('created_at'))}"
+            f"Solicitud: {get_commercial_request_title(request_row)}\n"
+            f"Contacto: {request_row.get('contact_text') or '-'}"
         )
 
 
@@ -7740,7 +8525,7 @@ def build_commercial_requests_keyboard(requests):
 
         keyboard.append([
             InlineKeyboardButton(
-                f"✅ Revisar solicitud #{request_id}",
+                format_owner_request_button_label(request_row, "📄 Ver detalle"),
                 callback_data=f"admin_commercial_review_{request_id}"
             )
         ])
@@ -7755,8 +8540,8 @@ def build_commercial_requests_keyboard(requests):
 
     keyboard.append([
         InlineKeyboardButton(
-            "⬅️ Volver",
-            callback_data="admin_back_main"
+            "⬅️ Volver al panel de propietarios",
+            callback_data="admin_owners_panel"
         )
     ])
 
@@ -7774,21 +8559,14 @@ def build_archived_commercial_requests_text(requests):
 
 
     lines = [
-        "📁 Solicitudes archivadas"
+        "📁 Archivados\n\n"
+        "Solicitudes finalizadas o cerradas sin borrar sus datos."
     ]
 
 
     for request_row in requests:
 
-        lines.append(
-            "\n"
-            f"ID: {request_row.get('id')}\n"
-            f"Usuario: {request_row.get('user_id') or '-'}\n"
-            f"Estado: {request_row.get('status') or '-'}\n"
-            f"Grupo vinculado: {request_row.get('approved_group_id') or '-'}\n"
-            f"Telegram group ID: {request_row.get('approved_telegram_group_id') or '-'}\n"
-            f"Fecha: {format_commercial_datetime(request_row.get('updated_at') or request_row.get('created_at'))}"
-        )
+        lines.append("\n" + format_owner_request_card(request_row))
 
 
     return "\n".join(lines)
@@ -7805,7 +8583,7 @@ def build_archived_commercial_requests_keyboard(requests):
 
         keyboard.append([
             InlineKeyboardButton(
-                f"👁 Ver estado #{request_id}",
+                format_owner_request_button_label(request_row, "👁 Ver estado"),
                 callback_data=f"admin_commercial_review_{request_id}"
             )
         ])
@@ -7813,8 +8591,8 @@ def build_archived_commercial_requests_keyboard(requests):
 
     keyboard.append([
         InlineKeyboardButton(
-            "⬅️ Volver",
-            callback_data="admin_commercial_requests"
+            "⬅️ Volver al panel de propietarios",
+            callback_data="admin_owners_panel"
         )
     ])
 
@@ -7836,6 +8614,7 @@ def build_commercial_request_detail_text(request_row):
 
     return (
         "📩 Solicitud comercial\n\n"
+        f"{format_owner_request_card(request_row)}\n\n"
         f"ID: {request_row.get('id')}\n"
         f"Estado: {request_row.get('status') or '-'}\n"
         f"Tipo: {format_commercial_request_type(request_row.get('request_type'))}\n"
@@ -7894,15 +8673,15 @@ def build_commercial_advanced_review_keyboard(request_row):
 
     keyboard.append([
         InlineKeyboardButton(
-            "📦 Ver configuración",
+            "📄 Ver detalle completo",
             callback_data=f"admin_commercial_status_{request_id}"
         )
     ])
 
     keyboard.append([
         InlineKeyboardButton(
-            "👁 Ver estado",
-            callback_data=f"admin_commercial_status_{request_id}"
+            "🏪 Ver sus grupos",
+            callback_data=f"admin_commercial_owner_groups_{request_id}"
         )
     ])
 
@@ -7919,6 +8698,13 @@ def build_commercial_advanced_review_keyboard(request_row):
             InlineKeyboardButton(
                 "🗄 Finalizar solicitud",
                 callback_data=f"admin_commercial_archive_{request_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "📝 Añadir nota interna",
+                callback_data=f"admin_commercial_internal_note_{request_id}"
             )
         ])
 
@@ -7941,12 +8727,8 @@ def build_commercial_advanced_review_keyboard(request_row):
 
     keyboard.append([
         InlineKeyboardButton(
-            "⬅️ Volver",
-            callback_data=(
-                "admin_commercial_archived_requests"
-                if is_commercial_request_archived(request_row)
-                else "admin_commercial_requests"
-            )
+            "⬅️ Volver al panel de propietarios",
+            callback_data="admin_owners_panel"
         )
     ])
 
@@ -7974,6 +8756,20 @@ def build_commercial_pending_review_keyboard(request_row):
     keyboard = [
         [build_commercial_contact_button(request_row)]
     ]
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "📄 Ver detalle completo",
+            callback_data=f"admin_commercial_status_{request_id}"
+        )
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "🏪 Ver sus grupos",
+            callback_data=f"admin_commercial_owner_groups_{request_id}"
+        )
+    ])
 
 
     if request_type == "shared_trial":
@@ -8004,15 +8800,22 @@ def build_commercial_pending_review_keyboard(request_row):
 
     keyboard.append([
         InlineKeyboardButton(
-            "🔢 Ajustar cupo",
+            "📦 Cambiar cupo",
             callback_data=f"admin_commercial_group_limit_{request_id}"
         )
     ])
 
     keyboard.append([
         InlineKeyboardButton(
-            "⬅️ Volver",
-            callback_data="admin_commercial_requests"
+            "📝 Añadir nota interna",
+            callback_data=f"admin_commercial_internal_note_{request_id}"
+        )
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Volver al panel de propietarios",
+            callback_data="admin_owners_panel"
         )
     ])
 
@@ -11635,6 +12438,337 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "admin_customer_satisfaction":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "😊 Satisfacción de clientes\n\n"
+            "Envía encuestas y revisa la opinión de usuarios, propietarios y administradores.",
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("admin_satisfaction_send_"):
+
+        audience_slug = data.replace("admin_satisfaction_send_", "", 1)
+        audience = {
+            "global": "global",
+            "users": "users",
+            "owners": "owners",
+            "group_admins": "group_admins"
+        }.get(audience_slug)
+
+        if not audience:
+            await query.message.reply_text(
+                "❌ Audiencia no válida.",
+                reply_markup=build_customer_satisfaction_panel_keyboard()
+            )
+            return
+
+        recipients = fetch_customer_satisfaction_recipients(audience)
+        survey_id = create_customer_satisfaction_survey(user_id, audience)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📤 Confirmar envío de encuesta\n\n"
+            f"Audiencia: {get_customer_satisfaction_audience_label(audience)}\n"
+            f"Usuarios elegibles: {len(recipients)}\n\n"
+            "Vas a enviar una encuesta de satisfacción. ¿Confirmas?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Confirmar envío", callback_data=f"admin_satisfaction_confirm_{survey_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="admin_customer_satisfaction")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_satisfaction_confirm_"):
+
+        try:
+            survey_id = int(data.replace("admin_satisfaction_confirm_", "", 1))
+        except Exception:
+            await query.message.reply_text("❌ Encuesta no válida.")
+            return
+
+        with conn.cursor() as cur:
+            cur.execute("""
+
+                SELECT audience, status
+                FROM customer_satisfaction_surveys
+                WHERE id=%s
+                LIMIT 1
+
+            """, (survey_id,))
+            survey_row = cur.fetchone()
+
+        if not survey_row:
+            await query.message.reply_text(
+                "❌ Encuesta no encontrada.",
+                reply_markup=build_customer_satisfaction_panel_keyboard()
+            )
+            return
+
+        audience, status = survey_row
+        if status != "draft":
+            await query.message.reply_text(
+                "⚠️ Esta encuesta ya fue enviada o cerrada.",
+                reply_markup=build_customer_satisfaction_panel_keyboard()
+            )
+            return
+
+        recipients = fetch_customer_satisfaction_recipients(audience)
+        sent_count = 0
+        failed_count = 0
+
+        for recipient_id in recipients:
+            try:
+                await context.bot.send_message(
+                    chat_id=recipient_id,
+                    text=(
+                        "Queremos mejorar el bot. Responde esta encuesta rápida de 1 a 5.\n\n"
+                        "Tus respuestas ayudan a mejorar menús, acceso, pagos, soporte y seguridad."
+                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📝 Responder encuesta", callback_data=f"satisfaction_start_{survey_id}")]
+                    ])
+                )
+                sent_count += 1
+            except Exception as e:
+                failed_count += 1
+                print("Error enviando encuesta de satisfacción:", e)
+
+        update_customer_satisfaction_sent_counts(survey_id, sent_count, failed_count)
+
+        log_event(
+            "survey_sent",
+            category="satisfaction",
+            severity="info",
+            actor_user_id=user_id,
+            message="Encuesta de satisfacción enviada.",
+            metadata={
+                "survey_id": survey_id,
+                "audience": audience,
+                "sent_count": sent_count,
+                "failed_count": failed_count
+            }
+        )
+        record_beta_event(
+            "survey_sent",
+            severity="info",
+            user_id=user_id,
+            message="Encuesta de satisfacción enviada.",
+            metadata={
+                "survey_id": survey_id,
+                "audience": audience,
+                "sent_count": sent_count,
+                "failed_count": failed_count
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Encuesta enviada\n\n"
+            f"Enviados: {sent_count}\n"
+            f"Fallidos: {failed_count}",
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_satisfaction_results":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_customer_satisfaction_results_text(),
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_satisfaction_questions":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_customer_satisfaction_questions_text(),
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_satisfaction_deactivate_menu":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🚫 Desactivar pregunta\n\nElige una pregunta activa para ocultarla en próximas encuestas.",
+            reply_markup=build_customer_satisfaction_deactivate_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_satisfaction_edit_menu":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✏️ Editar preguntas\n\nElige la pregunta cuyo texto quieres actualizar.",
+            reply_markup=build_customer_satisfaction_edit_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("admin_satisfaction_edit_"):
+
+        try:
+            question_id = int(data.replace("admin_satisfaction_edit_", "", 1))
+        except Exception:
+            await query.message.reply_text("❌ Pregunta no válida.")
+            return
+
+        context.user_data["customer_satisfaction_admin_edit_question_id"] = question_id
+
+        await query.message.reply_text(
+            "✏️ Editar pregunta\n\nEscribe el nuevo texto de la pregunta.",
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("admin_satisfaction_deactivate_"):
+
+        try:
+            question_id = int(data.replace("admin_satisfaction_deactivate_", "", 1))
+        except Exception:
+            await query.message.reply_text("❌ Pregunta no válida.")
+            return
+
+        with conn.cursor() as cur:
+            cur.execute("""
+
+                UPDATE customer_satisfaction_questions
+                SET is_active=FALSE
+                WHERE id=%s
+
+            """, (question_id,))
+
+        await query.message.reply_text(
+            "✅ Pregunta desactivada.",
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_satisfaction_add_rating":
+
+        context.user_data["customer_satisfaction_admin_add_question"] = "rating_1_5"
+        await query.message.reply_text(
+            "➕ Añadir pregunta\n\nEscribe el texto de la pregunta. Se guardará como valoración 1-5.",
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_satisfaction_add_text":
+
+        context.user_data["customer_satisfaction_admin_add_question"] = "text"
+        await query.message.reply_text(
+            "➕ Añadir pregunta texto\n\nEscribe el texto de la pregunta. El usuario responderá con texto libre.",
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_satisfaction_latest":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_customer_satisfaction_results_text(),
+            reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("satisfaction_start_"):
+
+        try:
+            survey_id = int(data.replace("satisfaction_start_", "", 1))
+        except Exception:
+            await query.message.reply_text("❌ Encuesta no válida.")
+            return
+
+        response_id = get_or_create_customer_satisfaction_response(
+            survey_id,
+            user_id
+        )
+
+        context.user_data["customer_satisfaction_response_id"] = response_id
+        await send_customer_satisfaction_question(
+            context,
+            query.message.chat_id,
+            response_id
+        )
+
+        return
+
+
+    if data.startswith("satisfaction_rate_"):
+
+        parts = data.split("_")
+
+        if len(parts) != 5 or not all(part.isdigit() for part in parts[2:]):
+            await query.message.reply_text("❌ Respuesta no válida.")
+            return
+
+        response_id = int(parts[2])
+        question_id = int(parts[3])
+        rating = int(parts[4])
+
+        if not customer_satisfaction_response_belongs_to_user(
+            response_id,
+            user_id
+        ):
+
+            await query.message.reply_text("⛔ No puedes responder esta encuesta.")
+            return
+
+        if rating < 1 or rating > 5:
+            await query.message.reply_text("❌ Respuesta no válida.")
+            return
+
+        save_customer_satisfaction_answer(
+            response_id,
+            question_id,
+            rating=rating
+        )
+
+        await send_customer_satisfaction_question(
+            context,
+            query.message.chat_id,
+            response_id
+        )
+
+        return
+
+
     if data == "owner_backup_panel":
 
         groups = fetch_backup_owner_groups(user_id)
@@ -13266,6 +14400,68 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("admin_commercial_owner_groups_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_owner_groups_"
+        )
+
+        request_row = fetch_commercial_request(request_id)
+
+
+        if not request_row:
+
+            await query.message.reply_text(
+                "❌ Solicitud comercial no encontrada."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            build_owner_groups_detail_text(request_row),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "📄 Ver detalle completo",
+                    callback_data=f"admin_commercial_status_{request_id}"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ Volver al panel de propietarios",
+                    callback_data="admin_owners_panel"
+                )]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_commercial_internal_note_"):
+
+        request_id = extract_commercial_request_id(
+            data,
+            "admin_commercial_internal_note_"
+        )
+
+        await query.message.reply_text(
+            "📝 Añadir nota interna\n\n"
+            "Este acceso deja claro dónde irá la nota interna. "
+            "La edición de notas se conectará al flujo de texto seguro en una fase posterior.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "📄 Ver detalle completo",
+                    callback_data=f"admin_commercial_status_{request_id}"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ Volver al panel de propietarios",
+                    callback_data="admin_owners_panel"
+                )]
+            ])
+        )
+
+        return
+
+
     if data.startswith("admin_commercial_archive_confirm_"):
 
         request_id = extract_commercial_request_id(
@@ -14589,8 +15785,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         callback_data=f"free_access_{group_id}"
                     )],
                     [InlineKeyboardButton(
-                        "🎟 Tengo código de acceso",
-                        callback_data="group_user_promo_redeem_start"
+                        "🎟 Canjear código de esta comunidad",
+                        callback_data=f"group_user_promo_redeem_start_{group_id}"
                     )],
                     [InlineKeyboardButton(
                         "💬 Ayuda sobre este menú",
@@ -14648,9 +15844,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             InlineKeyboardButton(
 
-                "🎟 Tengo código de acceso",
+                "🎟 Canjear código de esta comunidad",
 
-                callback_data="group_user_promo_redeem_start"
+                callback_data=f"group_user_promo_redeem_start_{group_id}"
 
             )
 
@@ -19220,12 +20416,44 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "group_user_promo_redeem_start":
 
+        await query.message.reply_text(
+            "🎟 Código de comunidad\n\n"
+            "El canje de códigos se hace desde la ficha de una comunidad concreta.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("group_user_promo_redeem_start_"):
+
+        try:
+
+            redeem_group_id = int(data.replace("group_user_promo_redeem_start_", "", 1))
+
+        except Exception:
+
+            await query.message.reply_text(
+                "❌ Comunidad no válida.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
         context.user_data["group_user_promo_waiting"] = "redeem_code"
+        context.user_data["group_user_promo_redeem_group_id"] = redeem_group_id
 
         await query.message.reply_text(
-            "🎟 Tengo código de acceso\n\n"
-            "Envía ahora el código de acceso de tu comunidad.",
+            "🎟 Canjear código de esta comunidad\n\n"
+            "Envía ahora el código de acceso. Solo será válido si pertenece a esta comunidad.",
             reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a comunidad", callback_data=f"marketplace_group_{redeem_group_id}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
@@ -19244,7 +20472,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "❌ Código no válido.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
                     [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
                 ])
             )
@@ -19260,7 +20488,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "❌ No hay un código pendiente para confirmar.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
                     [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
                 ])
             )
@@ -19297,6 +20525,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         valid, error_message = validate_group_user_promo_row(promo_row)
+        selected_group_id = context.user_data.get("group_user_promo_redeem_group_id")
+
+
+        if valid and selected_group_id and int(promo_row[1]) != int(selected_group_id):
+
+            valid = False
+            error_message = "❌ Este código no pertenece a esta comunidad."
 
 
         if not valid:
@@ -19304,7 +20539,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 error_message,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton(
+                        "⬅️ Volver a comunidad",
+                        callback_data=f"marketplace_group_{selected_group_id}"
+                        if selected_group_id
+                        else "start_explore_groups"
+                    )],
                     [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
                 ])
             )
@@ -19323,6 +20563,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.user_data.pop("group_user_promo_pending_code_id", None)
             context.user_data.pop("group_user_promo_waiting", None)
+            context.user_data.pop("group_user_promo_redeem_group_id", None)
 
         except Exception as e:
 
@@ -19331,7 +20572,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "❌ Error canjeando el código.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎟 Tengo código de acceso", callback_data="group_user_promo_redeem_start")],
+                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
                     [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
                 ])
             )

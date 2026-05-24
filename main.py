@@ -104,6 +104,7 @@ import callback_router as callback_router_module
 from callback_router import (
     button,
     receive_commercial_request_chat_message,
+    receive_customer_satisfaction_text,
     receive_group_user_promo_code,
     receive_support_message,
     receive_location_gate
@@ -792,6 +793,14 @@ async def handle_text(update, context):
 
     if context.user_data.get("group_user_promo_waiting"):
         await receive_group_user_promo_code(update, context)
+        return
+
+    if (
+        context.user_data.get("customer_satisfaction_response_id")
+        or context.user_data.get("customer_satisfaction_admin_add_question")
+        or context.user_data.get("customer_satisfaction_admin_edit_question_id")
+    ):
+        await receive_customer_satisfaction_text(update, context)
         return
 
     if context.user_data.get("waiting_code"):
