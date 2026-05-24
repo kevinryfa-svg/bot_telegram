@@ -916,7 +916,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
                 InlineKeyboardButton(
 
-                    "⚙️ Panel global",
+                    "👑 Panel global del bot",
 
                     callback_data=CALLBACK_ADMIN_PANEL
 
@@ -930,12 +930,15 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
                 cur.execute("""
 
-                    SELECT 1
+                    SELECT role
 
                     FROM admins
 
                     WHERE user_id=%s
                     AND is_active=TRUE
+
+                    ORDER BY
+                        CASE WHEN role='GROUP_OWNER' THEN 0 ELSE 1 END
 
                     LIMIT 1
 
@@ -950,7 +953,11 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
                     InlineKeyboardButton(
 
-                        "⚙️ Mi panel de gestión",
+                        (
+                            "🏪 Mis comunidades"
+                            if admin_row[0] == "GROUP_OWNER"
+                            else "👮 Panel admin de grupo"
+                        ),
 
                         callback_data=CALLBACK_ADMIN_PANEL
 

@@ -1070,25 +1070,127 @@ def build_commercial_menu_keyboard():
     ]
 
 
-def build_admin_panel_keyboard(user_id):
+def user_has_group_owner_role(user_id):
 
-    permissions = get_admin_permissions(user_id)
+    if is_super_admin(user_id):
 
-    button_rows = build_admin_menu_button_rows(
-        permissions=permissions,
-        is_super_admin=is_super_admin(user_id)
+        return True
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT 1
+                FROM admins
+                WHERE user_id=%s
+                AND role='GROUP_OWNER'
+                AND is_active=TRUE
+                LIMIT 1
+
+            """, (user_id,))
+
+            return cur.fetchone() is not None
+
+    except Exception as e:
+
+        print("Error verificando rol owner:", e)
+
+        return False
+
+
+def build_admin_home_text(user_id):
+
+    if is_super_admin(user_id):
+
+        return (
+            "👑 Panel global del bot\n\n"
+            "Gestiona la plataforma completa desde paneles separados: "
+            "bot, propietarios y comunidades concretas."
+        )
+
+
+    if user_has_group_owner_role(user_id):
+
+        return (
+            "🏪 Mis comunidades\n\n"
+            "Gestiona tus grupos concretos, códigos, planes, admins, logs y backups."
+        )
+
+
+    return (
+        "👮 Panel admin de grupo\n\n"
+        "Verás solo la comunidad actual, tus permisos concedidos y los accesos rápidos permitidos."
     )
 
-    return [
-        [
-            make_button(
-                button["text"],
-                button["callback_data"]
-            )
-            for button in row
+
+def build_admin_global_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
+        [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
+        [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
+        [InlineKeyboardButton("🏪 Marketplace global", callback_data="admin_global_marketplace")],
+        [InlineKeyboardButton("👥 Propietarios / solicitudes comerciales", callback_data="admin_owners_panel")],
+        [InlineKeyboardButton("💳 Planes comerciales del bot", callback_data="admin_global_commercial_plans")],
+        [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
+        [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
+        [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
+        [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_admin_owners_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📩 Solicitudes pendientes", callback_data="admin_commercial_requests")],
+        [InlineKeyboardButton("✅ Solicitudes activas", callback_data="admin_commercial_active_requests")],
+        [InlineKeyboardButton("📁 Solicitudes archivadas", callback_data="admin_commercial_archived_requests")],
+        [InlineKeyboardButton("⏳ Trials activos", callback_data="admin_commercial_trials_active")],
+        [InlineKeyboardButton("💳 Suscripciones comerciales", callback_data="admin_commercial_subscriptions")],
+        [InlineKeyboardButton("🔢 Cupos de grupos", callback_data="admin_commercial_group_limits")],
+        [InlineKeyboardButton("🔁 Reasignar owner/grupo", callback_data="admin_commercial_owner_tools")],
+        [InlineKeyboardButton("🏪 Ver grupos de un propietario", callback_data="admin_commercial_owner_tools")],
+        [InlineKeyboardButton("💬 Contactar propietario", callback_data="admin_commercial_requests")],
+        [InlineKeyboardButton("🗄 Finalizar/archivar solicitud", callback_data="admin_commercial_requests")],
+        [InlineKeyboardButton("👑 Panel global", callback_data="admin_global_panel")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+    ])
+
+
+def build_admin_panel_keyboard(user_id):
+
+    if is_super_admin(user_id):
+
+        return [
+            [InlineKeyboardButton("👑 Panel global del bot", callback_data="admin_global_panel")],
+            [InlineKeyboardButton("🧑‍💼 Panel de propietarios", callback_data="admin_owners_panel")],
+            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
         ]
-        for row in button_rows
-    ]
+
+
+    if user_has_group_owner_role(user_id):
+
+        return [
+            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ]
+
+
+    if has_any_admin_permission(user_id):
+
+        return [
+            [InlineKeyboardButton("👮 Panel admin de grupo", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ]
+
+
+    return []
 
 
 def build_beta_monitor_keyboard():
@@ -3897,7 +3999,7 @@ def build_group_settings_keyboard(user_id, group_id):
     ):
 
         keyboard.append([
-            InlineKeyboardButton("💳 Planes y pagos", callback_data="owner_panel_payments")
+            InlineKeyboardButton("💳 Planes y pagos del grupo", callback_data="owner_panel_payments")
         ])
 
 
@@ -3930,7 +4032,7 @@ def build_group_settings_keyboard(user_id, group_id):
     ):
 
         keyboard.append([
-            InlineKeyboardButton("👑 Administradores", callback_data="owner_panel_admins")
+            InlineKeyboardButton("👑 Administradores del grupo", callback_data="owner_panel_admins")
         ])
 
 
@@ -3941,7 +4043,7 @@ def build_group_settings_keyboard(user_id, group_id):
     ):
 
         keyboard.append([
-            InlineKeyboardButton("📜 Logs y actividad", callback_data="owner_panel_logs")
+            InlineKeyboardButton("📜 Logs y actividad del grupo", callback_data="owner_panel_logs")
         ])
 
 
@@ -3963,7 +4065,7 @@ def build_group_settings_keyboard(user_id, group_id):
     ):
 
         keyboard.append([
-            InlineKeyboardButton("⚙️ Configuración general", callback_data="owner_panel_general")
+            InlineKeyboardButton("⚙️ Configuración de la comunidad", callback_data="owner_panel_general")
         ])
 
 
@@ -4121,7 +4223,7 @@ OWNER_PANEL_SECTIONS = {
         "codes"
     ),
     "owner_panel_payments": (
-        "💳 Planes y pagos",
+        "💳 Planes y pagos del grupo",
         "Gestiona planes, cobros, Stripe y pagos recibidos.",
         ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"],
         "payments"
@@ -4139,13 +4241,13 @@ OWNER_PANEL_SECTIONS = {
         "marketplace"
     ),
     "owner_panel_admins": (
-        "👑 Administradores",
+        "👑 Administradores del grupo",
         "Añade admins de grupo y ajusta sus permisos por comunidad.",
         ["can_manage_admins"],
         "admins"
     ),
     "owner_panel_logs": (
-        "📜 Logs y actividad",
+        "📜 Logs y actividad del grupo",
         "Consulta accesos, pagos, códigos, backups y errores de esta comunidad.",
         ["can_view_logs"],
         "logs"
@@ -4157,7 +4259,7 @@ OWNER_PANEL_SECTIONS = {
         "backup"
     ),
     "owner_panel_general": (
-        "⚙️ Configuración general",
+        "⚙️ Configuración de la comunidad",
         "Edita datos básicos, tipo de acceso y ajustes seguros de la comunidad.",
         ["can_manage_groups", "can_edit_group_texts"],
         "general"
@@ -6655,6 +6757,84 @@ def fetch_archived_commercial_requests():
         row_to_commercial_request(row)
         for row in rows
     ]
+
+
+def fetch_commercial_requests_by_statuses(statuses, limit=20):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(COMMERCIAL_REQUEST_FIELDS)}
+            FROM commercial_requests
+            WHERE status = ANY(%s)
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT %s
+
+        """, (statuses, limit))
+
+        rows = cur.fetchall()
+
+
+    return [
+        row_to_commercial_request(row)
+        for row in rows
+    ]
+
+
+def build_commercial_status_list_text(title, requests):
+
+    if not requests:
+
+        return f"{title}\n\nNo hay solicitudes en esta vista."
+
+
+    lines = [title]
+
+
+    for request_row in requests:
+
+        lines.append(
+            "\n"
+            f"ID: {request_row.get('id')}\n"
+            f"Usuario: {request_row.get('user_id') or '-'}\n"
+            f"Estado: {request_row.get('status') or '-'}\n"
+            f"Setup: {request_row.get('creator_setup_status') or '-'}\n"
+            f"Grupo: {request_row.get('approved_group_id') or '-'}\n"
+            f"Cupo: {request_row.get('max_groups_allowed') or '-'}\n"
+            f"Fecha: {format_commercial_datetime(request_row.get('updated_at') or request_row.get('created_at'))}"
+        )
+
+
+    return "\n".join(lines)
+
+
+def build_commercial_status_list_keyboard(requests, back_callback="admin_owners_panel"):
+
+    keyboard = []
+
+
+    for request_row in requests:
+
+        request_id = request_row.get("id")
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"👁 Ver estado #{request_id}",
+                callback_data=f"admin_commercial_review_{request_id}"
+            )
+        ])
+
+
+    keyboard.append([
+        InlineKeyboardButton("🧑‍💼 Propietarios", callback_data=back_callback)
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")
+    ])
+
+    return keyboard
 
 
 def fetch_commercial_request(request_id):
@@ -11286,7 +11466,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
 
-            "🔐 PANEL ADMIN",
+            build_admin_home_text(user_id),
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -11323,6 +11503,136 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             return
+
+
+    if data == "admin_global_panel":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "👑 Panel global del bot: gestiona la plataforma completa.\n\n"
+            "Aquí viven monitor beta, smoke test, logs del sistema, códigos comerciales globales y herramientas internas.",
+            reply_markup=build_admin_global_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_owners_panel":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🧑‍💼 Panel de propietarios: gestiona solicitudes, trials y cupos.\n\n"
+            "No se mezcla con códigos de grupo, planes de acceso ni configuración de comunidades concretas.",
+            reply_markup=build_admin_owners_panel_keyboard()
+        )
+
+        return
+
+
+    if data in (
+        "admin_global_marketplace",
+        "admin_global_commercial_plans",
+        "admin_global_config",
+        "admin_global_tools"
+    ):
+
+        info_texts = {
+            "admin_global_marketplace": (
+                "🏪 Marketplace global\n\n"
+                "Sirve para revisar comunidades publicadas, visibilidad global y salud del marketplace."
+            ),
+            "admin_global_commercial_plans": (
+                "💳 Planes comerciales del bot\n\n"
+                "Sirve para separar los planes comerciales de publicación del bot de los planes de acceso de cada grupo."
+            ),
+            "admin_global_config": (
+                "⚙️ Configuración global\n\n"
+                "Sirve para revisar ajustes generales de la plataforma sin entrar en comunidades concretas."
+            ),
+            "admin_global_tools": (
+                "🛠 Herramientas internas\n\n"
+                "Sirve para tareas de diagnóstico, mantenimiento y operaciones de beta."
+            )
+        }
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            info_texts[data],
+            reply_markup=build_admin_global_panel_keyboard()
+        )
+
+        return
+
+
+    if data in (
+        "admin_commercial_active_requests",
+        "admin_commercial_trials_active",
+        "admin_commercial_subscriptions",
+        "admin_commercial_group_limits",
+        "admin_commercial_owner_tools"
+    ):
+
+        if data == "admin_commercial_active_requests":
+
+            requests = fetch_commercial_requests_by_statuses([
+                "approved",
+                "awaiting_creator_setup",
+                "setup_in_progress",
+                "setup_ready",
+                "active"
+            ])
+
+            title = "✅ Solicitudes activas"
+
+        elif data == "admin_commercial_trials_active":
+
+            requests = fetch_commercial_requests_by_statuses([
+                "trial_active"
+            ])
+
+            title = "⏳ Trials activos"
+
+        elif data == "admin_commercial_subscriptions":
+
+            requests = fetch_commercial_requests_by_statuses([
+                "active",
+                "trial_expired",
+                "expired_pending_reactivation"
+            ])
+
+            title = "💳 Suscripciones comerciales"
+
+        else:
+
+            requests = fetch_commercial_requests_by_statuses([
+                "approved",
+                "trial_active",
+                "awaiting_creator_setup",
+                "setup_in_progress",
+                "setup_ready",
+                "active"
+            ])
+
+            title = (
+                "🔢 Cupos de grupos"
+                if data == "admin_commercial_group_limits"
+                else "🔁 Reasignar owner/grupo"
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_commercial_status_list_text(title, requests),
+            reply_markup=InlineKeyboardMarkup(
+                build_commercial_status_list_keyboard(requests)
+            )
+        )
+
+        return
 
 
     if data == "owner_backup_panel":
@@ -15246,7 +15556,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             query.message.chat_id,
 
-            "🔐 PANEL ADMIN",
+            build_admin_home_text(user_id),
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -15483,10 +15793,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
 
+        panel_intro = (
+            "🏪 Mis comunidades\n\n"
+            "Selecciona una comunidad para abrir su panel de gestión:"
+            if is_super_admin(user_id) or user_has_group_owner_role(user_id)
+            else
+            "👮 Panel admin de grupo\n\n"
+            "Selecciona la comunidad donde tienes permisos. Solo verás accesos compatibles con tu rol:"
+        )
+
+
         await query.message.reply_text(
 
-            "🏪 Mis comunidades\n\n"
-            "Selecciona una comunidad para abrir su panel de gestión:",
+            panel_intro,
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
