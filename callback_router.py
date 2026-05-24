@@ -427,6 +427,8 @@ SPANISH_AUTONOMOUS_COMMUNITIES = [
 
 SPANISH_AUTONOMOUS_COMMUNITY_LABELS = dict(SPANISH_AUTONOMOUS_COMMUNITIES)
 
+LOCATION_BORDER_MARGIN_DEGREES = 0.08
+
 
 def normalize_location_text(value):
 
@@ -527,13 +529,26 @@ def resolve_spanish_autonomous_community_alias(value):
     return None
 
 
+SPANISH_LOCATION_FIXTURE_BOXES = [
+    # Fixtures near the Alicante/Murcia border. They are checked before broad
+    # autonomous-community boxes because the coarse Murcia box overlaps Elche.
+    (COMUNIDAD_VALENCIANA_REGION, "Alicante", "Elche", 38.19, 38.36, -0.82, -0.58),
+    (COMUNIDAD_VALENCIANA_REGION, "Alicante", "Alicante", 38.25, 38.43, -0.58, -0.35),
+    (COMUNIDAD_VALENCIANA_REGION, "Alicante", "Torrevieja", 37.90, 38.05, -0.78, -0.60),
+    (COMUNIDAD_VALENCIANA_REGION, "Alicante", "Orihuela", 37.85, 38.15, -1.05, -0.80),
+    ("region_de_murcia", None, "Murcia capital", 37.85, 38.08, -1.35, -1.00),
+    ("region_de_murcia", None, "Cartagena", 37.50, 37.70, -1.10, -0.85),
+    (COMUNIDAD_VALENCIANA_REGION, "Valencia", "Valencia capital", 39.36, 39.58, -0.50, -0.28),
+    (COMUNIDAD_VALENCIANA_REGION, "Castellón", "Castellón", 39.90, 40.10, -0.15, 0.15)
+]
+
 SPANISH_AUTONOMOUS_COMMUNITY_BOXES = [
     ("ceuta", None, 35.86, 35.92, -5.38, -5.27),
     ("melilla", None, 35.24, 35.35, -3.05, -2.88),
     ("canarias", None, 27.5, 29.5, -18.3, -13.3),
     ("andalucia", None, 35.8, 38.8, -7.6, -1.6),
     ("region_de_murcia", None, 37.3, 38.9, -2.4, -0.6),
-    (COMUNIDAD_VALENCIANA_REGION, "Alicante", 37.75, 38.95, -1.25, 0.25),
+    (COMUNIDAD_VALENCIANA_REGION, "Alicante", 37.75, 38.95, -1.05, 0.25),
     (COMUNIDAD_VALENCIANA_REGION, "Valencia", 38.65, 40.05, -1.60, -0.05),
     (COMUNIDAD_VALENCIANA_REGION, "Castellón", 39.70, 40.85, -0.90, 0.60),
     ("extremadura", None, 37.9, 40.5, -7.6, -4.6),
@@ -557,6 +572,18 @@ def point_in_box(lat, lon, box):
     min_lat, max_lat, min_lon, max_lon = box
 
     return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon
+
+
+def is_near_location_box_border(lat, lon, box, margin=LOCATION_BORDER_MARGIN_DEGREES):
+
+    min_lat, max_lat, min_lon, max_lon = box
+
+    return (
+        abs(lat - min_lat) <= margin
+        or abs(max_lat - lat) <= margin
+        or abs(lon - min_lon) <= margin
+        or abs(max_lon - lon) <= margin
+    )
 
 
 def is_location_in_comunidad_valenciana(lat, lon):
@@ -586,16 +613,53 @@ def resolve_location_region(lat, lon):
     country_name = HISPANIC_COUNTRY_LABELS.get(country_code)
     autonomous_community = None
     province = None
+    detection_source = None
+    near_boundary = False
+    matched_box = None
 
 
     if country_code == "ES":
 
-        for slug, detected_province, min_lat, max_lat, min_lon, max_lon in SPANISH_AUTONOMOUS_COMMUNITY_BOXES:
+        for slug, detected_province, fixture_name, min_lat, max_lat, min_lon, max_lon in SPANISH_LOCATION_FIXTURE_BOXES:
 
-            if point_in_box(lat, lon, (min_lat, max_lat, min_lon, max_lon)):
+            box = (min_lat, max_lat, min_lon, max_lon)
+
+            if point_in_box(lat, lon, box):
 
                 autonomous_community = SPANISH_AUTONOMOUS_COMMUNITY_LABELS.get(slug)
                 province = detected_province
+                detection_source = f"fixture:{fixture_name}"
+                near_boundary = is_near_location_box_border(lat, lon, box)
+                matched_box = {
+                    "name": fixture_name,
+                    "min_lat": min_lat,
+                    "max_lat": max_lat,
+                    "min_lon": min_lon,
+                    "max_lon": max_lon
+                }
+
+                break
+
+
+    if country_code == "ES" and not autonomous_community:
+
+        for slug, detected_province, min_lat, max_lat, min_lon, max_lon in SPANISH_AUTONOMOUS_COMMUNITY_BOXES:
+
+            box = (min_lat, max_lat, min_lon, max_lon)
+
+            if point_in_box(lat, lon, box):
+
+                autonomous_community = SPANISH_AUTONOMOUS_COMMUNITY_LABELS.get(slug)
+                province = detected_province
+                detection_source = "autonomous_community_box"
+                near_boundary = is_near_location_box_border(lat, lon, box)
+                matched_box = {
+                    "name": slug,
+                    "min_lat": min_lat,
+                    "max_lat": max_lat,
+                    "min_lon": min_lon,
+                    "max_lon": max_lon
+                }
 
                 break
 
@@ -604,7 +668,10 @@ def resolve_location_region(lat, lon):
         "country": country_code,
         "country_name": country_name,
         "spanish_autonomous_community": autonomous_community,
-        "province": province
+        "province": province,
+        "detection_source": detection_source,
+        "near_boundary": near_boundary,
+        "matched_box": matched_box
     }
 
 
@@ -818,9 +885,18 @@ def build_location_log_metadata(region_type, allowed_region, region_label, resol
         "detected_region": resolved_region.get("spanish_autonomous_community"),
         "detected_province": resolved_region.get("province"),
         "detected_label": format_detected_location_region(resolved_region),
+        "detection_source": resolved_region.get("detection_source"),
+        "near_boundary": resolved_region.get("near_boundary") is True,
         "reason": reason,
         "action": action
     }
+
+    matched_box = resolved_region.get("matched_box")
+
+
+    if matched_box:
+
+        metadata["matched_box"] = matched_box.get("name")
 
 
     if location:
@@ -12818,6 +12894,12 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
             location=location,
             action=action
         )
+        boundary_text = (
+            "\n\nTu ubicación parece estar cerca del límite de la zona permitida. "
+            "Si crees que es un error, contacta soporte."
+            if resolved_region.get("near_boundary")
+            else ""
+        )
 
 
         try:
@@ -12865,6 +12947,7 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
                 f"Detectado: {detected_label}\n"
                 f"Motivo: {reason_message}\n\n"
                 "Asegúrate de pulsar el botón de ubicación de Telegram, no escribir la ciudad manualmente."
+                f"{boundary_text}"
             ),
             reply_markup=ReplyKeyboardRemove()
         )
