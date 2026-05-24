@@ -1223,11 +1223,41 @@ def create_tables():
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-            last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            group_id INTEGER
 
         );
 
         """)
+
+
+        try:
+
+            cur.execute("""
+
+                ALTER TABLE support_tickets
+                ADD COLUMN IF NOT EXISTS group_id INTEGER
+
+            """)
+
+        except Exception:
+
+            pass
+
+
+        try:
+
+            cur.execute("""
+
+                CREATE INDEX IF NOT EXISTS idx_support_tickets_group_id
+                ON support_tickets(group_id)
+
+            """)
+
+        except Exception:
+
+            pass
 
 
         cur.execute("""
