@@ -1751,7 +1751,19 @@ def create_tables():
 
             metadata_json JSONB DEFAULT '{}'::jsonb,
 
+            encrypted_config_json TEXT,
+
             secret_ref TEXT,
+
+            secret_status TEXT DEFAULT 'not_configured',
+
+            last_verified_at TIMESTAMP,
+
+            verified_by BIGINT,
+
+            verification_error TEXT,
+
+            masked_public_summary TEXT,
 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
@@ -1769,7 +1781,13 @@ def create_tables():
             ("provider_config_scope", "TEXT DEFAULT 'group'"),
             ("destination_type", "TEXT DEFAULT 'group_config'"),
             ("destination_ref", "TEXT"),
-            ("metadata_json", "JSONB DEFAULT '{}'::jsonb")
+            ("metadata_json", "JSONB DEFAULT '{}'::jsonb"),
+            ("encrypted_config_json", "TEXT"),
+            ("secret_status", "TEXT DEFAULT 'not_configured'"),
+            ("last_verified_at", "TIMESTAMP"),
+            ("verified_by", "BIGINT"),
+            ("verification_error", "TEXT"),
+            ("masked_public_summary", "TEXT")
 
         ]
 

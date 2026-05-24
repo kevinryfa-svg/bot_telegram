@@ -272,3 +272,92 @@ Guardar el Webhook ID en `PAYPAL_WEBHOOK_ID`.
 - No se implementa Revolut real.
 - No se implementa cripto real.
 - La activación automática de productos de plataforma queda para una fase posterior por tipo de producto.
+
+## Fase 1E: credenciales seguras por owner/grupo
+
+Hay dos tipos de credenciales y no deben mezclarse.
+
+### Credenciales de plataforma
+
+Van en Railway porque pertenecen al dueño del bot/plataforma:
+
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `PAYPAL_CLIENT_ID`
+- `PAYPAL_CLIENT_SECRET`
+- `PAYPAL_WEBHOOK_ID`
+- variables futuras globales de Revolut o cripto.
+
+Estas credenciales sirven para productos de plataforma: mensualidades de owners, publicar grupos, bots personalizados, upgrades y módulos premium.
+
+### Credenciales de owner/grupo
+
+No van en Railway. Cada propietario deberá conectarlas desde el bot para sus comunidades.
+
+La configuración queda asociada a:
+
+- `owner_user_id`
+- `group_id`
+- `provider`
+- `status`
+- credenciales cifradas o referencia segura.
+
+El super admin puede supervisar estados, pero no debe ver secretos completos.
+
+### Tabla `group_payment_provider_configs`
+
+La tabla queda preparada con campos adicionales:
+
+- `encrypted_config_json`: configuración sensible cifrada.
+- `secret_status`: `not_configured`, `pending`, `active`, `error` o `disabled`.
+- `last_verified_at`: última verificación segura.
+- `verified_by`: usuario que verificó/conectó.
+- `verification_error`: último error no sensible.
+- `masked_public_summary`: resumen público enmascarado.
+
+`public_config_json` debe contener solo datos no sensibles. Nunca debe guardar `client_secret`, tokens, claves privadas ni webhooks secretos.
+
+### Cifrado
+
+El módulo `payment_secret_store.py` prepara helpers para:
+
+- `encrypt_provider_config(data)`
+- `decrypt_provider_config(...)`
+- `mask_provider_config(...)`
+- `has_payment_encryption_key()`
+- `validate_safe_provider_config(...)`
+
+Para guardar credenciales reales debe existir:
+
+`PAYMENT_CONFIG_ENCRYPTION_KEY`
+
+Si esa variable no existe, el bot no debe guardar secretos reales de owners/grupos.
+
+### Pantalla del owner
+
+En `💳 Métodos de pago del grupo`, cada proveedor puede mostrar:
+
+- estado global,
+- estado del grupo,
+- estado de credenciales,
+- si el cifrado está preparado,
+- qué falta para conectar,
+- opciones para configurar/conectar,
+- desactivar,
+- borrar configuración.
+
+En esta fase, `Configurar / conectar` es un placeholder seguro: explica qué datos harán falta y no pide secretos todavía.
+
+### PayPal owner/grupo futuro
+
+Cuando se implemente PayPal por owner/grupo, el flujo deberá:
+
+1. Pedir credenciales dentro del bot, dato por dato.
+2. Borrar mensajes sensibles si Telegram lo permite.
+3. Validar formato.
+4. Cifrar con `PAYMENT_CONFIG_ENCRYPTION_KEY`.
+5. Guardar solo resumen enmascarado.
+6. Verificar con PayPal.
+7. Activar `secret_status=active`.
+8. Crear checkout con `payment_scope=group` y `provider_config_id`.
+9. Conceder acceso solo tras webhook verificado.
