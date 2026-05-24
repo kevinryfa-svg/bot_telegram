@@ -722,4 +722,4 @@ Los secretos nunca se muestran completos en Telegram ni se guardan en texto plan
 
 ### UX y cumplimiento
 
-Los textos del bot usan el wording: “privacidad frente al comprador y liquidación en USDT”. No se promete anonimato total. El comprador ve que algunos pagos pueden requerir verificación KYC/AML o revisión por importe, país o riesgo.
+Los textos del bot usan el wording: “privacidad frente al comprador y liquidación en USDT”. No se promete ocultación total de identidad ni ausencia de verificación. El comprador ve que algunos pagos pueden requerir verificación KYC/AML o revisión por importe, país o riesgo.
