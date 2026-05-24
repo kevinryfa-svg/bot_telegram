@@ -766,7 +766,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
         InlineKeyboardButton(
 
-            "🔥 Explorar comunidades privadas",
+            "🔎 Explorar comunidades",
 
             callback_data="start_explore_groups"
 
@@ -830,7 +830,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
             InlineKeyboardButton(
 
-                "🎟 Gestionar mi acceso",
+                "🎟 Mis accesos",
 
                 callback_data="mis_subs"
 
@@ -844,7 +844,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
             InlineKeyboardButton(
 
-                "🎟 Ya tengo acceso / recuperar enlace",
+                "🎟 Mis accesos / recuperar",
 
                 callback_data="mis_subs"
 
@@ -857,7 +857,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
         InlineKeyboardButton(
 
-            "🎟 Tengo código de acceso",
+            "🎟 Tengo código",
 
             callback_data="group_user_promo_redeem_start"
 
@@ -874,7 +874,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
         InlineKeyboardButton(
 
-            "🚀 Soluciones para mi comunidad",
+            "🚀 Publicar mi comunidad",
 
             callback_data=CALLBACK_MONETIZE_COMMUNITY
 

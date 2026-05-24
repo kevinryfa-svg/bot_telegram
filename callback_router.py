@@ -3514,9 +3514,348 @@ def fetch_admin_groups_for_permissions(user_id, permissions):
         raise
 
 
+OWNER_QUICK_STATUS_PERMISSIONS = {
+    "can_view_users": "ver usuarios",
+    "can_manage_users": "gestionar usuarios",
+    "can_kick_users": "expulsar usuarios",
+    "can_ban_users": "banear usuarios",
+    "can_unban_users": "desbanear usuarios",
+    "can_warn_users": "gestionar warnings",
+    "can_reset_warnings": "reiniciar warnings",
+    "can_resend_links": "reenviar enlaces",
+    "can_recover_access": "recuperar accesos",
+    "can_manage_codes": "gestionar códigos",
+    "can_manage_plans": "gestionar planes",
+    "can_manage_payments": "gestionar pagos",
+    "can_view_payments": "ver pagos",
+    "can_manage_groups": "configurar comunidad",
+    "can_manage_admins": "gestionar admins",
+    "can_view_logs": "ver logs",
+    "can_edit_group_texts": "editar textos",
+    "can_edit_marketplace_preview": "editar marketplace",
+}
+
+
+def get_group_permission_summary(user_id, group_id):
+
+    if is_super_admin(user_id):
+
+        return "Puedes gestionar: todo el panel de esta comunidad."
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT role, """ + ", ".join(ADMIN_PERMISSION_COLUMNS) + """
+                FROM admins
+                WHERE user_id=%s
+                AND group_id=%s
+                AND is_active=TRUE
+                LIMIT 1
+
+            """, (user_id, group_id))
+
+            row = cur.fetchone()
+
+    except Exception as e:
+
+        print("Error cargando permisos del grupo:", e)
+
+        return "Puedes gestionar: permisos no disponibles ahora."
+
+
+    if not row:
+
+        return "Puedes gestionar: ninguna sección de esta comunidad."
+
+
+    role = row[0]
+
+    if role == "GROUP_OWNER":
+
+        return "Puedes gestionar: todo el panel owner de esta comunidad."
+
+
+    granted = [
+        OWNER_QUICK_STATUS_PERMISSIONS[column]
+        for index, column in enumerate(ADMIN_PERMISSION_COLUMNS, start=1)
+        if row[index] and column in OWNER_QUICK_STATUS_PERMISSIONS
+    ]
+
+
+    if not granted:
+
+        return "Puedes gestionar: permisos limitados sin accesos rápidos activos."
+
+
+    return "Puedes gestionar: " + ", ".join(granted[:8]) + ("..." if len(granted) > 8 else "") + "."
+
+
+def fetch_owner_group_quick_status(group_id):
+
+    status = {
+        "name": "Comunidad",
+        "is_free_group": False,
+        "public_visibility": "start_home",
+        "active_users": 0,
+        "active_plans": 0,
+        "active_codes": 0,
+        "active_admins": 0,
+        "backup_active": False,
+        "critical_errors": []
+    }
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT name, COALESCE(is_free_group, FALSE), COALESCE(public_visibility, 'start_home')
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            group_row = cur.fetchone()
+
+            if group_row:
+
+                status["name"] = group_row[0] or "Comunidad"
+                status["is_free_group"] = bool(group_row[1])
+                status["public_visibility"] = group_row[2] or "start_home"
+
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM users
+                WHERE group_id=%s
+                AND COALESCE(subscription_active, FALSE)=TRUE
+                AND (
+                    expiration IS NULL
+                    OR expiration > NOW()
+                )
+
+            """, (group_id,))
+
+            status["active_users"] = cur.fetchone()[0] or 0
+
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM plans
+                WHERE group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+
+            """, (group_id,))
+
+            status["active_plans"] = cur.fetchone()[0] or 0
+
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM group_user_promo_codes
+                WHERE group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+
+            """, (group_id,))
+
+            status["active_codes"] = cur.fetchone()[0] or 0
+
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM admins
+                WHERE group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+
+            """, (group_id,))
+
+            status["active_admins"] = cur.fetchone()[0] or 0
+
+
+            cur.execute("""
+
+                SELECT 1
+                FROM group_backup_configs
+                WHERE source_group_id=%s
+                AND status='active'
+                LIMIT 1
+
+            """, (group_id,))
+
+            status["backup_active"] = cur.fetchone() is not None
+
+
+            cur.execute("""
+
+                SELECT event_type, message
+                FROM audit_logs
+                WHERE group_id=%s
+                AND severity='critical'
+                ORDER BY created_at DESC
+                LIMIT 3
+
+            """, (group_id,))
+
+            status["critical_errors"] = cur.fetchall()
+
+    except Exception as e:
+
+        print("Error cargando estado rápido owner:", e)
+
+
+    return status
+
+
+def build_owner_quick_status_text(user_id, group_id):
+
+    status = fetch_owner_group_quick_status(group_id)
+    access_type = "Gratis" if status["is_free_group"] else "Pago"
+    backup_text = "Activo" if status["backup_active"] else "No activo"
+    errors_text = "Sin errores críticos recientes"
+
+
+    if status["critical_errors"]:
+
+        errors_text = "\n".join(
+            f"- {event_type or 'error'}: {message or 'sin detalle'}"
+            for event_type, message in status["critical_errors"]
+        )
+
+
+    return (
+        "✅ Estado rápido de esta comunidad\n\n"
+        f"Comunidad: {status['name']}\n"
+        f"Tipo: {access_type}\n"
+        f"Visibilidad marketplace: {status['public_visibility']}\n"
+        f"Usuarios activos: {status['active_users']}\n"
+        f"Planes activos: {status['active_plans']}\n"
+        f"Códigos activos: {status['active_codes']}\n"
+        f"Admins activos: {status['active_admins']}\n"
+        f"Backup: {backup_text}\n"
+        f"Errores críticos recientes: {errors_text}\n\n"
+        f"{get_group_permission_summary(user_id, group_id)}\n\n"
+        "🏪 Panel de comunidad\n"
+        "Elige el apartado que quieres gestionar."
+    )
+
+
+def build_owner_setup_assistant_text(group_id):
+
+    status = fetch_owner_group_quick_status(group_id)
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT
+                    COALESCE(name, ''),
+                    COALESCE(preview_text, ''),
+                    preview_image_file_id,
+                    preview_video_file_id,
+                    COALESCE(preview_mode, 'manual')
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            group_row = cur.fetchone()
+
+    except Exception as e:
+
+        print("Error cargando asistente owner:", e)
+
+        group_row = None
+
+
+    name_done = bool(group_row and group_row[0])
+    preview_done = bool(
+        group_row
+        and (
+            group_row[1]
+            or group_row[2]
+            or group_row[3]
+            or group_row[4] in ("dynamic", "hybrid", "private")
+        )
+    )
+    access_done = status["is_free_group"] or status["active_plans"] > 0
+    codes_done = status["active_codes"] > 0
+    admins_done = status["active_admins"] > 0
+    logs_done = not status["critical_errors"]
+    backup_done = status["backup_active"]
+
+
+    def mark(done):
+
+        return "✅ completado" if done else "⚠️ pendiente"
+
+
+    return (
+        "🧭 Asistente de configuración\n\n"
+        "Sigue esta lista para dejar tu comunidad lista para la beta.\n\n"
+        f"{mark(name_done)} — configurar nombre/descripción\n"
+        f"{mark(preview_done)} — configurar preview\n"
+        f"{mark(access_done)} — configurar plan o acceso gratis\n"
+        f"{mark(codes_done)} — crear primer código promocional\n"
+        f"{mark(admins_done)} — revisar admins\n"
+        f"{mark(logs_done)} — revisar logs críticos\n"
+        f"{mark(backup_done)} — activar backup opcional"
+    )
+
+
+def build_owner_setup_assistant_keyboard(user_id, group_id):
+
+    keyboard = []
+
+
+    if user_has_group_permission_any(user_id, group_id, ["can_manage_groups", "can_edit_group_texts"]):
+        keyboard.append([InlineKeyboardButton("⚙️ Nombre/descripción", callback_data="owner_panel_general")])
+
+    if user_has_group_permission_any(user_id, group_id, ["can_manage_groups", "can_edit_marketplace_preview"]):
+        keyboard.append([InlineKeyboardButton("🖼 Preview", callback_data="owner_panel_marketplace")])
+
+    if user_has_group_permission_any(user_id, group_id, ["can_manage_plans", "can_manage_groups"]):
+        keyboard.append([InlineKeyboardButton("💳 Plan/acceso", callback_data="owner_panel_payments")])
+
+    if user_has_group_permission_any(user_id, group_id, ["can_manage_codes"]):
+        keyboard.append([InlineKeyboardButton("🎟 Primer código", callback_data="owner_panel_codes")])
+
+    if user_has_group_permission_any(user_id, group_id, ["can_manage_admins"]):
+        keyboard.append([InlineKeyboardButton("👑 Admins", callback_data="owner_panel_admins")])
+
+    if user_has_group_permission_any(user_id, group_id, ["can_view_logs"]):
+        keyboard.append([InlineKeyboardButton("📜 Logs", callback_data="owner_panel_logs")])
+
+    if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
+        keyboard.append([InlineKeyboardButton("🛡 Backup opcional", callback_data="owner_panel_backup")])
+
+
+    keyboard.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 def build_group_settings_keyboard(user_id, group_id):
 
     keyboard = []
+
+
+    keyboard.append([
+        InlineKeyboardButton("🧭 Asistente de configuración", callback_data="owner_setup_assistant")
+    ])
 
 
     if user_has_group_permission_any(
@@ -15156,6 +15495,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "owner_setup_assistant":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            [
+                "can_manage_groups",
+                "can_manage_plans",
+                "can_manage_codes",
+                "can_manage_admins",
+                "can_edit_group_texts",
+                "can_edit_marketplace_preview",
+                "can_view_logs"
+            ]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para abrir el asistente de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_setup_assistant_text(group_id),
+            reply_markup=build_owner_setup_assistant_keyboard(user_id, group_id)
+        )
+
+        return
+
+
     if data in OWNER_PANEL_SECTIONS:
 
         title, description, required_permissions, section = OWNER_PANEL_SECTIONS[data]
@@ -15194,7 +15570,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            f"{title}\n\n{description}",
+            f"{title}\n\nEsto sirve para: {description}",
             reply_markup=build_owner_section_keyboard(
                 user_id,
                 group_id,
@@ -15291,9 +15667,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
 
-            "🏪 Panel de comunidad\n\n"
-            "Elige el apartado que quieres gestionar. "
-            "Solo verás secciones compatibles con tus permisos en esta comunidad.",
+            build_owner_quick_status_text(user_id, group_id)
+            + "\nSolo verás secciones compatibles con tus permisos en esta comunidad.",
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -15323,8 +15698,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await query.message.reply_text(
-            "🏪 Panel de comunidad\n\n"
-            "Elige el apartado que quieres gestionar.",
+            build_owner_quick_status_text(user_id, group_id),
             reply_markup=InlineKeyboardMarkup(
                 build_group_settings_keyboard(user_id, group_id)
             )

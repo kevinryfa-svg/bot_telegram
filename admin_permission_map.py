@@ -143,6 +143,15 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "owner_panel_logs": ("can_view_logs",),
     "owner_panel_backup": ("can_manage_groups",),
     "owner_panel_general": ("can_manage_groups", "can_edit_group_texts"),
+    "owner_setup_assistant": (
+        "can_manage_groups",
+        "can_manage_plans",
+        "can_manage_codes",
+        "can_manage_admins",
+        "can_edit_group_texts",
+        "can_edit_marketplace_preview",
+        "can_view_logs"
+    ),
     "owner_panel_security_info": ("can_manage_groups", "can_view_logs"),
     "owner_panel_location_info": ("can_manage_groups",),
     "owner_panel_access_type_info": ("can_manage_groups",),
