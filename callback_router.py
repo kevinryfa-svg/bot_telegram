@@ -26,8 +26,11 @@ from admin_permission_map import (
 )
 from admin_button_audit import (
     audit_admin_button_menus,
+    callback_has_handler,
+    flatten_keyboard_buttons,
     format_admin_button_audit_detail,
-    format_admin_button_audit_summary
+    format_admin_button_audit_summary,
+    load_callback_router_source
 )
 from admin_menu_catalog import build_admin_menu_button_rows
 from audit_log_service import (
@@ -5202,6 +5205,17 @@ def build_group_settings_keyboard(user_id, group_id):
         ])
 
 
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_groups", "can_view_logs"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("🧪 Auditoría del panel de comunidad", callback_data="owner_panel_audit")
+        ])
+
+
     if is_super_admin(user_id):
 
         keyboard.append([
@@ -5283,7 +5297,7 @@ def build_owner_section_keyboard(user_id, group_id, section):
     elif section == "security":
 
         if user_has_group_permission_any(user_id, group_id, ["can_view_logs"]):
-            keyboard.append([InlineKeyboardButton("📜 Logs de accesos", callback_data="admin_logs_security")])
+            keyboard.append([InlineKeyboardButton("📜 Logs de accesos", callback_data=f"owner_group_logs_access_{group_id}")])
 
         if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
             keyboard.append([InlineKeyboardButton("📍 Ubicación permitida", callback_data="owner_panel_location_info")])
@@ -5312,18 +5326,18 @@ def build_owner_section_keyboard(user_id, group_id, section):
     elif section == "logs":
 
         keyboard.extend([
-            [InlineKeyboardButton("📜 Logs de mi grupo", callback_data="admin_logs")],
-            [InlineKeyboardButton("👥 Accesos", callback_data="admin_logs_users")],
-            [InlineKeyboardButton("💳 Pagos", callback_data="admin_logs_payments")],
-            [InlineKeyboardButton("🎟 Códigos", callback_data="admin_logs_security")],
-            [InlineKeyboardButton("🛡 Backups / errores", callback_data="admin_logs_security")]
+            [InlineKeyboardButton("📜 Actividad reciente", callback_data=f"owner_group_logs_all_{group_id}")],
+            [InlineKeyboardButton("👥 Accesos", callback_data=f"owner_group_logs_access_{group_id}")],
+            [InlineKeyboardButton("💳 Pagos", callback_data=f"owner_group_logs_payment_{group_id}")],
+            [InlineKeyboardButton("🛟 Soporte", callback_data=f"owner_group_logs_support_{group_id}")],
+            [InlineKeyboardButton("🛡 Seguridad / errores", callback_data=f"owner_group_logs_security_{group_id}")]
         ])
 
     elif section == "support":
 
         keyboard.extend([
             [InlineKeyboardButton("🛟 Ver solicitudes de soporte", callback_data="owner_support_tickets")],
-            [InlineKeyboardButton("💬 Abrir soporte", callback_data="public_support")]
+            [InlineKeyboardButton("💬 Abrir soporte sobre esta comunidad", callback_data=f"public_support_group_{group_id}")]
         ])
 
     elif section == "backup":
@@ -5346,6 +5360,10 @@ def build_owner_section_keyboard(user_id, group_id, section):
             [InlineKeyboardButton("🧹 Reiniciar configuración segura", callback_data="owner_panel_general_info")]
         ])
 
+
+    keyboard.append([
+        InlineKeyboardButton("❓ Ayuda", callback_data=f"owner_panel_help_{section}")
+    ])
 
     keyboard.extend(build_owner_panel_nav_keyboard().inline_keyboard)
 
@@ -5447,6 +5465,438 @@ def get_selected_group_for_permissions(context, user_id, permissions):
 
 
     return None
+
+
+def user_can_view_group_panel(user_id, group_id, permissions=None):
+
+    if not group_id:
+
+        return False
+
+
+    return user_has_group_permission_any(
+        user_id,
+        group_id,
+        permissions or [
+            "can_manage_groups",
+            "can_view_logs",
+            "can_respond_group_support"
+        ]
+    )
+
+
+def build_owner_location_management_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Activar ubicación", callback_data=f"owner_location_enable_{group_id}")],
+        [InlineKeyboardButton("🚫 Desactivar ubicación", callback_data=f"owner_location_disable_{group_id}")],
+        [InlineKeyboardButton("🇪🇸 Toda España", callback_data=f"owner_location_country_set_{group_id}_ES")],
+        [InlineKeyboardButton("📍 Comunidad Valenciana", callback_data=f"owner_location_region_set_{group_id}_{COMUNIDAD_VALENCIANA_REGION}")],
+        [InlineKeyboardButton("📂 Elegir comunidad autónoma", callback_data=f"owner_location_regions_{group_id}")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_security")],
+        [InlineKeyboardButton("⬅️ Volver a seguridad", callback_data="owner_panel_security")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_location_regions_keyboard(group_id):
+
+    keyboard = []
+
+
+    for slug, label in SPANISH_AUTONOMOUS_COMMUNITIES:
+
+        if slug == "all_spain":
+
+            continue
+
+
+        keyboard.append([
+            InlineKeyboardButton(
+                label,
+                callback_data=f"owner_location_region_set_{group_id}_{slug}"
+            )
+        ])
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="owner_panel_location_info")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_owner_location_management_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    enabled, allowed_region, region_type = get_group_location_gate(group_id)
+    region_label = format_allowed_region(region_type, allowed_region)
+    status = "Activada" if enabled else "Desactivada"
+
+    return (
+        "📍 Ubicación permitida\n\n"
+        f"Comunidad: {group_name or f'Grupo {group_id}'}\n"
+        f"Estado: {status}\n"
+        f"Regla actual: {region_label}\n\n"
+        "Esto pide al usuario una ubicación real de Telegram antes de generar el link de acceso. "
+        "No se aceptan ciudades escritas manualmente y no se guardan coordenadas exactas.\n\n"
+        "Puedes activar/desactivar la restricción o cambiar la región permitida. "
+        "Cada cambio queda registrado en logs."
+    )
+
+
+def set_group_location_rule(group_id, enabled=None, region_type=None, allowed_region=None):
+
+    updates = []
+    params = []
+
+
+    if enabled is not None:
+
+        updates.append("location_gate_enabled=%s")
+        params.append(enabled)
+
+
+    if region_type is not None:
+
+        updates.append("allowed_region_type=%s")
+        params.append(region_type)
+
+
+    if allowed_region is not None:
+
+        updates.append("allowed_region=%s")
+        params.append(allowed_region)
+
+
+    if not updates:
+
+        return False
+
+
+    params.append(group_id)
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE groups
+            SET {", ".join(updates)}
+            WHERE id=%s
+
+        """, params)
+
+        conn.commit()
+
+    return True
+
+
+def build_owner_security_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    location_enabled, region_label = get_group_location_gate_display(group_id)
+    location_status = "Activada" if location_enabled else "Desactivada"
+
+    return (
+        "🛡 Seguridad del grupo\n\n"
+        f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
+        "Estado actual:\n"
+        "- Anti-intrusos: activo con validación de users e invite_links.\n"
+        "- Links no registrados: se bloquean desde el control de entrada.\n"
+        f"- Restricción por ubicación: {location_status}.\n"
+        f"- Región permitida: {region_label}.\n\n"
+        "Acciones disponibles ahora:\n"
+        "- Gestionar ubicación permitida.\n"
+        "- Revisar logs de accesos y bloqueos.\n"
+        "- Gestionar usuarios/warnings desde Usuarios y accesos.\n\n"
+        "Próximamente: interruptores separados para anti-links y políticas avanzadas. "
+        "No aparecen como botones porque todavía no existen como configuración independiente segura."
+    )
+
+
+def build_owner_security_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📍 Gestionar ubicación", callback_data="owner_panel_location_info")],
+        [InlineKeyboardButton("📜 Logs de accesos", callback_data=f"owner_group_logs_access_{group_id}")],
+        [InlineKeyboardButton("👥 Usuarios y accesos", callback_data="owner_panel_users")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_security")],
+        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_panel_help_text(section):
+
+    help_texts = {
+        "users": "👥 Usuarios y accesos\n\nSirve para revisar usuarios, recuperar enlaces, expulsar, banear y gestionar warnings. Úsalo cuando un usuario tenga problemas de entrada o incumpla normas.",
+        "codes": "🎟 Códigos y promociones\n\nCrea códigos de acceso para esta comunidad. Solo afectan a este grupo y no se mezclan con códigos comerciales globales.",
+        "payments": "💳 Planes y pagos\n\nGestiona planes, pagos recibidos, suscripciones activas y métodos de pago preparados por grupo. No cambia el webhook Stripe global.",
+        "security": "🛡 Seguridad\n\nMuestra controles de acceso, logs, anti-intrusos y ubicación. Las acciones que afectan a usuarios reales quedan en logs.",
+        "marketplace": "🖼 Marketplace y preview\n\nEdita la ficha pública, previews, categoría y tags de la comunidad.",
+        "admins": "👑 Administradores\n\nAñade o retira admins de grupo y define permisos concretos por comunidad.",
+        "logs": "📜 Logs y actividad\n\nRevisa actividad importante de esta comunidad: accesos, pagos, códigos, soporte, backups y errores. Owner/admin solo ve su grupo.",
+        "support": "🛟 Soporte\n\nMuestra tickets vinculados a esta comunidad. El owner solo ve tickets de sus grupos; el soporte global queda para super admin.",
+        "backup": "🛡 Backup premium\n\nConfigura copia de mensajes nuevos que el bot recibe. No descarga archivos ni usa cuentas usuario.",
+        "general": "⚙️ Configuración general\n\nAgrupa datos básicos y opciones seguras de comunidad. Los cambios sensibles usan confirmación o pantallas específicas."
+    }
+
+    return help_texts.get(
+        section,
+        "🏪 Panel de comunidad\n\nGestiona esta comunidad por apartados. Usa Volver para regresar al panel y Inicio para salir."
+    )
+
+
+def build_owner_panel_audit_report(user_id, group_id):
+
+    router_source = load_callback_router_source()
+    handler_source = router_source.split("async def button", 1)[-1]
+    menu_specs = [{
+        "name": "Panel de comunidad",
+        "keyboard": InlineKeyboardMarkup(build_group_settings_keyboard(user_id, group_id))
+    }]
+
+
+    for callback_data, (_title, _description, required_permissions, section) in OWNER_PANEL_SECTIONS.items():
+
+        if user_has_group_permission_any(user_id, group_id, required_permissions):
+
+            menu_specs.append({
+                "name": f"Sección {section}",
+                "keyboard": build_owner_section_keyboard(user_id, group_id, section)
+            })
+
+
+    all_buttons = []
+
+
+    for menu in menu_specs:
+
+        all_buttons.extend(
+            flatten_keyboard_buttons(
+                menu.get("name"),
+                menu.get("keyboard")
+            )
+        )
+
+
+    placeholder_callbacks = {
+        "owner_panel_general_info": "solo informativo: configuración general avanzada pendiente",
+        "owner_panel_access_type_info": "solo informativo: cambio gratis/pago requiere flujo comercial seguro",
+        "edit_group_stripe": "solo informativo: Stripe propio por grupo pendiente"
+    }
+    editable_callbacks = {
+        "owner_panel_location_info",
+        "owner_panel_security_info",
+        "owner_support_tickets",
+        "owner_panel_logs",
+        "owner_panel_codes",
+        "owner_panel_payments",
+        "owner_panel_admins",
+        "owner_panel_marketplace"
+    }
+    occurrences = {}
+
+
+    for button in all_buttons:
+
+        occurrences.setdefault(button.get("callback_data"), []).append(button)
+
+
+    details = []
+    missing_handlers = 0
+    repeated = 0
+    placeholders = 0
+    editable = 0
+
+
+    for button in all_buttons:
+
+        callback_data = button.get("callback_data")
+        observations = []
+        state = "✅ OK"
+
+
+        if not callback_has_handler(callback_data, handler_source):
+
+            state = "❌ Problema"
+            missing_handlers += 1
+            observations.append("callback sin handler")
+
+
+        if callback_data in placeholder_callbacks:
+
+            if state == "✅ OK":
+
+                state = "⚠️ Próximamente"
+
+
+            placeholders += 1
+            observations.append(placeholder_callbacks[callback_data])
+
+
+        if callback_data in editable_callbacks or callback_data.startswith("owner_location_") or callback_data.startswith("owner_group_logs_"):
+
+            editable += 1
+            observations.append("funcional para esta comunidad")
+
+
+        if len(occurrences.get(callback_data, [])) > 1:
+
+            if state == "✅ OK":
+
+                state = "⚠️ Revisar"
+
+
+            repeated += 1
+            observations.append("callback repetido en el panel")
+
+
+        required_permissions = get_required_permissions_for_callback(callback_data)
+
+        details.append({
+            "menu": button.get("menu"),
+            "text": button.get("text"),
+            "callback_data": callback_data,
+            "state": state,
+            "permissions": ", ".join(required_permissions) if required_permissions else "público/validación interna",
+            "observation": "; ".join(observations) or "sin observaciones"
+        })
+
+
+    return {
+        "group_id": group_id,
+        "total_buttons": len(all_buttons),
+        "missing_handlers": missing_handlers,
+        "repeated": repeated,
+        "placeholders": placeholders,
+        "editable": editable,
+        "details": details
+    }
+
+
+def format_owner_panel_audit_summary(report):
+
+    state = "✅ OK"
+
+
+    if report.get("missing_handlers"):
+
+        state = "❌ Problema"
+
+    elif report.get("placeholders") or report.get("repeated"):
+
+        state = "⚠️ Revisar"
+
+
+    return (
+        "🧪 Auditoría del panel de comunidad\n\n"
+        f"Estado: {state}\n"
+        f"Comunidad: {report.get('group_id')}\n"
+        f"Botones visibles revisados: {report.get('total_buttons')}\n"
+        f"Acciones funcionales/editables detectadas: {report.get('editable')}\n"
+        f"Callbacks sin handler: {report.get('missing_handlers')}\n"
+        f"Callbacks repetidos: {report.get('repeated')}\n"
+        f"Acciones informativas/próximamente: {report.get('placeholders')}\n\n"
+        "Usa Ver detalle para revisar botón por botón."
+    )
+
+
+def format_owner_panel_audit_detail(report, limit=60):
+
+    lines = [
+        "📋 Detalle auditoría comunidad",
+        ""
+    ]
+
+
+    for index, detail in enumerate((report.get("details") or [])[:limit], start=1):
+
+        lines.extend([
+            f"{index}. {detail.get('state')} {detail.get('menu')}",
+            f"Botón: {detail.get('text')}",
+            f"Callback: {detail.get('callback_data')}",
+            f"Permisos: {detail.get('permissions')}",
+            f"Observación: {detail.get('observation')}",
+            ""
+        ])
+
+
+    return "\n".join(lines)[:3900]
+
+
+def build_owner_panel_audit_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Ver detalle", callback_data="owner_panel_audit_detail")],
+        [InlineKeyboardButton("🔁 Repetir auditoría", callback_data="owner_panel_audit")],
+        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def fetch_owner_group_logs(group_id, category_filter=None, event_types=None, limit=30):
+
+    rows = list_recent_events(
+        limit=80,
+        group_ids=[group_id]
+    )
+
+
+    if category_filter:
+
+        rows = [row for row in rows if row[2] == category_filter]
+
+
+    if event_types:
+
+        rows = [row for row in rows if row[1] in event_types]
+
+
+    return rows[:limit]
+
+
+def build_owner_group_logs_text(group_id, rows, title):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+
+
+    if not rows:
+
+        return (
+            f"{title}\n\n"
+            f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
+            "Todavía no hay actividad registrada para este filtro."
+        )
+
+
+    text = f"{title}\n\nComunidad: {group_name or f'Grupo {group_id}'}\n\n"
+
+
+    for created_at, event_type, category, severity, log_group_id, log_telegram_group_id, actor_user_id, target_user_id, message in rows:
+
+        text += (
+            f"Evento: {event_type or '-'}\n"
+            f"Categoría: {category or '-'} / {severity or '-'}\n"
+            f"Actor: {actor_user_id or '-'}\n"
+            f"Usuario: {target_user_id or '-'}\n"
+            f"Detalle: {message or '-'}\n"
+            f"Fecha: {created_at or '-'}\n\n"
+        )
+
+
+    return text[:3900]
+
+
+def build_owner_group_logs_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Volver a logs", callback_data="owner_panel_logs")],
+        [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
 
 
 def resolve_group_user_codes_group(context, user_id, permissions, group_id=None):
@@ -10463,7 +10913,8 @@ SUPPORT_TICKET_FIELDS = [
     "status",
     "created_at",
     "updated_at",
-    "last_message_at"
+    "last_message_at",
+    "group_id"
 ]
 
 
@@ -10519,7 +10970,7 @@ def fetch_user_support_ticket(ticket_id, user_id):
     return row_to_support_ticket(row)
 
 
-def get_or_create_support_ticket(user):
+def get_or_create_support_ticket(user, group_id=None):
 
     username = user.username if user and user.username else None
     first_name = user.first_name if user and user.first_name else None
@@ -10541,10 +10992,18 @@ def get_or_create_support_ticket(user):
             FROM support_tickets
             WHERE user_id=%s
             AND status IN ('open', 'answered')
+            AND (
+                (group_id IS NULL AND %s IS NULL)
+                OR group_id=%s
+            )
             ORDER BY last_message_at DESC
             LIMIT 1
 
-        """, (user_id,))
+        """, (
+            user_id,
+            group_id,
+            group_id
+        ))
 
         row = cur.fetchone()
 
@@ -10556,6 +11015,7 @@ def get_or_create_support_ticket(user):
                 UPDATE support_tickets
                 SET username=%s,
                     first_name=%s,
+                    group_id=%s,
                     status='open',
                     updated_at=NOW(),
                     last_message_at=NOW()
@@ -10564,6 +11024,7 @@ def get_or_create_support_ticket(user):
             """, (
                 username,
                 first_name,
+                group_id,
                 row[0]
             ))
 
@@ -10579,22 +11040,23 @@ def get_or_create_support_ticket(user):
                 first_name,
                 status,
                 updated_at,
-                last_message_at
+                last_message_at,
+                group_id
             )
-            VALUES (%s, %s, %s, 'open', NOW(), NOW())
+            VALUES (%s, %s, %s, 'open', NOW(), NOW(), %s)
             RETURNING {", ".join(SUPPORT_TICKET_FIELDS)}
 
         """, (
             user_id,
             username,
-            first_name
+            first_name,
+            group_id
         ))
 
         row = cur.fetchone()
 
 
     return row_to_support_ticket(row)
-
 
 def create_support_message(ticket_id, sender_type, sender_id, message_text):
 
@@ -10663,19 +11125,35 @@ def fetch_support_messages(ticket_id, limit=8):
     return list(reversed(rows))
 
 
-def fetch_recent_support_tickets():
+def fetch_recent_support_tickets(group_id=None):
 
     with conn.cursor() as cur:
 
-        cur.execute(f"""
+        if group_id is None:
 
-            SELECT {", ".join(SUPPORT_TICKET_FIELDS)}
-            FROM support_tickets
-            WHERE status IN ('open', 'answered')
-            ORDER BY last_message_at DESC
-            LIMIT 20
+            cur.execute(f"""
 
-        """)
+                SELECT {", ".join(SUPPORT_TICKET_FIELDS)}
+                FROM support_tickets
+                WHERE status IN ('open', 'answered')
+                ORDER BY last_message_at DESC
+                LIMIT 20
+
+            """)
+
+        else:
+
+            cur.execute(f"""
+
+                SELECT {", ".join(SUPPORT_TICKET_FIELDS)}
+                FROM support_tickets
+                WHERE status IN ('open', 'answered')
+                AND group_id=%s
+                ORDER BY last_message_at DESC
+                LIMIT 20
+
+            """, (group_id,))
+
 
         rows = cur.fetchall()
 
@@ -10684,7 +11162,6 @@ def fetch_recent_support_tickets():
         row_to_support_ticket(row)
         for row in rows
     ]
-
 
 def format_support_username(ticket):
 
@@ -10739,9 +11216,29 @@ def build_support_ticket_detail_text(ticket):
         f"Usuario: {ticket.get('user_id') or '-'}\n"
         f"Username: {format_support_username(ticket)}\n"
         f"Nombre: {ticket.get('first_name') or '-'}\n"
+        f"Comunidad: {ticket.get('group_id') or 'Global'}\n"
         f"Último mensaje: {format_commercial_datetime(ticket.get('last_message_at'))}\n\n"
         f"{format_support_messages(messages)}"
     )
+
+
+def build_owner_support_ticket_keyboard(ticket):
+
+    ticket_id = ticket.get("id") if isinstance(ticket, dict) else ticket
+    ticket_status = ticket.get("status") if isinstance(ticket, dict) else None
+    keyboard = []
+
+
+    if ticket_status != "closed":
+
+        keyboard.append([InlineKeyboardButton("✍️ Responder", callback_data=f"owner_support_reply_{ticket_id}")])
+        keyboard.append([InlineKeyboardButton("✅ Cerrar ticket", callback_data=f"owner_support_close_{ticket_id}")])
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver a soporte de comunidad", callback_data="owner_support_tickets")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return keyboard
 
 
 def build_support_ticket_keyboard(ticket):
@@ -10829,6 +11326,8 @@ def clear_support_user_state(context):
     context.user_data["support_lookup_mode"] = False
     context.user_data.pop("replying_support_ticket", None)
     context.user_data.pop("support_replying_ticket", None)
+    context.user_data.pop("support_group_id", None)
+    context.user_data.pop("support_context", None)
 
 
 def log_support_ticket_privacy_attempt(ticket_id, requester_user_id, owner_user_id=None):
@@ -10933,7 +11432,8 @@ async def notify_support_admin(context, ticket, message_text):
                 "🛟 Nuevo mensaje de soporte\n\n"
                 f"Usuario: {ticket.get('user_id')}\n"
                 f"Username: {format_support_username(ticket)}\n"
-                f"Ticket: #{ticket.get('id')}\n\n"
+                f"Ticket: #{ticket.get('id')}\n"
+                f"Comunidad: {ticket.get('group_id') or 'Global'}\n\n"
                 f"{message_text}"
             ),
             reply_markup=InlineKeyboardMarkup([
@@ -10966,6 +11466,7 @@ def build_support_photo_admin_caption(ticket, user, original_caption, context_te
         "🛟 Captura recibida en soporte",
         "",
         f"Ticket: #{ticket.get('id')}",
+        f"Comunidad: {ticket.get('group_id') or 'Global'}",
         f"Usuario ID: {user.id if user else '-'}",
         f"Nombre: {user.first_name if user and user.first_name else '-'}",
         f"Username: {username}"
@@ -11039,7 +11540,8 @@ async def handle_user_support_message(update, context, text):
         f"first_name={user.first_name if user and user.first_name else '-'}"
     )
 
-    ticket = get_or_create_support_ticket(user)
+    group_id = context.user_data.get("support_group_id")
+    ticket = get_or_create_support_ticket(user, group_id=group_id)
 
     create_support_message(
         ticket.get("id"),
@@ -11069,7 +11571,8 @@ async def handle_user_support_message(update, context, text):
         message="Ticket o mensaje de soporte recibido durante beta.",
         metadata={
             "ticket_id": ticket.get("id"),
-            "status": ticket.get("status")
+            "status": ticket.get("status"),
+            "group_id": ticket.get("group_id")
         }
     )
 
@@ -11105,7 +11608,8 @@ async def handle_user_support_photo(update, context):
 
     photo_file_id = message.photo[-1].file_id
     original_caption = (message.caption or "").strip()
-    ticket = get_or_create_support_ticket(user)
+    group_id = context.user_data.get("support_group_id")
+    ticket = get_or_create_support_ticket(user, group_id=group_id)
     stored_text = "📷 Captura recibida."
 
 
@@ -11144,6 +11648,7 @@ async def handle_user_support_photo(update, context):
         message="Captura de soporte recibida durante beta.",
         metadata={
             "ticket_id": ticket.get("id"),
+            "group_id": ticket.get("group_id"),
             "has_caption": bool(original_caption),
             "content_type": "photo"
         }
@@ -11236,9 +11741,23 @@ async def handle_support_lookup_message(update, context, text):
 async def handle_admin_support_reply(update, context, text):
 
     admin_user = update.effective_user
+    ticket_id = context.user_data.get("replying_support_ticket")
+    ticket = fetch_support_ticket(ticket_id)
 
 
-    if not is_super_admin(admin_user.id):
+    can_reply = is_super_admin(admin_user.id)
+
+
+    if not can_reply and ticket and ticket.get("group_id"):
+
+        can_reply = user_has_group_permission_any(
+            admin_user.id,
+            ticket.get("group_id"),
+            ["can_respond_group_support"]
+        )
+
+
+    if not can_reply:
 
         context.user_data.pop("replying_support_ticket", None)
 
@@ -11247,10 +11766,6 @@ async def handle_admin_support_reply(update, context, text):
         )
 
         return
-
-
-    ticket_id = context.user_data.get("replying_support_ticket")
-    ticket = fetch_support_ticket(ticket_id)
 
 
     if not ticket:
@@ -11293,6 +11808,20 @@ async def handle_admin_support_reply(update, context, text):
         "answered"
     )
 
+    if ticket.get("group_id"):
+
+        log_event(
+            "owner_support_ticket_replied",
+            category="support",
+            severity="info",
+            scope="group",
+            group_id=ticket.get("group_id"),
+            actor_user_id=admin_user.id,
+            target_user_id=ticket.get("user_id"),
+            message="Owner respondió un ticket de soporte de comunidad.",
+            metadata={"ticket_id": ticket_id}
+        )
+
     context.user_data.pop("replying_support_ticket", None)
 
 
@@ -11311,9 +11840,9 @@ async def handle_admin_support_reply(update, context, text):
         print("Error enviando respuesta soporte al usuario:", e)
 
 
-    await update.message.reply_text(
-        "✅ Respuesta enviada al usuario.",
-        reply_markup=InlineKeyboardMarkup([
+    if is_super_admin(admin_user.id):
+
+        reply_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 "📨 Abrir ticket",
                 callback_data=f"admin_support_ticket_{ticket_id}"
@@ -11323,6 +11852,24 @@ async def handle_admin_support_reply(update, context, text):
                 callback_data="admin_support_tickets"
             )]
         ])
+
+    else:
+
+        reply_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "📨 Abrir ticket",
+                callback_data=f"owner_support_ticket_{ticket_id}"
+            )],
+            [InlineKeyboardButton(
+                "🛟 Soporte de comunidad",
+                callback_data="owner_support_tickets"
+            )]
+        ])
+
+
+    await update.message.reply_text(
+        "✅ Respuesta enviada al usuario.",
+        reply_markup=reply_keyboard
     )
 
 
@@ -11820,6 +12367,7 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
             metadata=metadata
         )
 
+        context.user_data["support_group_id"] = group_id
         context.user_data["support_context"] = (
             "Rechazo de ubicación. "
             f"Grupo: {group_id}. "
@@ -12634,10 +13182,56 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("public_support_group_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "public_support_group_"
+        )
+        group = fetch_group_basic_info(group_id)
+
+
+        if not group:
+
+            await query.message.reply_text(
+                "⚠️ Comunidad no encontrada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        _group_id, group_name, _telegram_group_id = group
+        context.user_data["support_mode"] = True
+        context.user_data["support_lookup_mode"] = False
+        context.user_data["support_group_id"] = group_id
+        context.user_data["support_context"] = f"Soporte vinculado a comunidad: {group_name or group_id} ({group_id})"
+        context.user_data.pop("replying_support_ticket", None)
+        context.user_data.pop("support_replying_ticket", None)
+
+        await delete_query_message_safely(query)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🛟 Soporte de comunidad\n\n"
+            f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
+            "Escribe tu mensaje o envía una captura. Quedará vinculado a esta comunidad.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔎 Consultar ticket", callback_data="user_support_lookup_start")],
+                [InlineKeyboardButton("⬅️ Volver", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
     if data == "public_support":
 
         context.user_data["support_mode"] = True
         context.user_data["support_lookup_mode"] = False
+        context.user_data.pop("support_group_id", None)
+        context.user_data.pop("support_context", None)
         context.user_data.pop("replying_support_ticket", None)
         context.user_data.pop("support_replying_ticket", None)
 
@@ -18017,6 +18611,146 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data in ("owner_panel_audit", "owner_panel_audit_detail"):
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_view_logs"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para auditar este panel de comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        report = context.user_data.get("owner_panel_audit_report")
+
+
+        if data == "owner_panel_audit" or not report or report.get("group_id") != group_id:
+
+            report = build_owner_panel_audit_report(user_id, group_id)
+            context.user_data["owner_panel_audit_report"] = report
+
+
+        text = (
+            format_owner_panel_audit_detail(report)
+            if data == "owner_panel_audit_detail"
+            else format_owner_panel_audit_summary(report)
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            text,
+            reply_markup=build_owner_panel_audit_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("owner_panel_help_"):
+
+        section = data.replace("owner_panel_help_", "", 1)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_panel_help_text(section),
+            reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("owner_group_logs_"):
+
+        payload = data.replace("owner_group_logs_", "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[1].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar los logs de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        log_filter = parts[0]
+        group_id = int(parts[1])
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_view_logs"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver logs de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_owner_group"] = group_id
+        context.user_data["selected_group_admin"] = group_id
+
+        title = "📜 Actividad reciente del grupo"
+        category_filter = None
+        event_types = None
+
+
+        if log_filter == "access":
+
+            title = "👥 Logs de accesos"
+            category_filter = "access"
+
+        elif log_filter == "payment":
+
+            title = "💳 Logs de pagos"
+            category_filter = "payment"
+
+        elif log_filter == "support":
+
+            title = "🛟 Logs de soporte"
+            event_types = ["support_ticket_created"]
+
+        elif log_filter == "security":
+
+            title = "🛡 Seguridad / errores"
+            event_types = [
+                "access_unauthorized",
+                "location_check_failed",
+                "location_region_mismatch",
+                "location_geocode_failed",
+                "owner_location_gate_updated",
+                "telegram_handler_error"
+            ]
+
+
+        rows = fetch_owner_group_logs(
+            group_id,
+            category_filter=category_filter,
+            event_types=event_types
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_group_logs_text(group_id, rows, title),
+            reply_markup=build_owner_group_logs_keyboard()
+        )
+
+        return
+
+
     if data in OWNER_PANEL_SECTIONS:
 
         title, description, required_permissions, section = OWNER_PANEL_SECTIONS[data]
@@ -18419,52 +19153,466 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        keyboard = [
-            [InlineKeyboardButton("⬅️ Volver al apartado soporte", callback_data="owner_panel_support")],
-            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
-            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-        ]
+        context.user_data["selected_owner_group"] = group_id
+        tickets = fetch_recent_support_tickets(group_id=group_id)
+        keyboard = []
+
+
+        for ticket in tickets:
+
+            username = format_support_username(ticket)
+            label_name = username if username != "-" else ticket.get("first_name") or ticket.get("user_id")
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"📨 Ticket #{ticket.get('id')} - {label_name}",
+                    callback_data=f"owner_support_ticket_{ticket.get('id')}"
+                )
+            ])
 
 
         if is_super_admin(user_id):
 
-            keyboard.insert(
-                0,
-                [InlineKeyboardButton("🛟 Abrir bandeja global", callback_data="admin_support_tickets")]
-            )
+            keyboard.append([InlineKeyboardButton("🛟 Abrir bandeja global", callback_data="admin_support_tickets")])
 
+
+        keyboard.extend([
+            [InlineKeyboardButton("⬅️ Volver al apartado soporte", callback_data="owner_panel_support")],
+            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
 
         await send_clean_message(
             context,
             query.message.chat_id,
-            "🛟 Solicitudes de soporte\n\n"
-            "Esta sección pertenece a la comunidad seleccionada. "
-            "La bandeja de tickets actual es global para proteger conversaciones privadas; "
-            "por eso solo el super admin puede abrir el listado completo desde aquí.",
+            build_support_tickets_text(tickets).replace("🛟 Tickets de soporte", "🛟 Tickets de soporte de esta comunidad"),
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
 
 
+    if data.startswith("owner_support_ticket_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "owner_support_ticket_"
+        )
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket:
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        ticket_group_id = ticket.get("group_id")
+
+
+        if not ticket_group_id or not user_has_group_permission_any(user_id, ticket_group_id, ["can_respond_group_support"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver este ticket de soporte.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_owner_group"] = ticket_group_id
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_support_ticket_detail_text(ticket),
+            reply_markup=InlineKeyboardMarkup(build_owner_support_ticket_keyboard(ticket))
+        )
+
+        return
+
+
+    if data.startswith("owner_support_reply_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "owner_support_reply_"
+        )
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket or not ticket.get("group_id"):
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not user_has_group_permission_any(user_id, ticket.get("group_id"), ["can_respond_group_support"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para responder este ticket.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if ticket.get("status") == "closed":
+
+            await query.message.reply_text(
+                "📁 Este ticket está cerrado.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver a soporte de comunidad", callback_data="owner_support_tickets")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        context.user_data["selected_owner_group"] = ticket.get("group_id")
+        context.user_data["replying_support_ticket"] = ticket_id
+
+        await query.message.reply_text(
+            f"✍️ Responder ticket #{ticket_id}\n\n"
+            "Escribe ahora la respuesta para el usuario.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Cancelar", callback_data=f"owner_support_ticket_{ticket_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_support_close_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "owner_support_close_"
+        )
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket or not ticket.get("group_id"):
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not user_has_group_permission_any(user_id, ticket.get("group_id"), ["can_respond_group_support"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para cerrar este ticket.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        update_support_ticket_status(ticket_id, "closed")
+        context.user_data["selected_owner_group"] = ticket.get("group_id")
+
+        log_event(
+            "owner_support_ticket_closed",
+            category="support",
+            severity="info",
+            scope="group",
+            group_id=ticket.get("group_id"),
+            actor_user_id=user_id,
+            target_user_id=ticket.get("user_id"),
+            message="Owner cerró un ticket de soporte de comunidad.",
+            metadata={"ticket_id": ticket_id}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Ticket cerrado.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a soporte de comunidad", callback_data="owner_support_tickets")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "owner_panel_location_info":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para gestionar ubicación en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_location_management_text(group_id),
+            reply_markup=build_owner_location_management_keyboard(group_id)
+        )
+
+        return
+
+
+    if data == "owner_panel_security_info":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_view_logs"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para revisar seguridad en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_security_text(group_id),
+            reply_markup=build_owner_security_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_location_regions_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_location_regions_"
+        )
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para cambiar ubicación en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_owner_group"] = group_id
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📂 Elegir comunidad autónoma\n\nSelecciona la región permitida para esta comunidad.",
+            reply_markup=build_owner_location_regions_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_location_enable_") or data.startswith("owner_location_disable_"):
+
+        enabled = data.startswith("owner_location_enable_")
+        prefix = "owner_location_enable_" if enabled else "owner_location_disable_"
+        group_id = extract_commercial_request_id(data, prefix)
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para cambiar ubicación en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        set_group_location_rule(group_id, enabled=enabled)
+        context.user_data["selected_owner_group"] = group_id
+
+        log_event(
+            "owner_location_gate_updated",
+            category="security",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Owner actualizó el estado de restricción por ubicación.",
+            metadata={"enabled": enabled}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Restricción por ubicación actualizada.\n\n" + build_owner_location_management_text(group_id),
+            reply_markup=build_owner_location_management_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_location_country_set_"):
+
+        payload = data.replace("owner_location_country_set_", "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[0].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar la comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        country_code = parts[1]
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para cambiar ubicación en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        set_group_location_rule(
+            group_id,
+            enabled=True,
+            region_type=LOCATION_REGION_TYPE_COUNTRY,
+            allowed_region=country_code
+        )
+        context.user_data["selected_owner_group"] = group_id
+
+        log_event(
+            "owner_location_gate_updated",
+            category="security",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Owner actualizó país permitido por ubicación.",
+            metadata={"allowed_region": country_code, "region_type": LOCATION_REGION_TYPE_COUNTRY}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Región permitida actualizada.\n\n" + build_owner_location_management_text(group_id),
+            reply_markup=build_owner_location_management_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_location_region_set_"):
+
+        payload = data.replace("owner_location_region_set_", "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[0].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar la comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        region_slug = parts[1]
+
+
+        if region_slug not in SPANISH_AUTONOMOUS_COMMUNITY_LABELS:
+
+            await query.message.reply_text(
+                "⚠️ Región no válida.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para cambiar ubicación en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        set_group_location_rule(
+            group_id,
+            enabled=True,
+            region_type=LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY,
+            allowed_region=region_slug
+        )
+        context.user_data["selected_owner_group"] = group_id
+
+        log_event(
+            "owner_location_gate_updated",
+            category="security",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Owner actualizó comunidad autónoma permitida por ubicación.",
+            metadata={"allowed_region": region_slug, "region_type": LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Región permitida actualizada.\n\n" + build_owner_location_management_text(group_id),
+            reply_markup=build_owner_location_management_keyboard(group_id)
+        )
+
+        return
+
+
     if data in (
-        "owner_panel_security_info",
-        "owner_panel_location_info",
         "owner_panel_access_type_info",
         "owner_panel_general_info"
     ):
 
         info_texts = {
-            "owner_panel_security_info": (
-                "🛡 Seguridad del grupo\n\n"
-                "La protección anti-intrusos, anti-links y validación de accesos "
-                "funciona con la configuración actual del bot. Usa los logs para revisar actividad."
-            ),
-            "owner_panel_location_info": (
-                "📍 Ubicación permitida\n\n"
-                "La restricción por ubicación se gestiona desde el flujo de configuración "
-                "del creator cuando la comunidad está vinculada."
-            ),
             "owner_panel_access_type_info": (
                 "🔓 Tipo gratis/pago\n\n"
                 "El tipo de acceso se mantiene desde la configuración comercial de la comunidad. "
