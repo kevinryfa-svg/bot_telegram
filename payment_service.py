@@ -634,7 +634,9 @@ def build_payment_methods_admin_text():
         "Pagos de plataforma: el dinero entra en la cuenta del dueño del bot.",
         "Sirven para mensualidades de owners, publicar comunidades, bots personalizados, upgrades y módulos premium.",
         "",
-        "Stripe sigue siendo el proveedor activo para checkout real. PayPal, Revolut y cripto quedan preparados pero desactivados hasta configurar credenciales reales.",
+        "Stripe sigue siendo el proveedor activo para compras de acceso a grupos.",
+        "PayPal ya puede usarse en sandbox/live solo para pagos de plataforma si sus credenciales globales están completas.",
+        "Revolut y cripto continúan como métodos preparados pero no activos para cobros reales.",
         ""
     ]
 
@@ -657,11 +659,11 @@ def build_payment_methods_admin_text():
 
 
     lines.extend([
-        "Seguridad fase 1:",
+        "Seguridad:",
         "- payment_scope=platform identifica cobros de la plataforma.",
         "- payment_scope=group queda reservado para cobros propios de owners/grupos.",
-        "- No se concede acceso por PayPal, Revolut ni cripto.",
-        "- Ningún webhook nuevo está activo todavía.",
+        "- PayPal plataforma confirma pagos únicamente con webhook verificado.",
+        "- PayPal owner/grupo todavía no concede accesos.",
         "- No se guardan secretos en logs ni en el repo.",
         "- El acceso se concede solo cuando el proveedor confirma pago por webhook verificado."
     ])
