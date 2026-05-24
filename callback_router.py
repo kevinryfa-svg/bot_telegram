@@ -1139,6 +1139,7 @@ def build_admin_global_panel_keyboard():
         [InlineKeyboardButton("👥 Propietarios / solicitudes comerciales", callback_data="admin_owners_panel")],
         [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
         [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_panel")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
@@ -1151,6 +1152,7 @@ def build_admin_global_config_keyboard():
         [InlineKeyboardButton("💳 Planes comerciales del bot", callback_data="admin_global_commercial_plans")],
         [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
         [InlineKeyboardButton("😊 Encuestas y satisfacción", callback_data="admin_customer_satisfaction")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_config")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
@@ -1163,7 +1165,31 @@ def build_admin_global_tools_keyboard():
         [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
         [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_tools")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_admin_global_marketplace_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔎 Ver marketplace como usuario", callback_data="start_explore_groups")],
+        [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
+        [InlineKeyboardButton("👥 Propietarios / comunidades", callback_data="admin_owners_panel")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_marketplace")],
+        [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_admin_global_commercial_plans_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Propietarios / solicitudes", callback_data="admin_owners_panel")],
+        [InlineKeyboardButton("💳 Suscripciones comerciales", callback_data="admin_commercial_subscriptions")],
+        [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
+        [InlineKeyboardButton("⬅️ Volver a configuración global", callback_data="admin_global_config")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
 
@@ -1180,6 +1206,7 @@ def build_admin_owners_panel_keyboard():
         [InlineKeyboardButton("🔎 Buscar propietario", callback_data="admin_commercial_owner_tools")],
         [InlineKeyboardButton("📊 Resumen propietarios", callback_data="admin_commercial_owner_summary")],
         [InlineKeyboardButton("🔁 Reasignar owner/grupo", callback_data="admin_commercial_owner_tools")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_owners_panel")],
         [InlineKeyboardButton("👑 Panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
     ])
@@ -1199,7 +1226,116 @@ def build_customer_satisfaction_panel_keyboard():
         [InlineKeyboardButton("✏️ Editar preguntas", callback_data="admin_satisfaction_edit_menu")],
         [InlineKeyboardButton("🚫 Desactivar pregunta", callback_data="admin_satisfaction_deactivate_menu")],
         [InlineKeyboardButton("📋 Últimas respuestas", callback_data="admin_satisfaction_latest")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_customer_satisfaction")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")]
+    ])
+
+
+ADMIN_CONTEXT_HELP_TEXTS = {
+    "global_panel": (
+        "❓ Ayuda — Panel global del bot\n\n"
+        "Este panel es el índice principal de la plataforma.\n\n"
+        "📊 Monitor beta: úsalo para ver alertas, pagos, accesos, códigos y errores recientes.\n"
+        "😊 Satisfacción de clientes: envía encuestas y revisa qué opinan usuarios, owners y admins.\n"
+        "🛟 Solicitudes de soporte: abre la bandeja de tickets de ayuda.\n"
+        "🏪 Marketplace global: revisa cómo se ve el catálogo de comunidades y su configuración general.\n"
+        "👥 Propietarios / solicitudes comerciales: gestiona creators, pruebas, cupos y solicitudes.\n"
+        "⚙️ Configuración global: ajustes de plataforma, catálogo, planes comerciales y encuestas.\n"
+        "🛠 Herramientas internas: diagnóstico, smoke test, ciclo beta y logs.\n\n"
+        "Usa Volver para regresar al panel anterior o Inicio para volver al menú principal."
+    ),
+    "global_config": (
+        "❓ Ayuda — Configuración global\n\n"
+        "Este menú agrupa ajustes de plataforma y negocio.\n\n"
+        "🏪 Marketplace / catálogo: abre la vista global del catálogo y sus opciones disponibles.\n"
+        "💳 Planes comerciales del bot: revisa la zona de planes que pagan los owners para publicar.\n"
+        "🎟 Códigos comerciales globales: crea códigos para owners, no para usuarios finales de grupos.\n"
+        "😊 Encuestas y satisfacción: configura preguntas y envíos de encuestas.\n\n"
+        "No incluye logs ni pruebas técnicas; eso vive en Herramientas internas."
+    ),
+    "global_tools": (
+        "❓ Ayuda — Herramientas internas\n\n"
+        "Este menú es para operar y diagnosticar el bot.\n\n"
+        "🧪 Smoke Test Beta: ejecuta comprobaciones seguras antes de probar en real.\n"
+        "🗓 Ciclo beta: controla semanas de beta, cierre y preparación de lanzamiento.\n"
+        "📜 Logs del sistema: revisa actividad técnica y eventos importantes.\n"
+        "📊 Monitor beta: mira alertas y resumen de las últimas horas.\n\n"
+        "Si buscas cambiar catálogo, planes o encuestas, usa Configuración global."
+    ),
+    "owners_panel": (
+        "❓ Ayuda — Propietarios y solicitudes comerciales\n\n"
+        "Aquí gestionas a quienes quieren publicar comunidades en el bot.\n\n"
+        "🕓 Solicitudes pendientes: peticiones nuevas que aún necesitan decisión.\n"
+        "✅ Propietarios activos: creators que ya están aprobados o configurando.\n"
+        "🧪 Trials activos: pruebas de 1 día en curso.\n"
+        "💳 Suscripciones comerciales: estado comercial de owners.\n"
+        "📦 Cupos de grupos: cuántas comunidades puede tener cada owner.\n"
+        "📁 Archivados: solicitudes cerradas sin borrar datos.\n"
+        "🔎 Buscar propietario: revisa un owner concreto.\n"
+        "📊 Resumen propietarios: vista general para decidir rápido.\n\n"
+        "Úsalo cuando una persona quiera publicar, reactivar o resolver su comunidad."
+    ),
+    "customer_satisfaction": (
+        "❓ Ayuda — Satisfacción de clientes\n\n"
+        "Este módulo sirve para saber si el bot se entiende y dónde falla la experiencia.\n\n"
+        "📤 Enviar encuesta global: manda una encuesta a todos los usuarios elegibles.\n"
+        "👥 / 🧑‍💼 / 👮 Envíos segmentados: pregunta solo a usuarios, owners o admins.\n"
+        "📊 Ver resultados: medias, tasa de respuesta y puntos débiles.\n"
+        "📝 Gestionar preguntas: revisa las preguntas activas.\n"
+        "➕ Añadir pregunta: crea preguntas de puntuación o texto.\n"
+        "✏️ Editar / 🚫 Desactivar: ajusta preguntas sin perder respuestas anteriores.\n"
+        "📋 Últimas respuestas: lee comentarios recientes.\n\n"
+        "Úsalo durante beta para priorizar mejoras reales."
+    ),
+    "support_tickets": (
+        "❓ Ayuda — Solicitudes de soporte\n\n"
+        "Aquí ves tickets abiertos o respondidos recientemente.\n\n"
+        "Cada botón de ticket abre la conversación con datos del usuario y últimos mensajes.\n"
+        "✍️ Responder: envía una respuesta privada al usuario desde el bot.\n"
+        "✅ Cerrar ticket: marca el caso como cerrado cuando ya está resuelto.\n\n"
+        "Si una captura llega por soporte, se conserva dentro del ticket y no se mezcla con previews."
+    ),
+    "global_marketplace": (
+        "❓ Ayuda — Marketplace global\n\n"
+        "Esta pantalla te ayuda a revisar el catálogo público de comunidades.\n\n"
+        "🔎 Ver marketplace como usuario: abre la experiencia pública para comprobar fichas, previews y accesos.\n"
+        "⚙️ Configuración global: vuelve a ajustes de catálogo, planes comerciales y encuestas.\n"
+        "👥 Propietarios / comunidades: revisa owners y solicitudes que alimentan el marketplace.\n\n"
+        "Úsalo para comprobar si el escaparate del bot está claro antes de abrir la beta."
+    )
+}
+
+ADMIN_CONTEXT_HELP_BACK_CALLBACKS = {
+    "global_panel": "admin_global_panel",
+    "global_config": "admin_global_config",
+    "global_tools": "admin_global_tools",
+    "owners_panel": "admin_owners_panel",
+    "customer_satisfaction": "admin_customer_satisfaction",
+    "support_tickets": "admin_support_tickets",
+    "global_marketplace": "admin_global_marketplace"
+}
+
+
+def build_admin_context_help_text(help_key):
+
+    return ADMIN_CONTEXT_HELP_TEXTS.get(
+        help_key,
+        "❓ Ayuda\n\nEsta ayuda todavía no está configurada para este menú."
+    )
+
+
+def build_admin_context_help_keyboard(help_key):
+
+    back_callback = ADMIN_CONTEXT_HELP_BACK_CALLBACKS.get(
+        help_key,
+        "admin_global_panel"
+    )
+
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Volver al menú", callback_data=back_callback)],
+        [InlineKeyboardButton("👑 Panel global", callback_data="admin_global_panel")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
 
 
@@ -10415,8 +10551,15 @@ def build_support_tickets_keyboard(tickets):
 
     keyboard.append([
         InlineKeyboardButton(
+            "❓ Ayuda",
+            callback_data="admin_help_support_tickets"
+        )
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
             "⬅️ Volver",
-            callback_data="admin_back_main"
+            callback_data="admin_global_panel"
         )
     ])
 
@@ -12557,6 +12700,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("admin_help_"):
+
+        help_key = data.replace("admin_help_", "", 1)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_admin_context_help_text(help_key),
+            reply_markup=build_admin_context_help_keyboard(help_key)
+        )
+
+        return
+
+
     if data == "admin_owners_panel":
 
         await send_clean_message(
@@ -12580,11 +12737,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         info_texts = {
             "admin_global_marketplace": (
                 "🏪 Marketplace global\n\n"
-                "Sirve para revisar comunidades publicadas, visibilidad global y salud del marketplace."
+                "Vista de catálogo global. Desde aquí puedes abrir el marketplace como usuario y volver a configuración o propietarios."
             ),
             "admin_global_commercial_plans": (
                 "💳 Planes comerciales del bot\n\n"
-                "Sirve para separar los planes comerciales de publicación del bot de los planes de acceso de cada grupo."
+                "Zona informativa para revisar suscripciones comerciales, códigos globales y gestión de owners. No se mezcla con planes de acceso de cada grupo."
             ),
             "admin_global_config": (
                 "⚙️ Configuración global\n\n"
@@ -12596,6 +12753,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         }
         reply_markups = {
+            "admin_global_marketplace": build_admin_global_marketplace_keyboard(),
+            "admin_global_commercial_plans": build_admin_global_commercial_plans_keyboard(),
             "admin_global_config": build_admin_global_config_keyboard(),
             "admin_global_tools": build_admin_global_tools_keyboard()
         }

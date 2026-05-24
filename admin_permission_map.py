@@ -208,6 +208,7 @@ ADMIN_CALLBACK_PREFIX_PERMISSION_MAP = (
         "can_edit_marketplace_preview"
     )),
     ("admin_group_user_codes", (SUPER_ADMIN_ONLY,)),
+    ("admin_help_", (SUPER_ADMIN_ONLY,)),
     ("group_user_codes_", ("can_manage_codes",)),
     ("group_user_code_", ("can_manage_codes",)),
     ("edit_plan_", ("can_manage_groups", "can_manage_plans")),
@@ -230,6 +231,7 @@ ADMIN_CALLBACK_PREFIXES = (
     "edit_admin_permissions_",
     "edit_group",
     "admin_group_user_codes",
+    "admin_help_",
     "group_user_codes_",
     "group_user_code_",
     "view_group_plans",
