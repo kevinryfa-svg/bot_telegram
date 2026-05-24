@@ -102,6 +102,8 @@ from payment_service import (
     fetch_platform_payment_provider_config,
     is_changenow_group_checkout_available,
     is_changenow_platform_checkout_available,
+    is_guardarian_group_checkout_available,
+    is_guardarian_platform_checkout_available,
     is_paypal_group_checkout_available,
     is_revolut_group_checkout_available,
     is_stripe_payments_enabled,
@@ -147,6 +149,7 @@ get_group_id = None
 OWNER_PAYMENT_PROVIDER_PAYPAL = "paypal"
 OWNER_PAYMENT_PROVIDER_REVOLUT = "revolut"
 OWNER_PAYMENT_PROVIDER_CHANGENOW = "changenow"
+OWNER_PAYMENT_PROVIDER_GUARDARIAN = "guardarian"
 OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS = (
     "configuring_owner_payment_provider",
     "owner_payment_provider",
@@ -473,6 +476,144 @@ def build_changenow_payment_review_text(order):
     lines.extend([
         "Cuando el pago se confirme, soporte revisará la operación y activará el acceso si todo coincide.",
         "No envíes fondos por otra red ni a otra dirección."
+    ])
+
+    return "\n".join(lines)
+
+
+
+def build_guardarian_tutorial_text(scope_label="esta comunidad"):
+
+    return (
+        "💳 EUR → USDT / Guardarian\n\n"
+        "¿Qué es Guardarian?\n"
+        "Es una pasarela fiat a cripto: el comprador paga con tarjeta en euros y Guardarian liquida en USDT hacia la wallet configurada.\n\n"
+        "¿Para qué sirve?\n"
+        f"Sirve para vender accesos o productos de {scope_label} con tarjeta, manteniendo privacidad frente al comprador y liquidación en USDT. No es anonimato total.\n\n"
+        "¿Cómo funciona en este bot?\n"
+        "1. Configuras API key, wallet USDT y red correcta.\n"
+        "2. El comprador paga con tarjeta en EUR.\n"
+        "3. El webhook solo despierta al bot.\n"
+        "4. El bot consulta GET /v1/transaction/{id}.\n"
+        "5. El acceso se activa automáticamente solo si Guardarian devuelve status finished.\n\n"
+        "Qué necesitas:\n"
+        "- cuenta/API key de Guardarian;\n"
+        "- wallet USDT propia;\n"
+        "- red correcta: TRC20, ERC20, Polygon, BEP20 u otra soportada;\n"
+        "- webhook secret si tu cuenta lo ofrece;\n"
+        "- revisar límites, KYC/AML y riesgos de tarjeta.\n\n"
+        "Importante:\n"
+        "Una wallet o red incorrecta puede perder fondos. Algunos pagos pueden requerir verificación o revisión por importe, país o riesgo."
+    )
+
+
+def build_guardarian_safe_summary(payload):
+
+    masked = mask_provider_config({
+        "api_key": payload.get("api_key"),
+        "webhook_secret": payload.get("webhook_secret"),
+        "payout_wallet": payload.get("payout_wallet"),
+        "payout_network": payload.get("payout_network"),
+        "mode": payload.get("mode"),
+        "base_url": payload.get("base_url")
+    })
+    webhook_text = "sí" if payload.get("webhook_secret") else "no"
+
+    return (
+        f"Modo: {masked.get('mode') or 'live'}\n"
+        "Fiat comprador: EUR\n"
+        "Recibe owner/plataforma: USDT\n"
+        f"Red USDT: {masked.get('payout_network') or '-'}\n"
+        f"Wallet destino: {mask_secret_value(payload.get('payout_wallet')) if payload.get('payout_wallet') else '-'}\n"
+        f"API key: {masked.get('api_key') or '***'}\n"
+        f"Webhook secret configurado: {webhook_text}\n"
+        f"Base URL: {payload.get('base_url') or 'por defecto'}\n"
+        "Automático: sí, solo con status finished"
+    )
+
+
+def build_owner_guardarian_cancel_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar configuración", callback_data=f"owner_payment_guardarian_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_GUARDARIAN}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_guardarian_mode_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧪 Sandbox", callback_data=f"owner_payment_guardarian_mode_sandbox_{group_id}")],
+        [InlineKeyboardButton("🚀 Live", callback_data=f"owner_payment_guardarian_mode_live_{group_id}")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_payment_guardarian_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_GUARDARIAN}")]
+    ])
+
+
+def build_owner_guardarian_confirm_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Guardar cifrado", callback_data=f"owner_payment_guardarian_save_{group_id}")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_payment_guardarian_cancel_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_GUARDARIAN}")]
+    ])
+
+
+def build_platform_guardarian_cancel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar configuración", callback_data="admin_payment_guardarian_cancel")],
+        [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data="admin_payment_guardarian")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_platform_guardarian_mode_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧪 Sandbox", callback_data="admin_payment_guardarian_mode_sandbox")],
+        [InlineKeyboardButton("🚀 Live", callback_data="admin_payment_guardarian_mode_live")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="admin_payment_guardarian_cancel")],
+        [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data="admin_payment_guardarian")]
+    ])
+
+
+def build_platform_guardarian_confirm_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Guardar cifrado", callback_data="admin_payment_guardarian_save")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="admin_payment_guardarian_cancel")],
+        [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data="admin_payment_guardarian")]
+    ])
+
+
+def build_guardarian_payment_text(order):
+
+    payment_url = order.get("url") or order.get("payment_url") or order.get("checkout_url")
+    lines = [
+        "💳 Pago EUR → USDT creado",
+        "",
+        "Paga con tarjeta en euros. El acceso se activa automáticamente cuando Guardarian confirme oficialmente el pago.",
+        "El webhook solo avisa al bot; antes de activar nada el bot consulta GET /v1/transaction/{id}.",
+        "",
+        f"Referencia interna: {order.get('transaction_id') or '-'}",
+        f"Importe: {order.get('amount') or '-'} EUR",
+        f"Estado: {order.get('status') or 'pending'}",
+        ""
+    ]
+
+    if payment_url:
+
+        lines.extend([
+            "Abre el enlace para pagar:",
+            payment_url,
+            ""
+        ])
+
+    lines.extend([
+        "Algunos pagos pueden tardar por verificación bancaria, KYC/AML o revisión de riesgo.",
+        "No promete anonimato total: ofrece privacidad frente al comprador y liquidación en USDT."
     ])
 
     return "\n".join(lines)
@@ -1837,7 +1978,9 @@ def build_admin_payment_providers_keyboard():
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💱 ChangeNOW.io / Cripto", callback_data="admin_payment_changenow")],
+        [InlineKeyboardButton("💳 EUR → USDT / Guardarian", callback_data="admin_payment_guardarian")],
         [InlineKeyboardButton("🧪 Pagos ChangeNOW en revisión", callback_data="admin_changenow_manual_review")],
+        [InlineKeyboardButton("🧪 Pagos Guardarian en revisión", callback_data="admin_guardarian_manual_review")],
         [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
         [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
@@ -4670,12 +4813,12 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
         text = (update.message.text or "").strip() if update.message else ""
 
 
-        if provider != OWNER_PAYMENT_PROVIDER_CHANGENOW or not is_super_admin(user_id):
+        if provider not in (OWNER_PAYMENT_PROVIDER_CHANGENOW, OWNER_PAYMENT_PROVIDER_GUARDARIAN) or not is_super_admin(user_id):
 
             clear_owner_payment_provider_wizard(context)
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="⛔ No tienes permiso para configurar ChangeNOW plataforma.",
+                text="⛔ No tienes permiso para configurar este proveedor de plataforma.",
                 reply_markup=build_unknown_callback_keyboard()
             )
 
@@ -4686,11 +4829,13 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
 
             clear_owner_payment_provider_wizard(context)
             await delete_sensitive_user_message(update)
+            back_callback = "admin_payment_guardarian" if provider == OWNER_PAYMENT_PROVIDER_GUARDARIAN else "admin_payment_changenow"
+            back_label = "⬅️ Volver a Guardarian" if provider == OWNER_PAYMENT_PROVIDER_GUARDARIAN else "⬅️ Volver a ChangeNOW"
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="✅ Configuración ChangeNOW cancelada. No se ha guardado ningún secreto.",
+                text="✅ Configuración cancelada. No se ha guardado ningún secreto.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+                    [InlineKeyboardButton(back_label, callback_data=back_callback)],
                     [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
                 ])
             )
@@ -4705,6 +4850,177 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
                 chat_id=chat_id,
                 text="⚠️ Falta PAYMENT_CONFIG_ENCRYPTION_KEY. No se guardan credenciales sin cifrado.",
                 reply_markup=build_admin_payment_providers_keyboard()
+            )
+
+            return
+
+
+        if provider == OWNER_PAYMENT_PROVIDER_GUARDARIAN:
+
+            if step == "api_key":
+
+                await delete_sensitive_user_message(update)
+
+                if not is_valid_paypal_text_value(text, min_length=8):
+
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ La API key de Guardarian no parece válida. Pégala otra vez o cancela.",
+                        reply_markup=build_platform_guardarian_cancel_keyboard()
+                    )
+
+                    return
+
+
+                payload["api_key"] = text
+                context.user_data["platform_payment_payload"] = payload
+                context.user_data["platform_payment_step"] = "payout_network"
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Indica la red USDT destino. Ejemplos: TRC20, ERC20, Polygon, BEP20.",
+                    reply_markup=build_platform_guardarian_cancel_keyboard()
+                )
+
+                return
+
+
+            if step == "payout_network":
+
+                value = text.upper().strip()
+
+                if not value or len(value) > 30:
+
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ Red no válida. Ejemplos: TRC20, ERC20, Polygon, BEP20.",
+                        reply_markup=build_platform_guardarian_cancel_keyboard()
+                    )
+
+                    return
+
+
+                payload["payout_network"] = value
+                context.user_data["platform_payment_payload"] = payload
+                context.user_data["platform_payment_step"] = "payout_wallet"
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Envía la wallet USDT destino de la plataforma. Revísala con cuidado: una red o wallet incorrecta puede perder fondos.",
+                    reply_markup=build_platform_guardarian_cancel_keyboard()
+                )
+
+                return
+
+
+            if step == "payout_wallet":
+
+                await delete_sensitive_user_message(update)
+
+                if len(text) < 12 or len(text) > 300 or any(char.isspace() for char in text):
+
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ La wallet no parece válida. Pégala otra vez o cancela.",
+                        reply_markup=build_platform_guardarian_cancel_keyboard()
+                    )
+
+                    return
+
+
+                payload["payout_wallet"] = text
+                context.user_data["platform_payment_payload"] = payload
+                context.user_data["platform_payment_step"] = "webhook_secret"
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Envía el webhook secret de Guardarian si lo tienes. Si no lo tienes, escribe: saltar",
+                    reply_markup=build_platform_guardarian_cancel_keyboard()
+                )
+
+                return
+
+
+            if step == "webhook_secret":
+
+                await delete_sensitive_user_message(update)
+                lowered = text.lower()
+
+                if lowered in ("saltar", "skip", "no", "-"):
+
+                    payload["webhook_secret"] = None
+
+                elif is_valid_paypal_text_value(text, min_length=8):
+
+                    payload["webhook_secret"] = text
+
+                else:
+
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ El webhook secret no parece válido. Envíalo otra vez o escribe saltar.",
+                        reply_markup=build_platform_guardarian_cancel_keyboard()
+                    )
+
+                    return
+
+
+                context.user_data["platform_payment_payload"] = payload
+                context.user_data["platform_payment_step"] = "base_url"
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Envía GUARDARIAN_BASE_URL solo si usas una URL oficial distinta. Si no lo necesitas, escribe: saltar",
+                    reply_markup=build_platform_guardarian_cancel_keyboard()
+                )
+
+                return
+
+
+            if step == "base_url":
+
+                await delete_sensitive_user_message(update)
+                lowered = text.lower()
+
+                if lowered in ("saltar", "skip", "no", "-"):
+
+                    payload["base_url"] = None
+
+                elif text.startswith("https://") and len(text) <= 300:
+
+                    payload["base_url"] = text.rstrip("/")
+
+                else:
+
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ La URL no parece válida. Debe empezar por https:// o escribe saltar.",
+                        reply_markup=build_platform_guardarian_cancel_keyboard()
+                    )
+
+                    return
+
+
+                context.user_data["platform_payment_payload"] = payload
+                context.user_data["platform_payment_step"] = "confirm"
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        "Revisa la configuración Guardarian plataforma:\n\n"
+                        f"{build_guardarian_safe_summary(payload)}\n\n"
+                        "Se guardará cifrada. Los pagos solo conceden acceso con status finished verificado por API."
+                    ),
+                    reply_markup=build_platform_guardarian_confirm_keyboard()
+                )
+
+                return
+
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ No sé qué dato esperaba. Vuelve a iniciar la configuración Guardarian.",
+                reply_markup=build_platform_guardarian_cancel_keyboard()
             )
 
             return
@@ -4904,7 +5220,7 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
     chat_id = update.effective_chat.id if update.effective_chat else None
 
 
-    if provider not in (OWNER_PAYMENT_PROVIDER_PAYPAL, OWNER_PAYMENT_PROVIDER_REVOLUT, OWNER_PAYMENT_PROVIDER_CHANGENOW) or not group_id:
+    if provider not in (OWNER_PAYMENT_PROVIDER_PAYPAL, OWNER_PAYMENT_PROVIDER_REVOLUT, OWNER_PAYMENT_PROVIDER_CHANGENOW, OWNER_PAYMENT_PROVIDER_GUARDARIAN) or not group_id:
 
         clear_owner_payment_provider_wizard(context)
         await context.bot.send_message(
@@ -4964,6 +5280,177 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
                 [InlineKeyboardButton("⬅️ Volver al proveedor", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
+        )
+
+        return
+
+
+    if provider == OWNER_PAYMENT_PROVIDER_GUARDARIAN:
+
+        if step == "api_key":
+
+            await delete_sensitive_user_message(update)
+
+            if not is_valid_paypal_text_value(text, min_length=8):
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ La API key de Guardarian no parece válida. Pégala otra vez o cancela.",
+                    reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["api_key"] = text
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "payout_network"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Indica la red USDT destino. Ejemplos: TRC20, ERC20, Polygon, BEP20.",
+                reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "payout_network":
+
+            value = text.upper().strip()
+
+            if not value or len(value) > 30:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Red no válida. Ejemplos: TRC20, ERC20, Polygon, BEP20.",
+                    reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["payout_network"] = value
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "payout_wallet"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Envía tu wallet USDT destino. Revísala con cuidado: una red o wallet incorrecta puede perder fondos.",
+                reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "payout_wallet":
+
+            await delete_sensitive_user_message(update)
+
+            if len(text) < 12 or len(text) > 300 or any(char.isspace() for char in text):
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ La wallet no parece válida. Pégala otra vez o cancela.",
+                    reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            payload["payout_wallet"] = text
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "webhook_secret"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Envía el webhook secret de Guardarian si lo tienes. Si no lo tienes, escribe: saltar",
+                reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "webhook_secret":
+
+            await delete_sensitive_user_message(update)
+            lowered = text.lower()
+
+            if lowered in ("saltar", "skip", "no", "-"):
+
+                payload["webhook_secret"] = None
+
+            elif is_valid_paypal_text_value(text, min_length=8):
+
+                payload["webhook_secret"] = text
+
+            else:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ El webhook secret no parece válido. Envíalo otra vez o escribe saltar.",
+                    reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "base_url"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Envía GUARDARIAN_BASE_URL solo si usas una URL oficial distinta. Si no lo necesitas, escribe: saltar",
+                reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if step == "base_url":
+
+            await delete_sensitive_user_message(update)
+            lowered = text.lower()
+
+            if lowered in ("saltar", "skip", "no", "-"):
+
+                payload["base_url"] = None
+
+            elif text.startswith("https://") and len(text) <= 300:
+
+                payload["base_url"] = text.rstrip("/")
+
+            else:
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ La URL no parece válida. Debe empezar por https:// o escribe saltar.",
+                    reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+                )
+
+                return
+
+
+            context.user_data["owner_payment_payload"] = payload
+            context.user_data["owner_payment_step"] = "confirm"
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Revisa la configuración segura de Guardarian:\n\n"
+                    f"{build_guardarian_safe_summary(payload)}\n\n"
+                    "Se guardará cifrada. Guardarian quedará disponible para compradores del grupo. El acceso solo se concede con status finished verificado por API."
+                ),
+                reply_markup=build_owner_guardarian_confirm_keyboard(group_id)
+            )
+
+            return
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Usa los botones del asistente para continuar con Guardarian.",
+            reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
         )
 
         return
@@ -13697,6 +14184,72 @@ async def create_changenow_group_checkout_for_user(context, chat_id, user_id, gr
         )
 
 
+async def create_guardarian_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
+
+    try:
+
+        response = requests.post(
+
+            f"{SERVER_URL}/create-guardarian-group-order",
+
+            json={
+
+                "telegram_id": user_id,
+                "group_id": group_id,
+                "plan_id": plan_id
+
+            },
+
+            timeout=20
+
+        )
+        response_data = response.json()
+
+
+        if response.status_code >= 400:
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=response_data.get("error") or "Guardarian no está disponible para esta comunidad.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=build_guardarian_payment_text(response_data),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛟 Contactar soporte", callback_data=f"support_group_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+    except Exception as e:
+
+        log_event(
+            "guardarian_group_checkout_creation_error",
+            category="payment",
+            severity="error",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Error creando orden Guardarian de grupo.",
+            metadata={
+                "plan_id": plan_id,
+                "error": str(e)
+            }
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Error creando pago Guardarian",
+            reply_markup=build_group_recovery_keyboard(group_id)
+        )
+
+
 async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.user_data.get("location_gate_pending"):
@@ -13987,6 +14540,19 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
     if action == "changenow_checkout":
 
         await create_changenow_group_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return
+
+
+    if action == "guardarian_checkout":
+
+        await create_guardarian_group_checkout_for_user(
             context,
             chat_id,
             user_id,
@@ -15633,6 +16199,480 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ Configuración ChangeNOW plataforma borrada." if updated else "⚠️ No pude borrar ChangeNOW plataforma.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data="admin_payment_changenow")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_guardarian":
+
+        config_row = fetch_platform_payment_provider_config(OWNER_PAYMENT_PROVIDER_GUARDARIAN)
+        summary = (config_row or {}).get("masked_public_summary") or "sin configuración guardada"
+        status = (config_row or {}).get("status") or "not_configured"
+        enabled = "activo" if (config_row or {}).get("is_enabled") else "inactivo"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_guardarian_tutorial_text("la plataforma")
+            + "\n\nEstado plataforma:\n"
+            + f"Estado: {status} / {enabled}\n"
+            + f"Resumen seguro: {summary}\n\n"
+            + "Automático: sí, únicamente cuando Guardarian devuelve status finished al consultar GET /v1/transaction/{id}.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📘 Cómo funciona", callback_data="admin_payment_guardarian_help")],
+                [InlineKeyboardButton("⚙️ Configurar Guardarian", callback_data="admin_payment_guardarian_connect")],
+                [InlineKeyboardButton("🧪 Estado / revisión", callback_data="admin_guardarian_manual_review")],
+                [InlineKeyboardButton("⛔ Desactivar", callback_data="admin_payment_guardarian_disable")],
+                [InlineKeyboardButton("🗑 Borrar configuración", callback_data="admin_payment_guardarian_delete")],
+                [InlineKeyboardButton("⬅️ Métodos de pago", callback_data="admin_payment_providers")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_guardarian_help":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_guardarian_tutorial_text("la plataforma")
+            + "\n\nPaso a paso para superadmin:\n"
+            "1. Crea o revisa tu cuenta/API key de Guardarian.\n"
+            "2. Configura wallet USDT y red correcta.\n"
+            "3. Guarda cifrado desde este bot.\n"
+            "4. Usa el webhook solo como aviso; el bot siempre reconsulta Guardarian.\n"
+            "5. Revisa manualmente solo pagos retenidos, dudosos o no verificables.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data="admin_payment_guardarian")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_guardarian_connect":
+
+        if not has_payment_encryption_key():
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⚠️ Guardarian no puede configurarse todavía\n\n"
+                "Falta PAYMENT_CONFIG_ENCRYPTION_KEY. Por seguridad no se guardan credenciales reales sin cifrado.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data="admin_payment_guardarian")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        clear_owner_payment_provider_wizard(context)
+        context.user_data["configuring_platform_payment_provider"] = True
+        context.user_data["platform_payment_provider"] = OWNER_PAYMENT_PROVIDER_GUARDARIAN
+        context.user_data["platform_payment_step"] = "mode"
+        context.user_data["platform_payment_payload"] = {}
+        ensure_platform_payment_provider_config(OWNER_PAYMENT_PROVIDER_GUARDARIAN, status="pending")
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_guardarian_tutorial_text("la plataforma")
+            + "\n\nElige el entorno que quieres preparar.",
+            reply_markup=build_platform_guardarian_mode_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("admin_payment_guardarian_mode_"):
+
+        mode = data.replace("admin_payment_guardarian_mode_", "", 1)
+
+        if mode not in ("sandbox", "live"):
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el modo Guardarian.",
+                reply_markup=build_admin_payment_providers_keyboard()
+            )
+
+            return
+
+
+        context.user_data["configuring_platform_payment_provider"] = True
+        context.user_data["platform_payment_provider"] = OWNER_PAYMENT_PROVIDER_GUARDARIAN
+        context.user_data["platform_payment_payload"] = {
+            "mode": mode,
+            "fiat_currency": "EUR",
+            "payout_currency": "USDT"
+        }
+        context.user_data["platform_payment_step"] = "api_key"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            ("Modo seleccionado: sandbox\n\n" if mode == "sandbox" else "Modo seleccionado: live\n\n")
+            + "Envía ahora la API key de Guardarian para plataforma. Intentaré borrar el mensaje después de recibirlo.",
+            reply_markup=build_platform_guardarian_cancel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_payment_guardarian_cancel":
+
+        clear_owner_payment_provider_wizard(context)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración Guardarian cancelada. No se ha guardado ningún secreto.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data="admin_payment_guardarian")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_guardarian_save":
+
+        payload = context.user_data.get("platform_payment_payload") or {}
+        required_keys = ("mode", "api_key", "payout_network", "payout_wallet")
+
+        if any(not payload.get(key) for key in required_keys):
+
+            await query.message.reply_text(
+                "⚠️ Faltan datos para guardar Guardarian plataforma.",
+                reply_markup=build_platform_guardarian_cancel_keyboard()
+            )
+
+            return
+
+
+        safe_config = {
+            "provider": OWNER_PAYMENT_PROVIDER_GUARDARIAN,
+            "mode": payload.get("mode"),
+            "api_key": payload.get("api_key"),
+            "webhook_secret": payload.get("webhook_secret"),
+            "base_url": payload.get("base_url"),
+            "fiat_currency": "EUR",
+            "payout_currency": "USDT",
+            "payout_network": payload.get("payout_network"),
+            "payout_wallet": payload.get("payout_wallet")
+        }
+
+        try:
+
+            encrypted_config = encrypt_provider_config(safe_config)
+            masked_summary = (
+                f"mode={payload.get('mode')}; "
+                "fiat=EUR; payout=USDT; "
+                f"network={payload.get('payout_network')}; "
+                f"wallet={mask_secret_value(payload.get('payout_wallet'))}; "
+                f"webhook_secret={'configured' if payload.get('webhook_secret') else 'pending'}; "
+                "auto=finished"
+            )
+            saved = save_platform_payment_provider_encrypted_config(
+                OWNER_PAYMENT_PROVIDER_GUARDARIAN,
+                encrypted_config,
+                masked_summary,
+                public_config_json={
+                    "mode": payload.get("mode"),
+                    "fiat_currency": "EUR",
+                    "payout_currency": "USDT",
+                    "payout_network": payload.get("payout_network"),
+                    "webhook_configured": bool(payload.get("webhook_secret")),
+                    "checkout_enabled": True,
+                    "auto_verified_status": "finished",
+                    "base_url_configured": bool(payload.get("base_url"))
+                },
+                verified_by=user_id
+            )
+
+        except Exception:
+
+            saved = False
+
+        clear_owner_payment_provider_wizard(context)
+
+        if saved:
+
+            log_event(
+                "platform_payment_provider_credentials_saved",
+                category="payment",
+                severity="info",
+                actor_user_id=user_id,
+                message="Credenciales Guardarian plataforma guardadas cifradas.",
+                metadata={
+                    "provider": OWNER_PAYMENT_PROVIDER_GUARDARIAN,
+                    "mode": payload.get("mode"),
+                    "webhook_configured": bool(payload.get("webhook_secret")),
+                    "auto_verified_status": "finished"
+                }
+            )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            ("✅ Guardarian plataforma guardado de forma segura\n\n" if saved else "⚠️ No pude guardar Guardarian plataforma\n\n")
+            + (
+                f"{build_guardarian_safe_summary(payload)}\n\n"
+                "Estado: activo para pagos EUR → USDT. Solo status finished concede acceso."
+                if saved
+                else "Revisa la configuración y vuelve a intentarlo."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data="admin_payment_guardarian")],
+                [InlineKeyboardButton("💳 Métodos de pago", callback_data="admin_payment_providers")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_guardarian_disable":
+
+        updated = disable_platform_payment_provider_config(OWNER_PAYMENT_PROVIDER_GUARDARIAN)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Guardarian plataforma desactivado." if updated else "⚠️ No pude desactivar Guardarian plataforma.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data="admin_payment_guardarian")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_payment_guardarian_delete":
+
+        updated = clear_platform_payment_provider_config(OWNER_PAYMENT_PROVIDER_GUARDARIAN)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración Guardarian plataforma borrada." if updated else "⚠️ No pude borrar Guardarian plataforma.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data="admin_payment_guardarian")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_guardarian_manual_review":
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       user_id,
+                       group_id,
+                       plan_id,
+                       amount,
+                       currency,
+                       status,
+                       external_payment_id,
+                       external_checkout_id,
+                       created_at
+                FROM payment_transactions
+                WHERE provider=%s
+                AND status=%s
+                ORDER BY created_at DESC
+                LIMIT 20
+
+            """, (
+                OWNER_PAYMENT_PROVIDER_GUARDARIAN,
+                "manual_review"
+            ))
+
+            rows = cur.fetchall()
+
+        lines = [
+            "🧪 Pagos Guardarian en revisión",
+            "",
+            "Estos pagos no se pudieron verificar automáticamente como finished. Reconsulta o decide manualmente con cuidado."
+        ]
+        keyboard = []
+
+        if not rows:
+
+            lines.append("\nNo hay pagos Guardarian pendientes de revisión.")
+
+        for row in rows:
+
+            transaction_id, tx_user_id, tx_group_id, tx_plan_id, amount, currency, status, external_payment_id, external_checkout_id, created_at = row
+            lines.extend([
+                "",
+                f"#{transaction_id} Usuario: {tx_user_id}",
+                f"Grupo: {tx_group_id or '-'} Plan: {tx_plan_id or '-'}",
+                f"Importe: {amount or '-'} {currency or ''}",
+                f"Estado: {status}",
+                f"Provider id: {external_payment_id or external_checkout_id or '-'}",
+                f"Fecha: {created_at}"
+            ])
+            keyboard.append([
+                InlineKeyboardButton(f"✅ Confirmar #{transaction_id}", callback_data=f"admin_guardarian_mark_paid_{transaction_id}"),
+                InlineKeyboardButton(f"❌ Rechazar #{transaction_id}", callback_data=f"admin_guardarian_reject_{transaction_id}")
+            ])
+
+        keyboard.extend([
+            [InlineKeyboardButton("⬅️ Guardarian", callback_data="admin_payment_guardarian")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data.startswith("admin_guardarian_reject_"):
+
+        transaction_id = extract_commercial_request_id(data, "admin_guardarian_reject_")
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE payment_transactions
+                SET status='failed',
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=%s
+                AND provider=%s
+                RETURNING id
+
+            """, (
+                transaction_id,
+                OWNER_PAYMENT_PROVIDER_GUARDARIAN
+            ))
+            updated = cur.fetchone()
+
+        conn.commit()
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Pago Guardarian rechazado." if updated else "⚠️ No encontré ese pago Guardarian.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🧪 Volver a revisión", callback_data="admin_guardarian_manual_review")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_guardarian_mark_paid_"):
+
+        transaction_id = extract_commercial_request_id(data, "admin_guardarian_mark_paid_")
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       user_id,
+                       group_id,
+                       plan_id,
+                       amount,
+                       currency,
+                       external_payment_id,
+                       external_checkout_id,
+                       status
+                FROM payment_transactions
+                WHERE id=%s
+                AND provider=%s
+                LIMIT 1
+
+            """, (
+                transaction_id,
+                OWNER_PAYMENT_PROVIDER_GUARDARIAN
+            ))
+            row = cur.fetchone()
+
+        if not row:
+
+            await query.message.reply_text(
+                "⚠️ No encontré ese pago Guardarian.",
+                reply_markup=build_admin_payment_providers_keyboard()
+            )
+
+            return
+
+
+        _tx_id, tx_user_id, tx_group_id, tx_plan_id, amount, currency, external_payment_id, external_checkout_id, tx_status = row
+
+        if tx_status == "paid":
+
+            result = {"ok": True, "reason": "already_paid"}
+            new_status = "paid"
+
+        elif tx_group_id and tx_plan_id:
+
+            result = grant_group_access_after_payment(
+                OWNER_PAYMENT_PROVIDER_GUARDARIAN,
+                tx_user_id,
+                tx_group_id,
+                tx_plan_id,
+                external_payment_id=external_payment_id,
+                external_checkout_id=external_checkout_id,
+                amount=amount,
+                currency=currency,
+                transaction_id=transaction_id
+            )
+            new_status = "paid" if result.get("ok") else "manual_review"
+
+        else:
+
+            result = {"ok": True, "reason": "platform_manual_mark_paid"}
+            new_status = "paid"
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE payment_transactions
+                SET status=%s,
+                    metadata_json=COALESCE(metadata_json, '{}'::jsonb) || %s::jsonb,
+                    metadata=COALESCE(metadata, '{}'::jsonb) || %s::jsonb,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=%s
+
+            """, (
+                new_status,
+                json.dumps({"manual_confirmed_by": user_id, "manual_result": result}),
+                json.dumps({"manual_confirmed_by": user_id, "manual_result": result}),
+                transaction_id
+            ))
+
+        conn.commit()
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Pago Guardarian confirmado manualmente." if result.get("ok") else "⚠️ No pude conceder el acceso. El pago sigue en revisión.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🧪 Volver a revisión", callback_data="admin_guardarian_manual_review")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
@@ -19379,6 +20419,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         paypal_available = is_paypal_group_checkout_available(group_id)
         revolut_available = is_revolut_group_checkout_available(group_id)
         changenow_available = is_changenow_group_checkout_available(group_id)
+        guardarian_available = is_guardarian_group_checkout_available(group_id)
 
 
         for plan_id, name, price_id, amount, currency in plans:
@@ -19444,6 +20485,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"💱 Cripto / ChangeNOW — {button_text}",
 
                         callback_data=f"changenow_group_plan_{group_id}_{plan_id}"
+
+                    )
+
+                ])
+
+
+            if guardarian_available:
+
+                keyboard.append([
+
+                    InlineKeyboardButton(
+
+                        f"💳 Tarjeta EUR → USDT — {button_text}",
+
+                        callback_data=f"guardarian_group_plan_{group_id}_{plan_id}"
 
                     )
 
@@ -21410,6 +22466,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if provider == OWNER_PAYMENT_PROVIDER_GUARDARIAN:
+
+            if not has_payment_encryption_key():
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "⚠️ Guardarian no puede configurarse todavía\n\n"
+                    "Falta PAYMENT_CONFIG_ENCRYPTION_KEY en la configuración segura del bot.\n\n"
+                    "Por seguridad no se piden ni se guardan credenciales reales sin cifrado.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                    ])
+                )
+
+                return
+
+
+            clear_owner_payment_provider_wizard(context)
+            context.user_data["configuring_owner_payment_provider"] = True
+            context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_GUARDARIAN
+            context.user_data["owner_payment_group_id"] = group_id
+            context.user_data["owner_payment_step"] = "mode"
+            context.user_data["owner_payment_payload"] = {}
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_guardarian_tutorial_text("esta comunidad")
+                + "\n\nPulsa el entorno que quieres preparar para esta comunidad.",
+                reply_markup=build_owner_guardarian_mode_keyboard(group_id)
+            )
+
+            return
+
+
         await send_clean_message(
             context,
             query.message.chat_id,
@@ -21481,6 +22574,67 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             + "Envía ahora la API key de ChangeNOW. Intentaré borrar el mensaje después de recibirlo.",
             reply_markup=build_owner_changenow_cancel_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_guardarian_mode_"):
+
+        payload = data.replace("owner_payment_guardarian_mode_", "", 1)
+        mode, _, group_text = payload.partition("_")
+
+
+        if mode not in ("sandbox", "live") or not group_text.isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el modo de Guardarian.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(group_text)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⛔ No tienes permiso para configurar Guardarian en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not context.user_data.get("configuring_owner_payment_provider"):
+
+            context.user_data["configuring_owner_payment_provider"] = True
+            context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_GUARDARIAN
+            context.user_data["owner_payment_group_id"] = group_id
+            context.user_data["owner_payment_payload"] = {}
+
+
+        owner_payload = context.user_data.get("owner_payment_payload") or {}
+        owner_payload["mode"] = mode
+        owner_payload["fiat_currency"] = "EUR"
+        owner_payload["payout_currency"] = "USDT"
+        context.user_data["owner_payment_payload"] = owner_payload
+        context.user_data["owner_payment_step"] = "api_key"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "Modo seleccionado: sandbox\n\n"
+                if mode == "sandbox"
+                else "Modo seleccionado: live\n\n"
+            )
+            + "Envía ahora la API key de Guardarian. Intentaré borrar el mensaje después de recibirlo.",
+            reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
         )
 
         return
@@ -21620,6 +22774,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ Configuración de ChangeNOW cancelada. No se ha guardado ningún secreto.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_guardarian_cancel_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_guardarian_cancel_"
+        )
+        clear_owner_payment_provider_wizard(context)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración de Guardarian cancelada. No se ha guardado ningún secreto.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_GUARDARIAN}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
@@ -21807,6 +22982,155 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Volver a ChangeNOW", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")],
+                [InlineKeyboardButton("💳 Métodos del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_payment_guardarian_save_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_guardarian_save_"
+        )
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group_id or (not is_super_admin(user_id) and owner_user_id != user_id):
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⛔ No tienes permiso para guardar Guardarian en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        provider = context.user_data.get("owner_payment_provider")
+        payload = context.user_data.get("owner_payment_payload") or {}
+
+
+        if provider != OWNER_PAYMENT_PROVIDER_GUARDARIAN or context.user_data.get("owner_payment_group_id") != group_id:
+
+            await query.message.reply_text(
+                "⚠️ No hay una configuración de Guardarian lista para guardar.",
+                reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        required_keys = ("mode", "api_key", "payout_network", "payout_wallet")
+
+
+        if any(not payload.get(key) for key in required_keys):
+
+            await query.message.reply_text(
+                "⚠️ Faltan datos para guardar Guardarian. Vuelve a iniciar la conexión.",
+                reply_markup=build_owner_guardarian_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if not has_payment_encryption_key():
+
+            clear_owner_payment_provider_wizard(context)
+            await query.message.reply_text(
+                "⚠️ Falta PAYMENT_CONFIG_ENCRYPTION_KEY. No se guardan credenciales sin cifrado.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        safe_config = {
+            "provider": OWNER_PAYMENT_PROVIDER_GUARDARIAN,
+            "mode": payload.get("mode"),
+            "api_key": payload.get("api_key"),
+            "webhook_secret": payload.get("webhook_secret"),
+            "base_url": payload.get("base_url"),
+            "fiat_currency": "EUR",
+            "payout_currency": "USDT",
+            "payout_network": payload.get("payout_network"),
+            "payout_wallet": payload.get("payout_wallet")
+        }
+
+
+        try:
+
+            encrypted_config = encrypt_provider_config(safe_config)
+            masked_summary = (
+                f"mode={payload.get('mode')}; "
+                "fiat=EUR; payout=USDT; "
+                f"network={payload.get('payout_network')}; "
+                f"wallet={mask_secret_value(payload.get('payout_wallet'))}; "
+                f"webhook_secret={'configured' if payload.get('webhook_secret') else 'pending'}; "
+                "auto=finished"
+            )
+            saved = save_group_payment_provider_encrypted_config(
+                owner_user_id or user_id,
+                group_id,
+                OWNER_PAYMENT_PROVIDER_GUARDARIAN,
+                encrypted_config,
+                masked_summary,
+                public_config_json={
+                    "mode": payload.get("mode"),
+                    "fiat_currency": "EUR",
+                    "payout_currency": "USDT",
+                    "payout_network": payload.get("payout_network"),
+                    "webhook_configured": bool(payload.get("webhook_secret")),
+                    "checkout_enabled": True,
+                    "auto_verified_status": "finished",
+                    "base_url_configured": bool(payload.get("base_url"))
+                },
+                verified_by=user_id
+            )
+
+        except Exception:
+
+            saved = False
+
+        clear_owner_payment_provider_wizard(context)
+
+
+        if saved:
+
+            log_event(
+                "group_payment_provider_credentials_saved",
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Credenciales Guardarian de grupo guardadas cifradas.",
+                metadata={
+                    "provider": OWNER_PAYMENT_PROVIDER_GUARDARIAN,
+                    "mode": payload.get("mode"),
+                    "webhook_configured": bool(payload.get("webhook_secret")),
+                    "status": "active",
+                    "auto_verified_status": "finished"
+                }
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            ("✅ Guardarian guardado de forma segura\n\n" if saved else "⚠️ No pude guardar Guardarian\n\n")
+            + (
+                f"{build_guardarian_safe_summary(payload)}\n\n"
+                "Estado: activo para checkout EUR → USDT.\n"
+                "El acceso solo se concede cuando GET /v1/transaction/{id} devuelve status finished."
+                if saved
+                else "Revisa la configuración y vuelve a intentarlo."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_GUARDARIAN}")],
                 [InlineKeyboardButton("💳 Métodos del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
@@ -22090,6 +23414,58 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("owner_payment_guardarian_confirm_delete_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_payment_guardarian_confirm_delete_"
+        )
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not group_id or (not is_super_admin(user_id) and owner_user_id != user_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para borrar Guardarian en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        updated = clear_group_payment_provider_config(
+            group_id,
+            OWNER_PAYMENT_PROVIDER_GUARDARIAN
+        )
+
+
+        if updated:
+
+            log_event(
+                "group_payment_provider_config_deleted",
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Configuración Guardarian de grupo borrada.",
+                metadata={"provider": OWNER_PAYMENT_PROVIDER_GUARDARIAN}
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Configuración Guardarian borrada." if updated else "⚠️ No pude borrar la configuración Guardarian.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver a métodos de pago", callback_data=f"owner_group_payment_methods_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
     if data.startswith("owner_payment_changenow_confirm_delete_"):
 
         group_id = extract_commercial_request_id(
@@ -22328,6 +23704,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "¿Confirmas el borrado?",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("✅ Confirmar borrado", callback_data=f"owner_payment_revolut_confirm_delete_{group_id}")],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
+        if deleting and provider == OWNER_PAYMENT_PROVIDER_GUARDARIAN:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🗑 Borrar configuración Guardarian\n\n"
+                "Esto eliminará las credenciales cifradas guardadas para esta comunidad. "
+                "No afecta a Stripe, PayPal, Revolut ni ChangeNOW.\n\n"
+                "¿Confirmas el borrado?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Confirmar borrado", callback_data=f"owner_payment_guardarian_confirm_delete_{group_id}")],
                     [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_group_payment_provider_{group_id}_{provider}")],
                     [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
                 ])
@@ -29060,6 +30455,61 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await create_changenow_group_checkout_for_user(
+            context,
+            query.message.chat_id,
+            user_id,
+            group_id,
+            plan_id
+        )
+
+        return
+
+
+    if data.startswith("guardarian_group_plan_"):
+
+        payload = data.replace("guardarian_group_plan_", "", 1)
+        parts = payload.split("_", 1)
+
+
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar el plan Guardarian.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        plan_id = int(parts[1])
+        context.user_data["selected_group"] = group_id
+
+
+        if not is_guardarian_group_checkout_available(group_id):
+
+            await query.message.reply_text(
+                "Guardarian todavía no está configurado para esta comunidad.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        if group_requires_location_gate(group_id):
+
+            await request_location_verification(
+                context,
+                query.message.chat_id,
+                group_id,
+                "guardarian_checkout",
+                price_id=plan_id
+            )
+
+            return
+
+
+        await create_guardarian_group_checkout_for_user(
             context,
             query.message.chat_id,
             user_id,

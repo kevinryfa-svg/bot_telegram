@@ -609,3 +609,19 @@ Solo tras consultar GET /v1/transaction/{id} y recibir status == finished.
 ```
 
 Proveedor recomendado: **Guardarian directo**, no ChangeNOW+Guardarian, porque Guardarian directo da mas control sobre estado, webhook, partner account y payload de transaccion.
+
+## Decisión de implementación en el bot
+
+Se implementa Guardarian directo como proveedor automático condicionado a verificación por API.
+
+Regla operativa:
+
+- `POST /v1/transaction` crea la operación.
+- `/webhook/guardarian` solo dispara la revisión.
+- `GET /v1/transaction/{id}` es la fuente de verdad.
+- Único estado automático de acceso: `finished`.
+- Estados pending/processing se mantienen pendientes.
+- Estados hold/KYC/review/unknown pasan a revisión manual.
+- Estados failed/cancelled/expired/refunded no conceden acceso.
+
+El bot mantiene revisión manual para pagos retenidos, no verificables, con discrepancias de importe/moneda/red o con errores al consultar la API oficial.

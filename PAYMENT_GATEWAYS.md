@@ -664,3 +664,62 @@ Se evaluó activar acceso automático cuando llega callback de ChangeNOW. No se 
 El callback no puede ser fuente de verdad. Para conceder acceso automáticamente, el backend debe consultar el estado oficial de ChangeNOW por `transaction_id`/`order_id` y validar estado final, importe, moneda, red, wallet, usuario, grupo y plan.
 
 Mientras el endpoint oficial de consulta de estado y su contrato no estén confirmados en la documentación/API habilitada para la cuenta, ChangeNOW sigue operando en `manual_review`.
+
+## Guardarian directo: EUR con tarjeta -> USDT
+
+Guardarian se integra como proveedor directo para pagos `payment_scope=platform` y `payment_scope=group`.
+
+### Enfoque de seguridad
+
+- El comprador paga con tarjeta en EUR.
+- La plataforma u owner recibe USDT en la wallet configurada.
+- El webhook `/webhook/guardarian` solo actúa como disparador.
+- El backend no confía en el estado enviado por el webhook.
+- Antes de marcar un pago como pagado, el backend consulta `GET /v1/transaction/{id}`.
+- Solo `status == finished` concede acceso automático.
+- Estados dudosos como `hold`, `kyc`, `review`, `blocked`, `unknown` o errores de consulta quedan en `manual_review`.
+- Estados `failed`, `cancelled`, `expired` o `refunded` se guardan como fallo/cancelación/expiración/devolución y no conceden acceso.
+
+### Configuración desde el bot
+
+Guardarian no depende principalmente de Railway para owners/grupos. Las credenciales se configuran desde el bot y se guardan cifradas con `PAYMENT_CONFIG_ENCRYPTION_KEY`.
+
+Configuración de plataforma, solo superadmin:
+
+- API key de Guardarian.
+- Wallet USDT destino de la plataforma.
+- Red USDT: TRC20, ERC20, Polygon, BEP20 u otra soportada por la cuenta.
+- Webhook secret si la cuenta lo ofrece.
+- Modo sandbox/live si aplica.
+- Base URL opcional si Guardarian entrega una URL distinta.
+
+Configuración de grupo, owner o superadmin:
+
+- API key del owner/comercio.
+- Wallet USDT destino del owner.
+- Red USDT.
+- Webhook secret si aplica.
+- Modo sandbox/live.
+- Activar/desactivar o borrar configuración.
+
+Los secretos nunca se muestran completos en Telegram ni se guardan en texto plano.
+
+### Endpoints añadidos
+
+- `POST /create-guardarian-platform-order`
+- `POST /create-guardarian-group-order`
+- `POST /webhook/guardarian`
+
+### Flujo group
+
+1. El comprador elige `💳 Tarjeta EUR → USDT` en un plan de comunidad.
+2. El bot valida `group_id`, `plan_id`, plan activo y configuración Guardarian activa del grupo.
+3. Se crea `payment_transactions` con `provider='guardarian'`, `payment_scope='group'` y `status='pending'`.
+4. Se llama `POST /v1/transaction` usando las credenciales cifradas del grupo.
+5. Se guarda el `provider_order_id` devuelto por Guardarian.
+6. Al llegar webhook, el bot busca la transacción, carga la configuración correcta y consulta `GET /v1/transaction/{id}`.
+7. Si el estado oficial es `finished`, se marca como `paid` y se concede acceso con `payment_access_service.py`.
+
+### UX y cumplimiento
+
+Los textos del bot usan el wording: “privacidad frente al comprador y liquidación en USDT”. No se promete anonimato total. El comprador ve que algunos pagos pueden requerir verificación KYC/AML o revisión por importe, país o riesgo.
