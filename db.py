@@ -1646,6 +1646,37 @@ def create_tables():
         """)
 
 
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS group_payment_provider_configs (
+
+            id SERIAL PRIMARY KEY,
+
+            owner_user_id BIGINT NOT NULL,
+
+            group_id INTEGER NOT NULL,
+
+            provider TEXT NOT NULL,
+
+            is_enabled BOOLEAN DEFAULT FALSE,
+
+            status TEXT DEFAULT 'not_configured',
+
+            public_config_json JSONB DEFAULT '{}'::jsonb,
+
+            secret_ref TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE(group_id, provider)
+
+        );
+
+        """)
+
+
         # =========================
         # GRUPO DEFAULT
         # =========================

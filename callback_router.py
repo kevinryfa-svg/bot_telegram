@@ -86,6 +86,7 @@ from invite_link_service import (
     revoke_telegram_invite_link
 )
 from payment_service import (
+    build_group_payment_methods_text,
     build_payment_methods_admin_text,
     is_stripe_payments_enabled
 )
@@ -5030,6 +5031,9 @@ def build_owner_section_keyboard(user_id, group_id, section):
 
         if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
             keyboard.append([InlineKeyboardButton("🔗 Stripe/configuración pagos", callback_data="edit_group_stripe")])
+
+        if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
+            keyboard.append([InlineKeyboardButton("💳 Métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")])
 
         if user_has_group_permission_any(user_id, group_id, ["can_view_payments", "can_manage_payments"]):
             keyboard.append([InlineKeyboardButton("💳 Pagos recibidos", callback_data="admin_view_payments")])
@@ -17701,6 +17705,76 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 group_id,
                 section
             )
+        )
+
+        return
+
+
+    if data.startswith("owner_group_payment_methods_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_group_payment_methods_"
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar la comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group = fetch_group_basic_info(group_id)
+
+
+        if not group:
+
+            await query.message.reply_text(
+                "⚠️ Comunidad no encontrada.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        owner_user_id = get_group_owner_user_id(group_id)
+
+
+        if not is_super_admin(user_id) and owner_user_id != user_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver métodos de pago de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        group_id, group_name, telegram_group_id = group
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Volver a planes y pagos", callback_data="owner_panel_payments")],
+            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_group_payment_methods_text(
+                group_id,
+                group_name,
+                telegram_group_id,
+                owner_user_id
+            ),
+            reply_markup=keyboard
         )
 
         return
