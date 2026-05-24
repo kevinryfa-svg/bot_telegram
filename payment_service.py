@@ -218,6 +218,7 @@ from payment_gateway_config import (
 from payment_secret_store import (
     SECRET_STATUS_DISABLED,
     SECRET_STATUS_NOT_CONFIGURED,
+    SECRET_STATUS_PENDING,
     has_payment_encryption_key
 )
 
@@ -1064,7 +1065,7 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
 
     lines.extend([
         "Qué falta para activar pagos propios en próximas fases:",
-        "- Wizard seguro para introducir credenciales dentro del bot.",
+        "- Verificación segura de credenciales por owner/grupo.",
         "- Webhooks verificados por owner/grupo.",
         "- Idempotencia por proveedor y evento externo.",
         "- Concesión de acceso solo tras confirmación real del pago.",
@@ -1108,13 +1109,13 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
 
         lines.extend([
             "",
-            "Conectar PayPal necesitará en una fase posterior:",
+            "Conectar PayPal pide estos datos dentro del bot:",
             "- client_id",
             "- client_secret",
-            "- webhook_id",
+            "- webhook_id opcional",
             "- modo sandbox/live",
             "",
-            "No se pedirá ni guardará ningún secreto si PAYMENT_CONFIG_ENCRYPTION_KEY no está configurada."
+            "Los secretos se guardan cifrados si PAYMENT_CONFIG_ENCRYPTION_KEY está configurada. La configuración queda pendiente de verificación y no activa cobros reales todavía."
         ])
 
 
@@ -1197,5 +1198,77 @@ def clear_group_payment_provider_config(group_id, provider):
         conn.rollback()
 
         print("Error borrando configuración de proveedor de grupo:", e)
+
+        return False
+
+
+def save_group_payment_provider_encrypted_config(
+    owner_user_id,
+    group_id,
+    provider,
+    encrypted_config_json,
+    masked_public_summary,
+    public_config_json=None,
+    verified_by=None
+):
+
+    ensure_group_payment_provider_config(
+        owner_user_id,
+        group_id,
+        provider,
+        status=GROUP_PAYMENT_PROVIDER_STATUS_PENDING
+    )
+
+
+    safe_public_config = public_config_json or {}
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE group_payment_provider_configs
+                SET owner_user_id=%s,
+                    is_enabled=FALSE,
+                    status=%s,
+                    provider_config_scope=%s,
+                    destination_type=%s,
+                    public_config_json=%s::jsonb,
+                    encrypted_config_json=%s,
+                    secret_ref=NULL,
+                    secret_status=%s,
+                    last_verified_at=NULL,
+                    verified_by=%s,
+                    verification_error=NULL,
+                    masked_public_summary=%s,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE group_id=%s
+                AND provider=%s
+
+            """, (
+                owner_user_id,
+                GROUP_PAYMENT_PROVIDER_STATUS_PENDING,
+                PROVIDER_CONFIG_SCOPE_GROUP,
+                PAYMENT_DESTINATION_GROUP_CONFIG,
+                json.dumps(safe_public_config),
+                encrypted_config_json,
+                SECRET_STATUS_PENDING,
+                verified_by,
+                masked_public_summary,
+                group_id,
+                provider
+            ))
+
+        conn.commit()
+
+        return True
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Error guardando configuración cifrada de proveedor de grupo:", e)
 
         return False

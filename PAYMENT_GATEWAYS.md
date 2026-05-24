@@ -346,18 +346,42 @@ En `💳 Métodos de pago del grupo`, cada proveedor puede mostrar:
 - desactivar,
 - borrar configuración.
 
-En esta fase, `Configurar / conectar` es un placeholder seguro: explica qué datos harán falta y no pide secretos todavía.
+En esta fase, PayPal ya tiene un wizard seguro de configuración. Revolut y cripto siguen como placeholders seguros hasta tener integración real.
 
-### PayPal owner/grupo futuro
+## Fase 1F: wizard PayPal owner/grupo
 
-Cuando se implemente PayPal por owner/grupo, el flujo deberá:
+El owner puede entrar en:
 
-1. Pedir credenciales dentro del bot, dato por dato.
-2. Borrar mensajes sensibles si Telegram lo permite.
-3. Validar formato.
-4. Cifrar con `PAYMENT_CONFIG_ENCRYPTION_KEY`.
-5. Guardar solo resumen enmascarado.
-6. Verificar con PayPal.
-7. Activar `secret_status=active`.
-8. Crear checkout con `payment_scope=group` y `provider_config_id`.
-9. Conceder acceso solo tras webhook verificado.
+`🏪 Mis comunidades → Comunidad → 💳 Planes y pagos del grupo → 💳 Métodos de pago del grupo → PayPal → Configurar / conectar`
+
+El wizard pide:
+
+- modo `sandbox` o `live`;
+- `PAYPAL_CLIENT_ID`;
+- `PAYPAL_CLIENT_SECRET`;
+- `PAYPAL_WEBHOOK_ID` opcional.
+
+Seguridad aplicada:
+
+- no usa Railway para credenciales de owners;
+- requiere `PAYMENT_CONFIG_ENCRYPTION_KEY`;
+- intenta borrar del chat los mensajes con credenciales;
+- cifra la configuración con `payment_secret_store.py`;
+- guarda el secreto en `encrypted_config_json`;
+- guarda solo resumen enmascarado en `masked_public_summary`;
+- deja `status=pending`, `secret_status=pending` e `is_enabled=false`;
+- no muestra `client_secret` completo;
+- no registra secretos en logs.
+
+La configuración PayPal de grupo queda preparada, pero todavía no activa cobros reales ni concede accesos a compradores.
+
+### PayPal owner/grupo futuro real
+
+Para activar cobros reales por owner/grupo todavía falta:
+
+1. Verificar credenciales PayPal del owner contra PayPal.
+2. Activar `secret_status=active`.
+3. Crear checkout con `payment_scope=group` y `provider_config_id`.
+4. Añadir webhook PayPal por configuración owner/grupo.
+5. Validar evento, importe, moneda, `group_id`, `owner_user_id` e idempotencia.
+6. Conceder acceso solo tras webhook verificado.
