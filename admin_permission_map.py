@@ -100,6 +100,12 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_beta_monitor_codes": (SUPER_ADMIN_ONLY,),
     "admin_beta_monitor_backups": (SUPER_ADMIN_ONLY,),
     "admin_beta_monitor_resolve_all": (SUPER_ADMIN_ONLY,),
+    "admin_beta_cycle": (SUPER_ADMIN_ONLY,),
+    "admin_beta_cycle_start_beta_1": (SUPER_ADMIN_ONLY,),
+    "admin_beta_cycle_start_beta_2": (SUPER_ADMIN_ONLY,),
+    "admin_beta_cycle_finish": (SUPER_ADMIN_ONLY,),
+    "admin_beta_cycle_status": (SUPER_ADMIN_ONLY,),
+    "admin_beta_cycle_final_review": (SUPER_ADMIN_ONLY,),
 
     "admin_smoke_test": (SUPER_ADMIN_ONLY,),
     "admin_smoke_run": (SUPER_ADMIN_ONLY,),
