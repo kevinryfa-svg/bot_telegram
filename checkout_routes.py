@@ -1,5 +1,6 @@
 import os
 import stripe
+import traceback
 
 from flask import request, jsonify, redirect
 
@@ -107,10 +108,23 @@ def register_checkout_routes(app):
 
         except Exception as e:
 
-            print("Error creando sesión Stripe:", e)
+            print(
+                "Error creando sesión Stripe:",
+                {
+                    "provider": "stripe",
+                    "user_id": telegram_id,
+                    "group_id": group_id,
+                    "plan_id": plan,
+                    "price_id": price_id,
+                    "error": str(e)
+                }
+            )
+            print(traceback.format_exc())
 
             return jsonify({"error": "Error creando sesión"}), 500
 
+
+        stripe_session_id = session.id
 
         create_payment_transaction(
             PAYMENT_PROVIDER_STRIPE,
@@ -119,8 +133,8 @@ def register_checkout_routes(app):
             purchase_type=PURCHASE_TYPE_GROUP_ACCESS,
             user_id=telegram_id,
             group_id=group_id,
-            external_checkout_id=session.get("id"),
-            idempotency_key=session.get("id"),
+            external_checkout_id=stripe_session_id,
+            idempotency_key=stripe_session_id,
             metadata={
                 "price_id": price_id,
                 "source": "create_checkout_session"
