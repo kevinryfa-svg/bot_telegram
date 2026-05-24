@@ -738,6 +738,182 @@ def create_tables():
 
 
         # =========================
+        # CUSTOMER SATISFACTION
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS customer_satisfaction_surveys (
+
+            id SERIAL PRIMARY KEY,
+
+            title TEXT,
+
+            description TEXT,
+
+            audience TEXT,
+
+            status TEXT DEFAULT 'draft',
+
+            created_by BIGINT,
+
+            sent_at TIMESTAMP,
+
+            closed_at TIMESTAMP,
+
+            sent_count INTEGER DEFAULT 0,
+
+            failed_count INTEGER DEFAULT 0,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS customer_satisfaction_questions (
+
+            id SERIAL PRIMARY KEY,
+
+            survey_id INTEGER,
+
+            question_key TEXT,
+
+            question_text TEXT,
+
+            category TEXT,
+
+            answer_type TEXT,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            sort_order INTEGER,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS customer_satisfaction_responses (
+
+            id SERIAL PRIMARY KEY,
+
+            survey_id INTEGER,
+
+            user_id BIGINT,
+
+            role TEXT,
+
+            started_at TIMESTAMP,
+
+            completed_at TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (survey_id, user_id)
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS customer_satisfaction_answers (
+
+            id SERIAL PRIMARY KEY,
+
+            response_id INTEGER,
+
+            question_id INTEGER,
+
+            rating INTEGER,
+
+            text_answer TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (response_id, question_id)
+
+        );
+
+        """)
+
+
+        for column_sql in (
+            "ALTER TABLE customer_satisfaction_surveys ADD COLUMN IF NOT EXISTS sent_count INTEGER DEFAULT 0",
+            "ALTER TABLE customer_satisfaction_surveys ADD COLUMN IF NOT EXISTS failed_count INTEGER DEFAULT 0",
+            "ALTER TABLE customer_satisfaction_responses ADD COLUMN IF NOT EXISTS role TEXT",
+            "ALTER TABLE customer_satisfaction_responses ADD COLUMN IF NOT EXISTS started_at TIMESTAMP",
+            "ALTER TABLE customer_satisfaction_responses ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP",
+            "ALTER TABLE customer_satisfaction_answers ADD COLUMN IF NOT EXISTS rating INTEGER",
+            "ALTER TABLE customer_satisfaction_answers ADD COLUMN IF NOT EXISTS text_answer TEXT"
+        ):
+
+            try:
+
+                cur.execute(column_sql)
+
+            except Exception as e:
+
+                print("Error asegurando columna customer_satisfaction:", e)
+
+
+        default_satisfaction_questions = [
+            ("general_utility", "Utilidad general del bot", "general", "rating_1_5", 1),
+            ("ease_of_use", "Facilidad de uso", "ux", "rating_1_5", 2),
+            ("menu_clarity", "Claridad de los menús", "ux", "rating_1_5", 3),
+            ("community_access", "Proceso de acceso a comunidades", "access", "rating_1_5", 4),
+            ("payments_access", "Pagos y acceso premium", "payments", "rating_1_5", 5),
+            ("promo_codes", "Códigos promocionales", "codes", "rating_1_5", 6),
+            ("support", "Soporte", "support", "rating_1_5", 7),
+            ("speed", "Velocidad/respuesta del bot", "performance", "rating_1_5", 8),
+            ("trust_security", "Confianza/seguridad", "security", "rating_1_5", 9),
+            ("recommendation", "¿Recomendarías este bot?", "recommendation", "rating_1_5", 10),
+            ("improvements", "¿Qué mejorarías?", "feedback", "text", 11),
+            ("final_comment", "Comentario final", "feedback", "text", 12)
+        ]
+
+        for question_key, question_text, category, answer_type, sort_order in default_satisfaction_questions:
+
+            cur.execute("""
+
+                INSERT INTO customer_satisfaction_questions
+                (
+                    survey_id,
+                    question_key,
+                    question_text,
+                    category,
+                    answer_type,
+                    is_active,
+                    sort_order
+                )
+                SELECT NULL, %s, %s, %s, %s, TRUE, %s
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM customer_satisfaction_questions
+                    WHERE survey_id IS NULL
+                    AND question_key=%s
+                )
+
+            """, (
+                question_key,
+                question_text,
+                category,
+                answer_type,
+                sort_order,
+                question_key
+            ))
+
+
+        # =========================
         # BACKUP PREMIUM — FASE 1
         # =========================
 
