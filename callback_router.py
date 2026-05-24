@@ -1133,15 +1133,10 @@ def build_admin_global_panel_keyboard():
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
-        [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
-        [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
         [InlineKeyboardButton("😊 Satisfacción de clientes", callback_data="admin_customer_satisfaction")],
+        [InlineKeyboardButton("🛟 Solicitudes de soporte", callback_data="admin_support_tickets")],
         [InlineKeyboardButton("🏪 Marketplace global", callback_data="admin_global_marketplace")],
         [InlineKeyboardButton("👥 Propietarios / solicitudes comerciales", callback_data="admin_owners_panel")],
-        [InlineKeyboardButton("💳 Planes comerciales del bot", callback_data="admin_global_commercial_plans")],
-        [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
-        [InlineKeyboardButton("🛟 Solicitudes de soporte", callback_data="admin_support_tickets")],
-        [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
         [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
         [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")],
@@ -1152,10 +1147,10 @@ def build_admin_global_panel_keyboard():
 def build_admin_global_config_keyboard():
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
-        [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
-        [InlineKeyboardButton("😊 Satisfacción de clientes", callback_data="admin_customer_satisfaction")],
-        [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
+        [InlineKeyboardButton("🏪 Marketplace / catálogo", callback_data="admin_global_marketplace")],
+        [InlineKeyboardButton("💳 Planes comerciales del bot", callback_data="admin_global_commercial_plans")],
+        [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
+        [InlineKeyboardButton("😊 Encuestas y satisfacción", callback_data="admin_customer_satisfaction")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
@@ -1165,10 +1160,9 @@ def build_admin_global_tools_keyboard():
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
-        [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
         [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
-        [InlineKeyboardButton("🛟 Solicitudes de soporte", callback_data="admin_support_tickets")],
         [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
+        [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
@@ -12555,8 +12549,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_clean_message(
             context,
             query.message.chat_id,
-            "👑 Panel global del bot: gestiona la plataforma completa.\n\n"
-            "Aquí viven monitor beta, smoke test, logs del sistema, códigos comerciales globales y herramientas internas.",
+            "👑 Panel global del bot: índice principal de la plataforma.\n\n"
+            "Desde aquí entras a monitor beta, satisfacción, soporte, marketplace, propietarios y los dos submenús separados de configuración y herramientas.",
             reply_markup=build_admin_global_panel_keyboard()
         )
 
@@ -12594,11 +12588,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             "admin_global_config": (
                 "⚙️ Configuración global\n\n"
-                "Aquí puedes revisar ajustes operativos generales y entrar en monitor, smoke test, satisfacción o logs del sistema."
+                "Opciones de plataforma y configuración comercial. No incluye herramientas técnicas ni logs operativos para mantener el menú claro."
             ),
             "admin_global_tools": (
                 "🛠 Herramientas internas\n\n"
-                "Accesos rápidos para diagnóstico, ciclo beta, soporte y revisión de actividad interna."
+                "Herramientas de diagnóstico, revisión beta y mantenimiento interno. No mezcla configuración comercial ni satisfacción."
             )
         }
         reply_markups = {
