@@ -937,9 +937,81 @@ def create_tables():
         """)
 
 
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS customer_satisfaction_sent (
+
+            id SERIAL PRIMARY KEY,
+
+            survey_id INTEGER,
+
+            group_id INTEGER,
+
+            user_id BIGINT,
+
+            campaign_id TEXT DEFAULT 'default',
+
+            status TEXT DEFAULT 'sent',
+
+            sent_at TIMESTAMP,
+
+            completed_at TIMESTAMP,
+
+            failed_at TIMESTAMP,
+
+            failure_reason TEXT,
+
+            created_by BIGINT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_satisfaction_sent_unique
+        ON customer_satisfaction_sent (survey_id, COALESCE(group_id, 0), user_id, COALESCE(campaign_id, 'default'));
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_satisfaction_sent_unique_plain
+        ON customer_satisfaction_sent (survey_id, group_id, user_id, campaign_id);
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE INDEX IF NOT EXISTS idx_customer_satisfaction_sent_status
+        ON customer_satisfaction_sent (status);
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE INDEX IF NOT EXISTS idx_customer_satisfaction_sent_group
+        ON customer_satisfaction_sent (group_id);
+
+        """)
+
+
         for column_sql in (
             "ALTER TABLE customer_satisfaction_surveys ADD COLUMN IF NOT EXISTS sent_count INTEGER DEFAULT 0",
             "ALTER TABLE customer_satisfaction_surveys ADD COLUMN IF NOT EXISTS failed_count INTEGER DEFAULT 0",
+            "ALTER TABLE customer_satisfaction_surveys ADD COLUMN IF NOT EXISTS group_id INTEGER",
+            "ALTER TABLE customer_satisfaction_surveys ADD COLUMN IF NOT EXISTS campaign_id TEXT DEFAULT 'default'",
+            "ALTER TABLE customer_satisfaction_surveys ADD COLUMN IF NOT EXISTS send_mode TEXT DEFAULT 'pending'",
+            "ALTER TABLE customer_satisfaction_surveys ADD COLUMN IF NOT EXISTS skipped_completed_count INTEGER DEFAULT 0",
+            "ALTER TABLE customer_satisfaction_surveys ADD COLUMN IF NOT EXISTS skipped_already_sent_count INTEGER DEFAULT 0",
             "ALTER TABLE customer_satisfaction_responses ADD COLUMN IF NOT EXISTS role TEXT",
             "ALTER TABLE customer_satisfaction_responses ADD COLUMN IF NOT EXISTS started_at TIMESTAMP",
             "ALTER TABLE customer_satisfaction_responses ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP",

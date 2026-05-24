@@ -2092,7 +2092,11 @@ def build_admin_owners_panel_keyboard():
 def build_customer_satisfaction_panel_keyboard():
 
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 Enviar encuesta global", callback_data="admin_satisfaction_send_global")],
+        [InlineKeyboardButton("📨 Enviar a pendientes", callback_data="admin_satisfaction_send_pending")],
+        [InlineKeyboardButton("🔁 Reenviar a no completados", callback_data="admin_satisfaction_resend_incomplete")],
+        [InlineKeyboardButton("🧹 Enviar solo a nunca enviados", callback_data="admin_satisfaction_send_never_sent")],
+        [InlineKeyboardButton("📊 Ver estado de envíos", callback_data="admin_satisfaction_delivery_status")],
+        [InlineKeyboardButton("⚠️ Forzar nuevo ciclo", callback_data="admin_satisfaction_force_new_cycle")],
         [InlineKeyboardButton("👥 Enviar solo a usuarios", callback_data="admin_satisfaction_send_users")],
         [InlineKeyboardButton("🧑‍💼 Enviar solo a propietarios", callback_data="admin_satisfaction_send_owners")],
         [InlineKeyboardButton("👮 Enviar solo a admins de grupo", callback_data="admin_satisfaction_send_group_admins")],
@@ -2105,6 +2109,19 @@ def build_customer_satisfaction_panel_keyboard():
         [InlineKeyboardButton("📋 Últimas respuestas", callback_data="admin_satisfaction_latest")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_customer_satisfaction")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")]
+    ])
+
+
+def build_owner_satisfaction_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📨 Enviar a pendientes", callback_data="owner_satisfaction_send_pending")],
+        [InlineKeyboardButton("🔁 Reenviar a no completados", callback_data="owner_satisfaction_resend_incomplete")],
+        [InlineKeyboardButton("🧹 Enviar solo a nunca enviados", callback_data="owner_satisfaction_send_never_sent")],
+        [InlineKeyboardButton("📊 Ver estado de envíos", callback_data="owner_satisfaction_delivery_status")],
+        [InlineKeyboardButton("⚠️ Forzar nuevo ciclo", callback_data="owner_satisfaction_force_new_cycle")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_satisfaction")],
+        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="owner_panel_general")]
     ])
 
 
@@ -2157,7 +2174,11 @@ ADMIN_CONTEXT_HELP_TEXTS = {
     "customer_satisfaction": (
         "❓ Ayuda — Satisfacción de clientes\n\n"
         "Este módulo sirve para saber si el bot se entiende y dónde falla la experiencia.\n\n"
-        "📤 Enviar encuesta global: manda una encuesta a todos los usuarios elegibles.\n"
+        "📨 Enviar a pendientes: solo escribe a quienes no la recibieron y no la completaron.\n"
+        "🔁 Reenviar a no completados: recuerda la encuesta solo a quienes la recibieron y aún no respondieron.\n"
+        "🧹 Enviar solo a nunca enviados: evita completados y también evita cualquier usuario con envío previo.\n"
+        "📊 Ver estado de envíos: muestra completados, enviados sin responder, nunca enviados y fallidos.\n"
+        "⚠️ Forzar nuevo ciclo: abre una campaña nueva, pero sigue omitiendo por defecto a quienes ya respondieron.\n"
         "👥 / 🧑‍💼 / 👮 Envíos segmentados: pregunta solo a usuarios, owners o admins.\n"
         "📊 Ver resultados: medias, tasa de respuesta y puntos débiles.\n"
         "📝 Gestionar preguntas: revisa las preguntas activas.\n"
@@ -2269,33 +2290,54 @@ def fetch_customer_satisfaction_questions(active_only=True):
         return cur.fetchall()
 
 
-def fetch_customer_satisfaction_recipients(audience):
+def fetch_customer_satisfaction_recipients(audience, group_id=None):
 
     queries = []
+    params = []
+
+    group_filter_users = ""
+    group_filter_admins = ""
+
+    if group_id:
+        group_filter_users = " AND group_id=%s"
+        group_filter_admins = " AND group_id=%s"
 
     if audience in ("global", "users"):
-        queries.append("SELECT DISTINCT user_id FROM users WHERE user_id IS NOT NULL")
+        queries.append(f"""
+            SELECT DISTINCT user_id
+            FROM users
+            WHERE user_id IS NOT NULL
+            {group_filter_users}
+        """)
+        if group_id:
+            params.append(group_id)
 
     if audience in ("global", "owners"):
-        queries.append("""
+        queries.append(f"""
             SELECT DISTINCT user_id
             FROM admins
             WHERE role='GROUP_OWNER'
             AND is_active=TRUE
             AND user_id IS NOT NULL
+            {group_filter_admins}
         """)
+        if group_id:
+            params.append(group_id)
 
     if audience in ("global", "group_admins"):
-        queries.append("""
+        queries.append(f"""
             SELECT DISTINCT user_id
             FROM admins
             WHERE COALESCE(is_active, TRUE)=TRUE
             AND COALESCE(is_super_admin, FALSE)=FALSE
             AND COALESCE(role, '') <> 'GROUP_OWNER'
             AND user_id IS NOT NULL
+            {group_filter_admins}
         """)
+        if group_id:
+            params.append(group_id)
 
-    if audience == "global":
+    if audience == "global" and not group_id:
         queries.append("""
             SELECT DISTINCT user_id
             FROM commercial_requests
@@ -2306,11 +2348,24 @@ def fetch_customer_satisfaction_recipients(audience):
         return []
 
     with conn.cursor() as cur:
-        cur.execute(" UNION ".join(queries))
+        cur.execute(" UNION ".join(queries), tuple(params))
         return sorted({row[0] for row in cur.fetchall() if row[0]})
 
 
-def create_customer_satisfaction_survey(created_by, audience):
+def normalize_customer_satisfaction_campaign_id(campaign_id=None):
+
+    return str(campaign_id or "default")
+
+
+def create_customer_satisfaction_survey(
+    created_by,
+    audience,
+    group_id=None,
+    send_mode="pending",
+    campaign_id=None
+):
+
+    campaign_id = normalize_customer_satisfaction_campaign_id(campaign_id)
 
     with conn.cursor() as cur:
 
@@ -2322,22 +2377,322 @@ def create_customer_satisfaction_survey(created_by, audience):
                 description,
                 audience,
                 status,
-                created_by
+                created_by,
+                group_id,
+                campaign_id,
+                send_mode
             )
-            VALUES (%s, %s, %s, 'draft', %s)
+            VALUES (%s, %s, %s, 'draft', %s, %s, %s, %s)
             RETURNING id
 
         """, (
             "Encuesta de satisfacción beta",
             "Encuesta rápida de satisfacción para mejorar el bot.",
             audience,
-            created_by
+            created_by,
+            group_id,
+            campaign_id,
+            send_mode
         ))
 
         return cur.fetchone()[0]
 
 
-def update_customer_satisfaction_sent_counts(survey_id, sent_count, failed_count):
+def fetch_customer_satisfaction_survey(survey_id):
+
+    with conn.cursor() as cur:
+        cur.execute("""
+
+            SELECT id,
+                   audience,
+                   status,
+                   group_id,
+                   COALESCE(campaign_id, 'default'),
+                   COALESCE(send_mode, 'pending')
+            FROM customer_satisfaction_surveys
+            WHERE id=%s
+            LIMIT 1
+
+        """, (survey_id,))
+        row = cur.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "audience": row[1],
+        "status": row[2],
+        "group_id": row[3],
+        "campaign_id": row[4],
+        "send_mode": row[5]
+    }
+
+
+def fetch_latest_customer_satisfaction_survey(audience="global", group_id=None):
+
+    with conn.cursor() as cur:
+        cur.execute("""
+
+            SELECT id,
+                   audience,
+                   status,
+                   group_id,
+                   COALESCE(campaign_id, 'default'),
+                   COALESCE(send_mode, 'pending')
+            FROM customer_satisfaction_surveys
+            WHERE audience=%s
+            AND COALESCE(group_id, 0)=COALESCE(%s, 0)
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+
+        """, (audience, group_id))
+        row = cur.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "audience": row[1],
+        "status": row[2],
+        "group_id": row[3],
+        "campaign_id": row[4],
+        "send_mode": row[5]
+    }
+
+
+def fetch_customer_satisfaction_completed_user_ids(audience, group_id=None):
+
+    with conn.cursor() as cur:
+        cur.execute("""
+
+            SELECT DISTINCT r.user_id
+            FROM customer_satisfaction_responses r
+            JOIN customer_satisfaction_surveys s ON s.id=r.survey_id
+            WHERE r.completed_at IS NOT NULL
+            AND s.audience=%s
+            AND COALESCE(s.group_id, 0)=COALESCE(%s, 0)
+            AND r.user_id IS NOT NULL
+
+        """, (audience, group_id))
+        return {row[0] for row in cur.fetchall() if row[0]}
+
+
+def fetch_customer_satisfaction_sent_user_ids(audience, group_id=None, campaign_id=None):
+
+    params = [audience, group_id]
+    campaign_filter = ""
+
+    if campaign_id is not None:
+        campaign_filter = "AND COALESCE(cs.campaign_id, 'default')=%s"
+        params.append(normalize_customer_satisfaction_campaign_id(campaign_id))
+
+    with conn.cursor() as cur:
+        cur.execute(f"""
+
+            SELECT DISTINCT cs.user_id
+            FROM customer_satisfaction_sent cs
+            JOIN customer_satisfaction_surveys s ON s.id=cs.survey_id
+            WHERE s.audience=%s
+            AND COALESCE(cs.group_id, 0)=COALESCE(%s, 0)
+            {campaign_filter}
+            AND cs.user_id IS NOT NULL
+
+        """, tuple(params))
+        return {row[0] for row in cur.fetchall() if row[0]}
+
+
+def fetch_customer_satisfaction_failed_user_ids(audience, group_id=None, campaign_id=None):
+
+    params = [audience, group_id]
+    campaign_filter = ""
+
+    if campaign_id is not None:
+        campaign_filter = "AND COALESCE(cs.campaign_id, 'default')=%s"
+        params.append(normalize_customer_satisfaction_campaign_id(campaign_id))
+
+    with conn.cursor() as cur:
+        cur.execute(f"""
+
+            SELECT DISTINCT cs.user_id
+            FROM customer_satisfaction_sent cs
+            JOIN customer_satisfaction_surveys s ON s.id=cs.survey_id
+            WHERE s.audience=%s
+            AND COALESCE(cs.group_id, 0)=COALESCE(%s, 0)
+            {campaign_filter}
+            AND cs.status='failed'
+            AND cs.user_id IS NOT NULL
+
+        """, tuple(params))
+        return {row[0] for row in cur.fetchall() if row[0]}
+
+
+def build_customer_satisfaction_targeting(audience, mode, group_id=None, campaign_id=None):
+
+    campaign_id = normalize_customer_satisfaction_campaign_id(campaign_id)
+    recipients = set(fetch_customer_satisfaction_recipients(audience, group_id=group_id))
+    completed_users = fetch_customer_satisfaction_completed_user_ids(audience, group_id=group_id)
+    sent_current_cycle = fetch_customer_satisfaction_sent_user_ids(
+        audience,
+        group_id=group_id,
+        campaign_id=campaign_id
+    )
+    sent_any_cycle = fetch_customer_satisfaction_sent_user_ids(
+        audience,
+        group_id=group_id,
+        campaign_id=None
+    )
+    failed_current_cycle = fetch_customer_satisfaction_failed_user_ids(
+        audience,
+        group_id=group_id,
+        campaign_id=campaign_id
+    )
+
+    if mode == "resend_incomplete":
+        targets = (sent_current_cycle | failed_current_cycle) & recipients
+        targets -= completed_users
+        skipped_already_sent = 0
+    elif mode == "never_sent":
+        targets = recipients - completed_users - sent_any_cycle
+        skipped_already_sent = len(recipients - completed_users - targets)
+    else:
+        targets = recipients - completed_users - sent_current_cycle
+        skipped_already_sent = len(recipients - completed_users - targets)
+
+    return {
+        "recipients": sorted(recipients),
+        "targets": sorted(targets),
+        "completed_users": sorted(completed_users & recipients),
+        "sent_current_cycle": sorted(sent_current_cycle & recipients),
+        "sent_any_cycle": sorted(sent_any_cycle & recipients),
+        "failed_current_cycle": sorted(failed_current_cycle & recipients),
+        "total": len(recipients),
+        "target_count": len(targets),
+        "skipped_completed": len(completed_users & recipients),
+        "skipped_already_sent": skipped_already_sent
+    }
+
+
+def reserve_customer_satisfaction_delivery(
+    survey_id,
+    user_id,
+    group_id,
+    campaign_id,
+    created_by,
+    allow_existing=False
+):
+
+    campaign_id = normalize_customer_satisfaction_campaign_id(campaign_id)
+
+    with conn.cursor() as cur:
+        cur.execute("""
+
+            INSERT INTO customer_satisfaction_sent
+            (
+                survey_id,
+                group_id,
+                user_id,
+                campaign_id,
+                status,
+                sent_at,
+                created_by,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, 'sent', NOW(), %s, NOW())
+            ON CONFLICT (survey_id, COALESCE(group_id, 0), user_id, COALESCE(campaign_id, 'default'))
+            DO NOTHING
+            RETURNING id
+
+        """, (survey_id, group_id, user_id, campaign_id, created_by))
+        row = cur.fetchone()
+
+        if row:
+            return True
+
+        if allow_existing:
+            cur.execute("""
+
+                UPDATE customer_satisfaction_sent
+                SET status='sent',
+                    sent_at=NOW(),
+                    failed_at=NULL,
+                    failure_reason=NULL,
+                    updated_at=NOW()
+                WHERE survey_id=%s
+                AND COALESCE(group_id, 0)=COALESCE(%s, 0)
+                AND user_id=%s
+                AND COALESCE(campaign_id, 'default')=%s
+
+            """, (survey_id, group_id, user_id, campaign_id))
+            return True
+
+        return False
+
+
+def mark_customer_satisfaction_delivery_failed(survey_id, user_id, group_id, campaign_id, error):
+
+    campaign_id = normalize_customer_satisfaction_campaign_id(campaign_id)
+    reason = str(error)[:300]
+
+    with conn.cursor() as cur:
+        cur.execute("""
+
+            UPDATE customer_satisfaction_sent
+            SET status='failed',
+                failed_at=NOW(),
+                failure_reason=%s,
+                updated_at=NOW()
+            WHERE survey_id=%s
+            AND COALESCE(group_id, 0)=COALESCE(%s, 0)
+            AND user_id=%s
+            AND COALESCE(campaign_id, 'default')=%s
+
+        """, (reason, survey_id, group_id, user_id, campaign_id))
+
+
+def mark_customer_satisfaction_delivery_skipped(
+    survey_id,
+    user_id,
+    group_id,
+    campaign_id,
+    created_by,
+    status
+):
+
+    if status not in ("skipped_completed", "skipped_already_sent"):
+        return
+
+    campaign_id = normalize_customer_satisfaction_campaign_id(campaign_id)
+
+    with conn.cursor() as cur:
+        cur.execute("""
+
+            INSERT INTO customer_satisfaction_sent
+            (
+                survey_id,
+                group_id,
+                user_id,
+                campaign_id,
+                status,
+                created_by,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (survey_id, COALESCE(group_id, 0), user_id, COALESCE(campaign_id, 'default'))
+            DO UPDATE SET status=EXCLUDED.status,
+                          updated_at=NOW()
+
+        """, (survey_id, group_id, user_id, campaign_id, status, created_by))
+
+
+def update_customer_satisfaction_sent_counts(
+    survey_id,
+    sent_count,
+    failed_count,
+    skipped_completed_count=0,
+    skipped_already_sent_count=0
+):
 
     with conn.cursor() as cur:
 
@@ -2347,10 +2702,77 @@ def update_customer_satisfaction_sent_counts(survey_id, sent_count, failed_count
             SET status='sent',
                 sent_at=NOW(),
                 sent_count=%s,
-                failed_count=%s
+                failed_count=%s,
+                skipped_completed_count=%s,
+                skipped_already_sent_count=%s
             WHERE id=%s
 
-        """, (sent_count, failed_count, survey_id))
+        """, (
+            sent_count,
+            failed_count,
+            skipped_completed_count,
+            skipped_already_sent_count,
+            survey_id
+        ))
+
+
+def mark_customer_satisfaction_survey_sending(survey_id):
+
+    with conn.cursor() as cur:
+        cur.execute("""
+
+            UPDATE customer_satisfaction_surveys
+            SET status='sending'
+            WHERE id=%s
+            AND status='draft'
+            RETURNING id
+
+        """, (survey_id,))
+        return cur.fetchone() is not None
+
+
+def build_customer_satisfaction_delivery_status_text(audience="global", group_id=None, campaign_id="default"):
+
+    campaign_id = normalize_customer_satisfaction_campaign_id(campaign_id)
+    targeting = build_customer_satisfaction_targeting(
+        audience,
+        "pending",
+        group_id=group_id,
+        campaign_id=campaign_id
+    )
+
+    with conn.cursor() as cur:
+        cur.execute("""
+
+            SELECT COUNT(*)
+            FROM customer_satisfaction_sent cs
+            JOIN customer_satisfaction_surveys s ON s.id=cs.survey_id
+            WHERE s.audience=%s
+            AND COALESCE(cs.group_id, 0)=COALESCE(%s, 0)
+            AND COALESCE(cs.campaign_id, 'default')=%s
+            AND cs.status='failed'
+
+        """, (audience, group_id, campaign_id))
+        failed_count = cur.fetchone()[0]
+
+    scope_text = "global" if group_id is None else f"comunidad {group_id}"
+
+    sent_without_response = len(set(targeting["sent_current_cycle"]) - set(targeting["completed_users"]))
+    never_sent = len(set(targeting["recipients"]) - set(targeting["sent_any_cycle"]))
+
+    return (
+        "📊 Estado de envíos de satisfacción\n\n"
+        f"Ámbito: {scope_text}\n"
+        f"Audiencia: {get_customer_satisfaction_audience_label(audience)}\n"
+        f"Campaña: {campaign_id}\n\n"
+        f"Usuarios elegibles: {targeting['total']}\n"
+        f"Completaron: {targeting['skipped_completed']}\n"
+        f"Enviados sin responder: {sent_without_response}\n"
+        f"Nunca enviados: {never_sent}\n"
+        f"Fallidos: {failed_count}\n"
+        f"Pendientes de enviar: {targeting['target_count']}\n\n"
+        "Para que sea justo, el bot nunca reenvía por defecto a usuarios que ya respondieron."
+    )
 
 
 def get_customer_satisfaction_role(user_id):
@@ -2483,8 +2905,43 @@ def complete_customer_satisfaction_response(response_id):
             UPDATE customer_satisfaction_responses
             SET completed_at=NOW()
             WHERE id=%s
+            RETURNING survey_id, user_id
 
         """, (response_id,))
+        row = cur.fetchone()
+
+        if not row:
+            return
+
+        survey_id, user_id = row
+
+        cur.execute("""
+
+            SELECT group_id, COALESCE(campaign_id, 'default')
+            FROM customer_satisfaction_surveys
+            WHERE id=%s
+            LIMIT 1
+
+        """, (survey_id,))
+        survey_row = cur.fetchone()
+
+        if not survey_row:
+            return
+
+        group_id, campaign_id = survey_row
+
+        cur.execute("""
+
+            UPDATE customer_satisfaction_sent
+            SET status='completed',
+                completed_at=NOW(),
+                updated_at=NOW()
+            WHERE survey_id=%s
+            AND COALESCE(group_id, 0)=COALESCE(%s, 0)
+            AND user_id=%s
+            AND COALESCE(campaign_id, 'default')=%s
+
+        """, (survey_id, group_id, user_id, campaign_id))
 
 
 def build_customer_satisfaction_results_text():
@@ -6787,6 +7244,17 @@ def build_group_settings_keyboard(user_id, group_id):
     if user_has_group_permission_any(
         user_id,
         group_id,
+        ["can_manage_groups", "can_view_logs"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("😊 Encuestas de comunidad", callback_data="owner_panel_satisfaction")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
         ["can_manage_groups"]
     ):
 
@@ -7019,6 +7487,12 @@ OWNER_PANEL_SECTIONS = {
         "Revisa el acceso al soporte de esta comunidad sin mezclar tickets globales.",
         ["can_respond_group_support"],
         "support"
+    ),
+    "owner_panel_satisfaction": (
+        "😊 Encuestas de comunidad",
+        "Envía encuestas solo a usuarios de esta comunidad sin duplicar completados.",
+        ["can_manage_groups", "can_view_logs"],
+        "satisfaction"
     ),
     "owner_panel_backup": (
         "🛡 Backup premium",
@@ -7413,6 +7887,7 @@ def build_owner_panel_help_text(section):
         "admins": "👑 Administradores\n\nAñade o retira admins de grupo y define permisos concretos por comunidad.",
         "logs": "📜 Logs y actividad\n\nRevisa actividad importante de esta comunidad: accesos, pagos, códigos, soporte, backups y errores. Owner/admin solo ve su grupo.",
         "support": "🛟 Soporte\n\nMuestra tickets vinculados a esta comunidad. El owner solo ve tickets de sus grupos; el soporte global queda para super admin.",
+        "satisfaction": "😊 Encuestas de comunidad\n\nEnvía encuestas solo a usuarios de esta comunidad. Por justicia, quienes ya respondieron no vuelven a recibirla por defecto.",
         "backup": "🛡 Backup premium\n\nConfigura copia de mensajes nuevos que el bot recibe. No descarga archivos ni usa cuentas usuario.",
         "general": "⚙️ Configuración general\n\nAgrupa datos básicos y opciones seguras de comunidad. Los cambios sensibles usan confirmación o pantallas específicas."
     }
@@ -7470,6 +7945,12 @@ def build_owner_panel_audit_report(user_id, group_id):
         "owner_panel_location_info",
         "owner_panel_security_info",
         "owner_support_tickets",
+        "owner_panel_satisfaction",
+        "owner_satisfaction_send_pending",
+        "owner_satisfaction_resend_incomplete",
+        "owner_satisfaction_send_never_sent",
+        "owner_satisfaction_delivery_status",
+        "owner_satisfaction_force_new_cycle",
         "owner_panel_logs",
         "owner_panel_codes",
         "owner_panel_payments",
@@ -17101,8 +17582,66 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "😊 Satisfacción de clientes\n\n"
-            "Envía encuestas y revisa la opinión de usuarios, propietarios y administradores.",
+            "Envía encuestas y revisa la opinión de usuarios, propietarios y administradores.\n\n"
+            "Para que sea justo, el bot nunca reenvía por defecto a usuarios que ya respondieron.",
             reply_markup=build_customer_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data in (
+        "admin_satisfaction_send_pending",
+        "admin_satisfaction_resend_incomplete",
+        "admin_satisfaction_send_never_sent",
+        "admin_satisfaction_force_new_cycle"
+    ):
+
+        mode_by_callback = {
+            "admin_satisfaction_send_pending": "pending",
+            "admin_satisfaction_resend_incomplete": "resend_incomplete",
+            "admin_satisfaction_send_never_sent": "never_sent",
+            "admin_satisfaction_force_new_cycle": "pending"
+        }
+        mode = mode_by_callback[data]
+        campaign_id = "default"
+
+        if data == "admin_satisfaction_force_new_cycle":
+            campaign_id = f"cycle_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+
+        survey_id = create_customer_satisfaction_survey(
+            user_id,
+            "global",
+            send_mode=mode,
+            campaign_id=campaign_id
+        )
+        targeting = build_customer_satisfaction_targeting(
+            "global",
+            mode,
+            campaign_id=campaign_id
+        )
+
+        mode_text = {
+            "pending": "Enviar a pendientes",
+            "resend_incomplete": "Reenviar a no completados",
+            "never_sent": "Enviar solo a nunca enviados"
+        }.get(mode, mode)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📤 Confirmar envío de encuesta\n\n"
+            f"Modo: {mode_text}\n"
+            f"Audiencia: {get_customer_satisfaction_audience_label('global')}\n"
+            f"Campaña: {campaign_id}\n\n"
+            f"Se enviará la encuesta a {targeting['target_count']} usuarios.\n"
+            f"Se omitirán {targeting['skipped_completed']} usuarios que ya la completaron.\n"
+            f"Se omitirán {targeting['skipped_already_sent']} usuarios que ya la recibieron en este ciclo.\n\n"
+            "Para que sea justo, el bot nunca reenvía por defecto a usuarios que ya respondieron.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Confirmar envío", callback_data=f"admin_satisfaction_confirm_{survey_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="admin_customer_satisfaction")]
+            ])
         )
 
         return
@@ -17125,20 +17664,44 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        recipients = fetch_customer_satisfaction_recipients(audience)
-        survey_id = create_customer_satisfaction_survey(user_id, audience)
+        survey_id = create_customer_satisfaction_survey(
+            user_id,
+            audience,
+            send_mode="pending",
+            campaign_id="default"
+        )
+        targeting = build_customer_satisfaction_targeting(
+            audience,
+            "pending",
+            campaign_id="default"
+        )
 
         await send_clean_message(
             context,
             query.message.chat_id,
             "📤 Confirmar envío de encuesta\n\n"
             f"Audiencia: {get_customer_satisfaction_audience_label(audience)}\n"
-            f"Usuarios elegibles: {len(recipients)}\n\n"
-            "Vas a enviar una encuesta de satisfacción. ¿Confirmas?",
+            f"Usuarios elegibles: {targeting['total']}\n\n"
+            f"Se enviará la encuesta a {targeting['target_count']} usuarios.\n"
+            f"Se omitirán {targeting['skipped_completed']} usuarios que ya la completaron.\n"
+            f"Se omitirán {targeting['skipped_already_sent']} usuarios que ya la recibieron en este ciclo.\n\n"
+            "¿Confirmas?",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Confirmar envío", callback_data=f"admin_satisfaction_confirm_{survey_id}")],
                 [InlineKeyboardButton("❌ Cancelar", callback_data="admin_customer_satisfaction")]
             ])
+        )
+
+        return
+
+
+    if data == "admin_satisfaction_delivery_status":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_customer_satisfaction_delivery_status_text("global"),
+            reply_markup=build_customer_satisfaction_panel_keyboard()
         )
 
         return
@@ -17152,37 +17715,74 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("❌ Encuesta no válida.")
             return
 
-        with conn.cursor() as cur:
-            cur.execute("""
+        survey = fetch_customer_satisfaction_survey(survey_id)
 
-                SELECT audience, status
-                FROM customer_satisfaction_surveys
-                WHERE id=%s
-                LIMIT 1
-
-            """, (survey_id,))
-            survey_row = cur.fetchone()
-
-        if not survey_row:
+        if not survey:
             await query.message.reply_text(
                 "❌ Encuesta no encontrada.",
                 reply_markup=build_customer_satisfaction_panel_keyboard()
             )
             return
 
-        audience, status = survey_row
-        if status != "draft":
+        if survey["status"] != "draft":
             await query.message.reply_text(
-                "⚠️ Esta encuesta ya fue enviada o cerrada.",
+                "⚠️ Esta encuesta ya fue enviada o está en proceso. No se duplicará.",
                 reply_markup=build_customer_satisfaction_panel_keyboard()
             )
             return
 
-        recipients = fetch_customer_satisfaction_recipients(audience)
+        if not mark_customer_satisfaction_survey_sending(survey_id):
+            await query.message.reply_text(
+                "⚠️ Esta encuesta ya se está enviando o ya fue enviada. No se duplicará.",
+                reply_markup=build_customer_satisfaction_panel_keyboard()
+            )
+            return
+
+        targeting = build_customer_satisfaction_targeting(
+            survey["audience"],
+            survey["send_mode"],
+            group_id=survey["group_id"],
+            campaign_id=survey["campaign_id"]
+        )
         sent_count = 0
         failed_count = 0
 
-        for recipient_id in recipients:
+        for skipped_user_id in targeting["completed_users"]:
+            mark_customer_satisfaction_delivery_skipped(
+                survey_id,
+                skipped_user_id,
+                survey["group_id"],
+                survey["campaign_id"],
+                user_id,
+                "skipped_completed"
+            )
+
+        already_sent_users = set(targeting["sent_current_cycle"]) - set(targeting["targets"])
+        already_sent_users -= set(targeting["completed_users"])
+
+        for skipped_user_id in sorted(already_sent_users):
+            mark_customer_satisfaction_delivery_skipped(
+                survey_id,
+                skipped_user_id,
+                survey["group_id"],
+                survey["campaign_id"],
+                user_id,
+                "skipped_already_sent"
+            )
+
+        for recipient_id in targeting["targets"]:
+            reserved = reserve_customer_satisfaction_delivery(
+                survey_id,
+                recipient_id,
+                survey["group_id"],
+                survey["campaign_id"],
+                user_id,
+                allow_existing=survey["send_mode"] == "resend_incomplete"
+            )
+
+            if not reserved:
+                continue
+
             try:
                 await context.bot.send_message(
                     chat_id=recipient_id,
@@ -17197,33 +17797,69 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sent_count += 1
             except Exception as e:
                 failed_count += 1
-                print("Error enviando encuesta de satisfacción:", e)
+                mark_customer_satisfaction_delivery_failed(
+                    survey_id,
+                    recipient_id,
+                    survey["group_id"],
+                    survey["campaign_id"],
+                    e
+                )
+                log_event(
+                    "survey_send_failed",
+                    category="satisfaction",
+                    severity="warning",
+                    actor_user_id=user_id,
+                    target_user_id=recipient_id,
+                    group_id=survey["group_id"],
+                    message="No se pudo entregar una encuesta de satisfacción.",
+                    metadata={
+                        "survey_id": survey_id,
+                        "audience": survey["audience"],
+                        "error": str(e)[:200]
+                    }
+                )
 
-        update_customer_satisfaction_sent_counts(survey_id, sent_count, failed_count)
+        update_customer_satisfaction_sent_counts(
+            survey_id,
+            sent_count,
+            failed_count,
+            targeting["skipped_completed"],
+            targeting["skipped_already_sent"]
+        )
 
         log_event(
             "survey_sent",
             category="satisfaction",
             severity="info",
             actor_user_id=user_id,
+            group_id=survey["group_id"],
             message="Encuesta de satisfacción enviada.",
             metadata={
                 "survey_id": survey_id,
-                "audience": audience,
+                "audience": survey["audience"],
+                "campaign_id": survey["campaign_id"],
+                "send_mode": survey["send_mode"],
                 "sent_count": sent_count,
-                "failed_count": failed_count
+                "failed_count": failed_count,
+                "skipped_completed": targeting["skipped_completed"],
+                "skipped_already_sent": targeting["skipped_already_sent"]
             }
         )
         record_beta_event(
             "survey_sent",
             severity="info",
             user_id=user_id,
+            group_id=survey["group_id"],
             message="Encuesta de satisfacción enviada.",
             metadata={
                 "survey_id": survey_id,
-                "audience": audience,
+                "audience": survey["audience"],
+                "campaign_id": survey["campaign_id"],
+                "send_mode": survey["send_mode"],
                 "sent_count": sent_count,
-                "failed_count": failed_count
+                "failed_count": failed_count,
+                "skipped_completed": targeting["skipped_completed"],
+                "skipped_already_sent": targeting["skipped_already_sent"]
             }
         )
 
@@ -17232,7 +17868,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             "✅ Encuesta enviada\n\n"
             f"Enviados: {sent_count}\n"
-            f"Fallidos: {failed_count}",
+            f"Fallidos: {failed_count}\n"
+            f"Omitidos por completada: {targeting['skipped_completed']}\n"
+            f"Omitidos por ya enviada: {targeting['skipped_already_sent']}",
             reply_markup=build_customer_satisfaction_panel_keyboard()
         )
 
@@ -21764,6 +22402,314 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             build_owner_setup_assistant_text(group_id),
             reply_markup=build_owner_setup_assistant_keyboard(user_id, group_id)
+        )
+
+        return
+
+
+    if data == "owner_panel_satisfaction":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_view_logs"]
+        )
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para gestionar encuestas de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "😊 Encuestas de comunidad\n\n"
+            "Envía encuestas solo a usuarios de esta comunidad.\n\n"
+            "Para que sea justo, el bot nunca reenvía por defecto a usuarios que ya respondieron.",
+            reply_markup=build_owner_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data in (
+        "owner_satisfaction_send_pending",
+        "owner_satisfaction_resend_incomplete",
+        "owner_satisfaction_send_never_sent",
+        "owner_satisfaction_force_new_cycle"
+    ):
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_view_logs"]
+        )
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para enviar encuestas de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+        mode_by_callback = {
+            "owner_satisfaction_send_pending": "pending",
+            "owner_satisfaction_resend_incomplete": "resend_incomplete",
+            "owner_satisfaction_send_never_sent": "never_sent",
+            "owner_satisfaction_force_new_cycle": "pending"
+        }
+        mode = mode_by_callback[data]
+        campaign_id = "default"
+
+        if data == "owner_satisfaction_force_new_cycle":
+            campaign_id = f"group_{group_id}_cycle_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+
+        survey_id = create_customer_satisfaction_survey(
+            user_id,
+            "global",
+            group_id=group_id,
+            send_mode=mode,
+            campaign_id=campaign_id
+        )
+        targeting = build_customer_satisfaction_targeting(
+            "global",
+            mode,
+            group_id=group_id,
+            campaign_id=campaign_id
+        )
+
+        mode_text = {
+            "pending": "Enviar a pendientes",
+            "resend_incomplete": "Reenviar a no completados",
+            "never_sent": "Enviar solo a nunca enviados"
+        }.get(mode, mode)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "📤 Confirmar encuesta de comunidad\n\n"
+            f"Modo: {mode_text}\n"
+            f"Comunidad: {group_id}\n"
+            f"Campaña: {campaign_id}\n\n"
+            f"Se enviará la encuesta a {targeting['target_count']} usuarios.\n"
+            f"Se omitirán {targeting['skipped_completed']} usuarios que ya la completaron.\n"
+            f"Se omitirán {targeting['skipped_already_sent']} usuarios que ya la recibieron en este ciclo.\n\n"
+            "¿Confirmas el envío?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Confirmar envío", callback_data=f"owner_satisfaction_confirm_{survey_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="owner_panel_satisfaction")]
+            ])
+        )
+
+        return
+
+
+    if data == "owner_satisfaction_delivery_status":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_view_logs"]
+        )
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver encuestas de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_customer_satisfaction_delivery_status_text("global", group_id=group_id),
+            reply_markup=build_owner_satisfaction_panel_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("owner_satisfaction_confirm_"):
+
+        try:
+            survey_id = int(data.replace("owner_satisfaction_confirm_", "", 1))
+        except Exception:
+            await query.message.reply_text("❌ Encuesta no válida.")
+            return
+
+        survey = fetch_customer_satisfaction_survey(survey_id)
+
+        if not survey or not survey["group_id"]:
+            await query.message.reply_text(
+                "❌ Encuesta de comunidad no encontrada.",
+                reply_markup=build_owner_satisfaction_panel_keyboard()
+            )
+            return
+
+        if not user_has_group_permission_any(
+            user_id,
+            survey["group_id"],
+            ["can_manage_groups", "can_view_logs"]
+        ):
+            await query.message.reply_text(
+                "⛔ No tienes permiso para enviar encuestas de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+            return
+
+        if survey["status"] != "draft":
+            await query.message.reply_text(
+                "⚠️ Esta encuesta ya fue enviada o está en proceso. No se duplicará.",
+                reply_markup=build_owner_satisfaction_panel_keyboard()
+            )
+            return
+
+        if not mark_customer_satisfaction_survey_sending(survey_id):
+            await query.message.reply_text(
+                "⚠️ Esta encuesta ya se está enviando o ya fue enviada. No se duplicará.",
+                reply_markup=build_owner_satisfaction_panel_keyboard()
+            )
+            return
+
+        targeting = build_customer_satisfaction_targeting(
+            survey["audience"],
+            survey["send_mode"],
+            group_id=survey["group_id"],
+            campaign_id=survey["campaign_id"]
+        )
+        sent_count = 0
+        failed_count = 0
+
+        for skipped_user_id in targeting["completed_users"]:
+            mark_customer_satisfaction_delivery_skipped(
+                survey_id,
+                skipped_user_id,
+                survey["group_id"],
+                survey["campaign_id"],
+                user_id,
+                "skipped_completed"
+            )
+
+        already_sent_users = set(targeting["sent_current_cycle"]) - set(targeting["targets"])
+        already_sent_users -= set(targeting["completed_users"])
+
+        for skipped_user_id in sorted(already_sent_users):
+            mark_customer_satisfaction_delivery_skipped(
+                survey_id,
+                skipped_user_id,
+                survey["group_id"],
+                survey["campaign_id"],
+                user_id,
+                "skipped_already_sent"
+            )
+
+        for recipient_id in targeting["targets"]:
+            reserved = reserve_customer_satisfaction_delivery(
+                survey_id,
+                recipient_id,
+                survey["group_id"],
+                survey["campaign_id"],
+                user_id,
+                allow_existing=survey["send_mode"] == "resend_incomplete"
+            )
+
+            if not reserved:
+                continue
+
+            try:
+                await context.bot.send_message(
+                    chat_id=recipient_id,
+                    text=(
+                        "Queremos mejorar esta comunidad. Responde esta encuesta rápida de 1 a 5.\n\n"
+                        "Tus respuestas ayudan a mejorar acceso, soporte, pagos y seguridad."
+                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📝 Responder encuesta", callback_data=f"satisfaction_start_{survey_id}")]
+                    ])
+                )
+                sent_count += 1
+            except Exception as e:
+                failed_count += 1
+                mark_customer_satisfaction_delivery_failed(
+                    survey_id,
+                    recipient_id,
+                    survey["group_id"],
+                    survey["campaign_id"],
+                    e
+                )
+                log_event(
+                    "survey_send_failed",
+                    category="satisfaction",
+                    severity="warning",
+                    actor_user_id=user_id,
+                    target_user_id=recipient_id,
+                    group_id=survey["group_id"],
+                    message="No se pudo entregar una encuesta de comunidad.",
+                    metadata={"survey_id": survey_id, "error": str(e)[:200]}
+                )
+
+        update_customer_satisfaction_sent_counts(
+            survey_id,
+            sent_count,
+            failed_count,
+            targeting["skipped_completed"],
+            targeting["skipped_already_sent"]
+        )
+
+        log_event(
+            "survey_sent",
+            category="satisfaction",
+            severity="info",
+            actor_user_id=user_id,
+            group_id=survey["group_id"],
+            message="Encuesta de comunidad enviada.",
+            metadata={
+                "survey_id": survey_id,
+                "campaign_id": survey["campaign_id"],
+                "send_mode": survey["send_mode"],
+                "sent_count": sent_count,
+                "failed_count": failed_count,
+                "skipped_completed": targeting["skipped_completed"],
+                "skipped_already_sent": targeting["skipped_already_sent"]
+            }
+        )
+        record_beta_event(
+            "survey_sent",
+            severity="info",
+            user_id=user_id,
+            group_id=survey["group_id"],
+            message="Encuesta de comunidad enviada.",
+            metadata={
+                "survey_id": survey_id,
+                "campaign_id": survey["campaign_id"],
+                "send_mode": survey["send_mode"],
+                "sent_count": sent_count,
+                "failed_count": failed_count,
+                "skipped_completed": targeting["skipped_completed"],
+                "skipped_already_sent": targeting["skipped_already_sent"]
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Encuesta de comunidad enviada\n\n"
+            f"Enviados: {sent_count}\n"
+            f"Fallidos: {failed_count}\n"
+            f"Omitidos por completada: {targeting['skipped_completed']}\n"
+            f"Omitidos por ya enviada: {targeting['skipped_already_sent']}",
+            reply_markup=build_owner_satisfaction_panel_keyboard()
         )
 
         return
