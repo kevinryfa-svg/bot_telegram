@@ -202,6 +202,87 @@ async def delete_message_safely(context, chat_id, message_id):
         return False
 
 
+PREVIEW_MESSAGE_IDS_KEY = "pending_preview_message_ids"
+PREVIEW_CHAT_ID_KEY = "pending_preview_chat_id"
+
+
+def remember_preview_message(context, chat_id, message):
+
+    if not message or not is_private_chat(chat_id):
+
+        return
+
+
+    message_id = getattr(message, "message_id", None)
+
+
+    if not message_id:
+
+        return
+
+
+    preview_message_ids = context.user_data.setdefault(
+        PREVIEW_MESSAGE_IDS_KEY,
+        []
+    )
+
+
+    if message_id not in preview_message_ids:
+
+        preview_message_ids.append(message_id)
+
+
+    context.user_data[PREVIEW_CHAT_ID_KEY] = chat_id
+
+
+async def delete_pending_preview_messages(context, chat_id=None):
+
+    preview_message_ids = list(
+        context.user_data.get(PREVIEW_MESSAGE_IDS_KEY) or []
+    )
+
+
+    if not preview_message_ids:
+
+        context.user_data.pop(PREVIEW_CHAT_ID_KEY, None)
+
+        return False
+
+
+    preview_chat_id = chat_id or context.user_data.get(PREVIEW_CHAT_ID_KEY)
+
+
+    if not preview_chat_id or not is_private_chat(preview_chat_id):
+
+        context.user_data.pop(PREVIEW_MESSAGE_IDS_KEY, None)
+        context.user_data.pop(PREVIEW_CHAT_ID_KEY, None)
+
+        return False
+
+
+    deleted_any = False
+
+
+    for message_id in preview_message_ids:
+
+        deleted = await delete_message_safely(
+            context,
+            preview_chat_id,
+            message_id
+        )
+
+
+        if deleted:
+
+            deleted_any = True
+
+
+    context.user_data.pop(PREVIEW_MESSAGE_IDS_KEY, None)
+    context.user_data.pop(PREVIEW_CHAT_ID_KEY, None)
+
+    return deleted_any
+
+
 async def delete_active_bot_message(context, chat_id):
 
     if not is_private_chat(chat_id):
@@ -237,6 +318,11 @@ async def send_clean_message(
 ):
 
     if is_private_chat(chat_id):
+
+        await delete_pending_preview_messages(
+            context,
+            chat_id
+        )
 
         await delete_active_bot_message(
             context,

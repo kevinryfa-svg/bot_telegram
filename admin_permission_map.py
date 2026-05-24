@@ -165,6 +165,8 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     ),
     "owner_panel_admins": ("can_manage_admins",),
     "owner_panel_logs": ("can_view_logs",),
+    "owner_panel_support": ("can_respond_group_support",),
+    "owner_support_tickets": ("can_respond_group_support",),
     "owner_panel_backup": ("can_manage_groups",),
     "owner_panel_general": ("can_manage_groups", "can_edit_group_texts"),
     "owner_setup_assistant": (
