@@ -3522,44 +3522,21 @@ def build_group_settings_keyboard(user_id, group_id):
     if user_has_group_permission_any(
         user_id,
         group_id,
-        ["can_manage_groups", "can_edit_group_texts"]
+        [
+            "can_view_users",
+            "can_manage_users",
+            "can_kick_users",
+            "can_ban_users",
+            "can_unban_users",
+            "can_warn_users",
+            "can_reset_warnings",
+            "can_resend_links",
+            "can_recover_access"
+        ]
     ):
 
         keyboard.append([
-            InlineKeyboardButton("✏️ Editar nombre", callback_data="edit_group_name")
-        ])
-
-
-    if user_has_group_permission_any(
-        user_id,
-        group_id,
-        ["can_manage_groups", "can_edit_marketplace_preview"]
-    ):
-
-        keyboard.append([
-            InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")
-        ])
-
-
-    if user_has_group_permission_any(
-        user_id,
-        group_id,
-        ["can_manage_groups"]
-    ):
-
-        keyboard.append([
-            InlineKeyboardButton("🔗 Editar Stripe", callback_data="edit_group_stripe")
-        ])
-
-
-    if user_has_group_permission_any(
-        user_id,
-        group_id,
-        ["can_manage_plans", "can_manage_groups"]
-    ):
-
-        keyboard.append([
-            InlineKeyboardButton("💳 Editar planes", callback_data="edit_group_plans")
+            InlineKeyboardButton("👥 Usuarios y accesos", callback_data="owner_panel_users")
         ])
 
 
@@ -3570,7 +3547,40 @@ def build_group_settings_keyboard(user_id, group_id):
     ):
 
         keyboard.append([
-            InlineKeyboardButton("🎟 Códigos de mi grupo", callback_data="edit_group_user_codes")
+            InlineKeyboardButton("🎟 Códigos y promociones", callback_data="owner_panel_codes")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("💳 Planes y pagos", callback_data="owner_panel_payments")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_groups", "can_view_logs"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("🛡 Seguridad del grupo", callback_data="owner_panel_security")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_groups", "can_edit_group_texts", "can_edit_marketplace_preview"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("🖼 Marketplace y preview", callback_data="owner_panel_marketplace")
         ])
 
 
@@ -3581,7 +3591,40 @@ def build_group_settings_keyboard(user_id, group_id):
     ):
 
         keyboard.append([
-            InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")
+            InlineKeyboardButton("👑 Administradores", callback_data="owner_panel_admins")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_view_logs"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("📜 Logs y actividad", callback_data="owner_panel_logs")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_groups"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("🛡 Backup premium", callback_data="owner_panel_backup")
+        ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_groups", "can_edit_group_texts"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("⚙️ Configuración general", callback_data="owner_panel_general")
         ])
 
 
@@ -3593,11 +3636,194 @@ def build_group_settings_keyboard(user_id, group_id):
 
 
     keyboard.append([
-        InlineKeyboardButton("⬅️ Volver", callback_data="admin_edit_group")
+        InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")
     ])
 
     return keyboard
 
+
+def build_owner_panel_nav_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_section_keyboard(user_id, group_id, section):
+
+    keyboard = []
+
+
+    if section == "users":
+
+        if user_has_group_permission_any(user_id, group_id, ["can_view_users", "can_manage_users"]):
+            keyboard.append([InlineKeyboardButton("📋 Ver usuarios", callback_data="admin_users")])
+
+        if user_has_group_permission_any(user_id, group_id, ["can_kick_users", "can_manage_users"]):
+            keyboard.append([InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")])
+
+        if user_has_group_permission_any(user_id, group_id, ["can_ban_users", "can_manage_users"]):
+            keyboard.append([InlineKeyboardButton("⛔ Banear usuario", callback_data="admin_ban_user")])
+
+        if user_has_group_permission_any(user_id, group_id, ["can_unban_users", "can_manage_users"]):
+            keyboard.append([InlineKeyboardButton("♻️ Desbanear usuario", callback_data="admin_unban_user")])
+
+        if user_has_group_permission_any(user_id, group_id, ["can_warn_users", "can_reset_warnings", "can_manage_users"]):
+            keyboard.append([InlineKeyboardButton("⚠️ Warnings", callback_data="admin_reset_warnings")])
+
+        if user_has_group_permission_any(user_id, group_id, ["can_resend_links", "can_recover_access"]):
+            keyboard.append([InlineKeyboardButton("📩 Reenviar / recuperar link", callback_data="admin_resend_access")])
+
+    elif section == "codes":
+
+        keyboard.extend([
+            [InlineKeyboardButton("🎟 Códigos de mi grupo", callback_data="edit_group_user_codes")],
+            [InlineKeyboardButton("➕ Crear código", callback_data="group_user_code_create")],
+            [InlineKeyboardButton("📋 Ver códigos activos", callback_data="group_user_codes_active")],
+            [InlineKeyboardButton("📊 Usos de códigos", callback_data="group_user_code_usage")],
+            [InlineKeyboardButton("🚫 Desactivar código", callback_data="group_user_code_deactivate_menu")]
+        ])
+
+    elif section == "payments":
+
+        if user_has_group_permission_any(user_id, group_id, ["can_manage_plans", "can_manage_groups"]):
+            keyboard.append([InlineKeyboardButton("📋 Ver planes", callback_data="view_group_plans")])
+            keyboard.append([InlineKeyboardButton("💳 Crear/editar planes", callback_data="edit_group_plans")])
+
+        if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
+            keyboard.append([InlineKeyboardButton("🔗 Stripe/configuración pagos", callback_data="edit_group_stripe")])
+
+        if user_has_group_permission_any(user_id, group_id, ["can_view_payments", "can_manage_payments"]):
+            keyboard.append([InlineKeyboardButton("💳 Pagos recibidos", callback_data="admin_view_payments")])
+            keyboard.append([InlineKeyboardButton("📌 Suscripciones activas", callback_data="admin_view_payments")])
+
+    elif section == "security":
+
+        if user_has_group_permission_any(user_id, group_id, ["can_view_logs"]):
+            keyboard.append([InlineKeyboardButton("📜 Logs de accesos", callback_data="admin_logs_security")])
+
+        if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
+            keyboard.append([InlineKeyboardButton("📍 Ubicación permitida", callback_data="owner_panel_location_info")])
+            keyboard.append([InlineKeyboardButton("🛡 Anti-intrusos", callback_data="owner_panel_security_info")])
+            keyboard.append([InlineKeyboardButton("🔗 Anti-links", callback_data="owner_panel_security_info")])
+
+    elif section == "marketplace":
+
+        keyboard.extend([
+            [InlineKeyboardButton("✏️ Editar ficha", callback_data="edit_group_name")],
+            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
+            [InlineKeyboardButton("👁 Preview manual/dinámico/mixto", callback_data="edit_group_preview")],
+            [InlineKeyboardButton("📂 Categoría/tags", callback_data="edit_group_preview")]
+        ])
+
+    elif section == "admins":
+
+        keyboard.extend([
+            [InlineKeyboardButton("👑 Administradores", callback_data="edit_group_admins")],
+            [InlineKeyboardButton("➕ Añadir admin", callback_data="group_admin_add")],
+            [InlineKeyboardButton("📋 Ver admins", callback_data="group_admin_view")],
+            [InlineKeyboardButton("✏️ Editar permisos", callback_data="group_admin_edit")],
+            [InlineKeyboardButton("❌ Quitar admin", callback_data="group_admin_remove")]
+        ])
+
+    elif section == "logs":
+
+        keyboard.extend([
+            [InlineKeyboardButton("📜 Logs de mi grupo", callback_data="admin_logs")],
+            [InlineKeyboardButton("👥 Accesos", callback_data="admin_logs_users")],
+            [InlineKeyboardButton("💳 Pagos", callback_data="admin_logs_payments")],
+            [InlineKeyboardButton("🎟 Códigos", callback_data="admin_logs_security")],
+            [InlineKeyboardButton("🛡 Backups / errores", callback_data="admin_logs_security")]
+        ])
+
+    elif section == "backup":
+
+        keyboard.extend([
+            [InlineKeyboardButton("🛡 Estado backup", callback_data="owner_backup_panel")],
+            [InlineKeyboardButton("🔗 Configurar origen/destino", callback_data="owner_backup_destination_token")],
+            [InlineKeyboardButton("⚙️ Cambiar modo", callback_data="owner_backup_change_mode")],
+            [InlineKeyboardButton("📜 Últimos mensajes copiados", callback_data="owner_backup_messages")],
+            [InlineKeyboardButton("⚠️ Últimos errores", callback_data="owner_backup_errors")]
+        ])
+
+    elif section == "general":
+
+        keyboard.extend([
+            [InlineKeyboardButton("✏️ Nombre comunidad", callback_data="edit_group_name")],
+            [InlineKeyboardButton("📝 Descripción", callback_data="edit_group_name")],
+            [InlineKeyboardButton("🔓 Tipo gratis/pago", callback_data="owner_panel_access_type_info")],
+            [InlineKeyboardButton("🔢 Cupo/configuración", callback_data="owner_panel_general_info")],
+            [InlineKeyboardButton("🧹 Reiniciar configuración segura", callback_data="owner_panel_general_info")]
+        ])
+
+
+    keyboard.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+OWNER_PANEL_SECTIONS = {
+    "owner_panel_users": (
+        "👥 Usuarios y accesos",
+        "Gestiona entradas, expulsiones, bans, warnings y recuperación de acceso.",
+        ["can_view_users", "can_manage_users", "can_kick_users", "can_ban_users", "can_unban_users", "can_warn_users", "can_reset_warnings", "can_resend_links", "can_recover_access"],
+        "users"
+    ),
+    "owner_panel_codes": (
+        "🎟 Códigos y promociones",
+        "Crea y revisa códigos de acceso exclusivos para esta comunidad.",
+        ["can_manage_codes"],
+        "codes"
+    ),
+    "owner_panel_payments": (
+        "💳 Planes y pagos",
+        "Gestiona planes, cobros, Stripe y pagos recibidos.",
+        ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"],
+        "payments"
+    ),
+    "owner_panel_security": (
+        "🛡 Seguridad del grupo",
+        "Revisa protección de acceso, anti-intrusos, anti-links y ubicación permitida.",
+        ["can_manage_groups", "can_view_logs"],
+        "security"
+    ),
+    "owner_panel_marketplace": (
+        "🖼 Marketplace y preview",
+        "Configura visibilidad pública, ficha, previews, categoría y tags.",
+        ["can_manage_groups", "can_edit_group_texts", "can_edit_marketplace_preview"],
+        "marketplace"
+    ),
+    "owner_panel_admins": (
+        "👑 Administradores",
+        "Añade admins de grupo y ajusta sus permisos por comunidad.",
+        ["can_manage_admins"],
+        "admins"
+    ),
+    "owner_panel_logs": (
+        "📜 Logs y actividad",
+        "Consulta accesos, pagos, códigos, backups y errores de esta comunidad.",
+        ["can_view_logs"],
+        "logs"
+    ),
+    "owner_panel_backup": (
+        "🛡 Backup premium",
+        "Configura copia de seguridad de mensajes nuevos recibidos por el bot.",
+        ["can_manage_groups"],
+        "backup"
+    ),
+    "owner_panel_general": (
+        "⚙️ Configuración general",
+        "Edita datos básicos, tipo de acceso y ajustes seguros de la comunidad.",
+        ["can_manage_groups", "can_edit_group_texts"],
+        "general"
+    )
+}
 
 def get_selected_group_for_permissions(context, user_id, permissions):
 
@@ -14911,7 +15137,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 "⬅️ Volver",
 
-                callback_data="menu_groups"
+                callback_data="admin_back_main"
 
             )
 
@@ -14920,10 +15146,98 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
 
-            "Selecciona el grupo a editar:",
+            "🏪 Mis comunidades\n\n"
+            "Selecciona una comunidad para abrir su panel de gestión:",
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
+        )
+
+        return
+
+
+    if data in OWNER_PANEL_SECTIONS:
+
+        title, description, required_permissions, section = OWNER_PANEL_SECTIONS[data]
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            required_permissions
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if section == "codes":
+
+            set_group_user_promo_context(
+                context,
+                group_id,
+                step="panel"
+            )
+
+
+        if section == "admins":
+
+            context.user_data["selected_owner_group"] = group_id
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"{title}\n\n{description}",
+            reply_markup=build_owner_section_keyboard(
+                user_id,
+                group_id,
+                section
+            )
+        )
+
+        return
+
+
+    if data in (
+        "owner_panel_security_info",
+        "owner_panel_location_info",
+        "owner_panel_access_type_info",
+        "owner_panel_general_info"
+    ):
+
+        info_texts = {
+            "owner_panel_security_info": (
+                "🛡 Seguridad del grupo\n\n"
+                "La protección anti-intrusos, anti-links y validación de accesos "
+                "funciona con la configuración actual del bot. Usa los logs para revisar actividad."
+            ),
+            "owner_panel_location_info": (
+                "📍 Ubicación permitida\n\n"
+                "La restricción por ubicación se gestiona desde el flujo de configuración "
+                "del creator cuando la comunidad está vinculada."
+            ),
+            "owner_panel_access_type_info": (
+                "🔓 Tipo gratis/pago\n\n"
+                "El tipo de acceso se mantiene desde la configuración comercial de la comunidad. "
+                "No se cambia desde aquí para evitar tocar pagos o checkout."
+            ),
+            "owner_panel_general_info": (
+                "⚙️ Configuración general\n\n"
+                "Estos ajustes se gestionan con flujos seguros existentes. "
+                "No se reinicia ni borra configuración sin confirmación específica."
+            )
+        }
+
+        await query.message.reply_text(
+            info_texts.get(data, "Información no disponible."),
+            reply_markup=build_owner_panel_nav_keyboard()
         )
 
         return
@@ -14969,6 +15283,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Guardar grupo seleccionado
 
         context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
 
 
         keyboard = build_group_settings_keyboard(user_id, group_id)
@@ -14976,7 +15291,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
 
-            "🔧 CONFIGURACIÓN DEL GRUPO",
+            "🏪 Panel de comunidad\n\n"
+            "Elige el apartado que quieres gestionar. "
+            "Solo verás secciones compatibles con tus permisos en esta comunidad.",
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -15006,7 +15323,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await query.message.reply_text(
-            "🔧 CONFIGURACIÓN DEL GRUPO",
+            "🏪 Panel de comunidad\n\n"
+            "Elige el apartado que quieres gestionar.",
             reply_markup=InlineKeyboardMarkup(
                 build_group_settings_keyboard(user_id, group_id)
             )
