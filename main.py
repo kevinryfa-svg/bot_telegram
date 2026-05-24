@@ -106,6 +106,7 @@ from callback_router import (
     button,
     receive_commercial_request_chat_message,
     receive_customer_satisfaction_text,
+    receive_user_tracking_search_text,
     receive_group_user_promo_code,
     receive_owner_payment_provider_text,
     receive_support_message,
@@ -822,6 +823,12 @@ async def handle_text(update, context):
         or context.user_data.get("configuring_platform_payment_provider")
     ):
         await receive_owner_payment_provider_text(update, context)
+        return
+
+    if (
+        context.user_data.get("admin_user_tracking_search")
+    ):
+        await receive_user_tracking_search_text(update, context)
         return
 
     if (

@@ -8,6 +8,7 @@ from db import conn
 from invite_link_service import create_telegram_invite_link
 from notification_service import notify_super_admins, send_telegram_message
 from rbac_helpers import get_group_owner_user_id
+from user_activity_logger import log_user_event_by_ids
 
 
 def format_payment_amount(amount, currency):
@@ -433,6 +434,32 @@ def grant_group_access_after_payment(
             "transaction_id": transaction_id,
             "external_checkout_id": external_checkout_id
         }
+    )
+
+    log_user_event_by_ids(
+        user_id,
+        "payment_completed",
+        event_key=f"{provider}_group_payment",
+        group_id=group_id,
+        plan_id=plan_id,
+        payment_provider=provider,
+        payment_scope="group",
+        metadata={
+            "transaction_id": transaction_id,
+            "amount": amount,
+            "currency": currency
+        }
+    )
+
+    log_user_event_by_ids(
+        user_id,
+        "invite_link_created",
+        event_key="payment_invite_link",
+        group_id=group_id,
+        plan_id=plan_id,
+        payment_provider=provider,
+        payment_scope="group",
+        metadata={"transaction_id": transaction_id}
     )
 
     return {

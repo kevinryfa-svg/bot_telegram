@@ -1953,6 +1953,7 @@ def build_admin_global_tools_keyboard():
         [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
         [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
         [InlineKeyboardButton("🧪 Auditoría de botones", callback_data="admin_button_audit")],
+        [InlineKeyboardButton("👁 Seguimiento de usuarios", callback_data="admin_user_tracking")],
         [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_tools")],
@@ -2103,6 +2104,7 @@ def build_customer_satisfaction_panel_keyboard():
         [InlineKeyboardButton("🔁 Reenviar a no completados", callback_data="admin_satisfaction_resend_incomplete")],
         [InlineKeyboardButton("🧹 Enviar solo a nunca enviados", callback_data="admin_satisfaction_send_never_sent")],
         [InlineKeyboardButton("📊 Ver estado de envíos", callback_data="admin_satisfaction_delivery_status")],
+        [InlineKeyboardButton("📋 Detalle de encuestas", callback_data="satisfaction_detail")],
         [InlineKeyboardButton("⚠️ Forzar nuevo ciclo", callback_data="admin_satisfaction_force_new_cycle")],
         [InlineKeyboardButton("👥 Enviar solo a usuarios", callback_data="admin_satisfaction_send_users")],
         [InlineKeyboardButton("🧑‍💼 Enviar solo a propietarios", callback_data="admin_satisfaction_send_owners")],
@@ -2126,6 +2128,7 @@ def build_owner_satisfaction_panel_keyboard():
         [InlineKeyboardButton("🔁 Reenviar a no completados", callback_data="owner_satisfaction_resend_incomplete")],
         [InlineKeyboardButton("🧹 Enviar solo a nunca enviados", callback_data="owner_satisfaction_send_never_sent")],
         [InlineKeyboardButton("📊 Ver estado de envíos", callback_data="owner_satisfaction_delivery_status")],
+        [InlineKeyboardButton("📋 Detalle de encuestas", callback_data="satisfaction_detail")],
         [InlineKeyboardButton("⚠️ Forzar nuevo ciclo", callback_data="owner_satisfaction_force_new_cycle")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_satisfaction")],
         [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="owner_panel_general")]
@@ -2903,6 +2906,43 @@ def build_user_tracking_groups_text():
     return f"🏪 Actividad por comunidad\n\n{body}"
 
 
+def build_user_tracking_payments_text():
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id,
+                       group_id,
+                       plan_id,
+                       provider,
+                       payment_scope,
+                       amount,
+                       currency,
+                       status,
+                       created_at
+                FROM payment_transactions
+                ORDER BY created_at DESC
+                LIMIT 25
+            """)
+            rows = cur.fetchall()
+    except Exception:
+        rows = []
+
+    if not rows:
+        return "💳 Actividad de pagos\n\nSin transacciones registradas todavía."
+
+    lines = ["💳 Actividad de pagos", ""]
+
+    for user_id, group_id, plan_id, provider, scope, amount, currency, status, created_at in rows:
+        amount_text = f"{amount} {currency or ''}".strip() if amount is not None else "-"
+        lines.append(
+            f"- {format_tracking_time(created_at)} · {provider} · {status}\n"
+            f"  Usuario: {user_id or '-'} · Grupo: {group_id or '-'} · Plan: {plan_id or '-'} · Scope: {scope or '-'} · Importe: {amount_text}"
+        )
+
+    return "\n".join(lines)
+
+
 def build_user_tracking_user_profile_text(profile_data):
 
     if not profile_data:
@@ -2934,6 +2974,429 @@ def build_user_tracking_user_profile_text(profile_data):
         f"{groups_text}\n\n"
         "Últimas acciones:\n"
         f"{format_user_tracking_event_rows(profile_data.get('events', []))}"
+    )
+
+
+def user_can_view_satisfaction_survey(user_id, survey_id):
+
+    if is_super_admin(user_id):
+        return True
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT group_id
+                FROM customer_satisfaction_surveys
+                WHERE id=%s
+                LIMIT 1
+            """, (survey_id,))
+            row = cur.fetchone()
+    except Exception:
+        row = None
+
+    if not row or not row[0]:
+        return False
+
+    return user_has_group_permission_any(
+        user_id,
+        row[0],
+        ["can_manage_groups", "can_view_logs"]
+    )
+
+
+def get_satisfaction_detail_scope(user_id, context):
+
+    if is_super_admin(user_id):
+        return None
+
+    return get_selected_group_for_permissions(
+        context,
+        user_id,
+        ["can_manage_groups", "can_view_logs"]
+    )
+
+
+def fetch_satisfaction_surveys_for_scope(group_id=None, limit=12):
+
+    params = []
+    group_filter = ""
+
+    if group_id is not None:
+        group_filter = "WHERE COALESCE(s.group_id, 0)=COALESCE(%s, 0)"
+        params.append(group_id)
+
+    params.append(limit)
+
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            SELECT s.id,
+                   COALESCE(s.title, 'Encuesta'),
+                   s.group_id,
+                   COALESCE(g.name, 'Global'),
+                   COALESCE(s.campaign_id, 'default'),
+                   COALESCE(s.status, 'draft'),
+                   s.created_at,
+                   s.sent_at,
+                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status IN ('sent', 'completed', 'failed')),
+                   COUNT(DISTINCT r.user_id) FILTER (WHERE r.completed_at IS NOT NULL),
+                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status='failed'),
+                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status LIKE 'skipped%')
+            FROM customer_satisfaction_surveys s
+            LEFT JOIN groups g ON g.id=s.group_id
+            LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=s.id
+            LEFT JOIN customer_satisfaction_responses r ON r.survey_id=s.id
+            {group_filter}
+            GROUP BY s.id, s.title, s.group_id, g.name, s.campaign_id, s.status, s.created_at, s.sent_at
+            ORDER BY s.created_at DESC, s.id DESC
+            LIMIT %s
+        """, tuple(params))
+        return cur.fetchall()
+
+
+def build_satisfaction_survey_list_text(user_id, context):
+
+    group_id = get_satisfaction_detail_scope(user_id, context)
+
+    if not is_super_admin(user_id) and not group_id:
+        return "⛔ No tienes permiso para ver detalle de encuestas."
+
+    rows = fetch_satisfaction_surveys_for_scope(group_id=group_id)
+
+    if not rows:
+        return "📋 Detalle de encuestas\n\nNo hay encuestas registradas en este ámbito."
+
+    lines = [
+        "📋 Detalle de encuestas",
+        "",
+        "Elige una encuesta para ver enviados, pendientes, fallidos y respuestas persona por persona."
+    ]
+
+    for row in rows:
+        survey_id, title, survey_group_id, group_name, campaign_id, status, created_at, sent_at, sent_count, completed_count, failed_count, skipped_count = row
+        pending_count = max((sent_count or 0) - (completed_count or 0) - (failed_count or 0), 0)
+        lines.append(
+            f"\n#{survey_id} · {title}\n"
+            f"Comunidad: {group_name} ({survey_group_id or 'global'})\n"
+            f"Campaña: {campaign_id} · Estado: {status}\n"
+            f"Enviados: {sent_count or 0} · Completados: {completed_count or 0} · Pendientes: {pending_count} · Fallidos: {failed_count or 0} · Omitidos: {skipped_count or 0}\n"
+            f"Creada: {format_tracking_time(created_at)} · Enviada: {format_tracking_time(sent_at)}"
+        )
+
+    return "\n".join(lines)
+
+
+def build_satisfaction_survey_list_keyboard(user_id, context):
+
+    group_id = get_satisfaction_detail_scope(user_id, context)
+    keyboard = []
+    back_callback = "admin_customer_satisfaction" if is_super_admin(user_id) else "owner_panel_satisfaction"
+
+    if not is_super_admin(user_id) and not group_id:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+
+    rows = fetch_satisfaction_surveys_for_scope(group_id=group_id)
+
+    for row in rows[:10]:
+        survey_id, title, _survey_group_id, group_name, _campaign_id, _status, _created_at, _sent_at, *_rest = row
+        keyboard.append([
+            InlineKeyboardButton(
+                f"📝 #{survey_id} · {group_name or title}",
+                callback_data=f"satisfaction_survey_{survey_id}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=back_callback)])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def fetch_satisfaction_survey_header(survey_id):
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT s.id,
+                   COALESCE(s.title, 'Encuesta'),
+                   s.group_id,
+                   COALESCE(g.name, 'Global'),
+                   COALESCE(s.campaign_id, 'default'),
+                   COALESCE(s.status, 'draft'),
+                   s.created_at,
+                   s.sent_at
+            FROM customer_satisfaction_surveys s
+            LEFT JOIN groups g ON g.id=s.group_id
+            WHERE s.id=%s
+            LIMIT 1
+        """, (survey_id,))
+        return cur.fetchone()
+
+
+def build_satisfaction_survey_detail_text(survey_id):
+
+    header = fetch_satisfaction_survey_header(survey_id)
+
+    if not header:
+        return "❌ Encuesta no encontrada."
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status IN ('sent', 'completed', 'failed')),
+                   COUNT(DISTINCT r.user_id) FILTER (WHERE r.completed_at IS NOT NULL),
+                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status='failed'),
+                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status LIKE 'skipped%'),
+                   AVG(a.rating)
+            FROM customer_satisfaction_surveys s
+            LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=s.id
+            LEFT JOIN customer_satisfaction_responses r ON r.survey_id=s.id
+            LEFT JOIN customer_satisfaction_answers a ON a.response_id=r.id AND a.rating IS NOT NULL
+            WHERE s.id=%s
+        """, (survey_id,))
+        sent_count, completed_count, failed_count, skipped_count, average_rating = cur.fetchone()
+
+        cur.execute("""
+            SELECT question_text
+            FROM customer_satisfaction_questions
+            WHERE survey_id IS NULL
+            AND COALESCE(is_active, TRUE)=TRUE
+            ORDER BY sort_order ASC, id ASC
+            LIMIT 12
+        """)
+        questions = [row[0] for row in cur.fetchall()]
+
+    survey_id, title, group_id, group_name, campaign_id, status, created_at, sent_at = header
+    pending_count = max((sent_count or 0) - (completed_count or 0) - (failed_count or 0), 0)
+    response_rate = round(((completed_count or 0) / sent_count) * 100, 1) if sent_count else 0
+    average_text = f"{round(float(average_rating), 2)}/5" if average_rating else "Sin datos"
+    question_text = "\n".join(f"- {question}" for question in questions) or "Sin preguntas activas."
+
+    return (
+        f"📝 Encuesta #{survey_id}\n\n"
+        f"Título: {title}\n"
+        f"Comunidad: {group_name} ({group_id or 'global'})\n"
+        f"Campaña: {campaign_id}\n"
+        f"Estado: {status}\n"
+        f"Creada: {format_tracking_time(created_at)}\n"
+        f"Enviada: {format_tracking_time(sent_at)}\n\n"
+        f"Enviados: {sent_count or 0}\n"
+        f"Respondidos: {completed_count or 0}\n"
+        f"Pendientes: {pending_count}\n"
+        f"Fallidos: {failed_count or 0}\n"
+        f"Omitidos: {skipped_count or 0}\n"
+        f"Tasa respuesta: {response_rate}%\n"
+        f"Media: {average_text}\n\n"
+        "Preguntas:\n"
+        f"{question_text}"
+    )
+
+
+def build_satisfaction_survey_detail_keyboard(survey_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Respondieron", callback_data=f"satisfaction_survey_users_{survey_id}_completed")],
+        [InlineKeyboardButton("⏳ Pendientes", callback_data=f"satisfaction_survey_users_{survey_id}_pending")],
+        [InlineKeyboardButton("❌ Fallidos/omitidos", callback_data=f"satisfaction_survey_users_{survey_id}_failed")],
+        [InlineKeyboardButton("📊 Resumen respuestas", callback_data=f"satisfaction_survey_summary_{survey_id}")],
+        [InlineKeyboardButton("⬅️ Volver a encuestas", callback_data="satisfaction_detail")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def fetch_satisfaction_survey_users(survey_id, status):
+
+    if status == "completed":
+        status_filter = "r.completed_at IS NOT NULL"
+    elif status == "pending":
+        status_filter = "cs.status='sent' AND r.completed_at IS NULL"
+    else:
+        status_filter = "(cs.status='failed' OR cs.status LIKE 'skipped%')"
+
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            SELECT cs.user_id,
+                   COALESCE(MAX(u.username), MAX(e.username), ''),
+                   COALESCE(MAX(u.first_name), MAX(e.first_name), ''),
+                   COALESCE(MAX(cs.status), 'sent'),
+                   MIN(cs.sent_at),
+                   MAX(r.completed_at),
+                   MAX(r.id)
+            FROM customer_satisfaction_sent cs
+            LEFT JOIN customer_satisfaction_responses r ON r.survey_id=cs.survey_id AND r.user_id=cs.user_id
+            LEFT JOIN users u ON u.user_id=cs.user_id AND (cs.group_id IS NULL OR u.group_id=cs.group_id)
+            LEFT JOIN bot_user_events e ON e.user_id=cs.user_id
+            WHERE cs.survey_id=%s
+            AND {status_filter}
+            GROUP BY cs.user_id
+            ORDER BY MAX(COALESCE(r.completed_at, cs.sent_at, cs.created_at)) DESC NULLS LAST
+            LIMIT 20
+        """, (survey_id,))
+        return cur.fetchall()
+
+
+def build_satisfaction_survey_users_text(survey_id, status):
+
+    label = {
+        "completed": "✅ Usuarios que respondieron",
+        "pending": "⏳ Usuarios pendientes",
+        "failed": "❌ Fallidos u omitidos"
+    }.get(status, "Usuarios")
+    rows = fetch_satisfaction_survey_users(survey_id, status)
+
+    if not rows:
+        return f"{label}\n\nNo hay usuarios en este estado."
+
+    lines = [label, ""]
+
+    for user_id, username, first_name, sent_status, sent_at, completed_at, _response_id in rows:
+        user_label = f"@{username}" if username else (first_name or "Sin nombre")
+        lines.append(
+            f"- {user_label} · ID {user_id}\n"
+            f"  Estado: {sent_status} · Enviada: {format_tracking_time(sent_at)} · Respondida: {format_tracking_time(completed_at)}"
+        )
+
+    return "\n".join(lines)
+
+
+def build_satisfaction_survey_users_keyboard(survey_id, status):
+
+    rows = fetch_satisfaction_survey_users(survey_id, status)
+    keyboard = []
+
+    for user_id, username, first_name, _sent_status, _sent_at, _completed_at, response_id in rows[:12]:
+        if not response_id:
+            continue
+        label = f"👤 @{username}" if username else f"👤 {first_name or user_id}"
+        keyboard.append([InlineKeyboardButton(label[:45], callback_data=f"satisfaction_response_{response_id}")])
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=f"satisfaction_survey_{survey_id}")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_satisfaction_response_detail_text(response_id):
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT r.id,
+                   r.survey_id,
+                   r.user_id,
+                   COALESCE(MAX(u.username), MAX(e.username), ''),
+                   COALESCE(MAX(u.first_name), MAX(e.first_name), ''),
+                   COALESCE(MAX(e.last_name), ''),
+                   s.group_id,
+                   COALESCE(g.name, 'Global'),
+                   MIN(cs.sent_at),
+                   r.completed_at
+            FROM customer_satisfaction_responses r
+            JOIN customer_satisfaction_surveys s ON s.id=r.survey_id
+            LEFT JOIN groups g ON g.id=s.group_id
+            LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=r.survey_id AND cs.user_id=r.user_id
+            LEFT JOIN users u ON u.user_id=r.user_id AND (s.group_id IS NULL OR u.group_id=s.group_id)
+            LEFT JOIN bot_user_events e ON e.user_id=r.user_id
+            WHERE r.id=%s
+            GROUP BY r.id, r.survey_id, r.user_id, s.group_id, g.name, r.completed_at
+            LIMIT 1
+        """, (response_id,))
+        header = cur.fetchone()
+
+        if not header:
+            return "❌ Respuesta no encontrada."
+
+        cur.execute("""
+            SELECT q.sort_order,
+                   q.question_text,
+                   a.rating,
+                   a.text_answer
+            FROM customer_satisfaction_answers a
+            JOIN customer_satisfaction_questions q ON q.id=a.question_id
+            WHERE a.response_id=%s
+            ORDER BY q.sort_order ASC, q.id ASC
+        """, (response_id,))
+        answers = cur.fetchall()
+
+    _response_id, survey_id, user_id, username, first_name, last_name, group_id, group_name, sent_at, completed_at = header
+    name_text = " ".join(part for part in (first_name, last_name) if part).strip() or "Sin nombre disponible"
+    username_text = f"@{username}" if username else "Sin username"
+    answer_lines = []
+
+    for sort_order, question_text, rating, text_answer in answers:
+        answer = rating if rating is not None else (text_answer or "-")
+        answer_lines.append(
+            f"{sort_order}. {question_text}\nRespuesta: {str(answer)[:500]}"
+        )
+
+    return (
+        f"👤 {name_text} ({username_text})\n"
+        f"ID: {user_id}\n"
+        f"Encuesta: #{survey_id}\n"
+        f"Comunidad: {group_name} ({group_id or 'global'})\n"
+        f"Enviada: {format_tracking_time(sent_at)}\n"
+        f"Respondida: {format_tracking_time(completed_at)}\n\n"
+        + ("\n\n".join(answer_lines) or "Sin respuestas guardadas.")
+    )
+
+
+def build_satisfaction_summary_answers_text(survey_id):
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT q.question_text,
+                   AVG(a.rating),
+                   COUNT(*) FILTER (WHERE a.rating=1),
+                   COUNT(*) FILTER (WHERE a.rating=2),
+                   COUNT(*) FILTER (WHERE a.rating=3),
+                   COUNT(*) FILTER (WHERE a.rating=4),
+                   COUNT(*) FILTER (WHERE a.rating=5),
+                   COUNT(a.rating)
+            FROM customer_satisfaction_answers a
+            JOIN customer_satisfaction_responses r ON r.id=a.response_id
+            JOIN customer_satisfaction_questions q ON q.id=a.question_id
+            WHERE r.survey_id=%s
+            AND a.rating IS NOT NULL
+            GROUP BY q.id, q.question_text, q.sort_order
+            ORDER BY q.sort_order ASC, q.id ASC
+        """, (survey_id,))
+        rating_rows = cur.fetchall()
+
+        cur.execute("""
+            SELECT q.question_text,
+                   a.text_answer,
+                   r.user_id,
+                   COALESCE(MAX(u.username), MAX(e.username), '')
+            FROM customer_satisfaction_answers a
+            JOIN customer_satisfaction_responses r ON r.id=a.response_id
+            JOIN customer_satisfaction_questions q ON q.id=a.question_id
+            LEFT JOIN users u ON u.user_id=r.user_id
+            LEFT JOIN bot_user_events e ON e.user_id=r.user_id
+            WHERE r.survey_id=%s
+            AND a.text_answer IS NOT NULL
+            AND LENGTH(TRIM(a.text_answer)) > 0
+            GROUP BY q.question_text, a.text_answer, r.user_id, a.created_at
+            ORDER BY a.created_at DESC
+            LIMIT 8
+        """, (survey_id,))
+        text_rows = cur.fetchall()
+
+    rating_text = []
+    for question, avg, one, two, three, four, five, total in rating_rows:
+        positive = round(((four + five) / total) * 100, 1) if total else 0
+        rating_text.append(
+            f"- {question}\n  Media: {round(float(avg), 2)}/5 · Positivo: {positive}% · 1:{one} 2:{two} 3:{three} 4:{four} 5:{five}"
+        )
+
+    text_answers = []
+    for question, answer, user_id, username in text_rows:
+        user_label = f"@{username}" if username else str(user_id)
+        text_answers.append(f"- {question} · {user_label}: {answer[:180]}")
+
+    return (
+        f"📊 Resumen de respuestas #{survey_id}\n\n"
+        "Preguntas 1-5:\n"
+        f"{chr(10).join(rating_text) or 'Sin respuestas numéricas.'}\n\n"
+        "Respuestas de texto recientes:\n"
+        f"{chr(10).join(text_answers) or 'Sin respuestas de texto.'}"
     )
 
 
@@ -3428,6 +3891,26 @@ async def receive_customer_satisfaction_text(update: Update, context: ContextTyp
         context,
         update.effective_chat.id,
         response_id
+    )
+
+
+async def receive_user_tracking_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message or not update.message.text:
+        return
+
+    if not is_super_admin(update.effective_user.id):
+        context.user_data.pop("admin_user_tracking_search", None)
+        await update.message.reply_text("⛔ Solo el superadmin puede usar seguimiento de usuarios.")
+        return
+
+    search_text = update.message.text.strip()
+    context.user_data.pop("admin_user_tracking_search", None)
+    profile_data = fetch_user_activity_profile(search_text)
+
+    await update.message.reply_text(
+        build_user_tracking_user_profile_text(profile_data),
+        reply_markup=build_user_tracking_panel_keyboard()
     )
 
 
@@ -5207,6 +5690,20 @@ async def grant_group_user_promo_access(context, chat_id, telegram_user, promo_r
             "code": code,
             "is_permanent": is_permanent,
             "duration_days": duration_days
+        }
+    )
+
+    log_user_event_by_ids(
+        user_id,
+        "code_redeemed",
+        event_key="group_user_promo_code",
+        username=telegram_user.username,
+        first_name=telegram_user.first_name,
+        group_id=group_id,
+        metadata={
+            "code_id": code_id,
+            "duration_days": duration_days,
+            "is_permanent": is_permanent
         }
     )
 
@@ -16616,6 +17113,116 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "admin_user_tracking":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_user_tracking_overview_text(),
+            reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_user_tracking_search":
+
+        context.user_data["admin_user_tracking_search"] = True
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "👤 Buscar usuario\n\nEscribe un user_id o @username para ver actividad registrada dentro del bot.",
+            reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_user_tracking_latest":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_user_tracking_events_text("🕒 Última actividad"),
+            reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_user_tracking_groups":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_user_tracking_groups_text(),
+            reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_user_tracking_payments":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_user_tracking_payments_text(),
+            reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_user_tracking_codes":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_user_tracking_events_text("🎟 Códigos canjeados", event_type="code_redeemed"),
+            reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_user_tracking_support":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_user_tracking_events_text("🛟 Soporte", event_type="support_message"),
+            reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_user_tracking_surveys":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_user_tracking_events_text("😊 Encuestas", event_type="survey_completed"),
+            reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_user_tracking_locations":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_user_tracking_events_text("📍 Ubicaciones", event_type="location_shared"),
+            reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
     if data == "admin_owners_panel":
 
         await send_clean_message(
@@ -18270,6 +18877,125 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             response_id
+        )
+
+        return
+
+
+    if data == "satisfaction_detail":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_satisfaction_survey_list_text(user_id, context),
+            reply_markup=build_satisfaction_survey_list_keyboard(user_id, context)
+        )
+
+        return
+
+
+    if data.startswith("satisfaction_survey_") and not data.startswith("satisfaction_survey_users_") and not data.startswith("satisfaction_survey_summary_"):
+
+        try:
+            survey_id = int(data.replace("satisfaction_survey_", "", 1))
+        except Exception:
+            await query.message.reply_text("❌ Encuesta no válida.")
+            return
+
+        if not user_can_view_satisfaction_survey(user_id, survey_id):
+            await query.message.reply_text("⛔ No tienes permiso para ver esta encuesta.")
+            return
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_satisfaction_survey_detail_text(survey_id),
+            reply_markup=build_satisfaction_survey_detail_keyboard(survey_id)
+        )
+
+        return
+
+
+    if data.startswith("satisfaction_survey_users_"):
+
+        payload = data.replace("satisfaction_survey_users_", "", 1)
+        parts = payload.rsplit("_", 1)
+
+        if len(parts) != 2 or not parts[0].isdigit():
+            await query.message.reply_text("❌ Encuesta no válida.")
+            return
+
+        survey_id = int(parts[0])
+        status = parts[1]
+
+        if not user_can_view_satisfaction_survey(user_id, survey_id):
+            await query.message.reply_text("⛔ No tienes permiso para ver esta encuesta.")
+            return
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_satisfaction_survey_users_text(survey_id, status),
+            reply_markup=build_satisfaction_survey_users_keyboard(survey_id, status)
+        )
+
+        return
+
+
+    if data.startswith("satisfaction_survey_summary_"):
+
+        try:
+            survey_id = int(data.replace("satisfaction_survey_summary_", "", 1))
+        except Exception:
+            await query.message.reply_text("❌ Encuesta no válida.")
+            return
+
+        if not user_can_view_satisfaction_survey(user_id, survey_id):
+            await query.message.reply_text("⛔ No tienes permiso para ver esta encuesta.")
+            return
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_satisfaction_summary_answers_text(survey_id),
+            reply_markup=build_satisfaction_survey_detail_keyboard(survey_id)
+        )
+
+        return
+
+
+    if data.startswith("satisfaction_response_"):
+
+        try:
+            response_id = int(data.replace("satisfaction_response_", "", 1))
+        except Exception:
+            await query.message.reply_text("❌ Respuesta no válida.")
+            return
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT survey_id
+                    FROM customer_satisfaction_responses
+                    WHERE id=%s
+                    LIMIT 1
+                """, (response_id,))
+                row = cur.fetchone()
+        except Exception:
+            row = None
+
+        if not row or not user_can_view_satisfaction_survey(user_id, row[0]):
+            await query.message.reply_text("⛔ No tienes permiso para ver esta respuesta.")
+            return
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_satisfaction_response_detail_text(response_id),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver", callback_data=f"satisfaction_survey_{row[0]}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return
