@@ -8,7 +8,7 @@ from bot_config import ADMIN_ID, TOKEN
 from db import conn
 from invite_link_service import create_telegram_invite_link
 from notification_service import notify_super_admins, send_telegram_message
-from rbac_helpers import get_group_owner_user_id
+from rbac_helpers import get_group_owner_user_id, is_user_group_owner
 from user_activity_logger import log_user_event_by_ids
 
 
@@ -175,6 +175,7 @@ def get_user_group_access_state(user_id, group_id):
         "group_name": None,
         "is_free_group": False,
         "has_active_access": False,
+        "is_group_owner": False,
         "access_source": "unknown",
         "subscription_status": "none",
         "expires_at": None,
@@ -227,6 +228,18 @@ def get_user_group_access_state(user_id, group_id):
         state["reason"] = reason
 
 
+    def mark_owner_access():
+
+        state["is_group_owner"] = True
+        state["has_active_access"] = True
+        state["access_source"] = "owner"
+        state["subscription_status"] = "active"
+        state["can_buy_again"] = False
+        state["can_recover_link"] = False
+        state["can_renew"] = False
+        state["reason"] = "owner_access"
+
+
     try:
 
         with conn.cursor() as cur:
@@ -256,11 +269,21 @@ def get_user_group_access_state(user_id, group_id):
             state["telegram_group_id"] = group_row[2]
             state["is_free_group"] = bool(group_row[3])
 
+
+            if is_user_group_owner(user_id, group_id):
+
+                mark_owner_access()
+
     except Exception as e:
 
         print("get_user_group_access_state_group_error:", str(e)[:200])
         state["can_buy_again"] = False
         state["reason"] = "group_lookup_error"
+        return state
+
+
+    if state["is_group_owner"]:
+
         return state
 
 
@@ -683,7 +706,9 @@ def should_block_new_group_purchase(access_state):
         return False
 
     return (
-        access_state.get("has_active_access") is True
+        access_state.get("is_group_owner") is True
+        or access_state.get("reason") == "owner_access"
+        or access_state.get("has_active_access") is True
         or (
             access_state.get("subscription_status") == "pending"
             and access_state.get("pending_payment_is_stale") is not True
@@ -695,21 +720,32 @@ def should_block_new_group_purchase(access_state):
 def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", event_type="purchase_blocked_existing_access", access_state=None):
 
     access_state = access_state or {}
+    actual_event_type = (
+        "owner_self_purchase_blocked"
+        if access_state.get("is_group_owner") or access_state.get("reason") == "owner_access"
+        else event_type
+    )
 
     log_event(
-        event_type,
-        category="payment" if event_type != "free_access_blocked_existing_access" else "access",
+        actual_event_type,
+        category="payment" if actual_event_type != "free_access_blocked_existing_access" else "access",
         severity="info",
         scope="group",
         group_id=group_id,
         actor_user_id=user_id,
         target_user_id=user_id,
-        message="Se bloqueó un nuevo acceso/pago porque el usuario ya tiene acceso o un pago pendiente.",
+        message=(
+            "Se bloqueó autocobro del owner de la comunidad."
+            if actual_event_type == "owner_self_purchase_blocked"
+            else "Se bloqueó un nuevo acceso/pago porque el usuario ya tiene acceso o un pago pendiente."
+        ),
         metadata={
             "provider": provider,
+            "user_id": user_id,
             "subscription_status": access_state.get("subscription_status"),
             "last_payment_status": access_state.get("last_payment_status"),
             "access_source": access_state.get("access_source"),
+            "is_group_owner": access_state.get("is_group_owner"),
             "has_active_invite_link": access_state.get("has_active_invite_link"),
             "has_active_code_access": access_state.get("has_active_code_access"),
             "paid_without_access_record": access_state.get("paid_without_access_record"),
@@ -725,16 +761,18 @@ def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", 
 
     log_user_event_by_ids(
         user_id,
-        event_type,
+        actual_event_type,
         event_key=f"{provider}_{group_id}",
         group_id=group_id,
         payment_provider=provider,
         payment_scope="group",
         metadata={
+            "provider": provider,
             "subscription_status": access_state.get("subscription_status"),
             "last_payment_status": access_state.get("last_payment_status"),
             "last_payment_provider": access_state.get("last_payment_provider"),
             "access_source": access_state.get("access_source"),
+            "is_group_owner": access_state.get("is_group_owner"),
             "has_active_invite_link": access_state.get("has_active_invite_link"),
             "ignored_pending_payment": access_state.get("ignored_pending_payment"),
             "ignored_pending_provider": access_state.get("ignored_pending_provider"),
@@ -747,6 +785,14 @@ def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", 
 
 
 def build_existing_access_api_response(access_state):
+
+    if access_state.get("is_group_owner") or access_state.get("reason") == "owner_access":
+
+        return {
+            "error": "Eres el propietario de esta comunidad. No necesitas comprar acceso.",
+            "reason": "owner_access"
+        }
+
 
     if access_state.get("subscription_status") == "pending":
 

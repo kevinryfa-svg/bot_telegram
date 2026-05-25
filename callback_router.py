@@ -703,6 +703,15 @@ def build_existing_group_access_text(access_state):
     group_name = access_state.get("group_name") or f"Grupo {access_state.get('group_id')}"
     expires_at = access_state.get("expires_at")
 
+    if access_state.get("reason") == "owner_access":
+
+        return (
+            f"👑 Eres el propietario de {group_name}.\n\n"
+            "No necesitas comprar acceso.\n"
+            "Puedes gestionar esta comunidad desde tu panel."
+        )
+
+
     if access_state.get("has_active_access"):
 
         return (
@@ -1011,7 +1020,18 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
     telegram_group_id = access_state.get("telegram_group_id")
 
 
-    if access_state.get("has_active_access"):
+    if access_state.get("reason") == "owner_access":
+
+        keyboard.append([InlineKeyboardButton(
+            "⚙️ Gestionar comunidad",
+            callback_data="admin_edit_group"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            "📊 Panel owner",
+            callback_data="owner_panel_general"
+        )])
+
+    elif access_state.get("has_active_access"):
 
         keyboard.append([InlineKeyboardButton(
             "🔗 Recuperar/Reenviar enlace",
@@ -1079,10 +1099,12 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
         )])
 
 
-    keyboard.append([InlineKeyboardButton(
-        "🛟 Soporte",
-        callback_data=f"public_support_group_{group_id}"
-    )])
+    if access_state.get("reason") != "owner_access":
+
+        keyboard.append([InlineKeyboardButton(
+            "🛟 Soporte",
+            callback_data=f"public_support_group_{group_id}"
+        )])
     keyboard.append([InlineKeyboardButton(
         "🏠 Inicio",
         callback_data="public_back_start"
