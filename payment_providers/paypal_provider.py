@@ -373,6 +373,7 @@ def create_platform_paypal_order(
         idempotency_key=internal_reference,
         metadata={
             **safe_metadata,
+            "approval_url": approval_url,
             "paypal_order_id": order_id
         }
     )
@@ -582,6 +583,7 @@ def create_group_paypal_order(
         idempotency_key=internal_reference,
         metadata={
             **safe_metadata,
+            "approval_url": approval_url,
             "paypal_order_id": order_id
         }
     )

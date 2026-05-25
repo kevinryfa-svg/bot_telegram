@@ -453,6 +453,7 @@ def create_platform_revolut_order(
         idempotency_key=internal_reference,
         metadata={
             **safe_metadata,
+            "checkout_url": checkout_url,
             "revolut_order_id": order_id
         }
     )
@@ -600,6 +601,7 @@ def create_group_revolut_order(
         idempotency_key=internal_reference,
         metadata={
             **safe_metadata,
+            "checkout_url": checkout_url,
             "revolut_order_id": order_id
         }
     )

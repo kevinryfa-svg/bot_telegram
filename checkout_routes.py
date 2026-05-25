@@ -176,6 +176,7 @@ def register_checkout_routes(app):
             external_checkout_id=stripe_session_id,
             idempotency_key=stripe_session_id,
             metadata={
+                "checkout_url": session.url,
                 "price_id": price_id,
                 "source": "create_checkout_session"
             }

@@ -712,15 +712,36 @@ def build_existing_group_access_text(access_state):
             "Si crees que esto es un error, abre soporte."
         )
 
-    if access_state.get("subscription_status") == "pending":
-
-        provider = access_state.get("last_payment_provider") or "proveedor"
+    if access_state.get("reason") == "payment_pending_stale":
 
         return (
-            f"⏳ Tienes un pago pendiente para {group_name}.\n\n"
+            f"⏳ Tu intento de pago anterior para {group_name} parece caducado.\n\n"
+            "Puedes crear uno nuevo desde el botón de abajo.\n"
+            "Si ya pagaste, abre soporte para revisar el pago y evitar duplicados."
+        )
+
+    if access_state.get("subscription_status") == "pending":
+
+        provider = (
+            access_state.get("pending_payment_provider")
+            or access_state.get("last_payment_provider")
+            or "proveedor"
+        )
+
+        if access_state.get("pending_payment_can_resume"):
+
+            return (
+                f"⏳ Tienes un pago pendiente para {group_name}.\n\n"
+                "Puedes continuar el pago desde el botón de abajo.\n"
+                "Si ya pagaste, revisa el estado o abre soporte."
+            )
+
+        return (
+            f"⏳ Hay un intento de pago pendiente para {group_name}, pero no puedo recuperar el enlace de pago.\n\n"
             f"Proveedor: {provider}\n"
             f"Estado: {access_state.get('last_payment_status') or 'pending'}\n\n"
-            "No crearé otro pago mientras este siga pendiente. Si tarda demasiado, abre soporte."
+            "Si no llegaste a pagar, espera unos minutos o revisa el estado.\n"
+            "Si ya pagaste, abre soporte para revisar el pago y evitar duplicados."
         )
 
     if access_state.get("reason") == "paid_without_access_record":
@@ -973,7 +994,23 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
             callback_data="mis_subs"
         )])
 
+    elif access_state.get("reason") == "payment_pending_stale":
+
+        keyboard.append([InlineKeyboardButton(
+            "🔄 Crear nuevo pago / Ver planes",
+            callback_data=f"group_{group_id}"
+        )])
+
     elif access_state.get("subscription_status") == "pending":
+
+        checkout_url = access_state.get("pending_payment_checkout_url")
+
+        if access_state.get("pending_payment_can_resume") and checkout_url:
+
+            keyboard.append([InlineKeyboardButton(
+                "💳 Continuar pago",
+                url=checkout_url
+            )])
 
         keyboard.append([InlineKeyboardButton(
             "🔁 Revisar estado del pago",

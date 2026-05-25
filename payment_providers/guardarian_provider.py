@@ -460,6 +460,7 @@ def update_guardarian_transaction_reference(transaction_id, provider_order_id, p
     metadata = sanitize_payment_metadata({
         "guardarian_transaction_id": provider_order_id,
         "guardarian_status": provider_transaction.get("status") if isinstance(provider_transaction, dict) else None,
+        "payment_url": extract_guardarian_payment_url(provider_transaction),
         "guardarian_payment_url_present": bool(extract_guardarian_payment_url(provider_transaction))
     })
 
