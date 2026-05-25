@@ -8423,14 +8423,29 @@ def build_owner_section_keyboard(user_id, group_id, section):
 
     elif section == "payments":
 
+        owner_can_manage_payment_methods = is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id
+
+
         if user_has_group_permission_any(user_id, group_id, ["can_manage_plans", "can_manage_groups"]):
             keyboard.append([InlineKeyboardButton("📋 Ver planes", callback_data="view_group_plans")])
             keyboard.append([InlineKeyboardButton("💳 Crear/editar planes", callback_data="edit_group_plans")])
 
-        if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
-            keyboard.append([InlineKeyboardButton("🔗 Stripe/configuración pagos", callback_data="edit_group_stripe")])
 
-        if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
+        if owner_can_manage_payment_methods:
+            keyboard.extend([
+                [InlineKeyboardButton("💳 Stripe", callback_data="edit_group_stripe")],
+                [InlineKeyboardButton("🅿️ PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+                [InlineKeyboardButton("🏦 Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")],
+                [InlineKeyboardButton("💱 ChangeNOW.io / Cripto", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")],
+                [InlineKeyboardButton("💳 Tarjeta EUR → USDT / Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_GUARDARIAN}")],
+                [InlineKeyboardButton("🎟 Códigos y promociones", callback_data="owner_panel_codes")]
+            ])
+
+
+        if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]) and not owner_can_manage_payment_methods:
+            keyboard.append([InlineKeyboardButton("🔗 Estado Stripe", callback_data="edit_group_stripe")])
+
+        if owner_can_manage_payment_methods:
             keyboard.append([InlineKeyboardButton("💳 Métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")])
 
         if user_has_group_permission_any(user_id, group_id, ["can_view_payments", "can_manage_payments"]):
@@ -8528,7 +8543,7 @@ OWNER_PANEL_SECTIONS = {
     ),
     "owner_panel_payments": (
         "💳 Planes y pagos del grupo",
-        "Gestiona planes, cobros, Stripe y pagos recibidos.",
+        "Gestiona planes y métodos de pago: Stripe, PayPal, Revolut, ChangeNOW, Guardarian y promociones.",
         ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"],
         "payments"
     ),
@@ -8974,27 +8989,61 @@ def build_owner_commercial_config_text(group_id):
     access_type = "Gratis" if is_free_group is True else "Pago" if is_free_group is False else "No configurado"
 
     return (
-        "🔓 Configuración comercial de la comunidad\n\n"
+        "💳 Configuración de pagos del grupo\n\n"
         f"Comunidad: {group_name or f'Grupo {group_id}'}\n"
         f"Tipo de acceso actual: {access_type}\n"
         f"Planes activos: {active_plans}\n"
         f"Métodos de pago del grupo activos: {active_payment_methods}\n\n"
-        "Cambiar de gratis a pago o de pago a gratis puede afectar ventas, accesos y mensajes del marketplace. "
-        "Por seguridad, esta pantalla no cambia el tipo con un solo toque.\n\n"
-        "Usa las rutas de abajo para revisar planes, métodos de pago y ficha pública antes de hacer cambios sensibles."
+        "Marcar el grupo como de pago no obliga a usar Stripe. Puedes activar uno o varios métodos de pago para cobrar tus suscripciones.\n\n"
+        "💳 Pagos tradicionales\n"
+        "- Stripe\n"
+        "- PayPal\n"
+        "- Revolut\n\n"
+        "🪙 Cripto / USDT\n"
+        "- ChangeNOW.io / Cripto\n"
+        "- Tarjeta EUR → USDT / Guardarian\n\n"
+        "🎟 Promociones\n"
+        "- Códigos y promociones\n\n"
+        "Guardarian permite que el comprador pague con tarjeta en euros y que tú recibas USDT en tu wallet.\n"
+        "ChangeNOW sirve para pagos cripto y puede requerir revisión manual según configuración."
     )
 
 
-def build_owner_commercial_config_keyboard(group_id):
+def build_owner_commercial_config_keyboard(group_id, user_id=None):
 
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Planes y pagos del grupo", callback_data="owner_panel_payments")],
-        [InlineKeyboardButton("💳 Métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
+    keyboard = []
+    owner_can_manage_payment_methods = (
+        user_id is not None
+        and (
+            is_super_admin(user_id)
+            or get_group_owner_user_id(group_id) == user_id
+        )
+    )
+
+
+    if owner_can_manage_payment_methods:
+
+        keyboard.extend([
+            [InlineKeyboardButton("💳 Stripe", callback_data="edit_group_stripe")],
+            [InlineKeyboardButton("🅿️ PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
+            [InlineKeyboardButton("🏦 Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")],
+            [InlineKeyboardButton("💱 ChangeNOW.io / Cripto", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")],
+            [InlineKeyboardButton("💳 Tarjeta EUR → USDT / Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_GUARDARIAN}")],
+            [InlineKeyboardButton("💳 Ver todos los métodos", callback_data=f"owner_group_payment_methods_{group_id}")]
+        ])
+
+
+    keyboard.extend([
+        [InlineKeyboardButton("🎟 Códigos y promociones", callback_data="owner_panel_codes")],
+        [InlineKeyboardButton("📋 Ver planes", callback_data="view_group_plans")],
+        [InlineKeyboardButton("➕ Crear/editar planes", callback_data="edit_group_plans")],
         [InlineKeyboardButton("🖼 Marketplace y preview", callback_data="owner_panel_marketplace")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_payments")],
         [InlineKeyboardButton("⬅️ Volver a configuración", callback_data="owner_panel_general")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 def build_owner_panel_help_text(section):
@@ -9002,7 +9051,7 @@ def build_owner_panel_help_text(section):
     help_texts = {
         "users": "👥 Usuarios y accesos\n\nSirve para revisar usuarios, recuperar enlaces, expulsar, banear y gestionar warnings. Úsalo cuando un usuario tenga problemas de entrada o incumpla normas.",
         "codes": "🎟 Códigos y promociones\n\nCrea códigos de acceso para esta comunidad. Solo afectan a este grupo y no se mezclan con códigos comerciales globales.",
-        "payments": "💳 Planes y pagos\n\nGestiona planes, pagos recibidos, suscripciones activas y métodos de pago preparados por grupo. No cambia el webhook Stripe global.",
+        "payments": "💳 Planes y pagos\n\nGestiona planes, pagos recibidos, suscripciones activas y métodos de pago del grupo. De pago no significa solo Stripe: puedes activar Stripe, PayPal, Revolut, ChangeNOW, Guardarian o códigos/promociones según tu configuración.",
         "security": "🛡 Seguridad\n\nMuestra controles de acceso, logs, anti-intrusos y ubicación. Las acciones que afectan a usuarios reales quedan en logs.",
         "marketplace": "🖼 Marketplace y preview\n\nEdita la ficha pública, previews, categoría y tags de la comunidad.",
         "admins": "👑 Administradores\n\nAñade o retira admins de grupo y define permisos concretos por comunidad.",
@@ -12487,7 +12536,7 @@ def build_creator_setup_keyboard(request_id, payment_mode=None):
 
         keyboard.append([
             InlineKeyboardButton(
-                "💳 Cobros / Stripe propio",
+                "💳 Métodos de pago",
                 callback_data=f"creator_setup_stripe_{request_id}"
             )
         ])
@@ -12512,7 +12561,7 @@ def build_creator_setup_keyboard(request_id, payment_mode=None):
 
         keyboard.append([
             InlineKeyboardButton(
-                "💳 Cobros / Stripe propio",
+                "💳 Métodos de pago",
                 callback_data=f"creator_setup_stripe_{request_id}"
             )
         ])
@@ -21961,8 +22010,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "💳 Grupo de pago\n\n"
-            "Este modo necesita Stripe o un modo de cobro configurado antes de activar ventas. "
-            "La configuración completa del cobro se hará en la siguiente fase."
+            "Este modo necesita planes y al menos un método de cobro configurado antes de activar ventas. "
+            "Puede ser Stripe, PayPal, Revolut, ChangeNOW, Guardarian o promociones según el caso."
         )
 
         return
@@ -24623,7 +24672,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             build_owner_commercial_config_text(group_id),
-            reply_markup=build_owner_commercial_config_keyboard(group_id)
+            reply_markup=build_owner_commercial_config_keyboard(group_id, user_id)
         )
 
         return
@@ -24855,10 +24904,33 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["selected_owner_group"] = group_id
 
 
+        panel_text = f"{title}\n\nEsto sirve para: {description}"
+
+
+        if section == "payments":
+
+            panel_text = (
+                "💳 Configuración de pagos del grupo\n\n"
+                "Este grupo puede vender acceso con varios métodos. De pago no significa solo Stripe.\n\n"
+                "💳 Pagos tradicionales\n"
+                "- Stripe\n"
+                "- PayPal\n"
+                "- Revolut\n\n"
+                "🪙 Cripto / USDT\n"
+                "- ChangeNOW.io / Cripto\n"
+                "- Tarjeta EUR → USDT / Guardarian\n\n"
+                "🎟 Promociones\n"
+                "- Códigos y promociones\n\n"
+                "Marcar el grupo como de pago no obliga a usar Stripe. Puedes activar uno o varios métodos de pago.\n\n"
+                "Guardarian permite que el comprador pague con tarjeta en euros y que tú recibas USDT en tu wallet.\n"
+                "ChangeNOW sirve para pagos cripto y puede requerir revisión manual según configuración."
+            )
+
+
         await send_clean_message(
             context,
             query.message.chat_id,
-            f"{title}\n\nEsto sirve para: {description}",
+            panel_text,
             reply_markup=build_owner_section_keyboard(
                 user_id,
                 group_id,
@@ -27406,8 +27478,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         info_texts = {
             "owner_panel_access_type_info": (
                 "🔓 Tipo gratis/pago\n\n"
-                "El tipo de acceso se mantiene desde la configuración comercial de la comunidad. "
-                "No se cambia desde aquí para evitar tocar pagos o checkout."
+                "El tipo de acceso se revisa desde Configuración de pagos del grupo. "
+                "De pago no significa solo Stripe: puedes activar Stripe, PayPal, Revolut, ChangeNOW, Guardarian o códigos."
             ),
             "owner_panel_general_info": (
                 "⚙️ Configuración general\n\n"
@@ -32192,13 +32264,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        group_id = get_commercial_request_group_id(request_row)
+
+
         if request_row.get("payment_mode") == "free":
 
             await send_clean_message(
             context,
             query.message.chat_id,
-                "💳 Cobros / Stripe propio\n\n"
-                "No aplica para comunidad gratuita. Puedes configurar grupo/canal y textos sin Stripe ni price_id.",
+                "💳 Métodos de pago\n\n"
+                "Esta comunidad está marcada como gratuita. Puedes configurar grupo/canal y textos sin activar métodos de pago.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(
                         "⬅️ Volver",
@@ -32210,15 +32285,44 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        start_creator_setup_state(context, request_id, "stripe")
+        keyboard = []
+
+
+        if group_id:
+
+            keyboard.extend([
+                [InlineKeyboardButton("💳 Abrir métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
+                [InlineKeyboardButton("📋 Ver planes", callback_data="view_group_plans")],
+                [InlineKeyboardButton("➕ Crear/editar planes", callback_data="edit_group_plans")]
+            ])
+
+
+        keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=f"configure_community_{request_id}")])
+        keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
 
         await send_clean_message(
             context,
             query.message.chat_id,
-            "💳 Cobros / Stripe propio\n\n"
-            "Envía tu STRIPE_SECRET_KEY.\n\n"
-            "No se mostrará completa después de guardarla. "
-            "El checkout real con Stripe del creador todavía no se conecta en esta fase."
+            "💳 Configuración de pagos del grupo\n\n"
+            "Marcar la comunidad como de pago no obliga a usar Stripe. Puedes activar uno o varios métodos de pago.\n\n"
+            "💳 Pagos tradicionales\n"
+            "- Stripe\n"
+            "- PayPal\n"
+            "- Revolut\n\n"
+            "🪙 Cripto / USDT\n"
+            "- ChangeNOW.io / Cripto\n"
+            "- Tarjeta EUR → USDT / Guardarian\n\n"
+            "🎟 Promociones\n"
+            "- Códigos y promociones\n\n"
+            "Guardarian permite que el comprador pague con tarjeta en euros y que tú recibas USDT en tu wallet.\n"
+            "ChangeNOW sirve para pagos cripto y puede requerir revisión manual según configuración.\n\n"
+            + (
+                "Abre Métodos de pago del grupo para configurar cada proveedor."
+                if group_id
+                else
+                "Primero vincula tu grupo/canal. Después podrás abrir Métodos de pago del grupo para configurar cada proveedor."
+            ),
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
@@ -32474,7 +32578,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             "✅ Tipo de acceso actualizado.\n\n"
-            "Tu comunidad queda como de pago. Ahora configura tus cobros/Stripe propio y planes con price_id.",
+            "Tu comunidad queda como de pago.\n\n"
+            "Ahora configura planes y elige uno o varios métodos de pago: Stripe, PayPal, Revolut, ChangeNOW o Guardarian EUR → USDT.\n\n"
+            "Marcarla como de pago no obliga a usar Stripe.",
             reply_markup=InlineKeyboardMarkup(
                 build_creator_setup_keyboard(
                     request_id,
