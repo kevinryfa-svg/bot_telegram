@@ -2994,12 +2994,12 @@ def user_can_view_satisfaction_survey(user_id, survey_id):
     except Exception:
         row = None
 
-    if not row or not row[0]:
+    if not row or not safe_satisfaction_value(row, 0):
         return False
 
     return user_has_group_permission_any(
         user_id,
-        row[0],
+        safe_satisfaction_value(row, 0),
         ["can_manage_groups", "can_view_logs"]
     )
 
@@ -3016,6 +3016,80 @@ def get_satisfaction_detail_scope(user_id, context):
     )
 
 
+def safe_satisfaction_value(row, index, default=None):
+
+    try:
+        if row is None or len(row) <= index:
+            return default
+
+        value = row[index]
+        return default if value is None else value
+
+    except Exception:
+        return default
+
+
+def log_satisfaction_detail_row_issue(callback, user_id=None, group_id=None, screen=None, row=None, expected_columns=None):
+
+    try:
+        log_event(
+            "satisfaction_detail_row_issue",
+            category="satisfaction",
+            severity="warning",
+            scope="group" if group_id else "global",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Fila incompleta al renderizar detalle de encuestas.",
+            metadata={
+                "callback": callback,
+                "screen": screen,
+                "expected_columns": expected_columns,
+                "actual_columns": len(row) if row is not None else 0
+            }
+        )
+    except Exception:
+        pass
+
+
+def normalize_satisfaction_survey_row(row, callback="satisfaction_detail", user_id=None, group_id=None, screen="survey_list"):
+
+    if not row or len(row) < 2:
+        log_satisfaction_detail_row_issue(
+            callback,
+            user_id=user_id,
+            group_id=group_id,
+            screen=screen,
+            row=row,
+            expected_columns=12
+        )
+        return None
+
+    if len(row) < 12:
+        log_satisfaction_detail_row_issue(
+            callback,
+            user_id=user_id,
+            group_id=group_id,
+            screen=screen,
+            row=row,
+            expected_columns=12
+        )
+
+    return {
+        "survey_id": safe_satisfaction_value(row, 0),
+        "title": safe_satisfaction_value(row, 1, "Encuesta"),
+        "group_id": safe_satisfaction_value(row, 2),
+        "group_name": safe_satisfaction_value(row, 3, "Global"),
+        "campaign_id": safe_satisfaction_value(row, 4, "default"),
+        "status": safe_satisfaction_value(row, 5, "draft"),
+        "created_at": safe_satisfaction_value(row, 6),
+        "sent_at": safe_satisfaction_value(row, 7),
+        "sent_count": safe_satisfaction_value(row, 8, 0) or 0,
+        "completed_count": safe_satisfaction_value(row, 9, 0) or 0,
+        "failed_count": safe_satisfaction_value(row, 10, 0) or 0,
+        "skipped_count": safe_satisfaction_value(row, 11, 0) or 0
+    }
+
+
 def fetch_satisfaction_surveys_for_scope(group_id=None, limit=12):
 
     params = []
@@ -3027,30 +3101,49 @@ def fetch_satisfaction_surveys_for_scope(group_id=None, limit=12):
 
     params.append(limit)
 
-    with conn.cursor() as cur:
-        cur.execute(f"""
-            SELECT s.id,
-                   COALESCE(s.title, 'Encuesta'),
-                   s.group_id,
-                   COALESCE(g.name, 'Global'),
-                   COALESCE(s.campaign_id, 'default'),
-                   COALESCE(s.status, 'draft'),
-                   s.created_at,
-                   s.sent_at,
-                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status IN ('sent', 'completed', 'failed')),
-                   COUNT(DISTINCT r.user_id) FILTER (WHERE r.completed_at IS NOT NULL),
-                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status='failed'),
-                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status LIKE 'skipped%')
-            FROM customer_satisfaction_surveys s
-            LEFT JOIN groups g ON g.id=s.group_id
-            LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=s.id
-            LEFT JOIN customer_satisfaction_responses r ON r.survey_id=s.id
-            {group_filter}
-            GROUP BY s.id, s.title, s.group_id, g.name, s.campaign_id, s.status, s.created_at, s.sent_at
-            ORDER BY s.created_at DESC, s.id DESC
-            LIMIT %s
-        """, tuple(params))
-        return cur.fetchall()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT s.id,
+                       COALESCE(s.title, 'Encuesta'),
+                       s.group_id,
+                       COALESCE(g.name, 'Global'),
+                       COALESCE(s.campaign_id, 'default'),
+                       COALESCE(s.status, 'draft'),
+                       s.created_at,
+                       s.sent_at,
+                       COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status IN ('sent', 'completed', 'failed')),
+                       COUNT(DISTINCT r.user_id) FILTER (WHERE r.completed_at IS NOT NULL),
+                       COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status='failed'),
+                       COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status LIKE 'skipped%')
+                FROM customer_satisfaction_surveys s
+                LEFT JOIN groups g ON g.id=s.group_id
+                LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=s.id
+                LEFT JOIN customer_satisfaction_responses r ON r.survey_id=s.id
+                {group_filter}
+                GROUP BY s.id, s.title, s.group_id, g.name, s.campaign_id, s.status, s.created_at, s.sent_at
+                ORDER BY s.created_at DESC, s.id DESC
+                LIMIT %s
+            """, tuple(params))
+            return cur.fetchall()
+    except Exception as e:
+        try:
+            log_event(
+                "satisfaction_detail_load_failed",
+                category="satisfaction",
+                severity="warning",
+                scope="group" if group_id else "global",
+                group_id=group_id,
+                message="No se pudo cargar el listado de detalle de encuestas.",
+                metadata={
+                    "callback": "satisfaction_detail",
+                    "error": str(e)[:250]
+                }
+            )
+        except Exception:
+            pass
+
+        return []
 
 
 def build_satisfaction_survey_list_text(user_id, context):
@@ -3063,7 +3156,7 @@ def build_satisfaction_survey_list_text(user_id, context):
     rows = fetch_satisfaction_surveys_for_scope(group_id=group_id)
 
     if not rows:
-        return "📋 Detalle de encuestas\n\nNo hay encuestas registradas en este ámbito."
+        return "📋 Todavía no hay encuestas registradas para mostrar."
 
     lines = [
         "📋 Detalle de encuestas",
@@ -3072,17 +3165,26 @@ def build_satisfaction_survey_list_text(user_id, context):
     ]
 
     for row in rows:
-        survey_id, title, survey_group_id, group_name, campaign_id, status, created_at, sent_at, sent_count, completed_count, failed_count, skipped_count = row
-        pending_count = max((sent_count or 0) - (completed_count or 0) - (failed_count or 0), 0)
-        lines.append(
-            f"\n#{survey_id} · {title}\n"
-            f"Comunidad: {group_name} ({survey_group_id or 'global'})\n"
-            f"Campaña: {campaign_id} · Estado: {status}\n"
-            f"Enviados: {sent_count or 0} · Completados: {completed_count or 0} · Pendientes: {pending_count} · Fallidos: {failed_count or 0} · Omitidos: {skipped_count or 0}\n"
-            f"Creada: {format_tracking_time(created_at)} · Enviada: {format_tracking_time(sent_at)}"
+        survey = normalize_satisfaction_survey_row(
+            row,
+            user_id=user_id,
+            group_id=group_id,
+            screen="survey_list_text"
         )
 
-    return "\n".join(lines)
+        if not survey:
+            continue
+
+        pending_count = max(survey["sent_count"] - survey["completed_count"] - survey["failed_count"], 0)
+        lines.append(
+            f"\n#{survey['survey_id']} · {survey['title']}\n"
+            f"Comunidad: {survey['group_name']} ({survey['group_id'] or 'global'})\n"
+            f"Campaña: {survey['campaign_id']} · Estado: {survey['status']}\n"
+            f"Enviados: {survey['sent_count']} · Completados: {survey['completed_count']} · Pendientes: {pending_count} · Fallidos: {survey['failed_count']} · Omitidos: {survey['skipped_count']}\n"
+            f"Creada: {format_tracking_time(survey['created_at'])} · Enviada: {format_tracking_time(survey['sent_at'])}"
+        )
+
+    return "\n".join(lines) if len(lines) > 3 else "📋 Todavía no hay encuestas registradas para mostrar."
 
 
 def build_satisfaction_survey_list_keyboard(user_id, context):
@@ -3099,11 +3201,20 @@ def build_satisfaction_survey_list_keyboard(user_id, context):
     rows = fetch_satisfaction_surveys_for_scope(group_id=group_id)
 
     for row in rows[:10]:
-        survey_id, title, _survey_group_id, group_name, _campaign_id, _status, _created_at, _sent_at, *_rest = row
+        survey = normalize_satisfaction_survey_row(
+            row,
+            user_id=user_id,
+            group_id=group_id,
+            screen="survey_list_keyboard"
+        )
+
+        if not survey or not survey["survey_id"]:
+            continue
+
         keyboard.append([
             InlineKeyboardButton(
-                f"📝 #{survey_id} · {group_name or title}",
-                callback_data=f"satisfaction_survey_{survey_id}"
+                f"📝 #{survey['survey_id']} · {survey['group_name'] or survey['title']}",
+                callback_data=f"satisfaction_survey_{survey['survey_id']}"
             )
         ])
 
@@ -3115,22 +3226,40 @@ def build_satisfaction_survey_list_keyboard(user_id, context):
 
 def fetch_satisfaction_survey_header(survey_id):
 
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT s.id,
-                   COALESCE(s.title, 'Encuesta'),
-                   s.group_id,
-                   COALESCE(g.name, 'Global'),
-                   COALESCE(s.campaign_id, 'default'),
-                   COALESCE(s.status, 'draft'),
-                   s.created_at,
-                   s.sent_at
-            FROM customer_satisfaction_surveys s
-            LEFT JOIN groups g ON g.id=s.group_id
-            WHERE s.id=%s
-            LIMIT 1
-        """, (survey_id,))
-        return cur.fetchone()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT s.id,
+                       COALESCE(s.title, 'Encuesta'),
+                       s.group_id,
+                       COALESCE(g.name, 'Global'),
+                       COALESCE(s.campaign_id, 'default'),
+                       COALESCE(s.status, 'draft'),
+                       s.created_at,
+                       s.sent_at
+                FROM customer_satisfaction_surveys s
+                LEFT JOIN groups g ON g.id=s.group_id
+                WHERE s.id=%s
+                LIMIT 1
+            """, (survey_id,))
+            return cur.fetchone()
+    except Exception as e:
+        try:
+            log_event(
+                "satisfaction_detail_load_failed",
+                category="satisfaction",
+                severity="warning",
+                message="No se pudo cargar la cabecera de encuesta.",
+                metadata={
+                    "callback": "satisfaction_survey",
+                    "survey_id": survey_id,
+                    "error": str(e)[:250]
+                }
+            )
+        except Exception:
+            pass
+
+        return None
 
 
 def build_satisfaction_survey_detail_text(survey_id):
@@ -3140,32 +3269,74 @@ def build_satisfaction_survey_detail_text(survey_id):
     if not header:
         return "❌ Encuesta no encontrada."
 
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status IN ('sent', 'completed', 'failed')),
-                   COUNT(DISTINCT r.user_id) FILTER (WHERE r.completed_at IS NOT NULL),
-                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status='failed'),
-                   COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status LIKE 'skipped%'),
-                   AVG(a.rating)
-            FROM customer_satisfaction_surveys s
-            LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=s.id
-            LEFT JOIN customer_satisfaction_responses r ON r.survey_id=s.id
-            LEFT JOIN customer_satisfaction_answers a ON a.response_id=r.id AND a.rating IS NOT NULL
-            WHERE s.id=%s
-        """, (survey_id,))
-        sent_count, completed_count, failed_count, skipped_count, average_rating = cur.fetchone()
+    if len(header) < 8:
+        log_satisfaction_detail_row_issue(
+            "satisfaction_survey",
+            group_id=safe_satisfaction_value(header, 2),
+            screen="survey_header",
+            row=header,
+            expected_columns=8
+        )
+        return "⚠️ No he podido cargar el detalle de esta encuesta. Vuelve a intentarlo o pulsa Inicio."
 
-        cur.execute("""
-            SELECT question_text
-            FROM customer_satisfaction_questions
-            WHERE survey_id IS NULL
-            AND COALESCE(is_active, TRUE)=TRUE
-            ORDER BY sort_order ASC, id ASC
-            LIMIT 12
-        """)
-        questions = [row[0] for row in cur.fetchall()]
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status IN ('sent', 'completed', 'failed')),
+                       COUNT(DISTINCT r.user_id) FILTER (WHERE r.completed_at IS NOT NULL),
+                       COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status='failed'),
+                       COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status LIKE 'skipped%'),
+                       AVG(a.rating)
+                FROM customer_satisfaction_surveys s
+                LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=s.id
+                LEFT JOIN customer_satisfaction_responses r ON r.survey_id=s.id
+                LEFT JOIN customer_satisfaction_answers a ON a.response_id=r.id AND a.rating IS NOT NULL
+                WHERE s.id=%s
+            """, (survey_id,))
+            aggregate = cur.fetchone() or (0, 0, 0, 0, None)
 
-    survey_id, title, group_id, group_name, campaign_id, status, created_at, sent_at = header
+            cur.execute("""
+                SELECT question_text
+                FROM customer_satisfaction_questions
+                WHERE survey_id IS NULL
+                AND COALESCE(is_active, TRUE)=TRUE
+                ORDER BY sort_order ASC, id ASC
+                LIMIT 12
+            """)
+            questions = [row[0] for row in cur.fetchall() if row and len(row) > 0]
+    except Exception as e:
+        try:
+            log_event(
+                "satisfaction_detail_load_failed",
+                category="satisfaction",
+                severity="warning",
+                group_id=safe_satisfaction_value(header, 2),
+                message="No se pudo cargar el detalle agregado de encuesta.",
+                metadata={
+                    "callback": "satisfaction_survey",
+                    "survey_id": survey_id,
+                    "error": str(e)[:250]
+                }
+            )
+        except Exception:
+            pass
+
+        aggregate = (0, 0, 0, 0, None)
+        questions = []
+
+    sent_count = safe_satisfaction_value(aggregate, 0, 0) or 0
+    completed_count = safe_satisfaction_value(aggregate, 1, 0) or 0
+    failed_count = safe_satisfaction_value(aggregate, 2, 0) or 0
+    skipped_count = safe_satisfaction_value(aggregate, 3, 0) or 0
+    average_rating = safe_satisfaction_value(aggregate, 4)
+    survey_id = safe_satisfaction_value(header, 0)
+    title = safe_satisfaction_value(header, 1, "Encuesta")
+    group_id = safe_satisfaction_value(header, 2)
+    group_name = safe_satisfaction_value(header, 3, "Global")
+    campaign_id = safe_satisfaction_value(header, 4, "default")
+    status = safe_satisfaction_value(header, 5, "draft")
+    created_at = safe_satisfaction_value(header, 6)
+    sent_at = safe_satisfaction_value(header, 7)
     pending_count = max((sent_count or 0) - (completed_count or 0) - (failed_count or 0), 0)
     response_rate = round(((completed_count or 0) / sent_count) * 100, 1) if sent_count else 0
     average_text = f"{round(float(average_rating), 2)}/5" if average_rating else "Sin datos"
@@ -3212,26 +3383,45 @@ def fetch_satisfaction_survey_users(survey_id, status):
     else:
         status_filter = "(cs.status='failed' OR cs.status LIKE 'skipped%')"
 
-    with conn.cursor() as cur:
-        cur.execute(f"""
-            SELECT cs.user_id,
-                   COALESCE(MAX(u.username), MAX(e.username), ''),
-                   COALESCE(MAX(u.first_name), MAX(e.first_name), ''),
-                   COALESCE(MAX(cs.status), 'sent'),
-                   MIN(cs.sent_at),
-                   MAX(r.completed_at),
-                   MAX(r.id)
-            FROM customer_satisfaction_sent cs
-            LEFT JOIN customer_satisfaction_responses r ON r.survey_id=cs.survey_id AND r.user_id=cs.user_id
-            LEFT JOIN users u ON u.user_id=cs.user_id AND (cs.group_id IS NULL OR u.group_id=cs.group_id)
-            LEFT JOIN bot_user_events e ON e.user_id=cs.user_id
-            WHERE cs.survey_id=%s
-            AND {status_filter}
-            GROUP BY cs.user_id
-            ORDER BY MAX(COALESCE(r.completed_at, cs.sent_at, cs.created_at)) DESC NULLS LAST
-            LIMIT 20
-        """, (survey_id,))
-        return cur.fetchall()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT cs.user_id,
+                       COALESCE(MAX(u.username), MAX(e.username), ''),
+                       COALESCE(MAX(u.first_name), MAX(e.first_name), ''),
+                       COALESCE(MAX(cs.status), 'sent'),
+                       MIN(cs.sent_at),
+                       MAX(r.completed_at),
+                       MAX(r.id)
+                FROM customer_satisfaction_sent cs
+                LEFT JOIN customer_satisfaction_responses r ON r.survey_id=cs.survey_id AND r.user_id=cs.user_id
+                LEFT JOIN users u ON u.user_id=cs.user_id AND (cs.group_id IS NULL OR u.group_id=cs.group_id)
+                LEFT JOIN bot_user_events e ON e.user_id=cs.user_id
+                WHERE cs.survey_id=%s
+                AND {status_filter}
+                GROUP BY cs.user_id
+                ORDER BY MAX(COALESCE(r.completed_at, cs.sent_at, cs.created_at)) DESC NULLS LAST
+                LIMIT 20
+            """, (survey_id,))
+            return cur.fetchall()
+    except Exception as e:
+        try:
+            log_event(
+                "satisfaction_detail_load_failed",
+                category="satisfaction",
+                severity="warning",
+                message="No se pudo cargar usuarios de encuesta.",
+                metadata={
+                    "callback": "satisfaction_survey_users",
+                    "survey_id": survey_id,
+                    "status": status,
+                    "error": str(e)[:250]
+                }
+            )
+        except Exception:
+            pass
+
+        return []
 
 
 def build_satisfaction_survey_users_text(survey_id, status):
@@ -3248,7 +3438,22 @@ def build_satisfaction_survey_users_text(survey_id, status):
 
     lines = [label, ""]
 
-    for user_id, username, first_name, sent_status, sent_at, completed_at, _response_id in rows:
+    for row in rows:
+        if len(row) < 7:
+            log_satisfaction_detail_row_issue(
+                "satisfaction_survey_users",
+                user_id=safe_satisfaction_value(row, 0),
+                screen=f"survey_users_{status}",
+                row=row,
+                expected_columns=7
+            )
+
+        user_id = safe_satisfaction_value(row, 0)
+        username = safe_satisfaction_value(row, 1, "")
+        first_name = safe_satisfaction_value(row, 2, "")
+        sent_status = safe_satisfaction_value(row, 3, "sent")
+        sent_at = safe_satisfaction_value(row, 4)
+        completed_at = safe_satisfaction_value(row, 5)
         user_label = f"@{username}" if username else (first_name or "Sin nombre")
         lines.append(
             f"- {user_label} · ID {user_id}\n"
@@ -3263,9 +3468,24 @@ def build_satisfaction_survey_users_keyboard(survey_id, status):
     rows = fetch_satisfaction_survey_users(survey_id, status)
     keyboard = []
 
-    for user_id, username, first_name, _sent_status, _sent_at, _completed_at, response_id in rows[:12]:
+    for row in rows[:12]:
+        if len(row) < 7:
+            log_satisfaction_detail_row_issue(
+                "satisfaction_survey_users",
+                user_id=safe_satisfaction_value(row, 0),
+                screen=f"survey_users_keyboard_{status}",
+                row=row,
+                expected_columns=7
+            )
+
+        user_id = safe_satisfaction_value(row, 0)
+        username = safe_satisfaction_value(row, 1, "")
+        first_name = safe_satisfaction_value(row, 2, "")
+        response_id = safe_satisfaction_value(row, 6)
+
         if not response_id:
             continue
+
         label = f"👤 @{username}" if username else f"👤 {first_name or user_id}"
         keyboard.append([InlineKeyboardButton(label[:45], callback_data=f"satisfaction_response_{response_id}")])
 
@@ -3277,51 +3497,92 @@ def build_satisfaction_survey_users_keyboard(survey_id, status):
 
 def build_satisfaction_response_detail_text(response_id):
 
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT r.id,
-                   r.survey_id,
-                   r.user_id,
-                   COALESCE(MAX(u.username), MAX(e.username), ''),
-                   COALESCE(MAX(u.first_name), MAX(e.first_name), ''),
-                   COALESCE(MAX(e.last_name), ''),
-                   s.group_id,
-                   COALESCE(g.name, 'Global'),
-                   MIN(cs.sent_at),
-                   r.completed_at
-            FROM customer_satisfaction_responses r
-            JOIN customer_satisfaction_surveys s ON s.id=r.survey_id
-            LEFT JOIN groups g ON g.id=s.group_id
-            LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=r.survey_id AND cs.user_id=r.user_id
-            LEFT JOIN users u ON u.user_id=r.user_id AND (s.group_id IS NULL OR u.group_id=s.group_id)
-            LEFT JOIN bot_user_events e ON e.user_id=r.user_id
-            WHERE r.id=%s
-            GROUP BY r.id, r.survey_id, r.user_id, s.group_id, g.name, r.completed_at
-            LIMIT 1
-        """, (response_id,))
-        header = cur.fetchone()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT r.id,
+                       r.survey_id,
+                       r.user_id,
+                       COALESCE(MAX(u.username), MAX(e.username), ''),
+                       COALESCE(MAX(u.first_name), MAX(e.first_name), ''),
+                       COALESCE(MAX(e.last_name), ''),
+                       s.group_id,
+                       COALESCE(g.name, 'Global'),
+                       MIN(cs.sent_at),
+                       r.completed_at
+                FROM customer_satisfaction_responses r
+                JOIN customer_satisfaction_surveys s ON s.id=r.survey_id
+                LEFT JOIN groups g ON g.id=s.group_id
+                LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=r.survey_id AND cs.user_id=r.user_id
+                LEFT JOIN users u ON u.user_id=r.user_id AND (s.group_id IS NULL OR u.group_id=s.group_id)
+                LEFT JOIN bot_user_events e ON e.user_id=r.user_id
+                WHERE r.id=%s
+                GROUP BY r.id, r.survey_id, r.user_id, s.group_id, g.name, r.completed_at
+                LIMIT 1
+            """, (response_id,))
+            header = cur.fetchone()
 
-        if not header:
-            return "❌ Respuesta no encontrada."
+            if not header:
+                return "❌ Respuesta no encontrada."
 
-        cur.execute("""
-            SELECT q.sort_order,
-                   q.question_text,
-                   a.rating,
-                   a.text_answer
-            FROM customer_satisfaction_answers a
-            JOIN customer_satisfaction_questions q ON q.id=a.question_id
-            WHERE a.response_id=%s
-            ORDER BY q.sort_order ASC, q.id ASC
-        """, (response_id,))
-        answers = cur.fetchall()
+            cur.execute("""
+                SELECT q.sort_order,
+                       q.question_text,
+                       a.rating,
+                       a.text_answer
+                FROM customer_satisfaction_answers a
+                JOIN customer_satisfaction_questions q ON q.id=a.question_id
+                WHERE a.response_id=%s
+                ORDER BY q.sort_order ASC, q.id ASC
+            """, (response_id,))
+            answers = cur.fetchall()
+    except Exception as e:
+        try:
+            log_event(
+                "satisfaction_detail_load_failed",
+                category="satisfaction",
+                severity="warning",
+                message="No se pudo cargar detalle de respuesta de encuesta.",
+                metadata={
+                    "callback": "satisfaction_response",
+                    "response_id": response_id,
+                    "error": str(e)[:250]
+                }
+            )
+        except Exception:
+            pass
 
-    _response_id, survey_id, user_id, username, first_name, last_name, group_id, group_name, sent_at, completed_at = header
+        return "⚠️ No he podido cargar esta respuesta. Vuelve a intentarlo o pulsa Inicio."
+
+    if len(header) < 10:
+        log_satisfaction_detail_row_issue(
+            "satisfaction_response",
+            user_id=safe_satisfaction_value(header, 2),
+            group_id=safe_satisfaction_value(header, 6),
+            screen="response_header",
+            row=header,
+            expected_columns=10
+        )
+        return "⚠️ No he podido cargar esta respuesta. Vuelve a intentarlo o pulsa Inicio."
+
+    survey_id = safe_satisfaction_value(header, 1)
+    user_id = safe_satisfaction_value(header, 2)
+    username = safe_satisfaction_value(header, 3, "")
+    first_name = safe_satisfaction_value(header, 4, "")
+    last_name = safe_satisfaction_value(header, 5, "")
+    group_id = safe_satisfaction_value(header, 6)
+    group_name = safe_satisfaction_value(header, 7, "Global")
+    sent_at = safe_satisfaction_value(header, 8)
+    completed_at = safe_satisfaction_value(header, 9)
     name_text = " ".join(part for part in (first_name, last_name) if part).strip() or "Sin nombre disponible"
     username_text = f"@{username}" if username else "Sin username"
     answer_lines = []
 
-    for sort_order, question_text, rating, text_answer in answers:
+    for row in answers:
+        sort_order = safe_satisfaction_value(row, 0, "-")
+        question_text = safe_satisfaction_value(row, 1, "Pregunta")
+        rating = safe_satisfaction_value(row, 2)
+        text_answer = safe_satisfaction_value(row, 3)
         answer = rating if rating is not None else (text_answer or "-")
         answer_lines.append(
             f"{sort_order}. {question_text}\nRespuesta: {str(answer)[:500]}"
@@ -3340,54 +3601,86 @@ def build_satisfaction_response_detail_text(response_id):
 
 def build_satisfaction_summary_answers_text(survey_id):
 
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT q.question_text,
-                   AVG(a.rating),
-                   COUNT(*) FILTER (WHERE a.rating=1),
-                   COUNT(*) FILTER (WHERE a.rating=2),
-                   COUNT(*) FILTER (WHERE a.rating=3),
-                   COUNT(*) FILTER (WHERE a.rating=4),
-                   COUNT(*) FILTER (WHERE a.rating=5),
-                   COUNT(a.rating)
-            FROM customer_satisfaction_answers a
-            JOIN customer_satisfaction_responses r ON r.id=a.response_id
-            JOIN customer_satisfaction_questions q ON q.id=a.question_id
-            WHERE r.survey_id=%s
-            AND a.rating IS NOT NULL
-            GROUP BY q.id, q.question_text, q.sort_order
-            ORDER BY q.sort_order ASC, q.id ASC
-        """, (survey_id,))
-        rating_rows = cur.fetchall()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT q.question_text,
+                       AVG(a.rating),
+                       COUNT(*) FILTER (WHERE a.rating=1),
+                       COUNT(*) FILTER (WHERE a.rating=2),
+                       COUNT(*) FILTER (WHERE a.rating=3),
+                       COUNT(*) FILTER (WHERE a.rating=4),
+                       COUNT(*) FILTER (WHERE a.rating=5),
+                       COUNT(a.rating)
+                FROM customer_satisfaction_answers a
+                JOIN customer_satisfaction_responses r ON r.id=a.response_id
+                JOIN customer_satisfaction_questions q ON q.id=a.question_id
+                WHERE r.survey_id=%s
+                AND a.rating IS NOT NULL
+                GROUP BY q.id, q.question_text, q.sort_order
+                ORDER BY q.sort_order ASC, q.id ASC
+            """, (survey_id,))
+            rating_rows = cur.fetchall()
 
-        cur.execute("""
-            SELECT q.question_text,
-                   a.text_answer,
-                   r.user_id,
-                   COALESCE(MAX(u.username), MAX(e.username), '')
-            FROM customer_satisfaction_answers a
-            JOIN customer_satisfaction_responses r ON r.id=a.response_id
-            JOIN customer_satisfaction_questions q ON q.id=a.question_id
-            LEFT JOIN users u ON u.user_id=r.user_id
-            LEFT JOIN bot_user_events e ON e.user_id=r.user_id
-            WHERE r.survey_id=%s
-            AND a.text_answer IS NOT NULL
-            AND LENGTH(TRIM(a.text_answer)) > 0
-            GROUP BY q.question_text, a.text_answer, r.user_id, a.created_at
-            ORDER BY a.created_at DESC
-            LIMIT 8
-        """, (survey_id,))
-        text_rows = cur.fetchall()
+            cur.execute("""
+                SELECT q.question_text,
+                       a.text_answer,
+                       r.user_id,
+                       COALESCE(MAX(u.username), MAX(e.username), '')
+                FROM customer_satisfaction_answers a
+                JOIN customer_satisfaction_responses r ON r.id=a.response_id
+                JOIN customer_satisfaction_questions q ON q.id=a.question_id
+                LEFT JOIN users u ON u.user_id=r.user_id
+                LEFT JOIN bot_user_events e ON e.user_id=r.user_id
+                WHERE r.survey_id=%s
+                AND a.text_answer IS NOT NULL
+                AND LENGTH(TRIM(a.text_answer)) > 0
+                GROUP BY q.question_text, a.text_answer, r.user_id, a.created_at
+                ORDER BY a.created_at DESC
+                LIMIT 8
+            """, (survey_id,))
+            text_rows = cur.fetchall()
+    except Exception as e:
+        try:
+            log_event(
+                "satisfaction_detail_load_failed",
+                category="satisfaction",
+                severity="warning",
+                message="No se pudo cargar resumen de respuestas.",
+                metadata={
+                    "callback": "satisfaction_survey_summary",
+                    "survey_id": survey_id,
+                    "error": str(e)[:250]
+                }
+            )
+        except Exception:
+            pass
+
+        rating_rows = []
+        text_rows = []
 
     rating_text = []
-    for question, avg, one, two, three, four, five, total in rating_rows:
+    for row in rating_rows:
+        question = safe_satisfaction_value(row, 0, "Pregunta")
+        avg = safe_satisfaction_value(row, 1)
+        one = safe_satisfaction_value(row, 2, 0) or 0
+        two = safe_satisfaction_value(row, 3, 0) or 0
+        three = safe_satisfaction_value(row, 4, 0) or 0
+        four = safe_satisfaction_value(row, 5, 0) or 0
+        five = safe_satisfaction_value(row, 6, 0) or 0
+        total = safe_satisfaction_value(row, 7, 0) or 0
         positive = round(((four + five) / total) * 100, 1) if total else 0
+        average = round(float(avg), 2) if avg is not None else 0
         rating_text.append(
-            f"- {question}\n  Media: {round(float(avg), 2)}/5 · Positivo: {positive}% · 1:{one} 2:{two} 3:{three} 4:{four} 5:{five}"
+            f"- {question}\n  Media: {average}/5 · Positivo: {positive}% · 1:{one} 2:{two} 3:{three} 4:{four} 5:{five}"
         )
 
     text_answers = []
-    for question, answer, user_id, username in text_rows:
+    for row in text_rows:
+        question = safe_satisfaction_value(row, 0, "Pregunta")
+        answer = safe_satisfaction_value(row, 1, "")
+        user_id = safe_satisfaction_value(row, 2)
+        username = safe_satisfaction_value(row, 3, "")
         user_label = f"@{username}" if username else str(user_id)
         text_answers.append(f"- {question} · {user_label}: {answer[:180]}")
 
@@ -18984,7 +19277,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             row = None
 
-        if not row or not user_can_view_satisfaction_survey(user_id, row[0]):
+        survey_id = safe_satisfaction_value(row, 0)
+
+        if not survey_id or not user_can_view_satisfaction_survey(user_id, survey_id):
             await query.message.reply_text("⛔ No tienes permiso para ver esta respuesta.")
             return
 
@@ -18993,7 +19288,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             build_satisfaction_response_detail_text(response_id),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Volver", callback_data=f"satisfaction_survey_{row[0]}")],
+                [InlineKeyboardButton("⬅️ Volver", callback_data=f"satisfaction_survey_{survey_id}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
