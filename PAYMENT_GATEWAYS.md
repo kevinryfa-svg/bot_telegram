@@ -597,6 +597,21 @@ Aunque ambos están relacionados con cripto/USDT, no son el mismo flujo:
 
 Los códigos comerciales globales y los códigos/promociones de grupo se muestran como rutas separadas. No se mezclan con proveedores de cobro para que owners y superadmin distingan entre pago real y acceso promocional.
 
+### Tipo de acceso de pago
+
+En el panel owner/comunidad, marcar una comunidad como `de pago` solo significa que venderá acceso o suscripciones. No significa que tenga que usar Stripe.
+
+Después de elegir `de pago`, el owner debe entrar en la configuración comercial o en `Métodos de pago del grupo` para activar uno o varios métodos:
+
+- Stripe.
+- PayPal.
+- Revolut.
+- ChangeNOW.io / Cripto.
+- Tarjeta EUR -> USDT / Guardarian.
+- Códigos y promociones.
+
+Stripe sigue disponible desde su propio botón, pero ya no debe ser el destino genérico de `Tipo de acceso -> De pago`.
+
 ## ChangeNOW.io / Cripto en modo seguro
 
 ChangeNOW queda preparado como proveedor cripto configurable desde el bot para dos scopes:
