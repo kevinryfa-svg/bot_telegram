@@ -1,3 +1,4 @@
+import json
 import time
 
 from datetime import datetime, timedelta
@@ -14,6 +15,92 @@ from user_activity_logger import log_user_event_by_ids
 ACTIVE_PAYMENT_STATUSES = ("paid", "completed")
 PENDING_PAYMENT_STATUSES = ("pending", "confirming", "manual_review")
 FAILED_PAYMENT_STATUSES = ("failed", "cancelled", "expired", "refunded")
+PENDING_PAYMENT_STALE_AFTER = timedelta(hours=2)
+PAYMENT_URL_METADATA_KEYS = (
+    "checkout_url",
+    "approval_url",
+    "payment_url",
+    "hosted_url"
+)
+
+
+def is_url(value):
+
+    return isinstance(value, str) and value.startswith(("http://", "https://"))
+
+
+def normalize_metadata_dict(metadata):
+
+    if not metadata:
+
+        return {}
+
+
+    if isinstance(metadata, dict):
+
+        return metadata
+
+
+    if isinstance(metadata, str):
+
+        try:
+
+            parsed = json.loads(metadata)
+
+            return parsed if isinstance(parsed, dict) else {}
+
+        except Exception:
+
+            return {}
+
+
+    return {}
+
+
+def extract_payment_checkout_url(*sources):
+
+    for source in sources:
+
+        metadata = normalize_metadata_dict(source)
+
+        for key in PAYMENT_URL_METADATA_KEYS:
+
+            value = metadata.get(key)
+
+            if is_url(value):
+
+                return value
+
+
+    for source in sources:
+
+        if is_url(source):
+
+            return source
+
+
+    return None
+
+
+def is_pending_payment_stale(created_at, updated_at):
+
+    timestamp = updated_at or created_at
+
+
+    if not timestamp:
+
+        return False
+
+
+    try:
+
+        now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.now()
+
+        return now - timestamp > PENDING_PAYMENT_STALE_AFTER
+
+    except Exception:
+
+        return False
 
 
 def format_payment_amount(amount, currency):
@@ -94,6 +181,13 @@ def get_user_group_access_state(user_id, group_id):
         "last_payment_status": None,
         "last_payment_provider": None,
         "last_payment_created_at": None,
+        "pending_payment_created_at": None,
+        "pending_payment_updated_at": None,
+        "pending_payment_checkout_url": None,
+        "pending_payment_can_resume": False,
+        "pending_payment_is_stale": False,
+        "pending_payment_provider": None,
+        "pending_payment_transaction_id": None,
         "has_active_invite_link": False,
         "has_active_code_access": False,
         "has_user_access_record": False,
@@ -119,6 +213,7 @@ def get_user_group_access_state(user_id, group_id):
     latest_active_payment_provider = None
     latest_pending_payment_status = None
     latest_pending_payment_provider = None
+    latest_pending_payment_is_stale = False
 
 
     def mark_active(access_source, reason):
@@ -289,8 +384,15 @@ def get_user_group_access_state(user_id, group_id):
 
             cur.execute("""
 
-                SELECT provider,
-                       status
+                SELECT id,
+                       provider,
+                       status,
+                       created_at,
+                       updated_at,
+                       external_checkout_id,
+                       external_payment_id,
+                       metadata_json,
+                       metadata
                 FROM payment_transactions
                 WHERE user_id=%s
                 AND group_id=%s
@@ -309,8 +411,36 @@ def get_user_group_access_state(user_id, group_id):
 
             if pending_transaction_row:
 
-                latest_pending_payment_provider = pending_transaction_row[0]
-                latest_pending_payment_status = (pending_transaction_row[1] or "").lower()
+                (
+                    transaction_id,
+                    provider,
+                    status,
+                    created_at,
+                    updated_at,
+                    external_checkout_id,
+                    external_payment_id,
+                    metadata_json,
+                    metadata
+                ) = pending_transaction_row
+                latest_pending_payment_provider = provider
+                latest_pending_payment_status = (status or "").lower()
+                latest_pending_payment_is_stale = is_pending_payment_stale(
+                    created_at,
+                    updated_at
+                )
+
+                state["pending_payment_transaction_id"] = transaction_id
+                state["pending_payment_provider"] = provider
+                state["pending_payment_created_at"] = created_at
+                state["pending_payment_updated_at"] = updated_at
+                state["pending_payment_checkout_url"] = extract_payment_checkout_url(
+                    metadata_json,
+                    metadata,
+                    external_checkout_id,
+                    external_payment_id
+                )
+                state["pending_payment_can_resume"] = bool(state["pending_payment_checkout_url"])
+                state["pending_payment_is_stale"] = latest_pending_payment_is_stale
 
     except Exception as e:
 
@@ -369,6 +499,14 @@ def get_user_group_access_state(user_id, group_id):
 
                 latest_pending_payment_provider = "stripe"
                 latest_pending_payment_status = (pending_payment_row[0] or "").lower()
+                latest_pending_payment_is_stale = is_pending_payment_stale(
+                    pending_payment_row[1],
+                    pending_payment_row[1]
+                )
+                state["pending_payment_provider"] = "stripe"
+                state["pending_payment_created_at"] = pending_payment_row[1]
+                state["pending_payment_updated_at"] = pending_payment_row[1]
+                state["pending_payment_is_stale"] = latest_pending_payment_is_stale
 
 
             if not state["last_payment_status"]:
@@ -518,12 +656,22 @@ def get_user_group_access_state(user_id, group_id):
 
     elif latest_pending_payment_status and not state["can_recover_link"]:
 
-        state["subscription_status"] = "pending"
         state["last_payment_provider"] = latest_pending_payment_provider
         state["last_payment_status"] = latest_pending_payment_status
-        state["can_buy_again"] = False
-        state["can_renew"] = False
-        state["reason"] = "payment_pending"
+
+        if latest_pending_payment_is_stale:
+
+            state["subscription_status"] = "none"
+            state["can_buy_again"] = True
+            state["can_renew"] = True
+            state["reason"] = "payment_pending_stale"
+
+        else:
+
+            state["subscription_status"] = "pending"
+            state["can_buy_again"] = False
+            state["can_renew"] = False
+            state["reason"] = "payment_pending"
 
 
     return state
@@ -536,7 +684,10 @@ def should_block_new_group_purchase(access_state):
 
     return (
         access_state.get("has_active_access") is True
-        or access_state.get("subscription_status") == "pending"
+        or (
+            access_state.get("subscription_status") == "pending"
+            and access_state.get("pending_payment_is_stale") is not True
+        )
         or access_state.get("reason") == "paid_without_access_record"
     )
 
@@ -564,6 +715,10 @@ def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", 
             "paid_without_access_record": access_state.get("paid_without_access_record"),
             "ignored_pending_payment": access_state.get("ignored_pending_payment"),
             "ignored_pending_provider": access_state.get("ignored_pending_provider"),
+            "pending_payment_is_stale": access_state.get("pending_payment_is_stale"),
+            "pending_payment_can_resume": access_state.get("pending_payment_can_resume"),
+            "pending_payment_provider": access_state.get("pending_payment_provider"),
+            "pending_payment_transaction_id": access_state.get("pending_payment_transaction_id"),
             "reason": access_state.get("reason")
         }
     )
@@ -583,6 +738,9 @@ def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", 
             "has_active_invite_link": access_state.get("has_active_invite_link"),
             "ignored_pending_payment": access_state.get("ignored_pending_payment"),
             "ignored_pending_provider": access_state.get("ignored_pending_provider"),
+            "pending_payment_is_stale": access_state.get("pending_payment_is_stale"),
+            "pending_payment_can_resume": access_state.get("pending_payment_can_resume"),
+            "pending_payment_provider": access_state.get("pending_payment_provider"),
             "reason": access_state.get("reason")
         }
     )
