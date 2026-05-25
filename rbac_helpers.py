@@ -659,6 +659,94 @@ def get_group_owner_user_id(group_id):
         return None
 
 
+def is_user_group_owner(user_id, group_id):
+
+    if not user_id or not group_id:
+
+        return False
+
+
+    try:
+
+        user_id = int(user_id)
+
+    except Exception:
+
+        return False
+
+
+    owner_user_id = get_group_owner_user_id(group_id)
+
+
+    try:
+
+        if owner_user_id is not None and int(owner_user_id) == user_id:
+
+            return True
+
+    except Exception:
+
+        pass
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT added_by,
+                       telegram_group_id
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            group_row = cur.fetchone()
+
+
+            if group_row:
+
+                added_by, telegram_group_id = group_row
+
+                if added_by is not None and int(added_by) == user_id:
+
+                    return True
+
+
+                cur.execute("""
+
+                    SELECT 1
+                    FROM commercial_requests
+                    WHERE user_id=%s
+                    AND (
+                        approved_group_id=%s
+                        OR approved_telegram_group_id=%s
+                    )
+                    LIMIT 1
+
+                """, (
+                    user_id,
+                    group_id,
+                    telegram_group_id
+                ))
+
+                if cur.fetchone():
+
+                    return True
+
+    except Exception as e:
+
+        print(
+            "Error comprobando owner real del grupo:",
+            e
+        )
+
+
+    return False
+
+
 def user_owns_group(user_id, group_id):
 
     if not user_id or not group_id:
