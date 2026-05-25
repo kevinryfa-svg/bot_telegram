@@ -740,8 +740,8 @@ def build_existing_group_access_text(access_state):
             f"⏳ Hay un intento de pago pendiente para {group_name}, pero no puedo recuperar el enlace de pago.\n\n"
             f"Proveedor: {provider}\n"
             f"Estado: {access_state.get('last_payment_status') or 'pending'}\n\n"
-            "Si no llegaste a pagar, espera unos minutos o revisa el estado.\n"
-            "Si ya pagaste, abre soporte para revisar el pago y evitar duplicados."
+            "Si ya pagaste, no crees otro pago: abre soporte para revisarlo y evitar duplicados.\n"
+            "Si no llegaste a pagar, puedes crear un nuevo intento desde Ver planes."
         )
 
     if access_state.get("reason") == "paid_without_access_record":
@@ -773,6 +773,34 @@ def append_existing_group_access_notice(text, user_id, group_id):
 
 
     access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if not should_block_new_group_purchase(access_state):
+
+        return text
+
+
+    notice = build_existing_group_access_text(access_state)
+    max_caption_length = 950
+    available_text_length = max_caption_length - len(notice) - 2
+
+
+    if available_text_length > 20 and len(text) > available_text_length:
+
+        text = f"{text[:available_text_length - 3]}..."
+
+
+    return f"{text}\n\n{notice}"
+
+
+async def append_existing_group_access_notice_async(context, text, user_id, group_id):
+
+    if not user_id:
+
+        return text
+
+
+    access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
     if not should_block_new_group_purchase(access_state):
@@ -1010,6 +1038,13 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
             keyboard.append([InlineKeyboardButton(
                 "💳 Continuar pago",
                 url=checkout_url
+            )])
+
+        else:
+
+            keyboard.append([InlineKeyboardButton(
+                "🔄 Crear nuevo pago / Ver planes",
+                callback_data=f"group_{group_id}"
             )])
 
         keyboard.append([InlineKeyboardButton(
@@ -11805,7 +11840,8 @@ def format_marketplace_preview_caption(group):
 async def send_marketplace_group_card(context, chat_id, group, user_id=None):
 
     caption = format_marketplace_group_caption(group)
-    caption = append_existing_group_access_notice(
+    caption = await append_existing_group_access_notice_async(
+        context,
         caption,
         user_id,
         group.get("id")
@@ -11851,7 +11887,8 @@ async def send_marketplace_group_card(context, chat_id, group, user_id=None):
 async def send_marketplace_preview(context, chat_id, group, user_id=None):
 
     caption = format_marketplace_preview_caption(group)
-    caption = append_existing_group_access_notice(
+    caption = await append_existing_group_access_notice_async(
+        context,
         caption,
         user_id,
         group.get("id")
@@ -17551,17 +17588,26 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if index == total
                 else None
             )
+            caption = format_dynamic_preview_video_caption(
+                group,
+                video,
+                index,
+                total
+            )
+
+            if index == total:
+
+                caption = await append_existing_group_access_notice_async(
+                    context,
+                    caption,
+                    user_id,
+                    group.get("id")
+                )
 
             message = await context.bot.send_video(
                 chat_id=query.message.chat_id,
                 video=video.get("video_file_id"),
-                caption=format_dynamic_preview_video_caption_for_user(
-                    group,
-                    video,
-                    index,
-                    total,
-                    user_id=user_id
-                ),
+                caption=caption,
                 reply_markup=reply_markup
             )
             remember_preview_message(
