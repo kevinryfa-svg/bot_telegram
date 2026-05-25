@@ -7,6 +7,13 @@ from rbac_helpers import (
     user_owns_group
 )
 from payment_service import list_group_payment_provider_statuses
+from payment_gateway_config import (
+    PAYMENT_PROVIDER_CHANGENOW,
+    PAYMENT_PROVIDER_GUARDARIAN,
+    PAYMENT_PROVIDER_PAYPAL,
+    PAYMENT_PROVIDER_REVOLUT,
+    PAYMENT_PROVIDER_STRIPE
+)
 from user_activity_logger import fetch_tracking_overview, fetch_recent_user_events
 from ai_policy import (
     AI_CONTEXT_OWNER_DASHBOARD,
@@ -18,6 +25,25 @@ from ai_policy import (
     AI_ROLE_SUPERADMIN,
     sanitize_ai_text
 )
+
+
+SUPPORTED_PAYMENT_METHODS = [
+    "Stripe",
+    "PayPal",
+    "Revolut",
+    "ChangeNOW.io / Cripto",
+    "Guardarian / Tarjeta EUR → USDT",
+    "Códigos y promociones"
+]
+
+
+PAYMENT_PROVIDER_AI_LABELS = {
+    PAYMENT_PROVIDER_STRIPE: "Stripe",
+    PAYMENT_PROVIDER_PAYPAL: "PayPal",
+    PAYMENT_PROVIDER_REVOLUT: "Revolut",
+    PAYMENT_PROVIDER_CHANGENOW: "ChangeNOW.io / Cripto",
+    PAYMENT_PROVIDER_GUARDARIAN: "Guardarian / Tarjeta EUR → USDT"
+}
 
 
 def fetch_one(sql, params=None):
@@ -81,6 +107,82 @@ def user_can_use_group_ai_context(user_id, role, group_id):
     return int(group_id) in [int(item) for item in get_accessible_ai_group_ids(user_id, role)]
 
 
+def get_group_ai_payment_methods(group_id):
+
+    active_methods = []
+    flags = {
+        "group_has_stripe": False,
+        "group_has_paypal": False,
+        "group_has_revolut": False,
+        "group_has_changenow": False,
+        "group_has_guardarian": False,
+        "codes_available": False
+    }
+
+    stripe_plan_count = fetch_one("""
+        SELECT COUNT(*)
+        FROM plans
+        WHERE group_id=%s
+        AND COALESCE(is_active, TRUE)=TRUE
+        AND price_id IS NOT NULL
+        AND price_id <> ''
+    """, (group_id,))
+
+    if stripe_plan_count and stripe_plan_count[0] > 0:
+        flags["group_has_stripe"] = True
+        active_methods.append("Stripe")
+
+    for status in list_group_payment_provider_statuses(group_id):
+        provider = status.get("provider")
+        label = PAYMENT_PROVIDER_AI_LABELS.get(provider)
+
+        if provider == PAYMENT_PROVIDER_STRIPE:
+            continue
+
+        if (
+            label
+            and status.get("global_enabled") is True
+            and status.get("group_enabled") is True
+            and status.get("status") == "active"
+        ):
+            active_methods.append(label)
+
+            if provider == PAYMENT_PROVIDER_PAYPAL:
+                flags["group_has_paypal"] = True
+            elif provider == PAYMENT_PROVIDER_REVOLUT:
+                flags["group_has_revolut"] = True
+            elif provider == PAYMENT_PROVIDER_CHANGENOW:
+                flags["group_has_changenow"] = True
+            elif provider == PAYMENT_PROVIDER_GUARDARIAN:
+                flags["group_has_guardarian"] = True
+
+    promo_count = fetch_one("""
+        SELECT COUNT(*)
+        FROM group_user_promo_codes
+        WHERE group_id=%s
+        AND COALESCE(is_active, TRUE)=TRUE
+        AND (
+            expires_at IS NULL
+            OR expires_at > NOW()
+        )
+        AND (
+            max_uses IS NULL
+            OR max_uses = 0
+            OR used_count < max_uses
+        )
+    """, (group_id,))
+
+    if promo_count and promo_count[0] > 0:
+        flags["codes_available"] = True
+        active_methods.append("Códigos y promociones")
+
+    return {
+        "supported": SUPPORTED_PAYMENT_METHODS,
+        "active": active_methods,
+        **flags
+    }
+
+
 def build_public_marketplace_context(user_id):
 
     groups = fetch_all("""
@@ -118,6 +220,8 @@ def build_public_marketplace_context(user_id):
 
     lines = [
         "Contexto comprador seguro:",
+        "Métodos de pago implementados por el bot: " + ", ".join(SUPPORTED_PAYMENT_METHODS) + ".",
+        "Cada comunidad activa sus propios métodos. Si no hay comunidad concreta, no prometas un método como disponible.",
         "Comunidades visibles recientes:"
     ]
 
@@ -184,6 +288,7 @@ def build_group_context(user_id, role, group_id):
         AND r.completed_at IS NOT NULL
     """, (group_id,))
     recent_events = fetch_recent_user_events(limit=8, group_id=group_id)
+    payment_methods = get_group_ai_payment_methods(group_id)
 
     lines = [
         "Contexto de comunidad autorizado:",
@@ -202,7 +307,17 @@ def build_group_context(user_id, role, group_id):
     if not plans:
         lines.append("- No hay planes registrados.")
 
-    lines.append("Métodos de pago del grupo:")
+    lines.append("Métodos de pago implementados por el bot:")
+    lines.append("- " + ", ".join(SUPPORTED_PAYMENT_METHODS) + ".")
+    lines.append("Métodos activos/configurados para esta comunidad:")
+
+    if payment_methods.get("active"):
+        for method in payment_methods.get("active"):
+            lines.append(f"- {method}.")
+    else:
+        lines.append("- No hay métodos activos detectados en el contexto seguro.")
+
+    lines.append("Estado técnico de métodos del grupo:")
 
     for status in list_group_payment_provider_statuses(group_id):
         lines.append(
@@ -334,13 +449,18 @@ def build_ai_context(user_id, role=None, context_key=None, group_id=None, suppor
         "role": role,
         "context_key": context_key,
         "group_id": group_id,
-        "support_ticket_id": support_ticket_id
+        "support_ticket_id": support_ticket_id,
+        "payment_methods_supported_global": SUPPORTED_PAYMENT_METHODS
     }
+
+    if group_id:
+        context_summary.update(get_group_ai_payment_methods(group_id))
 
     return {
         "role": role,
         "context_key": context_key,
         "group_id": group_id,
         "context_text": context_text,
-        "context_summary": json.dumps(context_summary, ensure_ascii=False)
+        "context_summary": json.dumps(context_summary, ensure_ascii=False),
+        "payment_methods": context_summary
     }

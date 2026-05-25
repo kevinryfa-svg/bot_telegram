@@ -66,6 +66,7 @@ from ai_policy import (
 from ai_response_service import (
     build_ai_feedback_keyboard_rows,
     build_contextual_ai_answer,
+    get_ai_interaction_feedback_context,
     update_ai_feedback
 )
 from support_ai_service import build_support_reply_suggestion
@@ -2004,6 +2005,38 @@ def build_ai_feedback_markup(interaction_id, back_callback=None):
     return InlineKeyboardMarkup(rows)
 
 
+def build_ai_feedback_next_keyboard(interaction_id=None, role=None, include_report=False, include_support=False):
+
+    ask_callback = "public_ai_help"
+
+    if role == AI_ROLE_BUYER:
+        ask_callback = "ai_ask_buyer"
+    elif role == AI_ROLE_OWNER:
+        ask_callback = "owner_ai_ask"
+    elif role == AI_ROLE_SUPERADMIN:
+        ask_callback = "admin_ai_ask"
+
+    rows = []
+
+
+    if include_report and interaction_id:
+
+        rows.append([InlineKeyboardButton("📝 Reportar problema", callback_data=f"ai_feedback_{interaction_id}_report")])
+
+
+    rows.append([InlineKeyboardButton("🔁 Hacer otra pregunta", callback_data=ask_callback)])
+
+
+    if include_support:
+
+        rows.append([InlineKeyboardButton("🛟 Abrir soporte", callback_data="public_support")])
+
+
+    rows.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(rows)
+
+
 def build_buyer_ai_panel_keyboard():
 
     return InlineKeyboardMarkup([
@@ -2042,10 +2075,68 @@ def build_admin_ai_center_keyboard():
         [InlineKeyboardButton("🛟 Resumen soporte", callback_data="admin_ai_support")],
         [InlineKeyboardButton("🧪 Auditorías", callback_data="admin_ai_audits")],
         [InlineKeyboardButton("🧾 Preparar tarea para Codex", callback_data="admin_ai_codex_task")],
+        [InlineKeyboardButton("📋 Feedback IA / problemas", callback_data="admin_ai_feedback")],
         [InlineKeyboardButton("✍️ Preguntar a la IA", callback_data="admin_ai_ask")],
         [InlineKeyboardButton("⬅️ Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
+
+
+def build_admin_ai_feedback_text(limit=10):
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+
+                SELECT user_id,
+                       role,
+                       group_id,
+                       intent,
+                       feedback_rating,
+                       response_summary,
+                       created_at
+                FROM ai_interactions
+                WHERE feedback_rating IN ('not_useful', 'problem')
+                ORDER BY created_at DESC
+                LIMIT %s
+
+            """, (limit,))
+            rows = cur.fetchall()
+
+    except Exception as exc:
+        print("admin_ai_feedback_error:", str(exc)[:200])
+        rows = []
+
+
+    if not rows:
+        return (
+            "📋 Feedback IA / problemas\n\n"
+            "Todavía no hay respuestas marcadas como no útiles o con problema reportado."
+        )
+
+
+    lines = [
+        "📋 Feedback IA / problemas",
+        "",
+        "Últimas respuestas a revisar:"
+    ]
+
+
+    for user_id, role, group_id, intent, feedback_rating, response_summary, created_at in rows:
+
+        lines.extend([
+            "",
+            f"Fecha: {created_at}",
+            f"Usuario: {user_id}",
+            f"Rol: {role or '-'}",
+            f"Grupo: {group_id or '-'}",
+            f"Intent: {intent or '-'}",
+            f"Feedback: {feedback_rating or '-'}",
+            f"Resumen: {str(response_summary or '-')[:350]}"
+        ])
+
+
+    return "\n".join(lines)
 
 
 async def send_ai_result_message(context, chat_id, result, back_callback=None):
@@ -17162,16 +17253,99 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = data.split("_")
 
         if len(parts) >= 4 and parts[2].isdigit():
+            interaction_id = int(parts[2])
+            rating = parts[3]
             updated = update_ai_feedback(
-                int(parts[2]),
-                parts[3]
+                interaction_id,
+                rating
             )
         else:
+            interaction_id = None
+            rating = None
             updated = False
 
+        feedback_context = get_ai_interaction_feedback_context(interaction_id) if interaction_id else None
+        role = feedback_context.get("role") if feedback_context else None
+
+
+        if not feedback_context:
+
+            log_user_event(
+                update,
+                "ai_feedback_missing_interaction",
+                event_key=data,
+                metadata={"interaction_id": interaction_id, "rating": rating}
+            )
+
+
         await query.answer(
-            "Gracias por valorar la respuesta." if updated else "No he podido guardar la valoración.",
+            "Valoración registrada." if updated else "Aviso recibido.",
             show_alert=False
+        )
+
+
+        if rating == "up":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Gracias por tu valoración.\n\nMe alegra que haya sido útil.",
+                reply_markup=build_ai_feedback_next_keyboard(
+                    interaction_id=interaction_id,
+                    role=role
+                )
+            )
+
+            return
+
+
+        if rating == "down":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "Gracias. Lo tendremos en cuenta para mejorar esta respuesta.",
+                reply_markup=build_ai_feedback_next_keyboard(
+                    interaction_id=interaction_id,
+                    role=role,
+                    include_report=True,
+                    include_support=True
+                )
+            )
+
+            return
+
+
+        if rating == "report":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                (
+                    "Gracias. Hemos registrado el problema para revisar esta respuesta."
+                    if feedback_context
+                    else
+                    "No he podido encontrar la interacción original, pero he registrado el aviso."
+                ),
+                reply_markup=build_ai_feedback_next_keyboard(
+                    interaction_id=interaction_id,
+                    role=role,
+                    include_support=True
+                )
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "No he podido guardar esa valoración, pero puedes hacer otra pregunta o abrir soporte.",
+            reply_markup=build_ai_feedback_next_keyboard(
+                interaction_id=interaction_id,
+                role=role,
+                include_support=True
+            )
         )
 
         return
@@ -17682,6 +17856,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update,
             context,
             help_context="superadmin"
+        )
+
+        return
+
+
+    if data == "admin_ai_feedback":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_admin_ai_feedback_text(),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Centro IA", callback_data="admin_ai_center")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return

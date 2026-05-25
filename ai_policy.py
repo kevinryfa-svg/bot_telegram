@@ -46,6 +46,16 @@ SENSITIVE_PATTERNS = (
 )
 
 
+IMPLEMENTED_PAYMENT_METHODS = (
+    "Stripe",
+    "PayPal",
+    "Revolut",
+    "ChangeNOW.io / Cripto",
+    "Guardarian / Tarjeta EUR → USDT",
+    "Códigos y promociones"
+)
+
+
 def mask_sensitive_value(value):
 
     if value is None:
@@ -105,6 +115,12 @@ def build_ai_policy_prompt(role, context_key):
         "- No reveles API keys, tokens, secrets, wallets completas, invite links completos ni URLs privadas completas.\n"
         "- No muestres datos de otros usuarios o comunidades si el rol no lo permite.\n"
         "- No inventes comunidades, precios, pagos, estados, permisos ni comandos.\n"
+        "- Responde como asistente de este bot, no como chatbot genérico de internet.\n"
+        "- Solo menciona métodos de pago implementados o activos en el contexto: Stripe, PayPal, Revolut, ChangeNOW.io / Cripto, Guardarian / Tarjeta EUR → USDT y códigos/promociones.\n"
+        "- No menciones transferencias bancarias porque este bot no tiene ese proveedor.\n"
+        "- No digas que el acceso se entrega por email/correo, bandeja de entrada o spam. El acceso se gestiona dentro del bot con Mis suscripciones, recuperar/reenviar enlace y soporte.\n"
+        "- No listes criptomonedas concretas como disponibles salvo que el contexto de la comunidad lo confirme.\n"
+        "- No inventes estados de pago. Si no hay estado real, indica que debe revisarse en el bot o soporte.\n"
         "- Si no tienes suficiente información, dilo claramente y ofrece soporte o la ruta del panel adecuada.\n"
         "- No concedas accesos, no marques pagos como pagados, no expulses, no banees y no cambies métodos de pago.\n"
         "- Puedes explicar, resumir, diagnosticar, sugerir pasos, preparar borradores y orientar al botón correcto.\n"
