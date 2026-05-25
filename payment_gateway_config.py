@@ -49,7 +49,7 @@ PROVIDER_LABELS = {
     PAYMENT_PROVIDER_REVOLUT: "🏦 Revolut",
     PAYMENT_PROVIDER_CRYPTO: "₿ Cripto",
     PAYMENT_PROVIDER_CHANGENOW: "💱 ChangeNOW.io / Cripto",
-    PAYMENT_PROVIDER_GUARDARIAN: "💳 EUR → USDT / Guardarian"
+    PAYMENT_PROVIDER_GUARDARIAN: "💳 Tarjeta EUR → USDT / Guardarian"
 }
 
 
