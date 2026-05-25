@@ -892,6 +892,19 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     ])
 
 
+    keyboard.append([
+
+        InlineKeyboardButton(
+
+            "🤖 Ayuda inteligente",
+
+            callback_data="ai_buyer_panel"
+
+        )
+
+    ])
+
+
     # =========================
     # PANEL SEGÚN JERARQUÍA REAL
     # =========================

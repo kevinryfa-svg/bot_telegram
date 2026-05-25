@@ -48,6 +48,27 @@ from audit_log_service import (
     summarize_beta_monitor_events
 )
 from ai_handler import activate_ai_help_context
+from ai_policy import (
+    AI_CONTEXT_CHECKOUT_HELP,
+    AI_CONTEXT_OWNER_DASHBOARD,
+    AI_CONTEXT_OWNER_PAYMENTS,
+    AI_CONTEXT_OWNER_SURVEYS,
+    AI_CONTEXT_OWNER_USERS,
+    AI_CONTEXT_PAYMENT_DIAGNOSTICS,
+    AI_CONTEXT_PUBLIC_MARKETPLACE,
+    AI_CONTEXT_SUPPORT_TICKET,
+    AI_CONTEXT_SUPERADMIN_DASHBOARD,
+    AI_CONTEXT_USER_TRACKING,
+    AI_ROLE_BUYER,
+    AI_ROLE_OWNER,
+    AI_ROLE_SUPERADMIN
+)
+from ai_response_service import (
+    build_ai_feedback_keyboard_rows,
+    build_contextual_ai_answer,
+    update_ai_feedback
+)
+from support_ai_service import build_support_reply_suggestion
 from code_admin_handler import crear_codigo_callback
 from bot_config import ADMIN_ID
 from commercial_catalog import (
@@ -1953,6 +1974,7 @@ def build_admin_global_config_keyboard():
 def build_admin_global_tools_keyboard():
 
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧠 Centro IA", callback_data="admin_ai_center")],
         [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
         [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
         [InlineKeyboardButton("🧪 Auditoría de botones", callback_data="admin_button_audit")],
@@ -1963,6 +1985,85 @@ def build_admin_global_tools_keyboard():
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
+
+
+def build_ai_feedback_markup(interaction_id, back_callback=None):
+
+    rows = [
+        [InlineKeyboardButton(label, callback_data=callback_data)]
+        for label, callback_data in build_ai_feedback_keyboard_rows(interaction_id)
+    ]
+
+    if back_callback:
+
+        rows.append([InlineKeyboardButton("⬅️ Volver", callback_data=back_callback)])
+
+
+    rows.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(rows)
+
+
+def build_buyer_ai_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Pagué y no tengo link", callback_data="ai_buyer_access_help")],
+        [InlineKeyboardButton("💳 Cómo puedo pagar", callback_data="ai_buyer_payment_methods")],
+        [InlineKeyboardButton("📍 Por qué pide ubicación", callback_data="ai_buyer_location_help")],
+        [InlineKeyboardButton("✍️ Preguntar a la IA", callback_data="ai_ask_buyer")],
+        [InlineKeyboardButton("🛟 Soporte", callback_data="public_support")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_ai_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚙️ Ayúdame a configurar mi comunidad", callback_data="owner_ai_setup")],
+        [InlineKeyboardButton("💳 Ayuda con métodos de pago", callback_data="owner_ai_payments")],
+        [InlineKeyboardButton("📊 Analizar mis encuestas", callback_data="owner_ai_surveys")],
+        [InlineKeyboardButton("👥 Analizar usuarios/accesos", callback_data="owner_ai_users")],
+        [InlineKeyboardButton("🛟 Ayuda con soporte", callback_data="owner_ai_support")],
+        [InlineKeyboardButton("🖼 Mejorar texto de marketplace", callback_data="owner_ai_marketplace")],
+        [InlineKeyboardButton("🧪 Diagnóstico de mi comunidad", callback_data="owner_ai_diagnostics")],
+        [InlineKeyboardButton("✍️ Preguntar a la IA", callback_data="owner_ai_ask")],
+        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_admin_ai_center_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚨 Diagnóstico de errores", callback_data="admin_ai_errors")],
+        [InlineKeyboardButton("💳 Diagnóstico de pagos", callback_data="admin_ai_payments")],
+        [InlineKeyboardButton("👥 Resumen de usuarios", callback_data="admin_ai_users")],
+        [InlineKeyboardButton("😊 Resumen de encuestas", callback_data="admin_ai_surveys")],
+        [InlineKeyboardButton("🛟 Resumen soporte", callback_data="admin_ai_support")],
+        [InlineKeyboardButton("🧪 Auditorías", callback_data="admin_ai_audits")],
+        [InlineKeyboardButton("🧾 Preparar tarea para Codex", callback_data="admin_ai_codex_task")],
+        [InlineKeyboardButton("✍️ Preguntar a la IA", callback_data="admin_ai_ask")],
+        [InlineKeyboardButton("⬅️ Herramientas internas", callback_data="admin_global_tools")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+async def send_ai_result_message(context, chat_id, result, back_callback=None):
+
+    prefix = "🤖 Respuesta IA"
+
+    if result.get("fallback_used"):
+        prefix += "\n\nNota: respuesta generada con fallback seguro porque el modelo no está disponible o no aportó respuesta fiable."
+
+    await send_clean_message(
+        context,
+        chat_id,
+        f"{prefix}\n\n{result.get('answer') or 'No tengo suficiente información para confirmarlo.'}",
+        reply_markup=build_ai_feedback_markup(
+            result.get("interaction_id"),
+            back_callback=back_callback
+        )
+    )
 
 
 def build_admin_global_marketplace_keyboard():
@@ -8103,6 +8204,17 @@ def build_group_settings_keyboard(user_id, group_id):
     keyboard.append([
         InlineKeyboardButton("🧭 Asistente de configuración", callback_data="owner_setup_assistant")
     ])
+
+
+    if user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_manage_groups", "can_view_logs", "can_manage_plans", "can_respond_group_support"]
+    ):
+
+        keyboard.append([
+            InlineKeyboardButton("🤖 Asistente de comunidad", callback_data="owner_ai_panel")
+        ])
 
 
     if user_has_group_permission_any(
@@ -14523,6 +14635,7 @@ def build_owner_support_ticket_keyboard(ticket):
     if ticket_status != "closed":
 
         keyboard.append([InlineKeyboardButton("✍️ Responder", callback_data=f"owner_support_reply_{ticket_id}")])
+        keyboard.append([InlineKeyboardButton("🤖 Sugerir respuesta", callback_data=f"owner_support_ai_{ticket_id}")])
         keyboard.append([InlineKeyboardButton("✅ Cerrar ticket", callback_data=f"owner_support_close_{ticket_id}")])
 
 
@@ -14562,6 +14675,11 @@ def build_support_ticket_keyboard(ticket):
         [InlineKeyboardButton(
             "✍️ Responder",
             callback_data=f"admin_support_reply_{ticket_id}"
+        )],
+
+        [InlineKeyboardButton(
+            "🤖 Sugerir respuesta",
+            callback_data=f"admin_support_ai_{ticket_id}"
         )],
 
         [InlineKeyboardButton(
@@ -16940,6 +17058,76 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "ai_buyer_panel":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🤖 Ayuda inteligente\n\n"
+            "Puedo ayudarte con pagos, accesos, comunidades, soporte y ubicación usando solo información segura del bot.\n\n"
+            "No invento precios ni estados de pago: si falta información te llevaré a soporte o al panel correcto.",
+            reply_markup=build_buyer_ai_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "ai_ask_buyer":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="buyer"
+        )
+
+        return
+
+
+    buyer_ai_questions = {
+        "ai_buyer_access_help": "Pagué y no me llegó el link. Dame pasos concretos para recuperar acceso.",
+        "ai_buyer_payment_methods": "Explícame qué métodos de pago puedo ver en una comunidad y qué significa EUR a USDT.",
+        "ai_buyer_location_help": "Explícame por qué una comunidad puede pedirme ubicación y qué hago si falla."
+    }
+
+    if data in buyer_ai_questions:
+
+        result = build_contextual_ai_answer(
+            user_id=user_id,
+            question=buyer_ai_questions[data],
+            role=AI_ROLE_BUYER,
+            context_key=AI_CONTEXT_PUBLIC_MARKETPLACE
+        )
+
+        await send_ai_result_message(
+            context,
+            query.message.chat_id,
+            result,
+            back_callback="ai_buyer_panel"
+        )
+
+        return
+
+
+    if data.startswith("ai_feedback_"):
+
+        parts = data.split("_")
+
+        if len(parts) >= 4 and parts[2].isdigit():
+            updated = update_ai_feedback(
+                int(parts[2]),
+                parts[3]
+            )
+        else:
+            updated = False
+
+        await query.answer(
+            "Gracias por valorar la respuesta." if updated else "No he podido guardar la valoración.",
+            show_alert=False
+        )
+
+        return
+
+
     if data == "commercial_shared_bot_space":
 
         await delete_query_message_safely(query)
@@ -17420,6 +17608,62 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👑 Panel global del bot: índice principal de la plataforma.\n\n"
             "Desde aquí entras a monitor beta, satisfacción, soporte, marketplace, propietarios y los dos submenús separados de configuración y herramientas.",
             reply_markup=build_admin_global_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_ai_center":
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🧠 Centro IA\n\n"
+            "Asistente interno para resumir errores, pagos, usuarios, encuestas, soporte y auditorías del bot.\n\n"
+            "La IA solo diagnostica, resume y prepara borradores. No concede accesos, no marca pagos como pagados y no ejecuta cambios peligrosos sin confirmación.",
+            reply_markup=build_admin_ai_center_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_ai_ask":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="superadmin"
+        )
+
+        return
+
+
+    admin_ai_questions = {
+        "admin_ai_errors": (AI_CONTEXT_SUPERADMIN_DASHBOARD, "Haz un diagnóstico de errores recientes del bot y dime dónde mirar primero."),
+        "admin_ai_payments": (AI_CONTEXT_PAYMENT_DIAGNOSTICS, "Haz un diagnóstico de pagos por proveedor, scope y estados problemáticos."),
+        "admin_ai_users": (AI_CONTEXT_USER_TRACKING, "Resume la actividad de usuarios dentro del bot y comunidades gestionadas."),
+        "admin_ai_surveys": (AI_CONTEXT_SUPERADMIN_DASHBOARD, "Resume encuestas, satisfacción y señales de usuarios pendientes o problemas de respuesta."),
+        "admin_ai_support": (AI_CONTEXT_SUPERADMIN_DASHBOARD, "Resume soporte reciente y detecta patrones por pagos, accesos, ubicación, códigos o comunidades."),
+        "admin_ai_audits": (AI_CONTEXT_SUPERADMIN_DASHBOARD, "Resume auditorías de botones y paneles, y destaca callbacks o navegación que conviene revisar."),
+        "admin_ai_codex_task": (AI_CONTEXT_SUPERADMIN_DASHBOARD, "Prepara una tarea breve para Codex con problema, contexto, restricciones, verificación y entrega esperada.")
+    }
+
+
+    if data in admin_ai_questions:
+
+        context_key, question = admin_ai_questions[data]
+        result = build_contextual_ai_answer(
+            user_id,
+            question,
+            role=AI_ROLE_SUPERADMIN,
+            context_key=context_key
+        )
+
+        await send_ai_result_message(
+            context,
+            query.message.chat_id,
+            result,
+            back_callback="admin_ai_center"
         )
 
         return
@@ -20699,6 +20943,87 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("admin_support_ai_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "admin_support_ai_"
+        )
+
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket:
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado."
+            )
+
+            return
+
+
+        result = build_support_reply_suggestion(
+            user_id,
+            AI_ROLE_SUPERADMIN,
+            ticket_id,
+            group_id=ticket.get("group_id")
+        )
+        keyboard = [
+            [InlineKeyboardButton("✍️ Usar como base", callback_data=f"admin_support_use_ai_{ticket_id}")],
+            [InlineKeyboardButton("⬅️ Volver al ticket", callback_data=f"admin_support_ticket_{ticket_id}")]
+        ]
+
+
+        if result.get("interaction_id"):
+
+            for label, callback_data in build_ai_feedback_keyboard_rows(result.get("interaction_id")):
+
+                keyboard.append([InlineKeyboardButton(label, callback_data=callback_data)])
+
+
+        await query.message.reply_text(
+            "🤖 Borrador sugerido para soporte\n\n"
+            f"{result.get('answer') or 'No tengo suficiente información para preparar un borrador.'}\n\n"
+            "No se enviará automáticamente. Puedes usarlo como base y editarlo antes de responder.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data.startswith("admin_support_use_ai_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "admin_support_use_ai_"
+        )
+
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket:
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado."
+            )
+
+            return
+
+
+        context.user_data["replying_support_ticket"] = ticket_id
+
+        await query.message.reply_text(
+            f"✍️ Responder ticket #{ticket_id}\n\n"
+            "Usa el borrador anterior como base, edítalo si hace falta y escribe ahora la respuesta final para el usuario.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Cancelar", callback_data=f"admin_support_ticket_{ticket_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
     if data.startswith("admin_support_ticket_"):
 
         ticket_id = extract_commercial_request_id(
@@ -23716,6 +24041,99 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "owner_ai_panel":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_view_logs", "can_manage_plans", "can_respond_group_support"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para abrir el asistente IA de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_owner_group"] = group_id
+        context.user_data["selected_group_admin"] = group_id
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🤖 Asistente de comunidad\n\n"
+            "Puedo ayudarte a configurar la comunidad, entender pagos, revisar encuestas, usuarios, soporte y marketplace.\n\n"
+            "No modifico nada automáticamente. Te doy diagnóstico, pasos y rutas seguras.",
+            reply_markup=build_owner_ai_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "owner_ai_ask":
+
+        await activate_ai_help_context(
+            update,
+            context,
+            help_context="owner"
+        )
+
+        return
+
+
+    owner_ai_questions = {
+        "owner_ai_setup": (AI_CONTEXT_OWNER_DASHBOARD, "Ayúdame a configurar mi comunidad y dime qué revisar primero."),
+        "owner_ai_payments": (AI_CONTEXT_OWNER_PAYMENTS, "Ayúdame a configurar métodos de pago y explica Stripe, PayPal, Revolut, ChangeNOW y Guardarian según el estado real."),
+        "owner_ai_surveys": (AI_CONTEXT_OWNER_SURVEYS, "Analiza mis encuestas y dime qué acciones prácticas puedo tomar."),
+        "owner_ai_users": (AI_CONTEXT_OWNER_USERS, "Analiza usuarios y accesos de esta comunidad y dime qué revisar."),
+        "owner_ai_support": (AI_CONTEXT_SUPPORT_TICKET, "Ayúdame a revisar soporte de esta comunidad y preparar mejores respuestas."),
+        "owner_ai_marketplace": (AI_CONTEXT_OWNER_DASHBOARD, "Sugiere mejoras para el texto de marketplace de mi comunidad sin inventar datos."),
+        "owner_ai_diagnostics": (AI_CONTEXT_OWNER_DASHBOARD, "Haz un diagnóstico seguro de esta comunidad: pagos, accesos, soporte, encuestas y configuración.")
+    }
+
+    if data in owner_ai_questions:
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_view_logs", "can_manage_plans", "can_respond_group_support"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para usar IA en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context_key, question = owner_ai_questions[data]
+        result = build_contextual_ai_answer(
+            user_id=user_id,
+            question=question,
+            role=AI_ROLE_OWNER,
+            context_key=context_key,
+            group_id=group_id
+        )
+
+        await send_ai_result_message(
+            context,
+            query.message.chat_id,
+            result,
+            back_callback="owner_ai_panel"
+        )
+
+        return
+
+
     if data == "owner_panel_satisfaction":
 
         group_id = get_selected_group_for_permissions(
@@ -26458,6 +26876,108 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             build_support_tickets_text(tickets).replace("🛟 Tickets de soporte", "🛟 Tickets de soporte de esta comunidad"),
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data.startswith("owner_support_ai_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "owner_support_ai_"
+        )
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket or not ticket.get("group_id"):
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not user_has_group_permission_any(user_id, ticket.get("group_id"), ["can_respond_group_support"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para usar IA en este ticket.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        result = build_support_reply_suggestion(
+            user_id,
+            AI_ROLE_OWNER,
+            ticket_id,
+            group_id=ticket.get("group_id")
+        )
+        keyboard = [
+            [InlineKeyboardButton("✍️ Usar como base", callback_data=f"owner_support_use_ai_{ticket_id}")],
+            [InlineKeyboardButton("⬅️ Volver al ticket", callback_data=f"owner_support_ticket_{ticket_id}")]
+        ]
+
+
+        if result.get("interaction_id"):
+
+            for label, callback_data in build_ai_feedback_keyboard_rows(result.get("interaction_id")):
+
+                keyboard.append([InlineKeyboardButton(label, callback_data=callback_data)])
+
+
+        await query.message.reply_text(
+            "🤖 Borrador sugerido para soporte\n\n"
+            f"{result.get('answer') or 'No tengo suficiente información para preparar un borrador.'}\n\n"
+            "No se enviará automáticamente. Puedes usarlo como base y editarlo antes de responder.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data.startswith("owner_support_use_ai_"):
+
+        ticket_id = extract_commercial_request_id(
+            data,
+            "owner_support_use_ai_"
+        )
+        ticket = fetch_support_ticket(ticket_id)
+
+
+        if not ticket or not ticket.get("group_id"):
+
+            await query.message.reply_text(
+                "❌ Ticket de soporte no encontrado.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not user_has_group_permission_any(user_id, ticket.get("group_id"), ["can_respond_group_support"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para responder este ticket.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_owner_group"] = ticket.get("group_id")
+        context.user_data["replying_support_ticket"] = ticket_id
+
+        await query.message.reply_text(
+            f"✍️ Responder ticket #{ticket_id}\n\n"
+            "Usa el borrador anterior como base, edítalo si hace falta y escribe ahora la respuesta final para el usuario.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Cancelar", callback_data=f"owner_support_ticket_{ticket_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return
