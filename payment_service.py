@@ -231,6 +231,67 @@ class PaymentProviderUnavailable(Exception):
     pass
 
 
+PAYMENT_UX_GROUP_TRADITIONAL = "traditional"
+PAYMENT_UX_GROUP_CRYPTO_USDT = "crypto_usdt"
+PAYMENT_UX_GROUP_OTHER = "other"
+
+
+PAYMENT_PROVIDER_UX_GROUPS = {
+    PAYMENT_PROVIDER_STRIPE: PAYMENT_UX_GROUP_TRADITIONAL,
+    PAYMENT_PROVIDER_PAYPAL: PAYMENT_UX_GROUP_TRADITIONAL,
+    PAYMENT_PROVIDER_REVOLUT: PAYMENT_UX_GROUP_TRADITIONAL,
+    PAYMENT_PROVIDER_CRYPTO: PAYMENT_UX_GROUP_CRYPTO_USDT,
+    PAYMENT_PROVIDER_CHANGENOW: PAYMENT_UX_GROUP_CRYPTO_USDT,
+    PAYMENT_PROVIDER_GUARDARIAN: PAYMENT_UX_GROUP_CRYPTO_USDT
+}
+
+
+PAYMENT_UX_GROUP_LABELS = {
+    PAYMENT_UX_GROUP_TRADITIONAL: "💳 Pagos tradicionales",
+    PAYMENT_UX_GROUP_CRYPTO_USDT: "🪙 Cripto / USDT",
+    PAYMENT_UX_GROUP_OTHER: "Otros métodos"
+}
+
+
+PAYMENT_UX_GROUP_DESCRIPTIONS = {
+    PAYMENT_UX_GROUP_TRADITIONAL: "Permiten cobrar con tarjeta, PayPal o Revolut según el proveedor configurado.",
+    PAYMENT_UX_GROUP_CRYPTO_USDT: "Permiten aceptar pagos cripto o recibir liquidación en USDT.",
+    PAYMENT_UX_GROUP_OTHER: "Métodos preparados para fases futuras o configuraciones especiales."
+}
+
+
+PAYMENT_UX_GROUP_ORDER = (
+    PAYMENT_UX_GROUP_TRADITIONAL,
+    PAYMENT_UX_GROUP_CRYPTO_USDT,
+    PAYMENT_UX_GROUP_OTHER
+)
+
+
+def get_payment_provider_ux_group(provider):
+
+    return PAYMENT_PROVIDER_UX_GROUPS.get(provider, PAYMENT_UX_GROUP_OTHER)
+
+
+def group_payment_provider_statuses_by_ux(provider_statuses):
+
+    grouped = {
+        group_key: []
+        for group_key in PAYMENT_UX_GROUP_ORDER
+    }
+
+
+    for provider_status in provider_statuses:
+
+        group_key = get_payment_provider_ux_group(
+            provider_status.get("provider")
+        )
+
+        grouped.setdefault(group_key, []).append(provider_status)
+
+
+    return grouped
+
+
 def get_enabled_payment_providers(include_disabled=False):
 
     providers = list_payment_provider_configs()
@@ -727,35 +788,54 @@ def create_placeholder_checkout(provider, **kwargs):
 
 def build_payment_methods_admin_text():
 
+    provider_configs = list_payment_provider_configs()
+    grouped_providers = group_payment_provider_statuses_by_ux(provider_configs)
     lines = [
         "💳 Métodos de pago",
         "",
         "Pagos de plataforma: el dinero entra en la cuenta del dueño del bot.",
         "Sirven para mensualidades de owners, publicar comunidades, bots personalizados, upgrades y módulos premium.",
         "",
-        "Stripe sigue siendo el proveedor activo para compras de acceso a grupos.",
-        "PayPal ya puede usarse en sandbox/live para pagos de plataforma si sus credenciales globales están completas.",
-        "Revolut ya puede usarse en sandbox/live para pagos de plataforma si sus credenciales globales están completas.",
-        "ChangeNOW.io queda preparado para pagos cripto en revisión manual. No concede acceso automáticamente hasta confirmar verificación oficial segura.",
+        "Agrupación visual:",
+        "💳 Pagos tradicionales: tarjeta, PayPal y Revolut.",
+        "🪙 Cripto / USDT: ChangeNOW.io para cripto/intercambio y Guardarian para tarjeta EUR con liquidación USDT.",
+        "🎟 Promociones: códigos comerciales globales y códigos de comunidad se gestionan en sus paneles propios.",
         ""
     ]
 
 
-    for provider in list_payment_provider_configs():
+    for group_key in PAYMENT_UX_GROUP_ORDER:
 
-        enabled = "activo" if provider.get("enabled") else "desactivado"
-        missing = provider.get("missing_env") or []
-        missing_text = "ninguna" if not missing else ", ".join(missing)
+        providers = grouped_providers.get(group_key) or []
+
+
+        if not providers:
+
+            continue
+
 
         lines.extend([
-            f"{provider.get('label')}",
-            f"Scope: platform",
-            f"Destino: cuenta de plataforma",
-            f"Estado: {enabled}",
-            f"Flag: {provider.get('flag')}",
-            f"Variables pendientes: {missing_text}",
+            PAYMENT_UX_GROUP_LABELS.get(group_key, "Métodos"),
+            PAYMENT_UX_GROUP_DESCRIPTIONS.get(group_key, ""),
             ""
         ])
+
+
+        for provider in providers:
+
+            enabled = "activo" if provider.get("enabled") else "desactivado"
+            missing = provider.get("missing_env") or []
+            missing_text = "ninguna" if not missing else ", ".join(missing)
+
+            lines.extend([
+                f"{provider.get('label')}",
+                f"Scope: platform",
+                f"Destino: cuenta de plataforma",
+                f"Estado: {enabled}",
+                f"Flag: {provider.get('flag')}",
+                f"Variables pendientes: {missing_text}",
+                ""
+            ])
 
 
     lines.extend([
@@ -763,7 +843,8 @@ def build_payment_methods_admin_text():
         "- payment_scope=platform identifica cobros de la plataforma.",
         "- payment_scope=group queda reservado para cobros propios de owners/grupos.",
         "- PayPal y Revolut plataforma confirman pagos únicamente con webhook verificado.",
-        "- PayPal owner/grupo todavía no concede accesos.",
+        "- ChangeNOW.io / Cripto queda en revisión manual.",
+        "- Guardarian concede acceso automáticamente solo cuando Guardarian confirma status finished.",
         "- No se guardan secretos en logs ni en el repo.",
         "- El acceso se concede solo cuando el proveedor confirma pago por webhook verificado."
     ])
@@ -1448,6 +1529,8 @@ def list_group_payment_provider_statuses(group_id):
 
 def build_group_payment_methods_text(group_id, group_name, telegram_group_id, owner_user_id=None):
 
+    provider_statuses = list_group_payment_provider_statuses(group_id)
+    grouped_providers = group_payment_provider_statuses_by_ux(provider_statuses)
     lines = [
         "💳 Métodos de pago del grupo",
         "",
@@ -1467,31 +1550,56 @@ def build_group_payment_methods_text(group_id, group_name, telegram_group_id, ow
         "Aquí se prepara la configuración de métodos de pago propios de esta comunidad.",
         "Estos pagos usan payment_scope=group y destino owner/grupo cuando el proveedor esté activo.",
         "Las credenciales propias del owner se configurarán desde el bot, no desde Railway.",
-        "PayPal y Revolut pueden crear checkout real si tienen credenciales cifradas, webhook secreto y estado activo. ChangeNOW puede crear pagos cripto controlados, siempre en revisión manual. Guardarian permite pagos EUR con tarjeta y liquidación USDT con activación automática solo si GET /v1/transaction/{id} devuelve finished.",
+        "",
+        "Los pagos tradicionales permiten cobrar con tarjeta, PayPal o Revolut.",
+        "Las opciones Cripto / USDT permiten aceptar pagos cripto o recibir liquidación en USDT.",
+        "",
+        "ChangeNOW.io / Cripto: pago cripto/intercambio. Algunos pagos pueden requerir revisión manual.",
+        "Guardarian: el comprador paga con tarjeta en euros y tú recibes USDT en tu wallet. El acceso se activa automáticamente solo cuando Guardarian confirma status finished.",
+        "",
         "Los métodos siempre respetan los flags globales de la plataforma.",
         f"Cifrado de credenciales: {'preparado' if has_payment_encryption_key() else 'pendiente de PAYMENT_CONFIG_ENCRYPTION_KEY'}.",
         ""
     ])
 
 
-    for provider in list_group_payment_provider_statuses(group_id):
+    for group_key in PAYMENT_UX_GROUP_ORDER:
+
+        providers = grouped_providers.get(group_key) or []
+
+
+        if not providers:
+
+            continue
+
 
         lines.extend([
-            provider.get("label") or provider.get("provider"),
-            "Scope: group",
-            f"Destino futuro: {provider.get('destination_type') or PAYMENT_DESTINATION_GROUP_CONFIG}",
-            f"Estado global: {'activo' if provider.get('global_enabled') else 'deshabilitado'}",
-            f"Estado del grupo: {provider.get('status_label')}",
-            f"Credenciales owner: {provider.get('secret_status') or SECRET_STATUS_NOT_CONFIGURED}",
-            f"Flag: {provider.get('flag')}",
+            PAYMENT_UX_GROUP_LABELS.get(group_key, "Métodos"),
+            PAYMENT_UX_GROUP_DESCRIPTIONS.get(group_key, ""),
             ""
         ])
+
+
+        for provider in providers:
+
+            lines.extend([
+                provider.get("label") or provider.get("provider"),
+                "Scope: group",
+                f"Destino futuro: {provider.get('destination_type') or PAYMENT_DESTINATION_GROUP_CONFIG}",
+                f"Estado global: {'activo' if provider.get('global_enabled') else 'deshabilitado'}",
+                f"Estado del grupo: {provider.get('status_label')}",
+                f"Credenciales owner: {provider.get('secret_status') or SECRET_STATUS_NOT_CONFIGURED}",
+                f"Flag: {provider.get('flag')}",
+                ""
+            ])
 
 
     lines.extend([
         "Qué falta para activar pagos propios en próximas fases:",
         "- ChangeNOW queda en revisión manual; Guardarian se activa solo con verificación oficial finished.",
         "- PayPal y Revolut owner/grupo conceden acceso solo tras webhook verificado.",
+        "",
+        "🎟 Promociones: los códigos y promociones siguen en su sección propia para no mezclarlos con cobros.",
         "",
         "Stripe global sigue funcionando como hasta ahora."
     ])
@@ -1504,6 +1612,7 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
 
     provider = provider_status.get("provider")
     label = provider_status.get("label") or provider
+    ux_group = get_payment_provider_ux_group(provider)
     encryption_text = "lista" if provider_status.get("encryption_ready") else "pendiente"
     global_text = "activo" if provider_status.get("global_enabled") else "deshabilitado"
     secret_summary = provider_status.get("masked_public_summary") or "sin credenciales guardadas"
@@ -1513,6 +1622,7 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
         f"{label}",
         "",
         f"Comunidad: {group_name or f'Grupo {group_id}'}",
+        f"Categoría: {PAYMENT_UX_GROUP_LABELS.get(ux_group, 'Método de pago')}",
         "Scope: group",
         "Destino futuro: cuenta/configuración del owner.",
         f"Estado global: {global_text}",
@@ -1524,7 +1634,7 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
         "",
         "Railway solo guarda credenciales globales de plataforma. Las credenciales propias de owners/grupos se configurarán desde el bot y se guardarán cifradas.",
         "",
-        "PayPal y Revolut de grupo crean checkout real solo si están activos y tienen credenciales cifradas completas. Otros proveedores siguen preparados como fase futura."
+        "PayPal y Revolut de grupo crean checkout real solo si están activos y tienen credenciales cifradas completas. ChangeNOW crea pagos cripto en revisión manual. Guardarian crea checkout EUR → USDT y solo concede acceso con status finished verificado."
     ]
 
 

@@ -567,6 +567,36 @@ Sigue pendiente para una fase posterior:
 4. PayPal/Revolut propios por owner para productos que no sean acceso de grupo.
 5. Cripto y Bizum reales.
 
+## Agrupación visual de métodos de pago
+
+Los paneles del bot muestran los proveedores agrupados para evitar que parezcan duplicados:
+
+### Pagos tradicionales
+
+Incluye:
+
+- Stripe / tarjeta.
+- PayPal.
+- Revolut.
+
+Estos métodos se presentan como cobros clásicos de plataforma o de grupo, según `payment_scope`.
+
+### Cripto / USDT
+
+Incluye:
+
+- ChangeNOW.io / Cripto.
+- Tarjeta EUR -> USDT / Guardarian.
+
+Aunque ambos están relacionados con cripto/USDT, no son el mismo flujo:
+
+- ChangeNOW.io / Cripto permite iniciar pagos cripto/intercambio. En la configuración actual queda en revisión manual y no concede acceso automáticamente.
+- Guardarian permite que el comprador pague con tarjeta en EUR y que plataforma/owner reciba USDT en su wallet. Es automático solo cuando Guardarian confirma oficialmente `status == finished` al consultar `GET /v1/transaction/{id}`.
+
+### Promociones
+
+Los códigos comerciales globales y los códigos/promociones de grupo se muestran como rutas separadas. No se mezclan con proveedores de cobro para que owners y superadmin distingan entre pago real y acceso promocional.
+
 ## ChangeNOW.io / Cripto en modo seguro
 
 ChangeNOW queda preparado como proveedor cripto configurable desde el bot para dos scopes:

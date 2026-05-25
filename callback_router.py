@@ -107,7 +107,10 @@ from payment_service import (
     is_paypal_group_checkout_available,
     is_revolut_group_checkout_available,
     is_stripe_payments_enabled,
+    group_payment_provider_statuses_by_ux,
     list_group_payment_provider_statuses,
+    PAYMENT_UX_GROUP_LABELS,
+    PAYMENT_UX_GROUP_ORDER,
     save_group_payment_provider_encrypted_config,
     save_platform_payment_provider_encrypted_config
 )
@@ -493,7 +496,7 @@ def build_changenow_payment_review_text(order):
 def build_guardarian_tutorial_text(scope_label="esta comunidad"):
 
     return (
-        "💳 EUR → USDT / Guardarian\n\n"
+        "💳 Tarjeta EUR → USDT / Guardarian\n\n"
         "¿Qué es Guardarian?\n"
         "Es una pasarela fiat a cripto: el comprador paga con tarjeta en euros y Guardarian liquida en USDT hacia la wallet configurada.\n\n"
         "¿Para qué sirve?\n"
@@ -1989,9 +1992,10 @@ def build_admin_payment_providers_keyboard():
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💱 ChangeNOW.io / Cripto", callback_data="admin_payment_changenow")],
-        [InlineKeyboardButton("💳 EUR → USDT / Guardarian", callback_data="admin_payment_guardarian")],
+        [InlineKeyboardButton("💳 Tarjeta EUR → USDT / Guardarian", callback_data="admin_payment_guardarian")],
         [InlineKeyboardButton("🧪 Pagos ChangeNOW en revisión", callback_data="admin_changenow_manual_review")],
         [InlineKeyboardButton("🧪 Pagos Guardarian en revisión", callback_data="admin_guardarian_manual_review")],
+        [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
         [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
         [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
@@ -22431,7 +22435,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 InlineKeyboardButton(
 
-                    f"💳 Tarjeta — {button_text}",
+                    f"💳 Tarjeta / Stripe — {button_text}",
 
                     callback_data=price_id
 
@@ -22491,7 +22495,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     InlineKeyboardButton(
 
-                        f"💳 Tarjeta EUR → USDT — {button_text}",
+                        f"💳 EUR → USDT / Guardarian — {button_text}",
 
                         callback_data=f"guardarian_group_plan_{group_id}_{plan_id}"
 
@@ -22543,7 +22547,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
 
-            "Selecciona un plan:",
+            (
+                "Selecciona un plan:\n\n"
+                "💳 Pagos tradicionales: tarjeta/Stripe, PayPal o Revolut.\n"
+                "🪙 Cripto / USDT: ChangeNOW para cripto y Guardarian para tarjeta EUR con liquidación USDT.\n"
+                "Solo verás métodos activos para esta comunidad."
+            ),
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -24492,22 +24501,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id, group_name, telegram_group_id = group
 
         keyboard_rows = []
+        provider_statuses = list_group_payment_provider_statuses(group_id)
+        grouped_provider_statuses = group_payment_provider_statuses_by_ux(
+            provider_statuses
+        )
 
 
-        for provider_status in list_group_payment_provider_statuses(group_id):
+        for group_key in PAYMENT_UX_GROUP_ORDER:
 
-            provider = provider_status.get("provider")
-            label = provider_status.get("label") or provider
+            for provider_status in grouped_provider_statuses.get(group_key) or []:
 
-            keyboard_rows.append([
-                InlineKeyboardButton(
-                    f"⚙️ {label}",
-                    callback_data=f"owner_group_payment_provider_{group_id}_{provider}"
-                )
-            ])
+                provider = provider_status.get("provider")
+                label = provider_status.get("label") or provider
+                group_label = PAYMENT_UX_GROUP_LABELS.get(group_key, "Métodos")
+
+                keyboard_rows.append([
+                    InlineKeyboardButton(
+                        f"⚙️ {group_label} · {label}",
+                        callback_data=f"owner_group_payment_provider_{group_id}_{provider}"
+                    )
+                ])
 
 
         keyboard_rows.extend([
+            [InlineKeyboardButton("🎟 Códigos y promociones", callback_data="owner_panel_codes")],
             [InlineKeyboardButton("⬅️ Volver a planes y pagos", callback_data="owner_panel_payments")],
             [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
             [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
