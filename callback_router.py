@@ -136,7 +136,12 @@ from payment_service import (
     save_group_payment_provider_encrypted_config,
     save_platform_payment_provider_encrypted_config
 )
-from payment_access_service import grant_group_access_after_payment
+from payment_access_service import (
+    get_user_group_access_state,
+    grant_group_access_after_payment,
+    log_purchase_blocked_existing_access,
+    should_block_new_group_purchase
+)
 from payment_providers.guardarian_provider import process_guardarian_webhook
 from payment_secret_store import (
     encrypt_provider_config,
@@ -680,6 +685,133 @@ def build_group_recovery_keyboard(group_id, retry_callback=None):
     )])
 
     return InlineKeyboardMarkup(keyboard)
+
+
+def format_access_expiration(expires_at):
+
+    if not expires_at:
+        return "permanente"
+
+    try:
+        return expires_at.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(expires_at)
+
+
+def build_existing_group_access_text(access_state):
+
+    group_name = access_state.get("group_name") or f"Grupo {access_state.get('group_id')}"
+    expires_at = access_state.get("expires_at")
+
+    if access_state.get("has_active_access"):
+
+        return (
+            f"✅ Ya tienes acceso activo a {group_name}.\n\n"
+            f"Acceso: {format_access_expiration(expires_at)}\n\n"
+            "Si necesitas volver a entrar, usa Recuperar/Reenviar enlace.\n"
+            "Si crees que esto es un error, abre soporte."
+        )
+
+    if access_state.get("subscription_status") == "pending":
+
+        provider = access_state.get("last_payment_provider") or "proveedor"
+
+        return (
+            f"⏳ Tienes un pago pendiente para {group_name}.\n\n"
+            f"Proveedor: {provider}\n"
+            f"Estado: {access_state.get('last_payment_status') or 'pending'}\n\n"
+            "No crearé otro pago mientras este siga pendiente. Si tarda demasiado, abre soporte."
+        )
+
+    if access_state.get("subscription_status") == "expired":
+
+        return (
+            f"⚠️ Tu acceso anterior a {group_name} está vencido.\n\n"
+            "Puedes renovar el acceso o revisar los planes disponibles."
+        )
+
+    return (
+        f"ℹ️ Estado de acceso para {group_name}\n\n"
+        "No veo un acceso activo ahora mismo."
+    )
+
+
+def build_existing_group_access_keyboard(group_id, access_state, retry_callback=None):
+
+    keyboard = []
+    telegram_group_id = access_state.get("telegram_group_id")
+
+
+    if access_state.get("has_active_access"):
+
+        keyboard.append([InlineKeyboardButton(
+            "🔗 Recuperar/Reenviar enlace",
+            callback_data=f"mysub_{telegram_group_id}" if telegram_group_id else "mis_subs"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            "📋 Ver mi suscripción",
+            callback_data="mis_subs"
+        )])
+
+    elif access_state.get("subscription_status") == "pending":
+
+        keyboard.append([InlineKeyboardButton(
+            "🔁 Revisar estado del pago",
+            callback_data=f"payment_status_group_{group_id}"
+        )])
+
+    elif access_state.get("subscription_status") == "expired":
+
+        keyboard.append([InlineKeyboardButton(
+            "🔄 Renovar acceso",
+            callback_data=f"group_{group_id}"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            "📋 Ver planes",
+            callback_data=f"group_{group_id}"
+        )])
+
+
+    if retry_callback and access_state.get("can_buy_again"):
+
+        keyboard.append([InlineKeyboardButton(
+            "💳 Reintentar pago",
+            callback_data=retry_callback
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "🛟 Soporte",
+        callback_data=f"public_support_group_{group_id}"
+    )])
+    keyboard.append([InlineKeyboardButton(
+        "🏠 Inicio",
+        callback_data="public_back_start"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def send_existing_group_access_notice(context, chat_id, user_id, group_id, provider="unknown", event_type="purchase_blocked_existing_access", retry_callback=None):
+
+    access_state = get_user_group_access_state(user_id, group_id)
+    log_purchase_blocked_existing_access(
+        user_id,
+        group_id,
+        provider=provider,
+        event_type=event_type,
+        access_state=access_state
+    )
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=build_existing_group_access_text(access_state),
+        reply_markup=build_existing_group_access_keyboard(
+            group_id,
+            access_state,
+            retry_callback=retry_callback
+        )
+    )
 
 
 LEGACY_CALLBACK_PREFIXES = (
@@ -10634,6 +10766,7 @@ def build_marketplace_access_keyboard(
 ):
 
     keyboard = []
+    access_state = get_user_group_access_state(user_id, group_id) if user_id else None
 
 
     if user_id:
@@ -10644,6 +10777,13 @@ def build_marketplace_access_keyboard(
             favorite_button_text(is_favorite),
             callback_data=favorite_callback_data(group_id, is_favorite)
         )])
+
+
+    if access_state and should_block_new_group_purchase(access_state):
+
+        keyboard.extend(build_existing_group_access_keyboard(group_id, access_state).inline_keyboard)
+
+        return InlineKeyboardMarkup(keyboard)
 
 
     keyboard.append([InlineKeyboardButton(
@@ -10668,6 +10808,7 @@ def build_marketplace_preview_keyboard(group, user_id=None):
 
     group_id = group.get("id")
     keyboard = []
+    access_state = get_user_group_access_state(user_id, group_id) if user_id else None
 
 
     if user_id:
@@ -10686,6 +10827,13 @@ def build_marketplace_preview_keyboard(group, user_id=None):
             "⚡ Ver últimos vídeos",
             callback_data=f"marketplace_dynamic_preview_{group_id}"
         )])
+
+
+    if access_state and should_block_new_group_purchase(access_state):
+
+        keyboard.extend(build_existing_group_access_keyboard(group_id, access_state).inline_keyboard)
+
+        return InlineKeyboardMarkup(keyboard)
 
 
     keyboard.append([InlineKeyboardButton(
@@ -11160,6 +11308,7 @@ def build_marketplace_group_keyboard(group, user_id=None):
     is_free_group = group.get("is_free_group")
     preview_mode = group.get("preview_mode") or "manual"
     keyboard = []
+    access_state = get_user_group_access_state(user_id, group_id) if user_id else None
 
 
     if preview_mode in ("manual", "hybrid"):
@@ -11185,6 +11334,13 @@ def build_marketplace_group_keyboard(group, user_id=None):
             favorite_button_text(is_favorite),
             callback_data=favorite_callback_data(group_id, is_favorite)
         )])
+
+
+    if access_state and should_block_new_group_purchase(access_state):
+
+        keyboard.extend(build_existing_group_access_keyboard(group_id, access_state).inline_keyboard)
+
+        return InlineKeyboardMarkup(keyboard)
 
 
     keyboard.append([InlineKeyboardButton(
@@ -11287,6 +11443,12 @@ def format_dynamic_preview_video_caption(group, video, index, total):
 def build_dynamic_preview_access_keyboard(group, user_id=None):
 
     group_id = group.get("id")
+    access_state = get_user_group_access_state(user_id, group_id) if user_id else None
+
+
+    if access_state and should_block_new_group_purchase(access_state):
+
+        return build_existing_group_access_keyboard(group_id, access_state)
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
@@ -15499,6 +15661,21 @@ async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_
 async def create_free_access_for_user(context, chat_id, telegram_user, group_id):
 
     user_id = telegram_user.id
+    access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if should_block_new_group_purchase(access_state):
+
+        await send_existing_group_access_notice(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            provider="free",
+            event_type="free_access_blocked_existing_access"
+        )
+
+        return
 
 
     try:
@@ -15709,6 +15886,23 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
 
 async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id):
 
+    access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if should_block_new_group_purchase(access_state):
+
+        await send_existing_group_access_notice(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            provider="stripe",
+            retry_callback=price_id if is_stripe_checkout_callback(price_id) else None
+        )
+
+        return
+
+
     if not is_stripe_payments_enabled():
 
         await context.bot.send_message(
@@ -15773,6 +15967,22 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
 
 async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
+
+    access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if should_block_new_group_purchase(access_state):
+
+        await send_existing_group_access_notice(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            provider="paypal"
+        )
+
+        return
+
 
     try:
 
@@ -15841,6 +16051,22 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
 async def create_revolut_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
 
+    access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if should_block_new_group_purchase(access_state):
+
+        await send_existing_group_access_notice(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            provider="revolut"
+        )
+
+        return
+
+
     try:
 
         response = requests.post(
@@ -15908,6 +16134,22 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
 
 async def create_changenow_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
 
+    access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if should_block_new_group_purchase(access_state):
+
+        await send_existing_group_access_notice(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            provider="changenow"
+        )
+
+        return
+
+
     try:
 
         response = requests.post(
@@ -15973,6 +16215,22 @@ async def create_changenow_group_checkout_for_user(context, chat_id, user_id, gr
 
 
 async def create_guardarian_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
+
+    access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if should_block_new_group_purchase(access_state):
+
+        await send_existing_group_access_notice(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            provider="guardarian"
+        )
+
+        return
+
 
     try:
 
@@ -22821,6 +23079,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        access_state = get_user_group_access_state(user_id, group_id)
+
+
+        if should_block_new_group_purchase(access_state):
+
+            await send_existing_group_access_notice(
+                context,
+                query.message.chat_id,
+                user_id,
+                group_id,
+                provider="free",
+                event_type="free_access_blocked_existing_access"
+            )
+
+            return
+
+
         location_gate_enabled, allowed_region, allowed_region_type = group_row
 
 
@@ -22931,6 +23206,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
                 "❌ Error cargando planes."
+            )
+
+            return
+
+
+        access_state = get_user_group_access_state(user_id, group_id)
+
+
+        if should_block_new_group_purchase(access_state):
+
+            await send_existing_group_access_notice(
+                context,
+                query.message.chat_id,
+                user_id,
+                group_id,
+                provider="marketplace"
             )
 
             return
@@ -23106,16 +23397,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
 
-        await send_clean_message(
-            context,
-            query.message.chat_id,
+        intro_text = (
+            "Selecciona un plan:\n\n"
+            "💳 Pagos tradicionales: tarjeta/Stripe, PayPal o Revolut.\n"
+            "🪙 Cripto / USDT: ChangeNOW para cripto y Guardarian para tarjeta EUR con liquidación USDT.\n"
+            "Solo verás métodos activos para esta comunidad."
+        )
 
-            (
-                "Selecciona un plan:\n\n"
+
+        if access_state.get("subscription_status") == "expired":
+
+            intro_text = (
+                "⚠️ Tu acceso anterior está vencido.\n\n"
+                "Puedes renovar el acceso seleccionando un plan:\n\n"
                 "💳 Pagos tradicionales: tarjeta/Stripe, PayPal o Revolut.\n"
                 "🪙 Cripto / USDT: ChangeNOW para cripto y Guardarian para tarjeta EUR con liquidación USDT.\n"
                 "Solo verás métodos activos para esta comunidad."
-            ),
+            )
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            intro_text,
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -23135,6 +23439,40 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         await start(update, context)
+
+        return
+
+
+    if data.startswith("payment_status_group_"):
+
+        try:
+
+            group_id = int(data.replace("payment_status_group_", "", 1))
+
+        except Exception:
+
+            await query.message.reply_text(
+                "❌ Comunidad no válida.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        access_state = get_user_group_access_state(
+            query.from_user.id,
+            group_id
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_existing_group_access_text(access_state),
+            reply_markup=build_existing_group_access_keyboard(
+                group_id,
+                access_state
+            )
+        )
 
         return
 
@@ -33476,6 +33814,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        access_state = get_user_group_access_state(user_id, group_id)
+
+
+        if should_block_new_group_purchase(access_state):
+
+            await send_existing_group_access_notice(
+                context,
+                query.message.chat_id,
+                user_id,
+                group_id,
+                provider="paypal"
+            )
+
+            return
+
+
         if group_requires_location_gate(group_id):
 
             await request_location_verification(
@@ -33526,6 +33880,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "Revolut todavía no está configurado para esta comunidad.",
                 reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        access_state = get_user_group_access_state(user_id, group_id)
+
+
+        if should_block_new_group_purchase(access_state):
+
+            await send_existing_group_access_notice(
+                context,
+                query.message.chat_id,
+                user_id,
+                group_id,
+                provider="revolut"
             )
 
             return
@@ -33586,6 +33956,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        access_state = get_user_group_access_state(user_id, group_id)
+
+
+        if should_block_new_group_purchase(access_state):
+
+            await send_existing_group_access_notice(
+                context,
+                query.message.chat_id,
+                user_id,
+                group_id,
+                provider="changenow"
+            )
+
+            return
+
+
         if group_requires_location_gate(group_id):
 
             await request_location_verification(
@@ -33636,6 +34022,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "Guardarian todavía no está configurado para esta comunidad.",
                 reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        access_state = get_user_group_access_state(user_id, group_id)
+
+
+        if should_block_new_group_purchase(access_state):
+
+            await send_existing_group_access_notice(
+                context,
+                query.message.chat_id,
+                user_id,
+                group_id,
+                provider="guardarian"
             )
 
             return
@@ -33764,6 +34166,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
+
+
+    access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if should_block_new_group_purchase(access_state):
+
+        await send_existing_group_access_notice(
+            context,
+            query.message.chat_id,
+            user_id,
+            group_id,
+            provider="stripe",
+            retry_callback=data
+        )
+
+        return
+
 
     if group_requires_location_gate(group_id):
 

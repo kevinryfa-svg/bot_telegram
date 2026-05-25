@@ -21,6 +21,12 @@ from payment_service import (
     create_payment_transaction,
     is_stripe_payments_enabled
 )
+from payment_access_service import (
+    build_existing_access_api_response,
+    get_user_group_access_state,
+    log_purchase_blocked_existing_access,
+    should_block_new_group_purchase
+)
 from payment_providers.paypal_provider import (
     cancel_paypal_order,
     capture_paypal_order,
@@ -99,6 +105,21 @@ def register_checkout_routes(app):
             print("Error obteniendo price_id:", e)
 
             return jsonify({"error": "Error interno"}), 500
+
+
+        access_state = get_user_group_access_state(telegram_id, group_id)
+
+
+        if should_block_new_group_purchase(access_state):
+
+            log_purchase_blocked_existing_access(
+                telegram_id,
+                group_id,
+                provider=PAYMENT_PROVIDER_STRIPE,
+                access_state=access_state
+            )
+
+            return jsonify(build_existing_access_api_response(access_state)), 409
 
 
         try:
@@ -187,6 +208,21 @@ def register_checkout_routes(app):
 
         try:
 
+            access_state = get_user_group_access_state(user_id, group_id)
+
+
+            if should_block_new_group_purchase(access_state):
+
+                log_purchase_blocked_existing_access(
+                    user_id,
+                    group_id,
+                    provider=PAYMENT_PROVIDER_PAYPAL,
+                    access_state=access_state
+                )
+
+                return jsonify(build_existing_access_api_response(access_state)), 409
+
+
             order = create_group_paypal_order(
                 user_id=user_id,
                 group_id=group_id,
@@ -236,6 +272,21 @@ def register_checkout_routes(app):
 
 
         try:
+
+            access_state = get_user_group_access_state(user_id, group_id)
+
+
+            if should_block_new_group_purchase(access_state):
+
+                log_purchase_blocked_existing_access(
+                    user_id,
+                    group_id,
+                    provider=PAYMENT_PROVIDER_REVOLUT,
+                    access_state=access_state
+                )
+
+                return jsonify(build_existing_access_api_response(access_state)), 409
+
 
             order = create_group_revolut_order(
                 user_id=user_id,
@@ -287,6 +338,21 @@ def register_checkout_routes(app):
 
         try:
 
+            access_state = get_user_group_access_state(user_id, group_id)
+
+
+            if should_block_new_group_purchase(access_state):
+
+                log_purchase_blocked_existing_access(
+                    user_id,
+                    group_id,
+                    provider=PAYMENT_PROVIDER_CHANGENOW,
+                    access_state=access_state
+                )
+
+                return jsonify(build_existing_access_api_response(access_state)), 409
+
+
             order = create_group_changenow_order(
                 user_id=user_id,
                 group_id=group_id,
@@ -335,6 +401,21 @@ def register_checkout_routes(app):
 
 
         try:
+
+            access_state = get_user_group_access_state(user_id, group_id)
+
+
+            if should_block_new_group_purchase(access_state):
+
+                log_purchase_blocked_existing_access(
+                    user_id,
+                    group_id,
+                    provider=PAYMENT_PROVIDER_GUARDARIAN,
+                    access_state=access_state
+                )
+
+                return jsonify(build_existing_access_api_response(access_state)), 409
+
 
             order = create_group_guardarian_order(
                 user_id=user_id,

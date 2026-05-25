@@ -11,6 +11,11 @@ from rbac_helpers import get_group_owner_user_id
 from user_activity_logger import log_user_event_by_ids
 
 
+ACTIVE_PAYMENT_STATUSES = ("paid", "completed")
+PENDING_PAYMENT_STATUSES = ("pending", "confirming", "manual_review")
+FAILED_PAYMENT_STATUSES = ("failed", "cancelled", "expired", "refunded")
+
+
 def format_payment_amount(amount, currency):
 
     if amount is None:
@@ -72,6 +77,296 @@ def get_payment_owner_user_id(group_id, telegram_group_id):
 
 
     return None
+
+
+def get_user_group_access_state(user_id, group_id):
+
+    state = {
+        "user_id": user_id,
+        "group_id": group_id,
+        "telegram_group_id": None,
+        "group_name": None,
+        "is_free_group": False,
+        "has_active_access": False,
+        "access_source": "unknown",
+        "subscription_status": "none",
+        "expires_at": None,
+        "last_payment_status": None,
+        "last_payment_provider": None,
+        "last_payment_created_at": None,
+        "has_active_invite_link": False,
+        "can_buy_again": True,
+        "can_recover_link": False,
+        "can_renew": False,
+        "reason": "no_access"
+    }
+
+
+    if not user_id or not group_id:
+
+        state["can_buy_again"] = False
+        state["reason"] = "missing_user_or_group"
+        return state
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       name,
+                       telegram_group_id,
+                       COALESCE(is_free_group, FALSE)
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+            group_row = cur.fetchone()
+
+
+            if not group_row:
+
+                state["can_buy_again"] = False
+                state["reason"] = "group_not_found"
+                return state
+
+
+            state["group_name"] = group_row[1]
+            state["telegram_group_id"] = group_row[2]
+            state["is_free_group"] = bool(group_row[3])
+
+            cur.execute("""
+
+                SELECT expiration,
+                       COALESCE(subscription_active, FALSE),
+                       last_invite_link,
+                       created_at
+                FROM users
+                WHERE user_id=%s
+                AND group_id=%s
+                LIMIT 1
+
+            """, (
+                user_id,
+                group_id
+            ))
+            user_row = cur.fetchone()
+
+
+            if user_row:
+
+                expiration, subscription_active, _last_invite_link, _created_at = user_row
+                state["expires_at"] = expiration
+
+
+                if subscription_active and (expiration is None or expiration > datetime.now()):
+
+                    state["has_active_access"] = True
+                    state["subscription_status"] = "active"
+                    state["can_buy_again"] = False
+                    state["can_recover_link"] = True
+                    state["reason"] = "active_access"
+
+                elif subscription_active or expiration:
+
+                    state["subscription_status"] = "expired"
+                    state["can_buy_again"] = True
+                    state["can_renew"] = True
+                    state["reason"] = "expired_access"
+
+
+            cur.execute("""
+
+                SELECT provider,
+                       status,
+                       created_at
+                FROM payment_transactions
+                WHERE user_id=%s
+                AND group_id=%s
+                ORDER BY updated_at DESC NULLS LAST,
+                         created_at DESC
+                LIMIT 1
+
+            """, (
+                user_id,
+                group_id
+            ))
+            transaction_row = cur.fetchone()
+
+
+            if transaction_row:
+
+                state["last_payment_provider"] = transaction_row[0]
+                state["last_payment_status"] = transaction_row[1]
+                state["last_payment_created_at"] = transaction_row[2]
+
+                if transaction_row[1] in PENDING_PAYMENT_STATUSES and not state["has_active_access"]:
+
+                    state["subscription_status"] = "pending"
+                    state["can_buy_again"] = False
+                    state["can_renew"] = False
+                    state["reason"] = "payment_pending"
+
+
+            if not state["last_payment_status"]:
+
+                cur.execute("""
+
+                    SELECT status,
+                           payment_date
+                    FROM payments
+                    WHERE user_id=%s
+                    AND group_id=%s
+                    ORDER BY payment_date DESC
+                    LIMIT 1
+
+                """, (
+                    user_id,
+                    group_id
+                ))
+                payment_row = cur.fetchone()
+
+
+                if payment_row:
+
+                    state["last_payment_provider"] = "stripe"
+                    state["last_payment_status"] = payment_row[0]
+                    state["last_payment_created_at"] = payment_row[1]
+
+
+            cur.execute("""
+
+                SELECT 1
+                FROM invite_links
+                WHERE user_id=%s
+                AND (
+                    group_id=%s
+                    OR telegram_group_id=%s
+                )
+                AND COALESCE(is_active, TRUE)=TRUE
+                LIMIT 1
+
+            """, (
+                user_id,
+                group_id,
+                state["telegram_group_id"]
+            ))
+            state["has_active_invite_link"] = cur.fetchone() is not None
+
+            cur.execute("""
+
+                SELECT 1
+                FROM group_user_promo_redemptions
+                WHERE user_id=%s
+                AND group_id=%s
+                AND (
+                    expiration IS NULL
+                    OR expiration > NOW()
+                )
+                LIMIT 1
+
+            """, (
+                user_id,
+                group_id
+            ))
+            has_code_access = cur.fetchone() is not None
+
+
+            if state["has_active_access"]:
+
+                if has_code_access:
+
+                    state["access_source"] = "code"
+
+                elif state["last_payment_status"] in ACTIVE_PAYMENT_STATUSES:
+
+                    state["access_source"] = "paid"
+
+                elif state["is_free_group"] and state["expires_at"] is None:
+
+                    state["access_source"] = "free"
+
+                else:
+
+                    state["access_source"] = "manual"
+
+    except Exception as e:
+
+        print("get_user_group_access_state_error:", str(e)[:200])
+        state["can_buy_again"] = False
+        state["reason"] = "access_state_error"
+
+
+    return state
+
+
+def should_block_new_group_purchase(access_state):
+
+    if not access_state:
+        return False
+
+    return (
+        access_state.get("has_active_access") is True
+        or access_state.get("subscription_status") == "pending"
+    )
+
+
+def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", event_type="purchase_blocked_existing_access", access_state=None):
+
+    access_state = access_state or {}
+
+    log_event(
+        event_type,
+        category="payment" if event_type != "free_access_blocked_existing_access" else "access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        message="Se bloqueó un nuevo acceso/pago porque el usuario ya tiene acceso o un pago pendiente.",
+        metadata={
+            "provider": provider,
+            "subscription_status": access_state.get("subscription_status"),
+            "last_payment_status": access_state.get("last_payment_status"),
+            "access_source": access_state.get("access_source"),
+            "reason": access_state.get("reason")
+        }
+    )
+
+    log_user_event_by_ids(
+        user_id,
+        event_type,
+        event_key=f"{provider}_{group_id}",
+        group_id=group_id,
+        payment_provider=provider,
+        payment_scope="group",
+        metadata={
+            "subscription_status": access_state.get("subscription_status"),
+            "last_payment_status": access_state.get("last_payment_status"),
+            "reason": access_state.get("reason")
+        }
+    )
+
+
+def build_existing_access_api_response(access_state):
+
+    if access_state.get("subscription_status") == "pending":
+
+        return {
+            "error": "Tienes un pago pendiente para esta comunidad. Espera la confirmación del proveedor o contacta soporte.",
+            "reason": "payment_pending",
+            "subscription_status": "pending"
+        }
+
+    return {
+        "error": "Ya tienes acceso activo a esta comunidad. Puedes recuperar tu enlace desde Mis suscripciones.",
+        "reason": "active_access",
+        "subscription_status": access_state.get("subscription_status"),
+        "can_recover_link": access_state.get("can_recover_link")
+    }
 
 
 def get_group_plan_for_access(group_id, plan_id):
