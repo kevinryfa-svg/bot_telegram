@@ -119,7 +119,7 @@ Se añadió la tabla `ai_interactions` para registrar:
 - resumen de respuesta;
 - resumen de contexto seguro;
 - éxito/fallback;
-- feedback `up`, `down` o `report`.
+- feedback visible: `useful`, `not_useful` o `problem`.
 
 Los callbacks de feedback son:
 

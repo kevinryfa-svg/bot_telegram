@@ -26,6 +26,33 @@ from ai_policy import (
 from ai_service import generate_ai_response
 
 
+AI_FEEDBACK_USEFUL = "useful"
+AI_FEEDBACK_NOT_USEFUL = "not_useful"
+AI_FEEDBACK_PROBLEM = "problem"
+
+
+FORBIDDEN_USER_FACING_TERMS = (
+    "email",
+    "correo",
+    "bandeja de entrada",
+    "spam",
+    "inbox",
+    "transferencia bancaria",
+    "transferencias bancarias",
+    "bitcoin",
+    "ethereum",
+    "suelen incluir",
+    "normalmente puedes pagar"
+)
+
+
+DETERMINISTIC_INTENTS = (
+    AI_INTENT_ACCESS_RECOVERY,
+    AI_INTENT_PAYMENT_HELP,
+    AI_INTENT_PAYMENT_PROVIDER_SETUP
+)
+
+
 def record_ai_interaction(
     user_id,
     role,
@@ -83,25 +110,40 @@ def record_ai_interaction(
 
 def update_ai_feedback(interaction_id, rating):
 
-    if rating not in ("up", "down", "report"):
+    rating_map = {
+        "up": (AI_FEEDBACK_USEFUL, True),
+        "useful": (AI_FEEDBACK_USEFUL, True),
+        "down": (AI_FEEDBACK_NOT_USEFUL, False),
+        "not_useful": (AI_FEEDBACK_NOT_USEFUL, False),
+        "report": (AI_FEEDBACK_PROBLEM, False),
+        "problem": (AI_FEEDBACK_PROBLEM, False)
+    }
+
+    if rating not in rating_map:
         return False
+
+    stored_rating, success = rating_map[rating]
 
     try:
         with conn.cursor() as cur:
             cur.execute("""
 
                 UPDATE ai_interactions
-                SET feedback_rating=%s
+                SET feedback_rating=%s,
+                    success=%s
                 WHERE id=%s
+                RETURNING id
 
             """, (
-                rating,
+                stored_rating,
+                success,
                 interaction_id
             ))
+            row = cur.fetchone()
 
         conn.commit()
 
-        return True
+        return bool(row)
 
     except Exception as exc:
         try:
@@ -110,6 +152,36 @@ def update_ai_feedback(interaction_id, rating):
             pass
         print("ai_feedback_update_error:", str(exc)[:200])
         return False
+
+
+def get_ai_interaction_feedback_context(interaction_id):
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+
+                SELECT id, role, group_id, intent, feedback_rating
+                FROM ai_interactions
+                WHERE id=%s
+                LIMIT 1
+
+            """, (interaction_id,))
+            row = cur.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "role": row[1],
+            "group_id": row[2],
+            "intent": row[3],
+            "feedback_rating": row[4]
+        }
+
+    except Exception as exc:
+        print("ai_feedback_context_error:", str(exc)[:200])
+        return None
 
 
 def build_ai_feedback_keyboard_rows(interaction_id):
@@ -124,17 +196,88 @@ def build_ai_feedback_keyboard_rows(interaction_id):
     ]
 
 
-def build_rule_based_response(intent, role, context_key, group_id=None):
+def response_has_forbidden_content(answer):
+
+    text = str(answer or "").lower()
+
+    return any(term in text for term in FORBIDDEN_USER_FACING_TERMS)
+
+
+def build_payment_methods_answer(group_id=None, payment_methods=None):
+
+    payment_methods = payment_methods or {}
+    active_methods = payment_methods.get("active") or []
+
+    if group_id:
+        if active_methods:
+            return (
+                "Esta comunidad acepta solo los métodos que aparecen activos en el bot ahora mismo:\n\n"
+                + "\n".join(f"- {method}" for method in active_methods)
+                + "\n\nAl abrir un plan concreto, el bot mostrará únicamente los métodos disponibles para ese grupo."
+            )
+
+        return (
+            "No veo métodos de pago activos para esta comunidad en el contexto seguro disponible.\n\n"
+            "Abre el plan concreto desde el bot: ahí se muestran solo los métodos realmente disponibles. "
+            "Si esperabas ver un método, el owner debe revisarlo en Métodos de pago del grupo."
+        )
+
+    return (
+        "Depende de la comunidad.\n\n"
+        "En este bot los métodos soportados son:\n"
+        "- Stripe\n"
+        "- PayPal\n"
+        "- Revolut\n"
+        "- ChangeNOW.io / Cripto\n"
+        "- Guardarian / Tarjeta EUR → USDT\n"
+        "- Códigos y promociones\n\n"
+        "Cada propietario decide cuáles activa en su comunidad. Al abrir un plan concreto, el bot te mostrará solo los métodos disponibles para ese grupo."
+    )
+
+
+def build_rule_based_response(intent, role, context_key, group_id=None, question=None, payment_methods=None):
+
+    question_text = str(question or "").lower()
+
+    if "eur" in question_text and "usdt" in question_text or "guardarian" in question_text:
+        return (
+            "En este bot, EUR → USDT se refiere a Guardarian.\n\n"
+            "El comprador paga con tarjeta en euros y el propietario recibe USDT en la wallet configurada. "
+            "El acceso solo se activa automáticamente cuando Guardarian confirma el pago con estado finished. "
+            "Algunos pagos pueden requerir verificación KYC/AML."
+        )
+
+    if "changenow" in question_text:
+        return (
+            "ChangeNOW es el método de pago cripto/intercambio dentro del bot.\n\n"
+            "Puede permitir pagos cripto si el propietario lo tiene configurado. "
+            "Según la configuración actual, algunos pagos pueden quedar en revisión manual antes de activar el acceso."
+        )
+
+    if (
+        "cómo puedo pagar" in question_text
+        or "como puedo pagar" in question_text
+        or "qué métodos acepta" in question_text
+        or "que métodos acepta" in question_text
+        or "que metodos acepta" in question_text
+        or (
+            role == AI_ROLE_BUYER
+            and intent == AI_INTENT_PAYMENT_PROVIDER_SETUP
+            and "configur" not in question_text
+        )
+    ):
+        return build_payment_methods_answer(group_id=group_id, payment_methods=payment_methods)
 
     if intent == AI_INTENT_ACCESS_RECOVERY:
         return (
-            "Puedo ayudarte a recuperar el acceso.\n\n"
+            "Si ya pagaste y no recibiste el enlace, revisa primero Mis suscripciones dentro del bot.\n\n"
             "Pasos:\n"
-            "1. Pulsa 🏠 Inicio.\n"
-            "2. Entra en 🎟 Mis accesos / recuperar.\n"
-            "3. Si acabas de pagar, espera unos minutos: el link se envía cuando el proveedor confirma el pago.\n"
-            "4. Si no aparece, abre 🛟 Soporte e indica comunidad, método de pago y captura si la tienes.\n\n"
-            "No puedo confirmar un pago sin revisar datos reales del sistema, pero sí puedo guiarte al flujo correcto."
+            "1. Entra en Mis suscripciones.\n"
+            "2. Comprueba si tu acceso aparece activo.\n"
+            "3. Si aparece activo, usa la opción de recuperar o reenviar enlace.\n"
+            "4. Si el pago está pendiente, espera la confirmación del proveedor.\n"
+            "5. Si aparece pagado pero no recibes enlace, abre soporte desde el bot para que revisemos tu acceso.\n\n"
+            "No se entrega acceso por canales externos: todo se revisa desde el bot."
         )
 
     if intent == AI_INTENT_PAYMENT_PROVIDER_SETUP:
@@ -200,11 +343,7 @@ def build_rule_based_response(intent, role, context_key, group_id=None):
         )
 
     if intent == AI_INTENT_PAYMENT_HELP:
-        return (
-            "Puedes pagar con los métodos activos de cada comunidad.\n\n"
-            "Verás solo métodos configurados: Tarjeta/Stripe, PayPal, Revolut, ChangeNOW o Guardarian. "
-            "Guardarian significa tarjeta en EUR con liquidación USDT al owner. ChangeNOW es cripto/intercambio y puede requerir revisión manual."
-        )
+        return build_payment_methods_answer(group_id=group_id, payment_methods=payment_methods)
 
     return (
         "No tengo suficiente información para confirmarlo.\n\n"
@@ -243,12 +382,16 @@ def build_contextual_ai_answer(
         intent,
         role,
         context_key,
-        group_id=group_id
+        group_id=group_id,
+        question=question,
+        payment_methods=context_data.get("payment_methods")
     )
     ok = False
     answer = fallback
 
-    if prefer_model:
+    use_model = prefer_model and intent not in DETERMINISTIC_INTENTS
+
+    if use_model:
         ok, model_answer = generate_ai_response(
             question,
             system_prompt=policy_prompt,
@@ -257,6 +400,10 @@ def build_contextual_ai_answer(
 
         if ok and model_answer:
             answer = model_answer
+
+    if response_has_forbidden_content(answer):
+        ok = False
+        answer = fallback
 
     answer = sanitize_ai_text(answer)
     interaction_id = record_ai_interaction(

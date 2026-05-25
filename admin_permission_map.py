@@ -127,6 +127,7 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_ai_support": (SUPER_ADMIN_ONLY,),
     "admin_ai_audits": (SUPER_ADMIN_ONLY,),
     "admin_ai_codex_task": (SUPER_ADMIN_ONLY,),
+    "admin_ai_feedback": (SUPER_ADMIN_ONLY,),
     "admin_ai_ask": (SUPER_ADMIN_ONLY,),
     "admin_button_audit": (SUPER_ADMIN_ONLY,),
     "admin_button_audit_detail": (SUPER_ADMIN_ONLY,),
