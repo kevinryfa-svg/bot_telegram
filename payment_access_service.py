@@ -95,6 +95,9 @@ def get_user_group_access_state(user_id, group_id):
         "last_payment_provider": None,
         "last_payment_created_at": None,
         "has_active_invite_link": False,
+        "has_active_code_access": False,
+        "has_user_access_record": False,
+        "paid_without_access_record": False,
         "can_buy_again": True,
         "can_recover_link": False,
         "can_renew": False,
@@ -107,6 +110,20 @@ def get_user_group_access_state(user_id, group_id):
         state["can_buy_again"] = False
         state["reason"] = "missing_user_or_group"
         return state
+
+
+    user_expired_explicitly = False
+
+
+    def mark_active(access_source, reason):
+
+        state["has_active_access"] = True
+        state["access_source"] = access_source
+        state["subscription_status"] = "active"
+        state["can_buy_again"] = False
+        state["can_recover_link"] = True
+        state["can_renew"] = False
+        state["reason"] = reason
 
 
     try:
@@ -138,6 +155,18 @@ def get_user_group_access_state(user_id, group_id):
             state["telegram_group_id"] = group_row[2]
             state["is_free_group"] = bool(group_row[3])
 
+    except Exception as e:
+
+        print("get_user_group_access_state_group_error:", str(e)[:200])
+        state["can_buy_again"] = False
+        state["reason"] = "group_lookup_error"
+        return state
+
+
+    try:
+
+        with conn.cursor() as cur:
+
             cur.execute("""
 
                 SELECT expiration,
@@ -159,24 +188,47 @@ def get_user_group_access_state(user_id, group_id):
             if user_row:
 
                 expiration, subscription_active, _last_invite_link, _created_at = user_row
+                state["has_user_access_record"] = True
                 state["expires_at"] = expiration
 
 
                 if subscription_active and (expiration is None or expiration > datetime.now()):
 
-                    state["has_active_access"] = True
-                    state["subscription_status"] = "active"
-                    state["can_buy_again"] = False
-                    state["can_recover_link"] = True
-                    state["reason"] = "active_access"
+                    mark_active("unknown", "active_access")
 
-                elif subscription_active or expiration:
+                elif expiration and expiration <= datetime.now():
+
+                    user_expired_explicitly = True
 
                     state["subscription_status"] = "expired"
                     state["can_buy_again"] = True
                     state["can_renew"] = True
                     state["reason"] = "expired_access"
 
+                elif subscription_active:
+
+                    state["subscription_status"] = "expired"
+                    state["can_buy_again"] = True
+                    state["can_renew"] = True
+                    state["reason"] = "expired_access"
+
+
+                if (
+                    state["is_free_group"]
+                    and not state["has_active_access"]
+                    and not user_expired_explicitly
+                ):
+
+                    mark_active("free", "active_free_access")
+
+    except Exception as e:
+
+        print("get_user_group_access_state_user_error:", str(e)[:200])
+
+
+    try:
+
+        with conn.cursor() as cur:
 
             cur.execute("""
 
@@ -200,16 +252,24 @@ def get_user_group_access_state(user_id, group_id):
             if transaction_row:
 
                 state["last_payment_provider"] = transaction_row[0]
-                state["last_payment_status"] = transaction_row[1]
+                state["last_payment_status"] = (transaction_row[1] or "").lower()
                 state["last_payment_created_at"] = transaction_row[2]
 
-                if transaction_row[1] in PENDING_PAYMENT_STATUSES and not state["has_active_access"]:
+                if state["last_payment_status"] in PENDING_PAYMENT_STATUSES and not state["has_active_access"]:
 
                     state["subscription_status"] = "pending"
                     state["can_buy_again"] = False
                     state["can_renew"] = False
                     state["reason"] = "payment_pending"
 
+    except Exception as e:
+
+        print("get_user_group_access_state_transaction_error:", str(e)[:200])
+
+
+    try:
+
+        with conn.cursor() as cur:
 
             if not state["last_payment_status"]:
 
@@ -233,9 +293,17 @@ def get_user_group_access_state(user_id, group_id):
                 if payment_row:
 
                     state["last_payment_provider"] = "stripe"
-                    state["last_payment_status"] = payment_row[0]
+                    state["last_payment_status"] = (payment_row[0] or "").lower()
                     state["last_payment_created_at"] = payment_row[1]
 
+    except Exception as e:
+
+        print("get_user_group_access_state_payment_error:", str(e)[:200])
+
+
+    try:
+
+        with conn.cursor() as cur:
 
             cur.execute("""
 
@@ -256,6 +324,28 @@ def get_user_group_access_state(user_id, group_id):
             ))
             state["has_active_invite_link"] = cur.fetchone() is not None
 
+            if (
+                state["has_active_invite_link"]
+                and not state["has_active_access"]
+                and not user_expired_explicitly
+                and state["subscription_status"] != "pending"
+            ):
+
+                mark_active("free" if state["is_free_group"] else "unknown", "active_invite_link")
+
+            elif state["has_active_invite_link"]:
+
+                state["can_recover_link"] = True
+
+    except Exception as e:
+
+        print("get_user_group_access_state_invite_link_error:", str(e)[:200])
+
+
+    try:
+
+        with conn.cursor() as cur:
+
             cur.execute("""
 
                 SELECT 1
@@ -272,32 +362,47 @@ def get_user_group_access_state(user_id, group_id):
                 user_id,
                 group_id
             ))
-            has_code_access = cur.fetchone() is not None
+            state["has_active_code_access"] = cur.fetchone() is not None
 
 
-            if state["has_active_access"]:
+            if state["has_active_code_access"]:
 
-                if has_code_access:
-
-                    state["access_source"] = "code"
-
-                elif state["last_payment_status"] in ACTIVE_PAYMENT_STATUSES:
-
-                    state["access_source"] = "paid"
-
-                elif state["is_free_group"] and state["expires_at"] is None:
-
-                    state["access_source"] = "free"
-
-                else:
-
-                    state["access_source"] = "manual"
+                mark_active("code", "active_code_access")
 
     except Exception as e:
 
-        print("get_user_group_access_state_error:", str(e)[:200])
+        print("get_user_group_access_state_code_error:", str(e)[:200])
+
+
+    if state["has_active_access"]:
+
+        if state["has_active_code_access"]:
+
+            state["access_source"] = "code"
+
+        elif state["last_payment_status"] in ACTIVE_PAYMENT_STATUSES:
+
+            state["access_source"] = "paid"
+
+        elif state["is_free_group"] and (state["has_user_access_record"] or state["has_active_invite_link"]):
+
+            state["access_source"] = "free"
+
+        elif state["access_source"] == "unknown":
+
+            state["access_source"] = "manual"
+
+
+    elif (
+        state["last_payment_status"] in ACTIVE_PAYMENT_STATUSES
+        and not user_expired_explicitly
+    ):
+
+        state["paid_without_access_record"] = True
         state["can_buy_again"] = False
-        state["reason"] = "access_state_error"
+        state["can_renew"] = False
+        state["subscription_status"] = "paid_without_access_record"
+        state["reason"] = "paid_without_access_record"
 
 
     return state
@@ -311,6 +416,7 @@ def should_block_new_group_purchase(access_state):
     return (
         access_state.get("has_active_access") is True
         or access_state.get("subscription_status") == "pending"
+        or access_state.get("reason") == "paid_without_access_record"
     )
 
 
@@ -332,6 +438,9 @@ def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", 
             "subscription_status": access_state.get("subscription_status"),
             "last_payment_status": access_state.get("last_payment_status"),
             "access_source": access_state.get("access_source"),
+            "has_active_invite_link": access_state.get("has_active_invite_link"),
+            "has_active_code_access": access_state.get("has_active_code_access"),
+            "paid_without_access_record": access_state.get("paid_without_access_record"),
             "reason": access_state.get("reason")
         }
     )
@@ -346,6 +455,9 @@ def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", 
         metadata={
             "subscription_status": access_state.get("subscription_status"),
             "last_payment_status": access_state.get("last_payment_status"),
+            "last_payment_provider": access_state.get("last_payment_provider"),
+            "access_source": access_state.get("access_source"),
+            "has_active_invite_link": access_state.get("has_active_invite_link"),
             "reason": access_state.get("reason")
         }
     )
@@ -359,6 +471,14 @@ def build_existing_access_api_response(access_state):
             "error": "Tienes un pago pendiente para esta comunidad. Espera la confirmación del proveedor o contacta soporte.",
             "reason": "payment_pending",
             "subscription_status": "pending"
+        }
+
+    if access_state.get("reason") == "paid_without_access_record":
+
+        return {
+            "error": "Encontré un pago confirmado para esta comunidad, pero no puedo reconstruir el acceso automáticamente. Abre soporte o revisa Mis suscripciones antes de crear otro pago.",
+            "reason": "paid_without_access_record",
+            "subscription_status": "paid_without_access_record"
         }
 
     return {

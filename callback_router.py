@@ -723,6 +723,14 @@ def build_existing_group_access_text(access_state):
             "No crearé otro pago mientras este siga pendiente. Si tarda demasiado, abre soporte."
         )
 
+    if access_state.get("reason") == "paid_without_access_record":
+
+        return (
+            f"⚠️ Encontré un pago confirmado para {group_name}, pero no puedo reconstruir el acceso automáticamente.\n\n"
+            "Para evitar cobrarte dos veces, no crearé otro pago ahora.\n"
+            "Revisa Mis suscripciones o abre soporte para recuperar tu acceso."
+        )
+
     if access_state.get("subscription_status") == "expired":
 
         return (
@@ -734,6 +742,34 @@ def build_existing_group_access_text(access_state):
         f"ℹ️ Estado de acceso para {group_name}\n\n"
         "No veo un acceso activo ahora mismo."
     )
+
+
+def append_existing_group_access_notice(text, user_id, group_id):
+
+    if not user_id:
+
+        return text
+
+
+    access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if not should_block_new_group_purchase(access_state):
+
+        return text
+
+
+    notice = build_existing_group_access_text(access_state)
+    max_caption_length = 950
+    available_text_length = max_caption_length - len(notice) - 2
+
+
+    if available_text_length > 20 and len(text) > available_text_length:
+
+        text = f"{text[:available_text_length - 3]}..."
+
+
+    return f"{text}\n\n{notice}"
 
 
 def build_existing_group_access_keyboard(group_id, access_state, retry_callback=None):
@@ -758,6 +794,13 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
         keyboard.append([InlineKeyboardButton(
             "🔁 Revisar estado del pago",
             callback_data=f"payment_status_group_{group_id}"
+        )])
+
+    elif access_state.get("reason") == "paid_without_access_record":
+
+        keyboard.append([InlineKeyboardButton(
+            "📋 Ver mis suscripciones",
+            callback_data="mis_subs"
         )])
 
     elif access_state.get("subscription_status") == "expired":
@@ -11440,6 +11483,23 @@ def format_dynamic_preview_video_caption(group, video, index, total):
     )
 
 
+def format_dynamic_preview_video_caption_for_user(group, video, index, total, user_id=None):
+
+    caption = format_dynamic_preview_video_caption(group, video, index, total)
+
+
+    if index != total:
+
+        return caption
+
+
+    return append_existing_group_access_notice(
+        caption,
+        user_id,
+        group.get("id")
+    )
+
+
 def build_dynamic_preview_access_keyboard(group, user_id=None):
 
     group_id = group.get("id")
@@ -11520,6 +11580,11 @@ def format_marketplace_preview_caption(group):
 async def send_marketplace_group_card(context, chat_id, group, user_id=None):
 
     caption = format_marketplace_group_caption(group)
+    caption = append_existing_group_access_notice(
+        caption,
+        user_id,
+        group.get("id")
+    )
     keyboard = build_marketplace_group_keyboard(group, user_id=user_id)
     preview_mode = group.get("preview_mode") or "manual"
 
@@ -11561,6 +11626,11 @@ async def send_marketplace_group_card(context, chat_id, group, user_id=None):
 async def send_marketplace_preview(context, chat_id, group, user_id=None):
 
     caption = format_marketplace_preview_caption(group)
+    caption = append_existing_group_access_notice(
+        caption,
+        user_id,
+        group.get("id")
+    )
     keyboard = build_marketplace_preview_keyboard(
         group,
         user_id=user_id
@@ -17254,11 +17324,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message = await context.bot.send_video(
                 chat_id=query.message.chat_id,
                 video=video.get("video_file_id"),
-                caption=format_dynamic_preview_video_caption(
+                caption=format_dynamic_preview_video_caption_for_user(
                     group,
                     video,
                     index,
-                    total
+                    total,
+                    user_id=user_id
                 ),
                 reply_markup=reply_markup
             )
