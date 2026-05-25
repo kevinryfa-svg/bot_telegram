@@ -98,6 +98,8 @@ def get_user_group_access_state(user_id, group_id):
         "has_active_code_access": False,
         "has_user_access_record": False,
         "paid_without_access_record": False,
+        "ignored_pending_payment": False,
+        "ignored_pending_provider": None,
         "can_buy_again": True,
         "can_recover_link": False,
         "can_renew": False,
@@ -113,6 +115,10 @@ def get_user_group_access_state(user_id, group_id):
 
 
     user_expired_explicitly = False
+    latest_active_payment_status = None
+    latest_active_payment_provider = None
+    latest_pending_payment_status = None
+    latest_pending_payment_provider = None
 
 
     def mark_active(access_source, reason):
@@ -255,12 +261,56 @@ def get_user_group_access_state(user_id, group_id):
                 state["last_payment_status"] = (transaction_row[1] or "").lower()
                 state["last_payment_created_at"] = transaction_row[2]
 
-                if state["last_payment_status"] in PENDING_PAYMENT_STATUSES and not state["has_active_access"]:
+            cur.execute("""
 
-                    state["subscription_status"] = "pending"
-                    state["can_buy_again"] = False
-                    state["can_renew"] = False
-                    state["reason"] = "payment_pending"
+                SELECT provider,
+                       status
+                FROM payment_transactions
+                WHERE user_id=%s
+                AND group_id=%s
+                AND LOWER(COALESCE(status, '')) = ANY(%s)
+                ORDER BY updated_at DESC NULLS LAST,
+                         created_at DESC
+                LIMIT 1
+
+            """, (
+                user_id,
+                group_id,
+                list(ACTIVE_PAYMENT_STATUSES)
+            ))
+            active_transaction_row = cur.fetchone()
+
+
+            if active_transaction_row:
+
+                latest_active_payment_provider = active_transaction_row[0]
+                latest_active_payment_status = (active_transaction_row[1] or "").lower()
+
+
+            cur.execute("""
+
+                SELECT provider,
+                       status
+                FROM payment_transactions
+                WHERE user_id=%s
+                AND group_id=%s
+                AND LOWER(COALESCE(status, '')) = ANY(%s)
+                ORDER BY updated_at DESC NULLS LAST,
+                         created_at DESC
+                LIMIT 1
+
+            """, (
+                user_id,
+                group_id,
+                list(PENDING_PAYMENT_STATUSES)
+            ))
+            pending_transaction_row = cur.fetchone()
+
+
+            if pending_transaction_row:
+
+                latest_pending_payment_provider = pending_transaction_row[0]
+                latest_pending_payment_status = (pending_transaction_row[1] or "").lower()
 
     except Exception as e:
 
@@ -270,6 +320,56 @@ def get_user_group_access_state(user_id, group_id):
     try:
 
         with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT status,
+                       payment_date
+                FROM payments
+                WHERE user_id=%s
+                AND group_id=%s
+                AND LOWER(COALESCE(status, '')) = ANY(%s)
+                ORDER BY payment_date DESC
+                LIMIT 1
+
+            """, (
+                user_id,
+                group_id,
+                list(ACTIVE_PAYMENT_STATUSES)
+            ))
+            active_payment_row = cur.fetchone()
+
+
+            if active_payment_row:
+
+                latest_active_payment_provider = "stripe"
+                latest_active_payment_status = (active_payment_row[0] or "").lower()
+
+
+            cur.execute("""
+
+                SELECT status,
+                       payment_date
+                FROM payments
+                WHERE user_id=%s
+                AND group_id=%s
+                AND LOWER(COALESCE(status, '')) = ANY(%s)
+                ORDER BY payment_date DESC
+                LIMIT 1
+
+            """, (
+                user_id,
+                group_id,
+                list(PENDING_PAYMENT_STATUSES)
+            ))
+            pending_payment_row = cur.fetchone()
+
+
+            if pending_payment_row and not latest_pending_payment_status:
+
+                latest_pending_payment_provider = "stripe"
+                latest_pending_payment_status = (pending_payment_row[0] or "").lower()
+
 
             if not state["last_payment_status"]:
 
@@ -328,7 +428,6 @@ def get_user_group_access_state(user_id, group_id):
                 state["has_active_invite_link"]
                 and not state["has_active_access"]
                 and not user_expired_explicitly
-                and state["subscription_status"] != "pending"
             ):
 
                 mark_active("free" if state["is_free_group"] else "unknown", "active_invite_link")
@@ -365,7 +464,7 @@ def get_user_group_access_state(user_id, group_id):
             state["has_active_code_access"] = cur.fetchone() is not None
 
 
-            if state["has_active_code_access"]:
+            if state["has_active_code_access"] and not user_expired_explicitly:
 
                 mark_active("code", "active_code_access")
 
@@ -374,13 +473,29 @@ def get_user_group_access_state(user_id, group_id):
         print("get_user_group_access_state_code_error:", str(e)[:200])
 
 
-    if state["has_active_access"]:
+    if user_expired_explicitly:
+
+        state["has_active_access"] = False
+        state["access_source"] = "unknown"
+        state["subscription_status"] = "expired"
+        state["paid_without_access_record"] = False
+        state["can_buy_again"] = True
+        state["can_recover_link"] = state["has_active_invite_link"]
+        state["can_renew"] = True
+        state["reason"] = "expired_access"
+
+    elif state["has_active_access"]:
+
+        if latest_pending_payment_status:
+
+            state["ignored_pending_payment"] = True
+            state["ignored_pending_provider"] = latest_pending_payment_provider
 
         if state["has_active_code_access"]:
 
             state["access_source"] = "code"
 
-        elif state["last_payment_status"] in ACTIVE_PAYMENT_STATUSES:
+        elif latest_active_payment_status or state["last_payment_status"] in ACTIVE_PAYMENT_STATUSES:
 
             state["access_source"] = "paid"
 
@@ -393,16 +508,22 @@ def get_user_group_access_state(user_id, group_id):
             state["access_source"] = "manual"
 
 
-    elif (
-        state["last_payment_status"] in ACTIVE_PAYMENT_STATUSES
-        and not user_expired_explicitly
-    ):
+    elif latest_active_payment_status or state["last_payment_status"] in ACTIVE_PAYMENT_STATUSES:
 
         state["paid_without_access_record"] = True
         state["can_buy_again"] = False
         state["can_renew"] = False
         state["subscription_status"] = "paid_without_access_record"
         state["reason"] = "paid_without_access_record"
+
+    elif latest_pending_payment_status and not state["can_recover_link"]:
+
+        state["subscription_status"] = "pending"
+        state["last_payment_provider"] = latest_pending_payment_provider
+        state["last_payment_status"] = latest_pending_payment_status
+        state["can_buy_again"] = False
+        state["can_renew"] = False
+        state["reason"] = "payment_pending"
 
 
     return state
@@ -441,6 +562,8 @@ def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", 
             "has_active_invite_link": access_state.get("has_active_invite_link"),
             "has_active_code_access": access_state.get("has_active_code_access"),
             "paid_without_access_record": access_state.get("paid_without_access_record"),
+            "ignored_pending_payment": access_state.get("ignored_pending_payment"),
+            "ignored_pending_provider": access_state.get("ignored_pending_provider"),
             "reason": access_state.get("reason")
         }
     )
@@ -458,6 +581,8 @@ def log_purchase_blocked_existing_access(user_id, group_id, provider="unknown", 
             "last_payment_provider": access_state.get("last_payment_provider"),
             "access_source": access_state.get("access_source"),
             "has_active_invite_link": access_state.get("has_active_invite_link"),
+            "ignored_pending_payment": access_state.get("ignored_pending_payment"),
+            "ignored_pending_provider": access_state.get("ignored_pending_provider"),
             "reason": access_state.get("reason")
         }
     )
