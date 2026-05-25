@@ -1,9 +1,13 @@
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.ext import ContextTypes
 
-from ai_service import (
-    generate_ai_response,
-    build_system_prompt_for_scope
+from ai_response_service import (
+    build_ai_feedback_keyboard_rows,
+    build_contextual_ai_answer
 )
 
 from help_catalog import (
@@ -70,7 +74,17 @@ async def reply_ai(update: Update, text):
     await message.reply_text(text)
 
 
-async def send_ai_answer(update: Update, text):
+def build_ai_feedback_markup(interaction_id):
+
+    rows = [
+        [InlineKeyboardButton(label, callback_data=callback_data)]
+        for label, callback_data in build_ai_feedback_keyboard_rows(interaction_id)
+    ]
+
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+async def send_ai_answer(update: Update, text, interaction_id=None):
 
     if not text:
 
@@ -87,10 +101,13 @@ async def send_ai_answer(update: Update, text):
 
     if len(text) <= max_length:
 
-        await reply_ai(
-            update,
-            text
-        )
+        message = update.effective_message
+
+        if message:
+            await message.reply_text(
+                text,
+                reply_markup=build_ai_feedback_markup(interaction_id)
+            )
 
         return
 
@@ -128,6 +145,33 @@ def build_ai_manual_context():
     return "\n".join(lines)
 
 
+def resolve_ai_context_key(help_context):
+
+    mapping = {
+        "general": "public_marketplace",
+        "plans": "owner_payments",
+        "users": "owner_users",
+        "payments": "checkout_help",
+        "groups": "owner_dashboard",
+        "admin": "superadmin_dashboard",
+        "access": "subscription_help",
+        "commercial": "group_setup",
+        "subscriptions": "subscription_help",
+        "group_plans": "group_detail",
+        "support": "support_ticket",
+        "creator_setup": "group_setup",
+        "admin_users": "user_tracking",
+        "admin_groups": "superadmin_dashboard",
+        "admin_payments": "payment_diagnostics",
+        "admin_logs": "superadmin_dashboard",
+        "buyer": "public_marketplace",
+        "owner": "owner_dashboard",
+        "superadmin": "superadmin_dashboard"
+    }
+
+    return mapping.get(help_context, "public_marketplace")
+
+
 # =========================
 # AI HANDLER — /ia
 # =========================
@@ -154,35 +198,17 @@ async def ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-    system_prompt = build_system_prompt_for_scope(
-        "default"
+    result = build_contextual_ai_answer(
+        user_id=update.effective_user.id,
+        question=user_text,
+        context_key="public_marketplace"
     )
-
-
-    user_context = build_ai_user_context_text(
-        update.effective_user.id
-    )
-
-    ok, answer = generate_ai_response(
-        user_text,
-        system_prompt=system_prompt,
-        context_text=build_ai_manual_context() + "\n\n" + user_context
-    )
-
-
-    if not ok:
-
-        await reply_ai(
-            update,
-            answer
-        )
-
-        return
 
 
     await send_ai_answer(
         update,
-        answer
+        result.get("answer"),
+        interaction_id=result.get("interaction_id")
     )
 
 
@@ -212,35 +238,17 @@ async def asistente_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-    system_prompt = build_system_prompt_for_scope(
-        "default"
+    result = build_contextual_ai_answer(
+        user_id=update.effective_user.id,
+        question=user_text,
+        context_key="public_marketplace"
     )
-
-
-    user_context = build_ai_user_context_text(
-        update.effective_user.id
-    )
-
-    ok, answer = generate_ai_response(
-        user_text,
-        system_prompt=system_prompt,
-        context_text=build_ai_manual_context() + "\n\n" + user_context
-    )
-
-
-    if not ok:
-
-        await reply_ai(
-            update,
-            answer
-        )
-
-        return
 
 
     await send_ai_answer(
         update,
-        answer
+        result.get("answer"),
+        interaction_id=result.get("interaction_id")
     )
 
 
@@ -324,51 +332,16 @@ async def handle_ai_context_text(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 
-    system_prompt = build_system_prompt_for_scope(
-        "default"
+    result = build_contextual_ai_answer(
+        user_id=update.effective_user.id,
+        question=user_text,
+        context_key=resolve_ai_context_key(help_context),
+        group_id=context.user_data.get("selected_owner_group") or context.user_data.get("selected_group_admin")
     )
-
-
-    user_context = build_ai_user_context_text(
-        update.effective_user.id
-    )
-
-    context_text = (
-        build_ai_manual_context()
-        + "\n\n"
-        + user_context
-        + "\n\n"
-        + f"CONTEXTO ACTUAL DEL USUARIO: {label}\n"
-        + "Responde únicamente dentro de este contexto, el rol real del usuario y el manual oficial."
-    )
-
-
-    if help_context in ("commercial", "creator_setup"):
-
-        context_text += (
-            "\n\n"
-            + build_commercial_ai_context()
-        )
-
-
-    ok, answer = generate_ai_response(
-        user_text,
-        system_prompt=system_prompt,
-        context_text=context_text
-    )
-
-
-    if not ok:
-
-        await reply_ai(
-            update,
-            answer
-        )
-
-        return
 
 
     await send_ai_answer(
         update,
-        answer
+        result.get("answer"),
+        interaction_id=result.get("interaction_id")
     )

@@ -564,6 +564,57 @@ def create_tables():
 
 
         # =========================
+        # IA — INTERACCIONES Y FEEDBACK
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS ai_interactions (
+
+            id BIGSERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            role TEXT,
+
+            group_id BIGINT,
+
+            intent TEXT,
+
+            question TEXT,
+
+            response_summary TEXT,
+
+            source_context_summary TEXT,
+
+            success BOOLEAN DEFAULT TRUE,
+
+            feedback_rating TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        for index_sql in (
+            "CREATE INDEX IF NOT EXISTS idx_ai_interactions_user_id ON ai_interactions (user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ai_interactions_group_id ON ai_interactions (group_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ai_interactions_intent ON ai_interactions (intent)",
+            "CREATE INDEX IF NOT EXISTS idx_ai_interactions_created_at ON ai_interactions (created_at)"
+        ):
+
+            try:
+
+                cur.execute(index_sql)
+
+            except Exception:
+
+                pass
+
+
+        # =========================
         # TABLA BANEADOS (MULTI-GRUPO)
         # =========================
 
