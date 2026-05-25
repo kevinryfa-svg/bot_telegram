@@ -8466,6 +8466,53 @@ OWNER_PANEL_SECTIONS = {
     )
 }
 
+
+OWNER_PANEL_ALLOWED_REPEATED_CALLBACKS = {
+    "public_back_start",
+    "admin_edit_group",
+    "edit_group_back",
+    "back_admin",
+    "back_owner",
+    "owner_panel_users",
+    "owner_panel_codes",
+    "owner_panel_payments",
+    "owner_panel_security",
+    "owner_panel_marketplace",
+    "owner_panel_admins",
+    "owner_panel_logs",
+    "owner_panel_support",
+    "owner_panel_satisfaction",
+    "owner_panel_backup",
+    "owner_panel_general",
+    "owner_panel_commercial_config",
+    "owner_panel_location_info",
+    "owner_panel_audit"
+}
+
+
+OWNER_PANEL_ALLOWED_REPEATED_PREFIXES = (
+    "owner_panel_help_",
+    "owner_group_logs_",
+    "owner_group_users_"
+)
+
+
+def classify_owner_panel_repeated_callback(callback_data, placeholder_callbacks=None):
+
+    placeholder_callbacks = placeholder_callbacks or {}
+
+    if callback_data in OWNER_PANEL_ALLOWED_REPEATED_CALLBACKS:
+        return "allowed_navigation"
+
+    if any(callback_data.startswith(prefix) for prefix in OWNER_PANEL_ALLOWED_REPEATED_PREFIXES):
+        return "allowed_navigation"
+
+    if callback_data in placeholder_callbacks:
+        return "allowed_informational"
+
+    return "suspicious"
+
+
 def get_selected_group_for_permissions(context, user_id, permissions):
 
     for key in (
@@ -8925,7 +8972,8 @@ def build_owner_panel_audit_report(user_id, group_id):
 
     details = []
     missing_handlers = 0
-    repeated = 0
+    repeated_allowed = 0
+    repeated_suspicious = 0
     placeholders = 0
     editable = 0
 
@@ -8948,7 +8996,7 @@ def build_owner_panel_audit_report(user_id, group_id):
 
             if state == "✅ OK":
 
-                state = "⚠️ Próximamente"
+                state = "ℹ️ Informativo"
 
 
             placeholders += 1
@@ -8963,13 +9011,31 @@ def build_owner_panel_audit_report(user_id, group_id):
 
         if len(occurrences.get(callback_data, [])) > 1:
 
-            if state == "✅ OK":
+            duplicate_kind = classify_owner_panel_repeated_callback(
+                callback_data,
+                placeholder_callbacks
+            )
 
-                state = "⚠️ Revisar"
+
+            if duplicate_kind == "suspicious":
+
+                if state == "✅ OK":
+
+                    state = "⚠️ Revisar"
 
 
-            repeated += 1
-            observations.append("callback repetido en el panel")
+                repeated_suspicious += 1
+                observations.append("callback repetido sospechoso en el panel")
+
+            elif duplicate_kind == "allowed_informational":
+
+                repeated_allowed += 1
+                observations.append("Repetido permitido: acción informativa compartida")
+
+            else:
+
+                repeated_allowed += 1
+                observations.append("Repetido permitido: navegación común")
 
 
         required_permissions = get_required_permissions_for_callback(callback_data)
@@ -8988,7 +9054,8 @@ def build_owner_panel_audit_report(user_id, group_id):
         "group_id": group_id,
         "total_buttons": len(all_buttons),
         "missing_handlers": missing_handlers,
-        "repeated": repeated,
+        "repeated_allowed": repeated_allowed,
+        "repeated_suspicious": repeated_suspicious,
         "placeholders": placeholders,
         "editable": editable,
         "details": details
@@ -9004,7 +9071,7 @@ def format_owner_panel_audit_summary(report):
 
         state = "❌ Problema"
 
-    elif report.get("placeholders") or report.get("repeated"):
+    elif report.get("repeated_suspicious"):
 
         state = "⚠️ Revisar"
 
@@ -9016,7 +9083,8 @@ def format_owner_panel_audit_summary(report):
         f"Botones visibles revisados: {report.get('total_buttons')}\n"
         f"Acciones funcionales/editables detectadas: {report.get('editable')}\n"
         f"Callbacks sin handler: {report.get('missing_handlers')}\n"
-        f"Callbacks repetidos: {report.get('repeated')}\n"
+        f"Callbacks repetidos permitidos/navegación: {report.get('repeated_allowed')}\n"
+        f"Callbacks repetidos sospechosos: {report.get('repeated_suspicious')}\n"
         f"Acciones informativas/próximamente: {report.get('placeholders')}\n\n"
         "Usa Ver detalle para revisar botón por botón."
     )
