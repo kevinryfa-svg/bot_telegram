@@ -772,6 +772,190 @@ def append_existing_group_access_notice(text, user_id, group_id):
     return f"{text}\n\n{notice}"
 
 
+def fetch_group_telegram_id(group_id):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT telegram_group_id
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+
+        if row:
+
+            return row[0]
+
+    except Exception as e:
+
+        print("fetch_group_telegram_id_error:", str(e)[:200])
+
+
+    return None
+
+
+def sync_user_access_from_telegram_member(user_id, group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO users (
+                user_id,
+                group_id,
+                subscription_active,
+                expiration,
+                created_at
+            )
+            VALUES (%s, %s, TRUE, NULL, NOW())
+            ON CONFLICT (user_id, group_id)
+            DO UPDATE SET
+                subscription_active=TRUE,
+                expiration=CASE
+                    WHEN users.expiration IS NULL THEN EXCLUDED.expiration
+                    ELSE users.expiration
+                END
+
+        """, (
+            user_id,
+            group_id
+        ))
+
+        conn.commit()
+
+
+async def resolve_group_access_state_for_user(context, user_id, group_id):
+
+    access_state = get_user_group_access_state(user_id, group_id)
+
+
+    if not user_id or not group_id:
+
+        return access_state
+
+
+    if access_state.get("subscription_status") not in ("pending", "paid_without_access_record"):
+
+        return access_state
+
+
+    previous_subscription_status = access_state.get("subscription_status")
+    previous_reason = access_state.get("reason")
+    telegram_group_id = (
+        access_state.get("telegram_group_id")
+        or fetch_group_telegram_id(group_id)
+    )
+
+
+    if not telegram_group_id:
+
+        return access_state
+
+
+    try:
+
+        member = await context.bot.get_chat_member(
+            chat_id=telegram_group_id,
+            user_id=user_id
+        )
+
+    except Exception as e:
+
+        print("resolve_group_access_state_get_chat_member_error:", str(e)[:200])
+
+        log_event(
+            "access_sync_from_telegram_member_check_failed",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="No se pudo comprobar membresía de Telegram para resolver acceso pendiente.",
+            metadata={
+                "previous_subscription_status": previous_subscription_status,
+                "previous_reason": previous_reason,
+                "error": str(e)[:300]
+            }
+        )
+
+        return access_state
+
+
+    member_status = getattr(member, "status", None)
+
+
+    if member_status not in ("member", "administrator", "creator"):
+
+        return access_state
+
+
+    try:
+
+        sync_user_access_from_telegram_member(user_id, group_id)
+
+    except Exception as e:
+
+        print("sync_user_access_from_telegram_member_error:", str(e)[:200])
+
+        return access_state
+
+
+    access_state["telegram_group_id"] = telegram_group_id
+    access_state["has_active_access"] = True
+    access_state["has_user_access_record"] = True
+    access_state["subscription_status"] = "active"
+    access_state["access_source"] = "telegram_member"
+    access_state["can_buy_again"] = False
+    access_state["can_recover_link"] = True
+    access_state["can_renew"] = False
+    access_state["reason"] = "active_telegram_member"
+    access_state["ignored_pending_payment"] = True
+    access_state["ignored_pending_provider"] = access_state.get("last_payment_provider")
+
+    metadata = {
+        "group_id": group_id,
+        "telegram_group_id": telegram_group_id,
+        "previous_subscription_status": previous_subscription_status,
+        "previous_reason": previous_reason,
+        "ignored_pending_provider": access_state.get("ignored_pending_provider"),
+        "ignored_pending_payment": access_state.get("ignored_pending_payment"),
+        "telegram_member_status": member_status
+    }
+
+    log_event(
+        "access_synced_from_telegram_member",
+        category="access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        telegram_group_id=telegram_group_id,
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        message="Acceso activo sincronizado porque el usuario ya es miembro en Telegram.",
+        metadata=metadata
+    )
+
+    log_user_event_by_ids(
+        user_id,
+        "access_synced_from_telegram_member",
+        event_key=f"telegram_member_{group_id}",
+        group_id=group_id,
+        metadata=metadata
+    )
+
+    return access_state
+
+
 def build_existing_group_access_keyboard(group_id, access_state, retry_callback=None):
 
     keyboard = []
@@ -835,9 +1019,13 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
     return InlineKeyboardMarkup(keyboard)
 
 
-async def send_existing_group_access_notice(context, chat_id, user_id, group_id, provider="unknown", event_type="purchase_blocked_existing_access", retry_callback=None):
+async def send_existing_group_access_notice(context, chat_id, user_id, group_id, provider="unknown", event_type="purchase_blocked_existing_access", retry_callback=None, access_state=None):
 
-    access_state = get_user_group_access_state(user_id, group_id)
+    access_state = access_state or await resolve_group_access_state_for_user(
+        context,
+        user_id,
+        group_id
+    )
     log_purchase_blocked_existing_access(
         user_id,
         group_id,
@@ -15731,7 +15919,7 @@ async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_
 async def create_free_access_for_user(context, chat_id, telegram_user, group_id):
 
     user_id = telegram_user.id
-    access_state = get_user_group_access_state(user_id, group_id)
+    access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
     if should_block_new_group_purchase(access_state):
@@ -15742,7 +15930,8 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
             user_id,
             group_id,
             provider="free",
-            event_type="free_access_blocked_existing_access"
+            event_type="free_access_blocked_existing_access",
+            access_state=access_state
         )
 
         return
@@ -15956,7 +16145,7 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
 
 async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id):
 
-    access_state = get_user_group_access_state(user_id, group_id)
+    access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
     if should_block_new_group_purchase(access_state):
@@ -15967,7 +16156,8 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
             user_id,
             group_id,
             provider="stripe",
-            retry_callback=price_id if is_stripe_checkout_callback(price_id) else None
+            retry_callback=price_id if is_stripe_checkout_callback(price_id) else None,
+            access_state=access_state
         )
 
         return
@@ -16038,7 +16228,7 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
 async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
 
-    access_state = get_user_group_access_state(user_id, group_id)
+    access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
     if should_block_new_group_purchase(access_state):
@@ -16048,7 +16238,8 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
             chat_id,
             user_id,
             group_id,
-            provider="paypal"
+            provider="paypal",
+            access_state=access_state
         )
 
         return
@@ -16121,7 +16312,7 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
 async def create_revolut_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
 
-    access_state = get_user_group_access_state(user_id, group_id)
+    access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
     if should_block_new_group_purchase(access_state):
@@ -16131,7 +16322,8 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
             chat_id,
             user_id,
             group_id,
-            provider="revolut"
+            provider="revolut",
+            access_state=access_state
         )
 
         return
@@ -16204,7 +16396,7 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
 
 async def create_changenow_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
 
-    access_state = get_user_group_access_state(user_id, group_id)
+    access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
     if should_block_new_group_purchase(access_state):
@@ -16214,7 +16406,8 @@ async def create_changenow_group_checkout_for_user(context, chat_id, user_id, gr
             chat_id,
             user_id,
             group_id,
-            provider="changenow"
+            provider="changenow",
+            access_state=access_state
         )
 
         return
@@ -16286,7 +16479,7 @@ async def create_changenow_group_checkout_for_user(context, chat_id, user_id, gr
 
 async def create_guardarian_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
 
-    access_state = get_user_group_access_state(user_id, group_id)
+    access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
     if should_block_new_group_purchase(access_state):
@@ -16296,7 +16489,8 @@ async def create_guardarian_group_checkout_for_user(context, chat_id, user_id, g
             chat_id,
             user_id,
             group_id,
-            provider="guardarian"
+            provider="guardarian",
+            access_state=access_state
         )
 
         return
@@ -23150,7 +23344,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        access_state = get_user_group_access_state(user_id, group_id)
+        access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
         if should_block_new_group_purchase(access_state):
@@ -23161,7 +23355,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_id,
                 group_id,
                 provider="free",
-                event_type="free_access_blocked_existing_access"
+                event_type="free_access_blocked_existing_access",
+                access_state=access_state
             )
 
             return
@@ -23282,7 +23477,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        access_state = get_user_group_access_state(user_id, group_id)
+        access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
         if should_block_new_group_purchase(access_state):
@@ -23292,7 +23487,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 user_id,
                 group_id,
-                provider="marketplace"
+                provider="marketplace",
+                access_state=access_state
             )
 
             return
@@ -23530,7 +23726,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        access_state = get_user_group_access_state(
+        access_state = await resolve_group_access_state_for_user(
+            context,
             query.from_user.id,
             group_id
         )
@@ -33885,7 +34082,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        access_state = get_user_group_access_state(user_id, group_id)
+        access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
         if should_block_new_group_purchase(access_state):
@@ -33895,7 +34092,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 user_id,
                 group_id,
-                provider="paypal"
+                provider="paypal",
+                access_state=access_state
             )
 
             return
@@ -33956,7 +34154,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        access_state = get_user_group_access_state(user_id, group_id)
+        access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
         if should_block_new_group_purchase(access_state):
@@ -33966,7 +34164,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 user_id,
                 group_id,
-                provider="revolut"
+                provider="revolut",
+                access_state=access_state
             )
 
             return
@@ -34027,7 +34226,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        access_state = get_user_group_access_state(user_id, group_id)
+        access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
         if should_block_new_group_purchase(access_state):
@@ -34037,7 +34236,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 user_id,
                 group_id,
-                provider="changenow"
+                provider="changenow",
+                access_state=access_state
             )
 
             return
@@ -34098,7 +34298,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        access_state = get_user_group_access_state(user_id, group_id)
+        access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
         if should_block_new_group_purchase(access_state):
@@ -34108,7 +34308,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 user_id,
                 group_id,
-                provider="guardarian"
+                provider="guardarian",
+                access_state=access_state
             )
 
             return
@@ -34239,7 +34440,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    access_state = get_user_group_access_state(user_id, group_id)
+    access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
     if should_block_new_group_purchase(access_state):
@@ -34250,7 +34451,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id,
             group_id,
             provider="stripe",
-            retry_callback=data
+            retry_callback=data,
+            access_state=access_state
         )
 
         return
