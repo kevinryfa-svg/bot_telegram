@@ -22,6 +22,49 @@ PAYMENT_URL_METADATA_KEYS = (
     "payment_url",
     "hosted_url"
 )
+_TABLE_COLUMN_CACHE = {}
+
+
+def table_has_column(table_name, column_name):
+
+    cache_key = (table_name, column_name)
+
+
+    if cache_key in _TABLE_COLUMN_CACHE:
+
+        return _TABLE_COLUMN_CACHE[cache_key]
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = ANY (current_schemas(FALSE))
+                AND table_name=%s
+                AND column_name=%s
+                LIMIT 1
+
+            """, (
+                table_name,
+                column_name
+            ))
+
+            exists = cur.fetchone() is not None
+
+        _TABLE_COLUMN_CACHE[cache_key] = exists
+
+        return exists
+
+    except Exception as e:
+
+        print("table_has_column_error:", str(e)[:200])
+        _TABLE_COLUMN_CACHE[cache_key] = False
+
+        return False
 
 
 def is_url(value):
@@ -295,8 +338,7 @@ def get_user_group_access_state(user_id, group_id):
 
                 SELECT expiration,
                        COALESCE(subscription_active, FALSE),
-                       last_invite_link,
-                       created_at
+                       last_invite_link
                 FROM users
                 WHERE user_id=%s
                 AND group_id=%s
@@ -311,7 +353,7 @@ def get_user_group_access_state(user_id, group_id):
 
             if user_row:
 
-                expiration, subscription_active, _last_invite_link, _created_at = user_row
+                expiration, subscription_active, _last_invite_link = user_row
                 state["has_user_access_record"] = True
                 state["expires_at"] = expiration
 
@@ -472,6 +514,11 @@ def get_user_group_access_state(user_id, group_id):
 
     try:
 
+        if not table_has_column("payments", "status"):
+
+            raise LookupError("payments.status column unavailable")
+
+
         with conn.cursor() as cur:
 
             cur.execute("""
@@ -556,6 +603,10 @@ def get_user_group_access_state(user_id, group_id):
                     state["last_payment_provider"] = "stripe"
                     state["last_payment_status"] = (payment_row[0] or "").lower()
                     state["last_payment_created_at"] = payment_row[1]
+
+    except LookupError:
+
+        pass
 
     except Exception as e:
 
