@@ -16,6 +16,7 @@ from telegram import (
 
 from telegram.ext import (
     ApplicationBuilder,
+    ChatMemberHandler,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
@@ -82,6 +83,7 @@ from expiration_worker import check_expirations
 from group_registration_handler import (
     capture_group_preview_video,
     detect_bot_added,
+    detect_bot_channel_admin_update,
     detect_bot_removed,
     handle_backup_destination_token_command,
     handle_group_backup_media,
@@ -2081,6 +2083,14 @@ def main():
     # =========================
     # DETECTAR BOT AÑADIDO
     # =========================
+
+    telegram_app.add_handler(
+        ChatMemberHandler(
+            detect_bot_channel_admin_update,
+            ChatMemberHandler.MY_CHAT_MEMBER
+        ),
+        group=0
+    )
 
     telegram_app.add_handler(
         MessageHandler(

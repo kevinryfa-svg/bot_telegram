@@ -21,7 +21,7 @@ from telegram_group_actions import (
 
 from bot_config import TOKEN, GROUP_ID
 from formatters import format_tiempo_restante
-from group_service import get_latest_telegram_group_id
+from group_service import get_latest_telegram_group_id, get_community_type
 from rbac_helpers import (
     assign_pending_commercial_owner_for_group,
     get_admin_group_ids,
@@ -737,7 +737,8 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 TOKEN,
                                 telegram_group_id,
                                 expire_seconds=180,
-                                member_limit=1
+                                member_limit=1,
+                                community_type=get_community_type(group_id)
                             )
 
 

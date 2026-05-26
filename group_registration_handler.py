@@ -15,6 +15,11 @@ from telegram.ext import ContextTypes
 from audit_log_service import log_event
 from bot_config import TOKEN, ADMIN_ID
 from db import conn
+from group_service import (
+    format_community_kind,
+    format_community_kind_capitalized,
+    normalize_community_type
+)
 from rbac_helpers import (
     GROUP_OWNER,
     assign_group_owner_permissions,
@@ -1800,12 +1805,14 @@ async def safe_send(context, chat_id, text):
         return False
 
 
-async def safe_send_confirmation(context, chat_id, text, pending_id):
+async def safe_send_confirmation(context, chat_id, text, pending_id, community_type="group"):
 
     if not chat_id:
 
         return False
 
+
+    kind = format_community_kind(community_type)
 
     try:
 
@@ -1814,7 +1821,7 @@ async def safe_send_confirmation(context, chat_id, text, pending_id):
             text=text,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
-                    "✅ Sí, vincular este grupo",
+                    f"✅ Sí, vincular este {kind}",
                     callback_data=f"confirm_creator_group_link_{pending_id}"
                 )],
                 [InlineKeyboardButton(
@@ -1913,7 +1920,14 @@ async def leave_chat_safely(context, telegram_group_id):
     return False
 
 
-def create_creator_group_link_request(user_id, request_id, telegram_group_id, group_name):
+def get_community_type_from_chat_type(chat_type):
+
+    return "channel" if chat_type == "channel" else "group"
+
+
+def create_creator_group_link_request(user_id, request_id, telegram_group_id, group_name, community_type="group"):
+
+    community_type = normalize_community_type(community_type)
 
     with conn.cursor() as cur:
 
@@ -1941,16 +1955,18 @@ def create_creator_group_link_request(user_id, request_id, telegram_group_id, gr
                 user_id,
                 commercial_request_id,
                 telegram_group_id,
+                community_type,
                 group_name,
                 status
             )
-            VALUES (%s, %s, %s, %s, 'pending')
+            VALUES (%s, %s, %s, %s, %s, 'pending')
             RETURNING id
 
         """, (
             user_id,
             request_id,
             telegram_group_id,
+            community_type,
             group_name
         ))
 
@@ -1979,6 +1995,7 @@ def fetch_creator_group_link_request(pending_id):
                    user_id,
                    commercial_request_id,
                    telegram_group_id,
+                   COALESCE(community_type, 'group'),
                    group_name,
                    status
             FROM creator_group_link_requests
@@ -2000,8 +2017,9 @@ def fetch_creator_group_link_request(pending_id):
         "user_id": row[1],
         "commercial_request_id": row[2],
         "telegram_group_id": row[3],
-        "group_name": row[4],
-        "status": row[5]
+        "community_type": normalize_community_type(row[4]),
+        "group_name": row[5],
+        "status": row[6]
     }
 
 
@@ -2091,7 +2109,8 @@ def confirm_creator_group_link_request(pending_id, user_id):
         pending_row["group_name"],
         telegram_group_id,
         user_id,
-        request_row
+        request_row,
+        community_type=pending_row.get("community_type")
     )
 
     mark_creator_group_link_request(
@@ -2103,6 +2122,7 @@ def confirm_creator_group_link_request(pending_id, user_id):
         "status": "confirmed",
         "group_id": linked_group_id,
         "telegram_group_id": telegram_group_id,
+        "community_type": pending_row.get("community_type"),
         "group_name": pending_row["group_name"],
         "request_id": request_row["id"]
     }
@@ -2198,9 +2218,10 @@ async def reject_group_registration(
         )
 
 
-def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_row):
+def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_row, community_type="group"):
 
     public_visibility = request_row.get("requested_public_visibility") or "hidden"
+    community_type = normalize_community_type(community_type)
 
 
     with conn.cursor() as cur:
@@ -2211,16 +2232,18 @@ def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_ro
             (
                 name,
                 telegram_group_id,
+                community_type,
                 public_visibility,
                 is_free_group,
                 bot_is_admin,
                 is_active,
                 added_by
             )
-            VALUES (%s, %s, %s, %s, TRUE, TRUE, %s)
+            VALUES (%s, %s, %s, %s, %s, TRUE, TRUE, %s)
             ON CONFLICT (telegram_group_id)
             DO UPDATE SET
                 name=EXCLUDED.name,
+                community_type=EXCLUDED.community_type,
                 public_visibility=EXCLUDED.public_visibility,
                 is_free_group=EXCLUDED.is_free_group,
                 bot_is_admin=TRUE,
@@ -2231,6 +2254,7 @@ def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_ro
         """, (
             group_name,
             telegram_group_id,
+            community_type,
             public_visibility,
             request_row.get("is_free_group") is True,
             added_by
@@ -2286,6 +2310,7 @@ def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_ro
         metadata={
             "request_id": request_row.get("id"),
             "group_name": group_name,
+            "community_type": community_type,
             "public_visibility": public_visibility
         }
     )
@@ -2293,7 +2318,11 @@ def upsert_group_for_creator(group_name, telegram_group_id, added_by, request_ro
     return group_id
 
 
-async def register_authorized_group(group_id, group_name, added_by, context, request_row):
+async def register_authorized_group(group_id, group_name, added_by, context, request_row, community_type="group"):
+
+    community_type = normalize_community_type(community_type)
+    kind = format_community_kind(community_type)
+    kind_cap = format_community_kind_capitalized(community_type)
 
     existing_group_id = get_existing_group(group_id)
 
@@ -2320,15 +2349,16 @@ async def register_authorized_group(group_id, group_name, added_by, context, req
         group_name,
         group_id,
         added_by,
-        request_row
+        request_row,
+        community_type=community_type
     )
 
     await safe_send(
         context,
         added_by,
         (
-            "✅ Grupo detectado correctamente.\n\n"
-            "ID del grupo:\n"
+            f"✅ {kind_cap} detectado correctamente.\n\n"
+            f"ID del {kind}:\n"
             f"{group_id}\n\n"
             "Guarda este ID. También puedes usarlo en el panel de configuración de tu comunidad."
         )
@@ -2344,8 +2374,8 @@ async def register_authorized_group(group_id, group_name, added_by, context, req
         context,
         ADMIN_ID,
         (
-            "✅ GRUPO COMERCIAL AUTORIZADO\n\n"
-            f"Grupo: {group_name}\n"
+            f"✅ {kind_cap.upper()} COMERCIAL AUTORIZADO\n\n"
+            f"{kind_cap}: {group_name}\n"
             f"Telegram ID: {group_id}\n"
             f"ID interno: {internal_group_id}\n"
             f"Owner: {added_by}\n"
@@ -2354,7 +2384,11 @@ async def register_authorized_group(group_id, group_name, added_by, context, req
     )
 
 
-async def register_existing_owned_group(group_id, group_name, added_by, context, internal_group_id):
+async def register_existing_owned_group(group_id, group_name, added_by, context, internal_group_id, community_type="group"):
+
+    community_type = normalize_community_type(community_type)
+    kind = format_community_kind(community_type)
+    kind_cap = format_community_kind_capitalized(community_type)
 
     with conn.cursor() as cur:
 
@@ -2362,6 +2396,7 @@ async def register_existing_owned_group(group_id, group_name, added_by, context,
 
             UPDATE groups
             SET name=%s,
+                community_type=%s,
                 bot_is_admin=TRUE,
                 is_active=TRUE,
                 added_by=%s
@@ -2369,6 +2404,7 @@ async def register_existing_owned_group(group_id, group_name, added_by, context,
 
         """, (
             group_name,
+            community_type,
             added_by,
             internal_group_id
         ))
@@ -2378,8 +2414,8 @@ async def register_existing_owned_group(group_id, group_name, added_by, context,
         context,
         added_by,
         (
-            "✅ Este grupo ya está vinculado a tu comunidad.\n\n"
-            "ID del grupo:\n"
+            f"✅ Este {kind} ya está vinculado a tu comunidad.\n\n"
+            f"ID del {kind}:\n"
             f"{group_id}\n\n"
             "Guarda este ID. También puedes usarlo en el panel de configuración de tu comunidad."
         )
@@ -2395,8 +2431,8 @@ async def register_existing_owned_group(group_id, group_name, added_by, context,
         context,
         ADMIN_ID,
         (
-            "✅ GRUPO COMERCIAL EXISTENTE VERIFICADO\n\n"
-            f"Grupo: {group_name}\n"
+            f"✅ {kind_cap.upper()} COMERCIAL EXISTENTE VERIFICADO\n\n"
+            f"{kind_cap}: {group_name}\n"
             f"Telegram ID: {group_id}\n"
             f"ID interno: {internal_group_id}\n"
             f"Owner: {added_by}"
@@ -2415,8 +2451,13 @@ async def verificar_admin_despues(
     context,
     added_by,
     added_by_username=None,
-    added_by_first_name=None
+    added_by_first_name=None,
+    community_type="group"
 ):
+
+    community_type = normalize_community_type(community_type)
+    kind = format_community_kind(community_type)
+    kind_cap = format_community_kind_capitalized(community_type)
 
     log_event(
         "group_registration_verify_start",
@@ -2426,9 +2467,10 @@ async def verificar_admin_despues(
         telegram_group_id=group_id,
         actor_user_id=added_by,
         target_user_id=added_by,
-        message="Inicio de verificación de bot añadido a grupo.",
+        message=f"Inicio de verificación de bot añadido a {kind}.",
         metadata={
             "chat_title": group_name,
+            "community_type": community_type,
             "username": added_by_username,
             "first_name": added_by_first_name
         }
@@ -2461,9 +2503,10 @@ async def verificar_admin_despues(
             telegram_group_id=group_id,
             actor_user_id=added_by,
             target_user_id=added_by,
-            message="Estado del bot comprobado tras añadirlo al grupo.",
+            message=f"Estado del bot comprobado tras añadirlo al {kind}.",
             metadata={
-                "status": status
+                "status": status,
+                "community_type": community_type
             }
         )
 
@@ -2478,9 +2521,10 @@ async def verificar_admin_despues(
                 telegram_group_id=group_id,
                 actor_user_id=added_by,
                 target_user_id=added_by,
-                message="El bot no quedó como administrador tras 30 segundos.",
+                message=f"El bot no quedó como administrador del {kind} tras 30 segundos.",
                 metadata={
-                    "status": status
+                    "status": status,
+                    "community_type": community_type
                 }
             )
 
@@ -2539,7 +2583,8 @@ async def verificar_admin_despues(
                     owner_request["user_id"],
                     owner_request["id"],
                     group_id,
-                    group_name
+                    group_name,
+                    community_type=community_type
                 )
 
                 await safe_send(
@@ -2557,7 +2602,7 @@ async def verificar_admin_despues(
                         chat_id=owner_request["user_id"],
                         text=(
                             "Necesito permisos de administrador.\n\n"
-                            f"Grupo: {group_name}\n"
+                            f"{kind_cap}: {group_name}\n"
                             f"ID: {group_id}\n\n"
                             "Cuando me los des, pulsa Reintentar verificación."
                         ),
@@ -2586,8 +2631,8 @@ async def verificar_admin_despues(
                     context,
                     ADMIN_ID,
                     (
-                        "⚠️ Grupo comercial pendiente de permisos de administrador\n\n"
-                        f"Grupo: {group_name}\n"
+                        f"⚠️ {kind_cap} comercial pendiente de permisos de administrador\n\n"
+                        f"{kind_cap}: {group_name}\n"
                         f"Telegram ID: {group_id}\n"
                         f"Owner user_id: {owner_request['user_id']}\n"
                         f"Solicitud: #{owner_request['id']}"
@@ -2602,8 +2647,8 @@ async def verificar_admin_despues(
                 group_id,
                 group_name,
                 added_by,
-                "⚠️ No tienes una solicitud aprobada para añadir este bot a esta comunidad. El bot saldrá del grupo.",
-                "⛔ No tienes aprobado añadir el bot a un grupo. Solicita aprobación desde /start.",
+                    f"⚠️ No tienes una solicitud aprobada para añadir este bot a esta comunidad. El bot saldrá del {kind}.",
+                    f"⛔ No tienes aprobado añadir el bot a un {kind}. Solicita aprobación desde /start.",
                 "⚠️ BOT AÑADIDO POR USUARIO NO AUTORIZADO"
             )
 
@@ -2617,9 +2662,10 @@ async def verificar_admin_despues(
             telegram_group_id=group_id,
             actor_user_id=added_by,
             target_user_id=added_by,
-            message="Bot confirmado como administrador del grupo.",
+            message=f"Bot confirmado como administrador del {kind}.",
             metadata={
-                "chat_title": group_name
+                "chat_title": group_name,
+                "community_type": community_type
             }
         )
 
@@ -2634,15 +2680,17 @@ async def verificar_admin_despues(
                     (
                         name,
                         telegram_group_id,
+                        community_type,
                         public_visibility,
                         bot_is_admin,
                         is_active,
                         added_by
                     )
-                    VALUES (%s, %s, 'hidden', TRUE, TRUE, %s)
+                    VALUES (%s, %s, %s, 'hidden', TRUE, TRUE, %s)
                     ON CONFLICT (telegram_group_id)
                     DO UPDATE SET
                         name=EXCLUDED.name,
+                        community_type=EXCLUDED.community_type,
                         bot_is_admin=TRUE,
                         is_active=TRUE,
                         added_by=EXCLUDED.added_by
@@ -2650,6 +2698,7 @@ async def verificar_admin_despues(
                 """, (
                     group_name,
                     group_id,
+                    community_type,
                     added_by
                 ))
 
@@ -2657,10 +2706,10 @@ async def verificar_admin_despues(
                 context,
                 ADMIN_ID,
                 (
-                    "✅ NUEVO GRUPO DETECTADO\n\n"
+                    f"✅ NUEVO {kind_cap.upper()} DETECTADO\n\n"
                     f"Nombre: {group_name}\n"
                     f"ID: {group_id}\n\n"
-                    "Grupo registrado correctamente por el propietario principal."
+                    f"{kind_cap} registrado correctamente por el propietario principal."
                 )
             )
 
@@ -2678,7 +2727,8 @@ async def verificar_admin_despues(
                 group_name,
                 added_by,
                 context,
-                existing_group_id
+                existing_group_id,
+                community_type=community_type
             )
 
             return
@@ -2691,9 +2741,9 @@ async def verificar_admin_despues(
                 group_id,
                 group_name,
                 added_by,
-                "⚠️ Este grupo ya está asociado a otro creador. El bot saldrá del grupo.",
-                "⛔ Este grupo ya está asociado a otro creador. Contacta con soporte si crees que es un error.",
-                "⚠️ Bot añadido a un grupo ya asociado a otro owner."
+                f"⚠️ Este {kind} ya está asociado a otro creador. El bot saldrá del {kind}.",
+                f"⛔ Este {kind} ya está asociado a otro creador. Contacta con soporte si crees que es un error.",
+                f"⚠️ Bot añadido a un {kind} ya asociado a otro owner."
             )
 
             return
@@ -2717,23 +2767,25 @@ async def verificar_admin_despues(
                     owner_request["user_id"],
                     owner_request["id"],
                     group_id,
-                    group_name
+                    group_name,
+                    community_type=community_type
                 )
 
                 confirmation_sent = await safe_send_confirmation(
                     context,
                     owner_request["user_id"],
                     (
-                        "✅ He detectado un grupo pendiente de vinculación:\n\n"
+                        f"✅ He detectado un {kind} pendiente de vinculación:\n\n"
                         f"Nombre: {group_name}\n"
                         f"ID: {group_id}\n\n"
                         "Lo añadió otra cuenta o Telegram reportó otro user_id:\n"
                         f"Usuario detectado: {added_by or '-'}\n"
                         f"Username detectado: {('@' + added_by_username) if added_by_username else '-'}\n"
                         f"Nombre detectado: {added_by_first_name or '-'}\n\n"
-                        "¿Quieres vincular este grupo a tu comunidad?"
+                        f"¿Quieres vincular este {kind} a tu comunidad?"
                     ),
-                    pending_id
+                    pending_id,
+                    community_type=community_type
                 )
 
                 await safe_send(
@@ -2749,8 +2801,8 @@ async def verificar_admin_despues(
                     context,
                     ADMIN_ID,
                     (
-                        "📡 GRUPO COMERCIAL PENDIENTE DE CONFIRMACIÓN POR OWNER\n\n"
-                        f"Grupo: {group_name}\n"
+                        f"📡 {kind_cap.upper()} COMERCIAL PENDIENTE DE CONFIRMACIÓN POR OWNER\n\n"
+                        f"{kind_cap}: {group_name}\n"
                         f"Telegram ID: {group_id}\n"
                         f"Usuario que añadió el bot: {added_by or '-'}\n"
                         f"Username: {('@' + added_by_username) if added_by_username else '-'}\n"
@@ -2805,8 +2857,8 @@ async def verificar_admin_despues(
                 group_id,
                 group_name,
                 added_by,
-                "⚠️ No tienes una solicitud aprobada para añadir este bot a esta comunidad. El bot saldrá del grupo.",
-                "⛔ No tienes aprobado añadir el bot a un grupo. Solicita aprobación desde /start.",
+                    f"⚠️ No tienes una solicitud aprobada para añadir este bot a esta comunidad. El bot saldrá del {kind}.",
+                    f"⛔ No tienes aprobado añadir el bot a un {kind}. Solicita aprobación desde /start.",
                 (
                     "⚠️ Bot añadido por usuario no autorizado.\n"
                     f"Solicitudes pendientes/vinculables de otro user_id: {candidate_count}"
@@ -2831,8 +2883,8 @@ async def verificar_admin_despues(
                 group_id,
                 group_name,
                 added_by,
-                "⚠️ No se encontró una solicitud comercial vigente para vincular este grupo. El bot saldrá del grupo.",
-                "⛔ No he encontrado una solicitud comercial vigente para vincular este grupo. Revisa tu solicitud desde /start.",
+                f"⚠️ No se encontró una solicitud comercial vigente para vincular este {kind}. El bot saldrá del {kind}.",
+                f"⛔ No he encontrado una solicitud comercial vigente para vincular este {kind}. Revisa tu solicitud desde /start.",
                 "⚠️ Bot añadido por creador sin solicitud vinculable."
             )
 
@@ -2850,9 +2902,9 @@ async def verificar_admin_despues(
                 group_id,
                 group_name,
                 added_by,
-                "⚠️ Este grupo ya está vinculado a otra comunidad. El bot saldrá del grupo.",
-                "⛔ Este grupo ya está vinculado a otra comunidad. Si crees que es un error, contacta con soporte.",
-                "⚠️ Bot añadido a un grupo vinculado a otra comunidad."
+                f"⚠️ Este {kind} ya está vinculado a otra comunidad. El bot saldrá del {kind}.",
+                f"⛔ Este {kind} ya está vinculado a otra comunidad. Si crees que es un error, contacta con soporte.",
+                f"⚠️ Bot añadido a un {kind} vinculado a otra comunidad."
             )
 
             return
@@ -2880,19 +2932,21 @@ async def verificar_admin_despues(
             added_by,
             request_row["id"],
             group_id,
-            group_name
+            group_name,
+            community_type=community_type
         )
 
         confirmation_sent = await safe_send_confirmation(
             context,
             added_by,
             (
-                "✅ He detectado tu grupo:\n\n"
+                f"✅ He detectado tu {kind}:\n\n"
                 f"Nombre: {group_name}\n"
                 f"ID: {group_id}\n\n"
-                "¿Quieres vincular este grupo a tu comunidad?"
+                f"¿Quieres vincular este {kind} a tu comunidad?"
             ),
-            pending_id
+            pending_id,
+            community_type=community_type
         )
 
         await safe_send(
@@ -2908,8 +2962,8 @@ async def verificar_admin_despues(
             context,
             ADMIN_ID,
             (
-                "📡 GRUPO COMERCIAL PENDIENTE DE CONFIRMACIÓN\n\n"
-                f"Grupo: {group_name}\n"
+                f"📡 {kind_cap.upper()} COMERCIAL PENDIENTE DE CONFIRMACIÓN\n\n"
+                f"{kind_cap}: {group_name}\n"
                 f"Telegram ID: {group_id}\n"
                 f"Creator: {added_by}\n"
                 f"Solicitud: #{request_row['id']}\n"
@@ -2964,6 +3018,10 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             group_id = update.message.chat.id
             group_name = update.message.chat.title
+            community_type = get_community_type_from_chat_type(
+                update.message.chat.type
+            )
+            kind = format_community_kind(community_type)
 
 
             try:
@@ -2988,12 +3046,13 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 telegram_group_id=group_id,
                 actor_user_id=added_by,
                 target_user_id=added_by,
-                message="Bot añadido a un grupo.",
+                message=f"Bot añadido a un {kind}.",
                 metadata={
                     "effective_user_id": effective_user.id if effective_user else None,
                     "username": added_by_username,
                     "first_name": added_by_first_name,
-                    "chat_title": group_name
+                    "chat_title": group_name,
+                    "community_type": community_type
                 }
             )
 
@@ -3014,7 +3073,7 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     "Por favor asígnamelos en los próximos 30 segundos.\n\n"
 
-                    "Si no, abandonaré el grupo automáticamente."
+                    f"Si no, abandonaré el {kind} automáticamente."
 
                 )
 
@@ -3046,13 +3105,83 @@ async def detect_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     added_by_username,
 
-                    added_by_first_name
+                    added_by_first_name,
+
+                    community_type
 
                 )
 
             )
 
             return
+
+
+async def detect_bot_channel_admin_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    chat_member_update = update.my_chat_member
+
+
+    if not chat_member_update or not update.effective_chat:
+
+        return
+
+
+    chat = update.effective_chat
+
+
+    if chat.type != "channel":
+
+        return
+
+
+    new_member = chat_member_update.new_chat_member
+
+
+    if not new_member or new_member.user.id != context.bot.id:
+
+        return
+
+
+    if new_member.status not in ("administrator", "creator"):
+
+        return
+
+
+    added_by_user = update.effective_user
+    added_by = added_by_user.id if added_by_user else None
+    added_by_username = added_by_user.username if added_by_user else None
+    added_by_first_name = added_by_user.first_name if added_by_user else None
+
+    log_event(
+        "bot_added_to_channel_detected",
+        category="group_registration",
+        severity="info",
+        scope="group",
+        telegram_group_id=chat.id,
+        actor_user_id=added_by,
+        target_user_id=added_by,
+        message="Bot añadido como administrador a un canal.",
+        metadata={
+            "effective_user_id": added_by,
+            "username": added_by_username,
+            "first_name": added_by_first_name,
+            "chat_title": chat.title,
+            "community_type": "channel"
+        }
+    )
+
+    asyncio.create_task(
+        verificar_admin_despues(
+            chat.id,
+            chat.title,
+            context.bot.id,
+            context,
+            added_by,
+            added_by_username,
+            added_by_first_name,
+            "channel"
+        )
+    )
 
 
 async def detect_bot_removed(update: Update, context: ContextTypes.DEFAULT_TYPE):

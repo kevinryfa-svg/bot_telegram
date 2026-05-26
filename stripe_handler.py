@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from bot_config import TOKEN, ADMIN_ID, STRIPE_WEBHOOK_SECRET
 from audit_log_service import log_event
 from db import conn
+from group_service import format_community_kind, normalize_community_type
 from invite_link_service import create_telegram_invite_link
 from notification_service import notify_super_admins, send_telegram_message
 from payment_gateway_config import (
@@ -317,7 +318,8 @@ def stripe_webhook():
             cur.execute("""
 
                 SELECT telegram_group_id,
-                       name
+                       name,
+                       COALESCE(community_type, 'group')
 
                 FROM groups
 
@@ -352,6 +354,8 @@ def stripe_webhook():
 
             telegram_group_id = row[0]
             group_name = row[1] or f"Grupo {group_id}"
+            community_type = normalize_community_type(row[2])
+            community_kind = format_community_kind(community_type)
 
 
         # =========================
@@ -386,7 +390,8 @@ def stripe_webhook():
             TOKEN,
             telegram_group_id,
             expire_seconds=expire_seconds,
-            member_limit=1
+            member_limit=1,
+            community_type=community_type
         )
 
 
@@ -413,20 +418,21 @@ def stripe_webhook():
                 telegram_group_id=telegram_group_id,
                 actor_user_id=user_id,
                 target_user_id=user_id,
-                message="Pago confirmado pero no se pudo crear invite link.",
+                message=f"Pago confirmado pero no se pudo crear invite link para {community_kind}.",
                 metadata={
                     "stripe_session_id": stripe_session_id,
                     "stripe_payment_id": stripe_payment_id,
                     "plan": plan_name,
                     "amount": amount_total,
-                    "currency": currency
+                    "currency": currency,
+                    "community_type": community_type
                 }
             )
 
             notify_super_admins(
                 TOKEN,
                 "⚠️ Pago recibido pero no se pudo crear el link de acceso.\n\n"
-                f"Grupo: {group_name}\n"
+                f"{format_community_kind(community_type).capitalize()}: {group_name}\n"
                 f"Usuario: {user_id}\n"
                 f"Plan: {plan_name}",
                 fallback_admin_id=ADMIN_ID

@@ -1,6 +1,66 @@
 from db import conn
 
 
+def normalize_community_type(value):
+
+    return value if value in ("group", "channel") else "group"
+
+
+def get_community_type(group_id):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT community_type
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+
+        return normalize_community_type(row[0] if row else None)
+
+    except Exception as e:
+
+        print("Error obteniendo tipo de comunidad:", e)
+
+        return "group"
+
+
+def format_community_kind(group_or_type=None):
+
+    community_type = group_or_type
+
+
+    if isinstance(group_or_type, dict):
+
+        community_type = group_or_type.get("community_type")
+
+
+    if community_type == "channel":
+
+        return "canal"
+
+
+    if community_type == "group":
+
+        return "grupo"
+
+
+    return "comunidad"
+
+
+def format_community_kind_capitalized(group_or_type=None):
+
+    return format_community_kind(group_or_type).capitalize()
+
+
 # =========================
 # GROUP SERVICE — GET LATEST TELEGRAM GROUP ID
 # =========================

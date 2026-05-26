@@ -2,7 +2,7 @@ import time
 import requests
 
 from db import conn
-from group_service import resolve_telegram_group_id
+from group_service import format_community_kind, resolve_telegram_group_id
 
 
 def mask_invite_link(invite_link):
@@ -67,7 +67,7 @@ def sanitize_log_value(value, token=None):
 # INVITE LINKS — CREATE TELEGRAM LINK
 # =========================
 
-def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, member_limit=1):
+def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, member_limit=1, community_type=None):
 
     payload = {
         "chat_id": telegram_group_id,
@@ -93,8 +93,10 @@ def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, me
 
         if "result" not in response:
 
+            kind = format_community_kind(community_type)
+
             print(
-                "Error creando invite link:",
+                f"Error creando invite link para {kind}:",
                 sanitize_log_value(
                     response,
                     token=token
@@ -108,8 +110,10 @@ def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, me
 
     except Exception as e:
 
+        kind = format_community_kind(community_type)
+
         print(
-            "Excepción creando invite link:",
+            f"Excepción creando invite link para {kind}:",
             sanitize_log_value(
                 e,
                 token=token

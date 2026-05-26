@@ -16,6 +16,7 @@ from commercial_catalog import (
 )
 from bot_config import ADMIN_ID
 from db import conn
+from group_service import format_community_kind, format_community_kind_capitalized, normalize_community_type
 from formatters import (
     format_tiempo_restante
 )
@@ -144,6 +145,7 @@ def fetch_pending_creator_group_link(user_id):
             SELECT id,
                    commercial_request_id,
                    telegram_group_id,
+                   COALESCE(community_type, 'group'),
                    group_name
             FROM creator_group_link_requests
             WHERE user_id=%s
@@ -166,7 +168,8 @@ def fetch_pending_creator_group_link(user_id):
         "id": row[0],
         "request_id": row[1],
         "telegram_group_id": row[2],
-        "group_name": row[3]
+        "community_type": normalize_community_type(row[3]),
+        "group_name": row[4]
     }
 
 
@@ -680,15 +683,21 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
     if pending_group_link:
 
+        pending_kind = format_community_kind(
+            pending_group_link.get("community_type")
+        )
+        pending_kind_cap = format_community_kind_capitalized(
+            pending_group_link.get("community_type")
+        )
         creator_recovery_text = (
-            "He detectado un grupo pendiente de confirmar.\n\n"
-            f"Grupo: {pending_group_link.get('group_name') or '-'}\n"
+            f"He detectado un {pending_kind} pendiente de confirmar.\n\n"
+            f"{pending_kind_cap}: {pending_group_link.get('group_name') or '-'}\n"
             f"ID: {pending_group_link.get('telegram_group_id') or '-'}"
         )
 
         keyboard.append([
             InlineKeyboardButton(
-                "✅ Confirmar grupo",
+                f"✅ Confirmar {pending_kind}",
                 callback_data=f"confirm_creator_group_link_{pending_group_link['id']}"
             )
         ])

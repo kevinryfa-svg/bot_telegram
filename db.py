@@ -108,6 +108,8 @@ def create_tables():
 
             is_free_group BOOLEAN DEFAULT FALSE,
 
+            community_type TEXT DEFAULT 'group',
+
             location_gate_enabled BOOLEAN DEFAULT FALSE,
 
             allowed_region TEXT,
@@ -1851,6 +1853,8 @@ def create_tables():
 
             telegram_group_id BIGINT NOT NULL,
 
+            community_type TEXT DEFAULT 'group',
+
             group_name TEXT,
 
             status TEXT DEFAULT 'pending',
@@ -1866,6 +1870,29 @@ def create_tables():
         );
 
         """)
+
+
+        try:
+
+            cur.execute("""
+
+                ALTER TABLE creator_group_link_requests
+                ADD COLUMN IF NOT EXISTS community_type TEXT DEFAULT 'group'
+
+            """)
+
+            cur.execute("""
+
+                UPDATE creator_group_link_requests
+                SET community_type='group'
+                WHERE community_type IS NULL
+                OR community_type NOT IN ('group', 'channel')
+
+            """)
+
+        except Exception:
+
+            pass
 
 
         # =========================
@@ -2196,6 +2223,7 @@ def create_tables():
         group_columns = [
 
             ("is_free_group", "BOOLEAN DEFAULT FALSE"),
+            ("community_type", "TEXT DEFAULT 'group'"),
             ("bot_is_admin", "BOOLEAN DEFAULT FALSE"),
             ("is_active", "BOOLEAN DEFAULT TRUE"),
             ("added_by", "BIGINT"),
@@ -2228,6 +2256,29 @@ def create_tables():
             except Exception:
 
                 pass
+
+
+        try:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET community_type='group'
+                WHERE community_type IS NULL
+                OR community_type NOT IN ('group', 'channel')
+
+            """)
+
+            cur.execute("""
+
+                CREATE INDEX IF NOT EXISTS idx_groups_community_type
+                ON groups(community_type)
+
+            """)
+
+        except Exception as e:
+
+            print("Error normalizando community_type en groups:", e)
 
 
         try:

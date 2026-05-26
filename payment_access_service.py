@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from audit_log_service import log_event
 from bot_config import ADMIN_ID, TOKEN
 from db import conn
+from group_service import format_community_kind, normalize_community_type
 from invite_link_service import create_telegram_invite_link
 from notification_service import notify_super_admins, send_telegram_message
 from rbac_helpers import get_group_owner_user_id, is_user_group_owner
@@ -216,6 +217,7 @@ def get_user_group_access_state(user_id, group_id):
         "group_id": group_id,
         "telegram_group_id": None,
         "group_name": None,
+        "community_type": "group",
         "is_free_group": False,
         "has_active_access": False,
         "is_group_owner": False,
@@ -292,7 +294,8 @@ def get_user_group_access_state(user_id, group_id):
                 SELECT id,
                        name,
                        telegram_group_id,
-                       COALESCE(is_free_group, FALSE)
+                       COALESCE(is_free_group, FALSE),
+                       COALESCE(community_type, 'group')
                 FROM groups
                 WHERE id=%s
                 LIMIT 1
@@ -311,6 +314,7 @@ def get_user_group_access_state(user_id, group_id):
             state["group_name"] = group_row[1]
             state["telegram_group_id"] = group_row[2]
             state["is_free_group"] = bool(group_row[3])
+            state["community_type"] = normalize_community_type(group_row[4])
 
 
             if is_user_group_owner(user_id, group_id):
@@ -882,7 +886,8 @@ def get_group_plan_for_access(group_id, plan_id):
                    p.currency,
                    p.price_id,
                    g.telegram_group_id,
-                   g.name
+                   g.name,
+                   COALESCE(g.community_type, 'group')
             FROM plans p
             JOIN groups g ON g.id=p.group_id
             WHERE p.id=%s
@@ -912,7 +917,8 @@ def get_group_plan_for_access(group_id, plan_id):
         "currency": row[4],
         "price_id": row[5],
         "telegram_group_id": row[6],
-        "group_name": row[7]
+        "group_name": row[7],
+        "community_type": normalize_community_type(row[8])
     }
 
 
@@ -978,6 +984,8 @@ def grant_group_access_after_payment(
     )
     telegram_group_id = plan.get("telegram_group_id")
     group_name = plan.get("group_name") or f"Grupo {group_id}"
+    community_type = plan.get("community_type") or "group"
+    community_kind = format_community_kind(community_type)
     plan_name = plan.get("plan_name") or "Plan"
     payment_reference = f"{provider}:{external_payment_id or external_checkout_id or transaction_id}"
 
@@ -1004,7 +1012,8 @@ def grant_group_access_after_payment(
         TOKEN,
         telegram_group_id,
         expire_seconds=expire_seconds,
-        member_limit=1
+        member_limit=1,
+        community_type=community_type
     )
 
 
@@ -1019,11 +1028,16 @@ def grant_group_access_after_payment(
             telegram_group_id=telegram_group_id,
             actor_user_id=user_id,
             target_user_id=user_id,
-            message="Pago confirmado pero no se pudo crear invite link.",
+            message=f"Pago confirmado pero no se pudo crear invite link para {community_kind}.",
             metadata={
                 "provider": provider,
                 "transaction_id": transaction_id,
-                "plan_id": plan_id
+                "plan_id": plan_id,
+                "community_type": community_type,
+                "user_message": (
+                    f"No he podido crear enlace de invitación. Asegúrate de que el bot es administrador del {community_kind} "
+                    "y tiene permisos para invitar usuarios."
+                )
             }
         )
 
@@ -1184,7 +1198,7 @@ def grant_group_access_after_payment(
             owner_user_id,
             f"💳 Nuevo pago en tu comunidad\n\n"
             f"Proveedor: {provider}\n"
-            f"Grupo: {group_name}\n"
+            f"{format_community_kind(community_type).capitalize()}: {group_name}\n"
             f"Usuario: {user_id}\n"
             f"Plan: {plan_name}\n"
             f"Importe: {amount_text}\n"
