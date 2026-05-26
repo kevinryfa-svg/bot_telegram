@@ -107,6 +107,12 @@ from group_registration_handler import (
     leave_chat_safely,
     verificar_admin_despues
 )
+from group_service import (
+    format_community_kind,
+    format_community_kind_capitalized,
+    get_community_type,
+    normalize_community_type
+)
 from invite_link_service import (
     create_telegram_invite_link,
     revoke_telegram_invite_link
@@ -701,6 +707,8 @@ def format_access_expiration(expires_at):
 def build_existing_group_access_text(access_state):
 
     group_name = access_state.get("group_name") or f"Grupo {access_state.get('group_id')}"
+    community_type = normalize_community_type(access_state.get("community_type"))
+    community_kind = format_community_kind(community_type)
     expires_at = access_state.get("expires_at")
 
     if access_state.get("reason") == "owner_access":
@@ -717,7 +725,7 @@ def build_existing_group_access_text(access_state):
         return (
             f"✅ Ya tienes acceso activo a {group_name}.\n\n"
             f"Acceso: {format_access_expiration(expires_at)}\n\n"
-            "Si necesitas volver a entrar, usa Recuperar/Reenviar enlace.\n"
+            f"Si necesitas volver a entrar al {community_kind}, usa Recuperar/Reenviar enlace.\n"
             "Si crees que esto es un error, abre soporte."
         )
 
@@ -6653,7 +6661,8 @@ def fetch_group_basic_info(group_id):
 
             SELECT id,
                    name,
-                   telegram_group_id
+                   telegram_group_id,
+                   COALESCE(community_type, 'group')
             FROM groups
             WHERE id=%s
             LIMIT 1
@@ -6687,7 +6696,7 @@ def set_group_user_promo_context(context, group_id, step=None):
         return None
 
 
-    resolved_group_id, _group_name, telegram_group_id = group
+    resolved_group_id, _group_name, telegram_group_id, *_ = group
     owner_user_id = get_group_owner_user_id(resolved_group_id)
 
     context.user_data["selected_group_admin"] = resolved_group_id
@@ -6922,7 +6931,7 @@ def create_group_user_promo_code(
         return None
 
 
-    _group_id, _group_name, telegram_group_id = group
+    _group_id, _group_name, telegram_group_id, *_ = group
     group_owner_user_id = get_group_owner_user_id(group_id) or owner_user_id
 
 
@@ -7028,6 +7037,7 @@ def fetch_group_user_promo_by_code(code):
                    c.is_active,
                    c.expires_at,
                    g.name,
+                   COALESCE(g.community_type, 'group'),
                    COALESCE(g.is_active, TRUE)
             FROM group_user_promo_codes c
             JOIN groups g
@@ -7060,6 +7070,7 @@ def validate_group_user_promo_row(row):
         is_active,
         expires_at,
         _group_name,
+        _community_type,
         group_is_active
     ) = row
 
@@ -7102,8 +7113,12 @@ async def grant_group_user_promo_access(context, chat_id, telegram_user, promo_r
         _is_active,
         _expires_at,
         group_name,
+        community_type,
         _group_is_active
     ) = promo_row
+
+    community_type = normalize_community_type(community_type)
+    community_kind = format_community_kind(community_type)
 
     user_id = telegram_user.id
 
@@ -7130,7 +7145,8 @@ async def grant_group_user_promo_access(context, chat_id, telegram_user, promo_r
         TOKEN,
         telegram_group_id,
         expire_seconds=180,
-        member_limit=1
+        member_limit=1,
+        community_type=community_type
     )
 
 
@@ -7138,7 +7154,11 @@ async def grant_group_user_promo_access(context, chat_id, telegram_user, promo_r
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="❌ Error creando el enlace de acceso."
+            text=(
+                "❌ Error creando el enlace de acceso.\n\n"
+                f"No he podido crear enlace de invitación. Asegúrate de que el bot es administrador del {community_kind} "
+                "y tiene permisos para invitar usuarios."
+            )
         )
 
         return
@@ -9148,6 +9168,7 @@ def fetch_owner_group_quick_status(group_id):
 
     status = {
         "name": "Comunidad",
+        "community_type": "group",
         "is_free_group": False,
         "public_visibility": "start_home",
         "active_users": 0,
@@ -9165,7 +9186,10 @@ def fetch_owner_group_quick_status(group_id):
 
             cur.execute("""
 
-                SELECT name, COALESCE(is_free_group, FALSE), COALESCE(public_visibility, 'start_home')
+                SELECT name,
+                       COALESCE(is_free_group, FALSE),
+                       COALESCE(public_visibility, 'start_home'),
+                       COALESCE(community_type, 'group')
                 FROM groups
                 WHERE id=%s
                 LIMIT 1
@@ -9179,6 +9203,7 @@ def fetch_owner_group_quick_status(group_id):
                 status["name"] = group_row[0] or "Comunidad"
                 status["is_free_group"] = bool(group_row[1])
                 status["public_visibility"] = group_row[2] or "start_home"
+                status["community_type"] = normalize_community_type(group_row[3])
 
 
             cur.execute("""
@@ -9271,6 +9296,7 @@ def build_owner_quick_status_text(user_id, group_id):
 
     status = fetch_owner_group_quick_status(group_id)
     access_type = "Gratis" if status["is_free_group"] else "Pago"
+    community_kind_cap = format_community_kind_capitalized(status.get("community_type"))
     backup_text = "Activo" if status["backup_active"] else "No activo"
     errors_text = "Sin errores críticos recientes"
 
@@ -9286,7 +9312,8 @@ def build_owner_quick_status_text(user_id, group_id):
     return (
         "✅ Estado rápido de esta comunidad\n\n"
         f"Comunidad: {status['name']}\n"
-        f"Tipo: {access_type}\n"
+        f"Tipo: {community_kind_cap}\n"
+        f"Tipo de acceso: {access_type}\n"
         f"Visibilidad marketplace: {status['public_visibility']}\n"
         f"Usuarios activos: {status['active_users']}\n"
         f"Planes activos: {status['active_plans']}\n"
@@ -10078,6 +10105,7 @@ def build_owner_general_text(group_id):
     group = fetch_group_basic_info(group_id)
     group_name = group[1] if group else f"Grupo {group_id}"
     telegram_group_id = group[2] if group else None
+    community_type = normalize_community_type(group[3] if group and len(group) > 3 else None)
     access_type = "No configurado"
     public_visibility = "-"
 
@@ -10114,6 +10142,7 @@ def build_owner_general_text(group_id):
         f"Nombre: {group_name or f'Grupo {group_id}'}\n"
         f"ID interno: {group_id}\n"
         f"Telegram ID: {telegram_group_id or '-'}\n"
+        f"Tipo: {format_community_kind_capitalized(community_type)}\n"
         f"Tipo de acceso: {access_type}\n"
         f"Visibilidad marketplace: {public_visibility}\n\n"
         "Esta pantalla agrupa rutas seguras de configuración. Los cambios sensibles, como pagos o visibilidad, "
@@ -11746,6 +11775,12 @@ def build_marketplace_access_keyboard(
 
     keyboard = []
     access_state = get_user_group_access_state(user_id, group_id) if user_id else None
+    community_type = (
+        access_state.get("community_type")
+        if access_state
+        else get_community_type(group_id)
+    )
+    kind = format_community_kind(community_type)
 
 
     if user_id:
@@ -11766,7 +11801,7 @@ def build_marketplace_access_keyboard(
 
 
     keyboard.append([InlineKeyboardButton(
-        "🔓 Entrar gratis" if is_free_group else "💳 Ver acceso",
+        f"🔓 Entrar al {kind}" if is_free_group else "💳 Ver acceso",
         callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
     )])
 
@@ -11786,6 +11821,7 @@ def build_marketplace_access_keyboard(
 def build_marketplace_preview_keyboard(group, user_id=None):
 
     group_id = group.get("id")
+    kind = format_community_kind(group.get("community_type"))
     keyboard = []
     access_state = get_user_group_access_state(user_id, group_id) if user_id else None
 
@@ -11816,7 +11852,7 @@ def build_marketplace_preview_keyboard(group, user_id=None):
 
 
     keyboard.append([InlineKeyboardButton(
-        "🔓 Entrar gratis" if group.get("is_free_group") else "💳 Ver acceso",
+        f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Ver acceso",
         callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
     )])
 
@@ -11886,6 +11922,7 @@ def row_to_marketplace_group(row):
         "tags",
         "marketplace_badge",
         "preview_mode",
+        "community_type",
         "preview_views",
         "access_clicks",
         "favorites_count",
@@ -11910,6 +11947,7 @@ def get_marketplace_group_select():
                g.tags,
                g.marketplace_badge,
                COALESCE(g.preview_mode, 'manual'),
+               COALESCE(g.community_type, 'group'),
                COALESCE(cs.preview_views, 0),
                COALESCE(cs.access_clicks, 0),
                COALESCE(cs.favorites_count, 0),
@@ -12243,8 +12281,11 @@ def format_marketplace_category(group):
 
 def format_marketplace_card(group):
 
+    kind_cap = format_community_kind_capitalized(group.get("community_type"))
+
     return (
-        f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+        f"🔥 {group.get('name') or f'{kind_cap} privado'}\n"
+        f"📡 Tipo: {kind_cap}\n"
         f"📂 {format_marketplace_category(group)}\n"
         f"{format_marketplace_kind(group)}"
     )
@@ -12253,11 +12294,15 @@ def format_marketplace_card(group):
 def format_marketplace_group_caption(group):
 
     preview_mode = group.get("preview_mode") or "manual"
+    community_type = normalize_community_type(group.get("community_type"))
+    kind_cap = format_community_kind_capitalized(community_type)
+    members_label = "suscriptores" if community_type == "channel" else "miembros"
     base_text = (
         f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+        f"📡 Tipo: {kind_cap}\n"
         f"📂 {format_marketplace_category(group)}\n"
         f"⭐ {format_marketplace_number(group.get('favorites_count'))} favoritos\n"
-        f"👥 {format_marketplace_number(group.get('member_count'))} miembros\n"
+        f"👥 {format_marketplace_number(group.get('member_count'))} {members_label}\n"
         f"{format_marketplace_kind(group)}"
     )
 
@@ -12285,6 +12330,8 @@ def build_marketplace_group_keyboard(group, user_id=None):
 
     group_id = group.get("id")
     is_free_group = group.get("is_free_group")
+    community_type = normalize_community_type(group.get("community_type"))
+    kind = format_community_kind(community_type)
     preview_mode = group.get("preview_mode") or "manual"
     keyboard = []
     access_state = get_user_group_access_state(user_id, group_id) if user_id else None
@@ -12323,7 +12370,7 @@ def build_marketplace_group_keyboard(group, user_id=None):
 
 
     keyboard.append([InlineKeyboardButton(
-        "🔓 Entrar gratis" if is_free_group else "💳 Comprar acceso",
+        f"🔓 Entrar al {kind}" if is_free_group else "💳 Comprar acceso",
         callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
     )])
 
@@ -12439,6 +12486,7 @@ def format_dynamic_preview_video_caption_for_user(group, video, index, total, us
 def build_dynamic_preview_access_keyboard(group, user_id=None):
 
     group_id = group.get("id")
+    kind = format_community_kind(group.get("community_type"))
     access_state = get_user_group_access_state(user_id, group_id) if user_id else None
 
 
@@ -12448,7 +12496,7 @@ def build_dynamic_preview_access_keyboard(group, user_id=None):
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            "🔓 Entrar gratis" if group.get("is_free_group") else "💳 Comprar acceso",
+            f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Comprar acceso",
             callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
         )],
         [InlineKeyboardButton(
@@ -12461,9 +12509,12 @@ def build_dynamic_preview_access_keyboard(group, user_id=None):
 def format_marketplace_preview_caption(group):
 
     preview_mode = group.get("preview_mode") or "manual"
+    community_type = normalize_community_type(group.get("community_type"))
+    kind_cap = format_community_kind_capitalized(community_type)
+    members_label = "suscriptores" if community_type == "channel" else "miembros"
     stats_text = (
         f"⭐ {format_marketplace_number(group.get('favorites_count'))} favoritos\n"
-        f"👥 {format_marketplace_number(group.get('member_count'))} miembros"
+        f"👥 {format_marketplace_number(group.get('member_count'))} {members_label}"
     )
 
 
@@ -12471,6 +12522,7 @@ def format_marketplace_preview_caption(group):
 
         return (
             f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+            f"📡 Tipo: {kind_cap}\n"
             f"📂 {format_marketplace_category(group)}\n"
             f"{stats_text}\n"
             f"{format_marketplace_kind(group)}"
@@ -12481,6 +12533,7 @@ def format_marketplace_preview_caption(group):
 
         return (
             f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+            f"📡 Tipo: {kind_cap}\n"
             f"📂 {format_marketplace_category(group)}\n"
             f"{stats_text}\n"
             f"{format_marketplace_kind(group)}\n\n"
@@ -12490,6 +12543,7 @@ def format_marketplace_preview_caption(group):
 
     text = (
         f"🔥 {group.get('name') or 'Comunidad privada'}\n"
+        f"📡 Tipo: {kind_cap}\n"
         f"📂 {format_marketplace_category(group)}\n"
         f"{stats_text}\n"
         f"{format_marketplace_kind(group)}\n\n"
@@ -16857,7 +16911,8 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
             cur.execute("""
 
                 SELECT name,
-                       telegram_group_id
+                       telegram_group_id,
+                       COALESCE(community_type, 'group')
                 FROM groups
                 WHERE id=%s
                 AND is_active=TRUE
@@ -16880,7 +16935,9 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
                 return
 
 
-            group_name, telegram_group_id = group_row
+            group_name, telegram_group_id, community_type = group_row
+            community_type = normalize_community_type(community_type)
+            community_kind = format_community_kind(community_type)
 
             increment_community_stat(group_id, "access_clicks")
 
@@ -16925,7 +16982,8 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
             TOKEN,
             telegram_group_id,
             expire_seconds=180,
-            member_limit=1
+            member_limit=1,
+            community_type=community_type
         )
 
 
@@ -16940,12 +16998,16 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
                 telegram_group_id=telegram_group_id,
                 actor_user_id=user_id,
                 target_user_id=user_id,
-                message="No se pudo crear enlace de acceso gratuito."
+                message=f"No se pudo crear enlace de acceso gratuito para {community_kind}."
             )
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="❌ Error creando acceso.",
+                text=(
+                    "❌ Error creando acceso.\n\n"
+                    f"No he podido crear enlace de invitación. Asegúrate de que el bot es administrador del {community_kind} "
+                    "y tiene permisos para invitar usuarios."
+                ),
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 
@@ -18205,11 +18267,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             chat = await context.bot.get_chat(telegram_group_id)
             group_name = chat.title or str(telegram_group_id)
+            community_type = "channel" if chat.type == "channel" else "group"
 
         except Exception as e:
 
             print("Error obteniendo grupo para reintentar verificación:", e)
             group_name = str(telegram_group_id)
+            community_type = "group"
 
 
         asyncio.create_task(
@@ -18220,7 +18284,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context,
                 user_id,
                 query.from_user.username,
-                query.from_user.first_name
+                query.from_user.first_name,
+                community_type
             )
         )
 
@@ -18266,8 +18331,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if status == "confirmed":
 
+            community_type = normalize_community_type(result.get("community_type"))
+            kind = format_community_kind(community_type)
+            kind_cap = format_community_kind_capitalized(community_type)
+
             await query.message.reply_text(
-                "✅ Grupo vinculado correctamente.\n\n"
+                f"✅ {kind_cap} vinculado correctamente.\n\n"
                 "El panel de gestión se activó para esta comunidad."
             )
 
@@ -18290,8 +18359,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=ADMIN_ID,
                     text=(
-                        "✅ Grupo vinculado por creator\n\n"
-                        f"Grupo: {result.get('group_name')}\n"
+                        f"✅ {kind_cap} vinculado por creator\n\n"
+                        f"{kind_cap}: {result.get('group_name')}\n"
                         f"Telegram ID: {result.get('telegram_group_id')}\n"
                         f"ID interno: {result.get('group_id')}\n"
                         f"Usuario: {user_id}\n"
@@ -18895,7 +18964,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        _group_id, group_name, _telegram_group_id = group
+        _group_id, group_name, _telegram_group_id, *_ = group
         context.user_data["support_mode"] = True
         context.user_data["support_lookup_mode"] = False
         context.user_data["support_group_id"] = group_id
@@ -24057,7 +24126,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
-                    SELECT DISTINCT g.telegram_group_id, g.name
+                    SELECT DISTINCT g.telegram_group_id,
+                                    g.name,
+                                    COALESCE(g.community_type, 'group')
 
                     FROM users u
 
@@ -24103,13 +24174,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
 
 
-        for group_id, group_name in rows:
+        for group_id, group_name, community_type in rows:
+
+            kind_cap = format_community_kind_capitalized(community_type)
 
             keyboard.append([
 
                 InlineKeyboardButton(
 
-                    f"📦 {group_name}",
+                    f"📦 {group_name} · {kind_cap}",
 
                     callback_data=f"mysub_{group_id}"
 
@@ -24193,12 +24266,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with conn.cursor() as cur:
 
                 # =========================
-                # OBTENER NOMBRE GRUPO
+                # OBTENER COMUNIDAD
                 # =========================
 
                 cur.execute("""
 
-                    SELECT name
+                    SELECT name,
+                           COALESCE(community_type, 'group')
 
                     FROM groups
 
@@ -24219,6 +24293,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                 group_name = group_row[0]
+                community_type = normalize_community_type(group_row[1])
+                community_kind = format_community_kind(community_type)
 
 
                 # =========================
@@ -24284,7 +24360,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     await reply_with_recover_navigation(
                         query,
-                        "No tienes una suscripción activa para este grupo."
+                        f"No tienes una suscripción activa para este {community_kind}."
                     )
 
                     return
@@ -24465,14 +24541,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             TOKEN,
             telegram_group_id,
             expire_seconds=expire_seconds,
-            member_limit=1
+            member_limit=1,
+            community_type=community_type
         )
 
 
         if not link:
 
             await query.message.reply_text(
-                "❌ Error creando acceso."
+                "❌ Error creando acceso.\n\n"
+                f"No he podido crear enlace de invitación. Asegúrate de que el bot es administrador del {community_kind} "
+                "y tiene permisos para invitar usuarios."
             )
 
             return
@@ -25995,7 +26074,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        _group_id, group_name, _telegram_group_id = group
+        _group_id, group_name, _telegram_group_id, *_ = group
 
         await send_clean_message(
             context,
@@ -27049,7 +27128,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["selected_group_admin"] = group_id
         context.user_data["selected_owner_group"] = group_id
 
-        group_id, group_name, telegram_group_id = group
+        group_id, group_name, telegram_group_id, *_ = group
 
         keyboard_rows = []
         provider_statuses = list_group_payment_provider_statuses(group_id)
@@ -27159,7 +27238,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["selected_group_admin"] = group_id
         context.user_data["selected_owner_group"] = group_id
-        _group_id, group_name, _telegram_group_id = group
+        _group_id, group_name, _telegram_group_id, *_ = group
 
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔌 Configurar / conectar", callback_data=f"owner_group_payment_connect_{group_id}_{provider}")],
@@ -28698,7 +28777,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["selected_group_admin"] = group_id
         context.user_data["selected_owner_group"] = group_id
-        _group_id, group_name, _telegram_group_id = group
+        _group_id, group_name, _telegram_group_id, *_ = group
 
         try:
 
@@ -28861,7 +28940,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["selected_group_admin"] = group_id
         context.user_data["selected_owner_group"] = group_id
-        _group_id, group_name, _telegram_group_id = group
+        _group_id, group_name, _telegram_group_id, *_ = group
 
         try:
 
@@ -32649,7 +32728,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         cur2.execute("""
 
-                            SELECT telegram_group_id
+                            SELECT telegram_group_id,
+                                   COALESCE(community_type, 'group')
 
                             FROM groups
 
@@ -32672,13 +32752,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                     telegram_group_id = group_row[0]
+                    community_type = normalize_community_type(group_row[1])
 
 
                     link = create_telegram_invite_link(
                         TOKEN,
                         telegram_group_id,
                         expire_seconds=60,
-                        member_limit=1
+                        member_limit=1,
+                        community_type=community_type
                     )
 
 

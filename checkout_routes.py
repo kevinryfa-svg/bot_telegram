@@ -108,6 +108,7 @@ def register_checkout_routes(app):
 
 
         access_state = get_user_group_access_state(telegram_id, group_id)
+        community_type = access_state.get("community_type") or "group"
 
 
         if should_block_new_group_purchase(access_state):
@@ -141,7 +142,8 @@ def register_checkout_routes(app):
                 metadata={
                     "telegram_id": str(telegram_id),
                     "group_id": str(group_id),
-                    "price_id": price_id
+                    "price_id": price_id,
+                    "community_type": community_type
                 }
 
             )
@@ -178,6 +180,7 @@ def register_checkout_routes(app):
             metadata={
                 "checkout_url": session.url,
                 "price_id": price_id,
+                "community_type": community_type,
                 "source": "create_checkout_session"
             }
         )
@@ -229,6 +232,7 @@ def register_checkout_routes(app):
                 group_id=group_id,
                 plan_id=plan_id,
                 metadata={
+                    "community_type": access_state.get("community_type") or "group",
                     "source": "create_paypal_group_order"
                 }
             )
@@ -294,6 +298,7 @@ def register_checkout_routes(app):
                 group_id=group_id,
                 plan_id=plan_id,
                 metadata={
+                    "community_type": access_state.get("community_type") or "group",
                     "source": "create_revolut_group_order"
                 }
             )
@@ -359,6 +364,7 @@ def register_checkout_routes(app):
                 group_id=group_id,
                 plan_id=plan_id,
                 metadata={
+                    "community_type": access_state.get("community_type") or "group",
                     "source": "create_changenow_group_order"
                 }
             )
@@ -423,6 +429,7 @@ def register_checkout_routes(app):
                 group_id=group_id,
                 plan_id=plan_id,
                 metadata={
+                    "community_type": access_state.get("community_type") or "group",
                     "source": "create_guardarian_group_order"
                 }
             )
