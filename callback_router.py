@@ -1744,7 +1744,28 @@ def build_location_log_metadata(region_type, allowed_region, region_label, resol
     return metadata
 
 
-def build_location_denied_keyboard():
+def build_location_denied_keyboard(group_id=None):
+
+    if group_id:
+
+        return InlineKeyboardMarkup([
+
+            [InlineKeyboardButton(
+                "📩 Solicitar revisión manual",
+                callback_data=f"location_review_request_{group_id}"
+            )],
+
+            [InlineKeyboardButton(
+                "🔄 Enviar otra ubicación",
+                callback_data=f"location_review_send_location_{group_id}"
+            )],
+
+            [InlineKeyboardButton(
+                "🏠 Inicio",
+                callback_data="public_back_start"
+            )]
+
+        ])
 
     return InlineKeyboardMarkup([
 
@@ -1759,6 +1780,585 @@ def build_location_denied_keyboard():
         )]
 
     ])
+
+
+def clear_location_manual_review_state(context):
+
+    for key in [
+        "location_review_group_id",
+        "location_review_step",
+        "location_review_answers",
+        "location_review_failed_latitude",
+        "location_review_failed_longitude",
+        "location_review_allowed_region",
+        "location_review_allowed_region_type",
+        "location_review_detected_label",
+        "location_review_action",
+        "location_review_price_id"
+    ]:
+
+        context.user_data.pop(key, None)
+
+
+def build_location_manual_review_metadata(review=None, ticket=None):
+
+    review = review or {}
+    ticket = ticket or {}
+
+    return {
+        "review_id": review.get("id"),
+        "user_id": review.get("user_id") or ticket.get("user_id"),
+        "group_id": review.get("group_id") or ticket.get("group_id"),
+        "telegram_group_id": review.get("telegram_group_id"),
+        "support_ticket_id": review.get("support_ticket_id") or ticket.get("id"),
+        "status": review.get("status"),
+        "expires_at": str(review.get("expires_at")) if review.get("expires_at") else None,
+        "allowed_region": review.get("allowed_region"),
+        "allowed_region_type": review.get("allowed_region_type")
+    }
+
+
+def fetch_group_location_review_details(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   name,
+                   telegram_group_id,
+                   allowed_region,
+                   allowed_region_type
+            FROM groups
+            WHERE id=%s
+            LIMIT 1
+
+        """, (group_id,))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return None
+
+
+    group_id, name, telegram_group_id, allowed_region, allowed_region_type = row
+    region_type = normalize_allowed_region_type(
+        allowed_region_type,
+        allowed_region
+    )
+    normalized_region = normalize_allowed_region(
+        region_type,
+        allowed_region
+    )
+
+    return {
+        "group_id": group_id,
+        "name": name,
+        "telegram_group_id": telegram_group_id,
+        "allowed_region": normalized_region,
+        "allowed_region_type": region_type,
+        "allowed_region_label": format_allowed_region(
+            region_type,
+            normalized_region
+        )
+    }
+
+
+LOCATION_MANUAL_REVIEW_FIELDS = [
+    "id",
+    "user_id",
+    "group_id",
+    "telegram_group_id",
+    "support_ticket_id",
+    "requested_by_user_id",
+    "approved_by_user_id",
+    "status",
+    "failed_latitude",
+    "failed_longitude",
+    "allowed_region",
+    "allowed_region_type",
+    "question_1_reason",
+    "question_2_residence_proof",
+    "question_3_valid_location_eta",
+    "owner_note",
+    "user_note",
+    "expires_at",
+    "completed_at",
+    "created_at",
+    "updated_at"
+]
+
+
+def row_to_location_manual_review(row):
+
+    if not row:
+
+        return None
+
+
+    return dict(zip(LOCATION_MANUAL_REVIEW_FIELDS, row))
+
+
+def fetch_location_manual_review(review_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(LOCATION_MANUAL_REVIEW_FIELDS)}
+            FROM location_manual_reviews
+            WHERE id=%s
+            LIMIT 1
+
+        """, (review_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_location_manual_review(row)
+
+
+def fetch_active_location_manual_review(user_id, group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(LOCATION_MANUAL_REVIEW_FIELDS)}
+            FROM location_manual_reviews
+            WHERE user_id=%s
+            AND group_id=%s
+            AND status='approved_temp'
+            AND expires_at > NOW()
+            ORDER BY expires_at DESC
+            LIMIT 1
+
+        """, (
+            user_id,
+            group_id
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_location_manual_review(row)
+
+
+def mark_location_manual_review_completed(user_id, group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE location_manual_reviews
+            SET status='completed',
+                completed_at=NOW(),
+                updated_at=NOW()
+            WHERE id IN (
+                SELECT id
+                FROM location_manual_reviews
+                WHERE user_id=%s
+                AND group_id=%s
+                AND status IN ('pending', 'approved_temp')
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
+            RETURNING {", ".join(LOCATION_MANUAL_REVIEW_FIELDS)}
+
+        """, (
+            user_id,
+            group_id
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_location_manual_review(row)
+
+
+def approve_location_manual_review_temp(review_id, approver_user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE location_manual_reviews
+            SET status='approved_temp',
+                approved_by_user_id=%s,
+                expires_at=NOW() + INTERVAL '7 days',
+                updated_at=NOW()
+            WHERE id=%s
+            AND status='pending'
+            RETURNING {", ".join(LOCATION_MANUAL_REVIEW_FIELDS)}
+
+        """, (
+            approver_user_id,
+            review_id
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_location_manual_review(row)
+
+
+def reject_location_manual_review(review_id, rejected_by_user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE location_manual_reviews
+            SET status='rejected',
+                approved_by_user_id=%s,
+                updated_at=NOW()
+            WHERE id=%s
+            AND status='pending'
+            RETURNING {", ".join(LOCATION_MANUAL_REVIEW_FIELDS)}
+
+        """, (
+            rejected_by_user_id,
+            review_id
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_location_manual_review(row)
+
+
+def create_location_manual_review(user, group_details, answers, failed_latitude=None, failed_longitude=None):
+
+    ticket = get_or_create_support_ticket(
+        user,
+        group_id=group_details.get("group_id")
+    )
+
+    ticket_summary = (
+        "📍 Solicitud de revisión manual de ubicación\n\n"
+        f"Comunidad: {group_details.get('name') or group_details.get('group_id')}\n"
+        f"Zona permitida: {group_details.get('allowed_region_label')}\n"
+        f"Ubicación fallida: {failed_latitude or '-'}, {failed_longitude or '-'}\n\n"
+        "Respuestas del formulario:\n"
+        f"1. Motivo: {answers.get('reason') or '-'}\n"
+        f"2. Justificación residencia: {answers.get('residence_proof') or '-'}\n"
+        f"3. Cuándo podrá enviar ubicación válida: {answers.get('valid_location_eta') or '-'}"
+    )
+
+    create_support_message(
+        ticket.get("id"),
+        "user",
+        user.id,
+        ticket_summary
+    )
+
+    update_support_ticket_status(
+        ticket.get("id"),
+        "open"
+    )
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            INSERT INTO location_manual_reviews
+            (
+                user_id,
+                group_id,
+                telegram_group_id,
+                support_ticket_id,
+                requested_by_user_id,
+                status,
+                failed_latitude,
+                failed_longitude,
+                allowed_region,
+                allowed_region_type,
+                question_1_reason,
+                question_2_residence_proof,
+                question_3_valid_location_eta,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s, %s, NOW())
+            RETURNING {", ".join(LOCATION_MANUAL_REVIEW_FIELDS)}
+
+        """, (
+            user.id,
+            group_details.get("group_id"),
+            group_details.get("telegram_group_id"),
+            ticket.get("id"),
+            user.id,
+            failed_latitude,
+            failed_longitude,
+            group_details.get("allowed_region"),
+            group_details.get("allowed_region_type"),
+            answers.get("reason"),
+            answers.get("residence_proof"),
+            answers.get("valid_location_eta")
+        ))
+
+        row = cur.fetchone()
+
+
+    review = row_to_location_manual_review(row)
+
+    return review, ticket
+
+
+def user_can_manage_location_manual_review(user_id, group_id):
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    owner_user_id = get_group_owner_user_id(group_id)
+
+
+    try:
+
+        if owner_user_id is not None and int(owner_user_id) == int(user_id):
+
+            return True
+
+    except Exception:
+
+        pass
+
+
+    return user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_respond_group_support", "can_manage_groups"]
+    )
+
+
+def fetch_location_review_admin_recipients(group_id):
+
+    recipients = set()
+    owner_user_id = get_group_owner_user_id(group_id)
+
+
+    if owner_user_id:
+
+        recipients.add(int(owner_user_id))
+
+
+    recipients.add(int(ADMIN_ID))
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT user_id
+                FROM admins
+                WHERE group_id=%s
+                AND is_active=TRUE
+                AND (
+                    role='GROUP_OWNER'
+                    OR can_respond_group_support=TRUE
+                    OR can_manage_groups=TRUE
+                )
+
+            """, (group_id,))
+
+            for row in cur.fetchall():
+
+                if row and row[0]:
+
+                    recipients.add(int(row[0]))
+
+    except Exception as e:
+
+        print("Error obteniendo admins para revisión manual:", e)
+
+
+    return list(recipients)
+
+
+def format_location_manual_review_detail(review, ticket=None):
+
+    group_details = fetch_group_location_review_details(
+        review.get("group_id")
+    ) or {}
+
+    failed_location = (
+        f"{review.get('failed_latitude')}, {review.get('failed_longitude')}"
+        if review.get("failed_latitude") is not None and review.get("failed_longitude") is not None
+        else "-"
+    )
+
+    return (
+        f"📍 Revisión manual de ubicación #{review.get('id')}\n\n"
+        f"Estado: {review.get('status') or '-'}\n"
+        f"Usuario: {review.get('user_id') or '-'}\n"
+        f"Comunidad: {group_details.get('name') or review.get('group_id')}\n"
+        f"Group ID: {review.get('group_id') or '-'}\n"
+        f"Telegram group ID: {review.get('telegram_group_id') or '-'}\n"
+        f"Ticket: #{review.get('support_ticket_id') or '-'}\n"
+        f"Ubicación fallida: {failed_location}\n"
+        f"Zona permitida: {format_allowed_region(review.get('allowed_region_type'), review.get('allowed_region'))}\n\n"
+        "Respuestas del formulario:\n"
+        f"1. Motivo: {review.get('question_1_reason') or '-'}\n"
+        f"2. Justificación residencia: {review.get('question_2_residence_proof') or '-'}\n"
+        f"3. Cuándo podrá enviar ubicación válida: {review.get('question_3_valid_location_eta') or '-'}"
+    )
+
+
+def build_location_manual_review_admin_keyboard(review):
+
+    review_id = review.get("id")
+    ticket_id = review.get("support_ticket_id")
+    keyboard = []
+
+
+    if review.get("status") == "pending":
+
+        keyboard.append([InlineKeyboardButton(
+            "✅ Aprobar revisión temporal 7 días",
+            callback_data=f"location_review_approve7_{review_id}"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            "❌ Rechazar revisión",
+            callback_data=f"location_review_reject_{review_id}"
+        )])
+
+
+    if ticket_id:
+
+        keyboard.append([InlineKeyboardButton(
+            "💬 Responder al usuario",
+            callback_data=f"owner_support_reply_{ticket_id}"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            "🛟 Abrir ticket",
+            callback_data=f"owner_support_ticket_{ticket_id}"
+        )])
+
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def notify_location_manual_review_admins(context, review, ticket):
+
+    text = format_location_manual_review_detail(
+        review,
+        ticket=ticket
+    )
+    keyboard = build_location_manual_review_admin_keyboard(review)
+
+
+    for recipient_id in fetch_location_review_admin_recipients(review.get("group_id")):
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=recipient_id,
+                text=text,
+                reply_markup=keyboard
+            )
+
+        except Exception as e:
+
+            print("Error avisando revisión manual de ubicación:", recipient_id, e)
+
+
+async def continue_after_location_manual_review(context, chat_id, telegram_user, group_id, action, price_id=None, review=None):
+
+    expires_at = review.get("expires_at") if review else None
+    expires_text = format_commercial_datetime(expires_at) if expires_at else "-"
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "📍 Tienes una revisión temporal activa\n\n"
+            f"Tu caso está en revisión temporal hasta {expires_text}.\n"
+            "Para continuar con esta comunidad, debes enviar una ubicación válida desde la zona permitida antes de esa fecha.\n\n"
+            "Esta revisión no sustituye la verificación real de ubicación."
+        ),
+        reply_markup=ReplyKeyboardMarkup(
+            [[KeyboardButton(
+                "📍 Enviar ubicación ahora",
+                request_location=True
+            )]],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+    )
+
+    return True
+
+
+async def process_expired_location_manual_reviews(context):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE location_manual_reviews
+            SET status='expired',
+                updated_at=NOW()
+            WHERE status='approved_temp'
+            AND expires_at < NOW()
+            RETURNING {", ".join(LOCATION_MANUAL_REVIEW_FIELDS)}
+
+        """)
+
+        rows = cur.fetchall()
+
+
+    expired_reviews = [
+        row_to_location_manual_review(row)
+        for row in rows
+    ]
+
+
+    for review in expired_reviews:
+
+        log_event(
+            "location_manual_review_expired",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=review.get("group_id"),
+            actor_user_id=review.get("user_id"),
+            target_user_id=review.get("user_id"),
+            message="Revisión manual temporal de ubicación caducada.",
+            metadata=build_location_manual_review_metadata(review)
+        )
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=review.get("user_id"),
+                text=(
+                    "📍 Tu revisión temporal de ubicación ha caducado.\n\n"
+                    "Para continuar, envía una ubicación válida para esta comunidad."
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📍 Enviar ubicación de nuevo",
+                        callback_data=f"location_review_send_location_{review.get('group_id')}"
+                    )],
+                    [InlineKeyboardButton(
+                        "🏠 Inicio",
+                        callback_data="public_back_start"
+                    )]
+                ])
+            )
+
+        except Exception as e:
+
+            print("Error notificando caducidad de revisión manual:", e)
+
+
+    return {
+        "expired": len(expired_reviews)
+    }
 
 
 def build_location_gate_owner_keyboard(request_id):
@@ -1946,7 +2546,8 @@ async def request_location_verification(
     chat_id,
     group_id,
     action,
-    price_id=None
+    price_id=None,
+    telegram_user=None
 ):
 
     context.user_data["location_gate_pending"] = True
@@ -1971,6 +2572,31 @@ async def request_location_verification(
         resize_keyboard=True,
         one_time_keyboard=True
     )
+
+
+    if telegram_user:
+
+        review = fetch_active_location_manual_review(
+            telegram_user.id,
+            group_id
+        )
+
+
+        if review:
+
+            await continue_after_location_manual_review(
+                context,
+                chat_id,
+                telegram_user,
+                group_id,
+                action,
+                price_id=price_id,
+                review=review
+            )
+
+            return
+
+
     _enabled, region_label = get_group_location_gate_display(group_id)
 
     await context.bot.send_message(
@@ -16012,6 +16638,169 @@ async def receive_support_message(update: Update, context: ContextTypes.DEFAULT_
         return
 
 
+async def receive_location_manual_review_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message or not update.message.text:
+
+        return
+
+
+    step = context.user_data.get("location_review_step")
+    group_id = context.user_data.get("location_review_group_id")
+
+
+    if not step or not group_id:
+
+        return
+
+
+    text = update.message.text.strip()
+
+
+    if not text:
+
+        await update.message.reply_text(
+            "Escribe una respuesta breve para continuar."
+        )
+
+        return
+
+
+    answers = context.user_data.setdefault(
+        "location_review_answers",
+        {}
+    )
+
+
+    if step == "reason":
+
+        answers["reason"] = text
+        context.user_data["location_review_step"] = "residence_proof"
+
+        await update.message.reply_text(
+            "2/3 ¿Cómo puedes justificar que resides habitualmente en la zona permitida?\n\n"
+            "Puedes explicarlo con texto: padrón/certificado, contrato o alquiler, recibo/suministro, "
+            "o una explicación verificable. No subas documentos en esta fase."
+        )
+
+        return
+
+
+    if step == "residence_proof":
+
+        answers["residence_proof"] = text
+        context.user_data["location_review_step"] = "valid_location_eta"
+
+        await update.message.reply_text(
+            "3/3 ¿Cuándo podrás enviar una ubicación válida desde la zona permitida?\n\n"
+            "Puedes indicar una fecha aproximada. Ejemplo: “El viernes vuelvo a Valencia y podré enviarla.”"
+        )
+
+        return
+
+
+    if step != "valid_location_eta":
+
+        clear_location_manual_review_state(context)
+
+        await update.message.reply_text(
+            "⚠️ No he podido continuar la solicitud. Vuelve a intentarlo desde la verificación de ubicación."
+        )
+
+        return
+
+
+    answers["valid_location_eta"] = text
+    group_details = fetch_group_location_review_details(group_id)
+
+
+    if not group_details:
+
+        clear_location_manual_review_state(context)
+
+        await update.message.reply_text(
+            "⚠️ No he podido encontrar esta comunidad. Vuelve a intentarlo más tarde.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    review, ticket = create_location_manual_review(
+        update.effective_user,
+        group_details,
+        answers,
+        failed_latitude=context.user_data.get("location_review_failed_latitude"),
+        failed_longitude=context.user_data.get("location_review_failed_longitude")
+    )
+
+    log_user_event(
+        update,
+        "location_manual_review_form_completed",
+        event_key="location_review_form",
+        group_id=group_id,
+        metadata=build_location_manual_review_metadata(
+            review,
+            ticket
+        )
+    )
+
+    log_event(
+        "location_manual_review_requested",
+        category="access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=update.effective_user.id,
+        target_user_id=update.effective_user.id,
+        message="Usuario solicitó revisión manual de ubicación.",
+        metadata=build_location_manual_review_metadata(
+            review,
+            ticket
+        )
+    )
+
+    log_event(
+        "location_manual_review_ticket_created",
+        category="support",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=update.effective_user.id,
+        target_user_id=update.effective_user.id,
+        message="Ticket creado para revisión manual de ubicación.",
+        metadata=build_location_manual_review_metadata(
+            review,
+            ticket
+        )
+    )
+
+    await notify_location_manual_review_admins(
+        context,
+        review,
+        ticket
+    )
+
+    clear_location_manual_review_state(context)
+
+    await update.message.reply_text(
+        "Tu solicitud de revisión manual ha sido enviada. "
+        "El equipo de la comunidad la revisará y te responderá por este ticket.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔎 Consultar ticket",
+                callback_data="user_support_lookup_start"
+            )],
+            [InlineKeyboardButton(
+                "🏠 Inicio",
+                callback_data="public_back_start"
+            )]
+        ])
+    )
+
+
 async def create_free_access_for_user(context, chat_id, telegram_user, group_id):
 
     user_id = telegram_user.id
@@ -16838,17 +17627,23 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
             f"Detectado: {detected_label}. "
             f"Motivo: {reason_message}"
         )
+        context.user_data["location_review_group_id"] = group_id
+        context.user_data["location_review_failed_latitude"] = location.latitude
+        context.user_data["location_review_failed_longitude"] = location.longitude
+        context.user_data["location_review_allowed_region"] = allowed_region
+        context.user_data["location_review_allowed_region_type"] = region_type
+        context.user_data["location_review_detected_label"] = detected_label
+        context.user_data["location_review_action"] = action
+        context.user_data["location_review_price_id"] = price_id
 
         clear_location_gate_state(context)
 
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
-                "⛔ No he podido validar tu ubicación para esta comunidad.\n\n"
-                f"Región permitida: {region_label}\n"
-                f"Detectado: {detected_label}\n"
-                f"Motivo: {reason_message}\n\n"
-                "Asegúrate de pulsar el botón de ubicación de Telegram, no escribir la ciudad manualmente."
+                "📍 No hemos podido validar tu ubicación para esta comunidad.\n\n"
+                "La ubicación enviada no coincide con la zona permitida.\n"
+                "Si crees que se trata de un caso especial, puedes solicitar una revisión manual."
                 f"{boundary_text}"
             ),
             reply_markup=ReplyKeyboardRemove()
@@ -16856,8 +17651,8 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Si estás dentro de la zona permitida y crees que es un error, contacta con soporte.",
-            reply_markup=build_location_denied_keyboard()
+            text="Elige cómo quieres continuar:",
+            reply_markup=build_location_denied_keyboard(group_id)
         )
 
         return
@@ -16896,6 +17691,26 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
             action=action
         )
     )
+
+    completed_review = mark_location_manual_review_completed(
+        user_id,
+        group_id
+    )
+
+
+    if completed_review:
+
+        log_event(
+            "location_manual_review_completed",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Revisión manual de ubicación completada con ubicación válida.",
+            metadata=build_location_manual_review_metadata(completed_review)
+        )
 
     clear_location_gate_state(context)
 
@@ -17023,6 +17838,322 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             callback_chat_id
         )
+
+
+    if data.startswith("location_review_request_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "location_review_request_"
+        )
+        group_details = fetch_group_location_review_details(group_id)
+
+
+        if not group_details:
+
+            await query.message.reply_text(
+                "⚠️ Comunidad no encontrada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        context.user_data["location_review_group_id"] = group_id
+        context.user_data["location_review_step"] = "reason"
+        context.user_data["location_review_answers"] = {}
+
+        log_user_event(
+            update,
+            "location_manual_review_form_started",
+            event_key="location_review_request",
+            group_id=group_id,
+            metadata={
+                "group_id": group_id,
+                "allowed_region": group_details.get("allowed_region"),
+                "allowed_region_type": group_details.get("allowed_region_type")
+            }
+        )
+
+        log_event(
+            "location_manual_review_form_started",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Usuario inició formulario de revisión manual de ubicación.",
+            metadata={
+                "group_id": group_id,
+                "allowed_region": group_details.get("allowed_region"),
+                "allowed_region_type": group_details.get("allowed_region_type")
+            }
+        )
+
+        await query.message.reply_text(
+            "1/3 ¿Por qué solicitas una revisión manual de ubicación?\n\n"
+            "Puedes explicar, por ejemplo, si estás temporalmente fuera por trabajo o estudios, "
+            "si la ubicación del móvil no se detectó correctamente, o si resides en la zona permitida "
+            "pero ahora estás fuera."
+        )
+
+        return
+
+
+    if data.startswith("location_review_send_location_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "location_review_send_location_"
+        )
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ Comunidad no válida.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        await request_location_verification(
+            context,
+            query.message.chat_id,
+            group_id,
+            context.user_data.get("location_review_action") or "location_only",
+            price_id=context.user_data.get("location_review_price_id"),
+            telegram_user=query.from_user
+        )
+
+        return
+
+
+    if data.startswith("location_review_approve7_"):
+
+        review_id = extract_commercial_request_id(
+            data,
+            "location_review_approve7_"
+        )
+        review = fetch_location_manual_review(review_id)
+
+
+        if not review:
+
+            await query.message.reply_text(
+                "❌ Revisión no encontrada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        if not user_can_manage_location_manual_review(user_id, review.get("group_id")):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para aprobar esta revisión."
+            )
+
+            return
+
+
+        approved_review = approve_location_manual_review_temp(
+            review_id,
+            user_id
+        )
+
+
+        if not approved_review:
+
+            await query.message.reply_text(
+                "⚠️ Esta revisión ya no está pendiente.",
+                reply_markup=build_location_manual_review_admin_keyboard(review)
+            )
+
+            return
+
+
+        expires_text = format_commercial_datetime(
+            approved_review.get("expires_at")
+        )
+        ticket_id = approved_review.get("support_ticket_id")
+
+
+        if ticket_id:
+
+            create_support_message(
+                ticket_id,
+                "admin",
+                user_id,
+                "📍 Revisión temporal de ubicación aprobada."
+            )
+            update_support_ticket_status(
+                ticket_id,
+                "answered"
+            )
+
+
+        log_event(
+            "location_manual_review_approved_temp",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=approved_review.get("group_id"),
+            actor_user_id=user_id,
+            target_user_id=approved_review.get("user_id"),
+            message="Owner/admin aprobó revisión temporal de ubicación.",
+            metadata=build_location_manual_review_metadata(approved_review)
+        )
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=approved_review.get("user_id"),
+                text=(
+                    "📍 Revisión temporal aprobada\n\n"
+                    "Tu caso ha sido aprobado temporalmente.\n"
+                    f"Tienes hasta {expires_text} para enviar una ubicación válida para esta comunidad.\n\n"
+                    "Esta revisión no es permanente.\n"
+                    "Si no envías una ubicación válida antes de la fecha indicada, la revisión caducará."
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📍 Enviar ubicación ahora",
+                        callback_data=f"location_review_send_location_{approved_review.get('group_id')}"
+                    )]
+                ])
+            )
+
+        except Exception as e:
+
+            print("Error notificando aprobación de revisión manual:", e)
+
+
+        await query.message.reply_text(
+            "✅ Revisión temporal aprobada y usuario notificado.",
+            reply_markup=build_location_manual_review_admin_keyboard(approved_review)
+        )
+
+        return
+
+
+    if data.startswith("location_review_reject_"):
+
+        review_id = extract_commercial_request_id(
+            data,
+            "location_review_reject_"
+        )
+        review = fetch_location_manual_review(review_id)
+
+
+        if not review:
+
+            await query.message.reply_text(
+                "❌ Revisión no encontrada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        if not user_can_manage_location_manual_review(user_id, review.get("group_id")):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para rechazar esta revisión."
+            )
+
+            return
+
+
+        rejected_review = reject_location_manual_review(
+            review_id,
+            user_id
+        )
+
+
+        if not rejected_review:
+
+            await query.message.reply_text(
+                "⚠️ Esta revisión ya no está pendiente.",
+                reply_markup=build_location_manual_review_admin_keyboard(review)
+            )
+
+            return
+
+
+        ticket_id = rejected_review.get("support_ticket_id")
+
+
+        if ticket_id:
+
+            create_support_message(
+                ticket_id,
+                "admin",
+                user_id,
+                "❌ Revisión manual de ubicación rechazada."
+            )
+            update_support_ticket_status(
+                ticket_id,
+                "answered"
+            )
+
+
+        log_event(
+            "location_manual_review_rejected",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=rejected_review.get("group_id"),
+            actor_user_id=user_id,
+            target_user_id=rejected_review.get("user_id"),
+            message="Owner/admin rechazó revisión manual de ubicación.",
+            metadata=build_location_manual_review_metadata(rejected_review)
+        )
+
+        user_keyboard = [
+            [InlineKeyboardButton(
+                "📍 Enviar ubicación de nuevo",
+                callback_data=f"location_review_send_location_{rejected_review.get('group_id')}"
+            )],
+            [InlineKeyboardButton(
+                "🏠 Inicio",
+                callback_data="public_back_start"
+            )]
+        ]
+
+
+        if ticket_id:
+
+            user_keyboard.insert(1, [InlineKeyboardButton(
+                "💬 Responder ticket",
+                callback_data="user_support_lookup_start"
+            )])
+
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=rejected_review.get("user_id"),
+                text=(
+                    "❌ Revisión manual rechazada\n\n"
+                    "No se ha podido aprobar tu caso con la información enviada.\n"
+                    "Puedes responder al ticket si necesitas aportar más detalles o enviar una nueva ubicación válida."
+                ),
+                reply_markup=InlineKeyboardMarkup(user_keyboard)
+            )
+
+        except Exception as e:
+
+            print("Error notificando rechazo de revisión manual:", e)
+
+
+        await query.message.reply_text(
+            "❌ Revisión rechazada y usuario notificado.",
+            reply_markup=build_location_manual_review_admin_keyboard(rejected_review)
+        )
+
+        return
 
 
     if data.startswith("retry_creator_group_verification_"):
@@ -17274,6 +18405,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         clear_support_user_state(context)
         clear_location_gate_state(context)
+        clear_location_manual_review_state(context)
 
         await delete_query_message_safely(query)
 
@@ -23476,7 +24608,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context,
                 query.message.chat_id,
                 group_id,
-                "free_access"
+                "free_access",
+                telegram_user=query.from_user
             )
 
             return
@@ -34211,7 +35344,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 group_id,
                 "paypal_checkout",
-                price_id=plan_id
+                price_id=plan_id,
+                telegram_user=query.from_user
             )
 
             return
@@ -34283,7 +35417,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 group_id,
                 "revolut_checkout",
-                price_id=plan_id
+                price_id=plan_id,
+                telegram_user=query.from_user
             )
 
             return
@@ -34355,7 +35490,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 group_id,
                 "changenow_checkout",
-                price_id=plan_id
+                price_id=plan_id,
+                telegram_user=query.from_user
             )
 
             return
@@ -34427,7 +35563,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 group_id,
                 "guardarian_checkout",
-                price_id=plan_id
+                price_id=plan_id,
+                telegram_user=query.from_user
             )
 
             return
@@ -34570,7 +35707,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             group_id,
             "checkout",
-            price_id=data
+            price_id=data,
+            telegram_user=query.from_user
         )
 
         return

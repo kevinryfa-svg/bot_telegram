@@ -110,6 +110,7 @@ from callback_router import (
     receive_group_user_promo_code,
     receive_owner_payment_provider_text,
     receive_support_message,
+    receive_location_manual_review_form,
     receive_location_gate
 )
 from code_flow_handler import receive_code
@@ -172,6 +173,13 @@ def get_commercial_expiry_job_interval_seconds():
 
 COMMERCIAL_EXPIRY_JOB_INTERVAL_SECONDS = (
     get_commercial_expiry_job_interval_seconds()
+)
+
+LOCATION_MANUAL_REVIEW_EXPIRY_JOB_INTERVAL_SECONDS = int(
+    os.environ.get(
+        "LOCATION_MANUAL_REVIEW_EXPIRY_JOB_INTERVAL_SECONDS",
+        str(6 * 60 * 60)
+    )
 )
 
 BETA_MONITOR_SUMMARY_INTERVAL_SECONDS = int(
@@ -504,6 +512,74 @@ def schedule_commercial_expiry_job(application):
     return True
 
 
+async def location_manual_review_expiry_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        summary = await callback_router_module.process_expired_location_manual_reviews(
+            context
+        )
+
+
+        if int(summary.get("expired", 0) or 0) > 0:
+
+            print(
+                "Location manual review expiry scheduler:",
+                summary
+            )
+
+            log_event(
+                "location_manual_review_expiry_scheduler_activity",
+                category="access",
+                severity="info",
+                message="Revisión periódica de caducidad de revisiones manuales de ubicación.",
+                metadata=summary
+            )
+
+    except Exception as e:
+
+        print("Location manual review expiry scheduler: error:", e)
+
+        log_event(
+            "location_manual_review_expiry_scheduler_error",
+            category="access",
+            severity="warning",
+            message="Error en revisión periódica de revisiones manuales de ubicación.",
+            metadata={"error": str(e)}
+        )
+
+
+def schedule_location_manual_review_expiry_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Location manual review expiry scheduler: JobQueue no disponible. "
+            "No se programó la revisión automática."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        location_manual_review_expiry_job,
+        interval=LOCATION_MANUAL_REVIEW_EXPIRY_JOB_INTERVAL_SECONDS,
+        first=120,
+        name="location_manual_review_expiry_scheduler"
+    )
+
+    print(
+        "Location manual review expiry scheduler programado cada",
+        LOCATION_MANUAL_REVIEW_EXPIRY_JOB_INTERVAL_SECONDS,
+        "segundos"
+    )
+
+    return True
+
+
 async def beta_monitor_summary_job(context: ContextTypes.DEFAULT_TYPE):
 
     if not is_beta_monitor_enabled():
@@ -785,6 +861,10 @@ async def track_command_event(update, context):
 
 
 async def handle_text(update, context):
+
+    if context.user_data.get("location_review_step"):
+        await receive_location_manual_review_form(update, context)
+        return
 
     if context.user_data.get("location_gate_pending"):
         await receive_location_gate(update, context)
@@ -2031,6 +2111,7 @@ def main():
     )
 
     schedule_commercial_expiry_job(telegram_app)
+    schedule_location_manual_review_expiry_job(telegram_app)
     schedule_beta_monitor_job(telegram_app)
     schedule_beta_cycle_job(telegram_app)
 

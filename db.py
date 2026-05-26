@@ -1462,6 +1462,92 @@ def create_tables():
 
 
         # =========================
+        # TABLA REVISIONES MANUALES DE UBICACIÓN
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS location_manual_reviews (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT NOT NULL,
+
+            group_id INTEGER NOT NULL,
+
+            telegram_group_id BIGINT,
+
+            support_ticket_id INTEGER,
+
+            requested_by_user_id BIGINT,
+
+            approved_by_user_id BIGINT,
+
+            status TEXT DEFAULT 'pending',
+
+            failed_latitude DOUBLE PRECISION,
+
+            failed_longitude DOUBLE PRECISION,
+
+            allowed_region TEXT,
+
+            allowed_region_type TEXT,
+
+            question_1_reason TEXT,
+
+            question_2_residence_proof TEXT,
+
+            question_3_valid_location_eta TEXT,
+
+            owner_note TEXT,
+
+            user_note TEXT,
+
+            expires_at TIMESTAMP,
+
+            completed_at TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        for index_name, index_sql in [
+            (
+                "idx_location_manual_reviews_user_group",
+                "CREATE INDEX IF NOT EXISTS idx_location_manual_reviews_user_group ON location_manual_reviews(user_id, group_id)"
+            ),
+            (
+                "idx_location_manual_reviews_group_status",
+                "CREATE INDEX IF NOT EXISTS idx_location_manual_reviews_group_status ON location_manual_reviews(group_id, status)"
+            ),
+            (
+                "idx_location_manual_reviews_status_expires",
+                "CREATE INDEX IF NOT EXISTS idx_location_manual_reviews_status_expires ON location_manual_reviews(status, expires_at)"
+            ),
+            (
+                "idx_location_manual_reviews_support_ticket",
+                "CREATE INDEX IF NOT EXISTS idx_location_manual_reviews_support_ticket ON location_manual_reviews(support_ticket_id)"
+            )
+        ]:
+
+            try:
+
+                cur.execute(index_sql)
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error creando índice {index_name}: {e}",
+                    "errors"
+                )
+
+
+        # =========================
         # TABLA SOLICITUDES COMERCIALES
         # =========================
 
