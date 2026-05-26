@@ -4339,18 +4339,18 @@ def normalize_satisfaction_survey_row(row, callback="satisfaction_detail", user_
             group_id=group_id,
             screen=screen,
             row=row,
-            expected_columns=12
+            expected_columns=15
         )
         return None
 
-    if len(row) < 12:
+    if len(row) < 15:
         log_satisfaction_detail_row_issue(
             callback,
             user_id=user_id,
             group_id=group_id,
             screen=screen,
             row=row,
-            expected_columns=12
+            expected_columns=15
         )
 
     return {
@@ -4365,7 +4365,10 @@ def normalize_satisfaction_survey_row(row, callback="satisfaction_detail", user_
         "sent_count": safe_satisfaction_value(row, 8, 0) or 0,
         "completed_count": safe_satisfaction_value(row, 9, 0) or 0,
         "failed_count": safe_satisfaction_value(row, 10, 0) or 0,
-        "skipped_count": safe_satisfaction_value(row, 11, 0) or 0
+        "skipped_count": safe_satisfaction_value(row, 11, 0) or 0,
+        "average_rating": safe_satisfaction_value(row, 12),
+        "last_sent_at": safe_satisfaction_value(row, 13),
+        "survey_count": safe_satisfaction_value(row, 14, 0) or 0
     }
 
 
@@ -4391,16 +4394,31 @@ def fetch_satisfaction_surveys_for_scope(group_id=None, limit=12):
                        COALESCE(s.status, 'draft'),
                        s.created_at,
                        s.sent_at,
-                       COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status IN ('sent', 'completed', 'failed')),
-                       COUNT(DISTINCT r.user_id) FILTER (WHERE r.completed_at IS NOT NULL),
-                       COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status='failed'),
-                       COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status LIKE 'skipped%')
+                       COALESCE(s.sent_count, 0),
+                       (
+                           SELECT COUNT(*)
+                           FROM customer_satisfaction_responses r
+                           WHERE r.survey_id=s.id
+                           AND r.completed_at IS NOT NULL
+                       ),
+                       COALESCE(s.failed_count, 0),
+                       COALESCE(s.skipped_completed_count, 0) + COALESCE(s.skipped_already_sent_count, 0),
+                       (
+                           SELECT AVG(a.rating)
+                           FROM customer_satisfaction_answers a
+                           JOIN customer_satisfaction_responses r ON r.id=a.response_id
+                           WHERE r.survey_id=s.id
+                           AND a.rating IS NOT NULL
+                       ),
+                       (
+                           SELECT MAX(cs.sent_at)
+                           FROM customer_satisfaction_sent cs
+                           WHERE cs.survey_id=s.id
+                       ),
+                       COUNT(*) OVER()
                 FROM customer_satisfaction_surveys s
                 LEFT JOIN groups g ON g.id=s.group_id
-                LEFT JOIN customer_satisfaction_sent cs ON cs.survey_id=s.id
-                LEFT JOIN customer_satisfaction_responses r ON r.survey_id=s.id
                 {group_filter}
-                GROUP BY s.id, s.title, s.group_id, g.name, s.campaign_id, s.status, s.created_at, s.sent_at
                 ORDER BY s.created_at DESC, s.id DESC
                 LIMIT %s
             """, tuple(params))
@@ -4437,13 +4455,17 @@ def build_satisfaction_survey_list_text(user_id, context):
     if not rows:
         return "📋 Todavía no hay encuestas registradas para mostrar."
 
+    first_row = rows[0] if rows else None
+    survey_count = safe_satisfaction_value(first_row, 14, len(rows)) or len(rows)
     lines = [
-        "📋 Detalle de encuestas",
+        "😊 Detalle de satisfacción",
+        "",
+        f"Encuestas/campañas registradas: {survey_count}",
         "",
         "Elige una encuesta para ver enviados, pendientes, fallidos y respuestas persona por persona."
     ]
 
-    for row in rows:
+    for index, row in enumerate(rows, start=1):
         survey = normalize_satisfaction_survey_row(
             row,
             user_id=user_id,
@@ -4455,15 +4477,21 @@ def build_satisfaction_survey_list_text(user_id, context):
             continue
 
         pending_count = max(survey["sent_count"] - survey["completed_count"] - survey["failed_count"], 0)
+        response_rate = round((survey["completed_count"] / survey["sent_count"]) * 100, 1) if survey["sent_count"] else 0
+        average_rating = survey.get("average_rating")
+        average_text = f"{round(float(average_rating), 2)}/5" if average_rating else "Sin datos"
+        last_sent_at = survey.get("last_sent_at") or survey.get("sent_at")
         lines.append(
-            f"\n#{survey['survey_id']} · {survey['title']}\n"
+            f"\n{index}) #{survey['survey_id']} · {survey['title']}\n"
             f"Comunidad: {survey['group_name']} ({survey['group_id'] or 'global'})\n"
             f"Campaña: {survey['campaign_id']} · Estado: {survey['status']}\n"
-            f"Enviados: {survey['sent_count']} · Completados: {survey['completed_count']} · Pendientes: {pending_count} · Fallidos: {survey['failed_count']} · Omitidos: {survey['skipped_count']}\n"
-            f"Creada: {format_tracking_time(survey['created_at'])} · Enviada: {format_tracking_time(survey['sent_at'])}"
+            f"Enviados: {survey['sent_count']} · Fallidos: {survey['failed_count']} · Respuestas: {survey['completed_count']}\n"
+            f"Pendientes: {pending_count} · Omitidos: {survey['skipped_count']}\n"
+            f"Media: {average_text} · Tasa respuesta: {response_rate}%\n"
+            f"Creada: {format_tracking_time(survey['created_at'])} · Último envío: {format_tracking_time(last_sent_at)}"
         )
 
-    return "\n".join(lines) if len(lines) > 3 else "📋 Todavía no hay encuestas registradas para mostrar."
+    return "\n".join(lines) if len(lines) > 5 else "📋 Todavía no hay encuestas registradas para mostrar."
 
 
 def build_satisfaction_survey_list_keyboard(user_id, context):
