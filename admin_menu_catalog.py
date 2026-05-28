@@ -22,6 +22,7 @@ ADMIN_MENU_GLOBAL_PANEL = "global_panel"
 ADMIN_MENU_OWNERS_PANEL = "owners_panel"
 ADMIN_MENU_BETA_MONITOR = "beta_monitor"
 ADMIN_MENU_BETA_SMOKE_TEST = "beta_smoke_test"
+ADMIN_MENU_AD_PROMO = "ad_promo"
 
 
 ADMIN_MENU_SECTIONS = [
@@ -156,6 +157,14 @@ ADMIN_MENU_SECTIONS = [
         ]
     },
     {
+        "key": ADMIN_MENU_AD_PROMO,
+        "text": "📣 Promoción automática",
+        "callback_data": "admin_ad_promo",
+        "permissions_any": [
+            "super_admin_only"
+        ]
+    },
+    {
         "key": ADMIN_MENU_BETA_MONITOR,
         "text": "📊 Monitor beta",
         "callback_data": "admin_beta_monitor",
@@ -191,6 +200,7 @@ ADMIN_HELP_CONTEXT_BY_CALLBACK = {
     "admin_commercial_requests": "commercial_admin",
     "admin_commercial_promo_codes": "commercial_admin",
     "admin_group_user_codes": "admin_groups",
+    "admin_ad_promo": "admin_business",
     "admin_support_tickets": "support_admin",
     "admin_beta_monitor": "admin_logs",
     "admin_smoke_test": "admin_logs"
