@@ -55,7 +55,13 @@ async def crear_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if data == "gen_perm":
         duration = 0
     else:
-        duration = int(data.split("_")[1])
+        duration_text = data.replace("gen_", "", 1)
+
+        if not duration_text.isdigit():
+            await query.message.reply_text("❌ Duración no válida.")
+            return
+
+        duration = int(duration_text)
 
     code = generate_code()
 

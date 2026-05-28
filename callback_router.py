@@ -1166,15 +1166,26 @@ def is_legacy_callback(callback_data):
     )
 
 
+def parse_callback_int(data, prefix):
+
+    if not isinstance(data, str) or not data.startswith(prefix):
+
+        return None
+
+
+    value = data.replace(prefix, "", 1)
+
+    if not value.isdigit():
+
+        return None
+
+
+    return int(value)
+
+
 def is_numeric_group_callback(callback_data):
 
-    parts = (callback_data or "").split("_")
-
-    return (
-        len(parts) >= 2
-        and parts[0] == "group"
-        and parts[1].isdigit()
-    )
+    return parse_callback_int(callback_data, "group_") is not None
 
 
 def is_stripe_checkout_callback(callback_data):
@@ -5860,6 +5871,8 @@ def run_beta_smoke_checks():
     router_source = project_files["callback_router.py"]
     stripe_source = project_files["stripe_handler.py"]
     invite_source = project_files["invite_link_service.py"]
+    unsafe_split_pattern = "int(" + "data.split"
+    legacy_group_pattern = "int(" + 'data.split("_")[1])'
 
     static_checks = [
         (
@@ -5892,12 +5905,12 @@ def run_beta_smoke_checks():
         (
             "group_user_code no colisiona con group_{id}",
             "is_numeric_group_callback" in router_source
-            and 'int(data.split("_")[1])' not in router_source,
+            and legacy_group_pattern not in router_source,
             "El handler group_{id} valida prefijo numérico"
         ),
         (
-            "Sin int(data.split(...)) peligroso",
-            "int(data.split" not in router_source,
+            "Sin parseo split directo peligroso",
+            unsafe_split_pattern not in router_source,
             "No hay conversión directa insegura de callback"
         ),
         (
@@ -9845,7 +9858,10 @@ OWNER_PANEL_ALLOWED_REPEATED_CALLBACKS = {
     "owner_panel_backup",
     "owner_panel_general",
     "owner_panel_commercial_config",
+    "edit_group_name",
+    "edit_group_preview",
     "owner_panel_location_info",
+    "owner_panel_security_info",
     "owner_panel_audit"
 }
 
@@ -14964,13 +14980,7 @@ def build_commercial_setup_keyboard(request_id):
 
 def extract_commercial_request_id(data, prefix):
 
-    try:
-
-        return int(data.replace(prefix, "", 1))
-
-    except Exception:
-
-        return None
+    return parse_callback_int(data, prefix)
 
 
 def extract_commercial_group_limit_selection(data):
@@ -18299,11 +18309,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("confirm_creator_group_link_"):
 
-        try:
+        pending_id = extract_commercial_request_id(
+            data,
+            "confirm_creator_group_link_"
+        )
 
-            pending_id = int(data.replace("confirm_creator_group_link_", "", 1))
-
-        except Exception:
+        if pending_id is None:
 
             await query.message.reply_text(
                 "❌ Solicitud de vinculación no válida."
@@ -18420,11 +18431,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("cancel_creator_group_link_"):
 
-        try:
+        pending_id = extract_commercial_request_id(
+            data,
+            "cancel_creator_group_link_"
+        )
 
-            pending_id = int(data.replace("cancel_creator_group_link_", "", 1))
-
-        except Exception:
+        if pending_id is None:
 
             await query.message.reply_text(
                 "❌ Solicitud de vinculación no válida."
@@ -21220,9 +21232,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("admin_satisfaction_confirm_"):
 
-        try:
-            survey_id = int(data.replace("admin_satisfaction_confirm_", "", 1))
-        except Exception:
+        survey_id = extract_commercial_request_id(
+            data,
+            "admin_satisfaction_confirm_"
+        )
+
+        if survey_id is None:
             await query.message.reply_text("❌ Encuesta no válida.")
             return
 
@@ -21449,9 +21464,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("admin_satisfaction_edit_"):
 
-        try:
-            question_id = int(data.replace("admin_satisfaction_edit_", "", 1))
-        except Exception:
+        question_id = extract_commercial_request_id(
+            data,
+            "admin_satisfaction_edit_"
+        )
+
+        if question_id is None:
             await query.message.reply_text("❌ Pregunta no válida.")
             return
 
@@ -21467,9 +21485,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("admin_satisfaction_deactivate_"):
 
-        try:
-            question_id = int(data.replace("admin_satisfaction_deactivate_", "", 1))
-        except Exception:
+        question_id = extract_commercial_request_id(
+            data,
+            "admin_satisfaction_deactivate_"
+        )
+
+        if question_id is None:
             await query.message.reply_text("❌ Pregunta no válida.")
             return
 
@@ -21526,9 +21547,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("satisfaction_start_"):
 
-        try:
-            survey_id = int(data.replace("satisfaction_start_", "", 1))
-        except Exception:
+        survey_id = extract_commercial_request_id(
+            data,
+            "satisfaction_start_"
+        )
+
+        if survey_id is None:
             await query.message.reply_text("❌ Encuesta no válida.")
             return
 
@@ -21600,9 +21624,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("satisfaction_survey_") and not data.startswith("satisfaction_survey_users_") and not data.startswith("satisfaction_survey_summary_"):
 
-        try:
-            survey_id = int(data.replace("satisfaction_survey_", "", 1))
-        except Exception:
+        survey_id = extract_commercial_request_id(
+            data,
+            "satisfaction_survey_"
+        )
+
+        if survey_id is None:
             await query.message.reply_text("❌ Encuesta no válida.")
             return
 
@@ -21648,9 +21675,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("satisfaction_survey_summary_"):
 
-        try:
-            survey_id = int(data.replace("satisfaction_survey_summary_", "", 1))
-        except Exception:
+        survey_id = extract_commercial_request_id(
+            data,
+            "satisfaction_survey_summary_"
+        )
+
+        if survey_id is None:
             await query.message.reply_text("❌ Encuesta no válida.")
             return
 
@@ -21670,9 +21700,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("satisfaction_response_"):
 
-        try:
-            response_id = int(data.replace("satisfaction_response_", "", 1))
-        except Exception:
+        response_id = extract_commercial_request_id(
+            data,
+            "satisfaction_response_"
+        )
+
+        if response_id is None:
             await query.message.reply_text("❌ Respuesta no válida.")
             return
 
@@ -24648,11 +24681,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-        try:
+        group_id = extract_commercial_request_id(
+            data,
+            "free_access_"
+        )
 
-            group_id = int(data.replace("free_access_", "", 1))
-
-        except Exception:
+        if group_id is None:
 
             await query.message.reply_text(
                 "❌ Comunidad no válida."
@@ -24744,8 +24778,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-        group_callback_parts = data.split("_")
-        group_id = int(group_callback_parts[1])
+        group_id = parse_callback_int(data, "group_")
+
+        if group_id is None:
+
+            await query.message.reply_text(
+                "❌ Comunidad no válida."
+            )
+
+            return
 
 
         # =========================
@@ -25057,11 +25098,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("payment_status_group_"):
 
-        try:
+        group_id = extract_commercial_request_id(
+            data,
+            "payment_status_group_"
+        )
 
-            group_id = int(data.replace("payment_status_group_", "", 1))
-
-        except Exception:
+        if group_id is None:
 
             await query.message.reply_text(
                 "❌ Comunidad no válida.",
@@ -26458,9 +26500,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("owner_satisfaction_confirm_"):
 
-        try:
-            survey_id = int(data.replace("owner_satisfaction_confirm_", "", 1))
-        except Exception:
+        survey_id = extract_commercial_request_id(
+            data,
+            "owner_satisfaction_confirm_"
+        )
+
+        if survey_id is None:
             await query.message.reply_text("❌ Encuesta no válida.")
             return
 
@@ -32960,11 +33005,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("group_user_promo_redeem_start_"):
 
-        try:
+        redeem_group_id = extract_commercial_request_id(
+            data,
+            "group_user_promo_redeem_start_"
+        )
 
-            redeem_group_id = int(data.replace("group_user_promo_redeem_start_", "", 1))
-
-        except Exception:
+        if redeem_group_id is None:
 
             await query.message.reply_text(
                 "❌ Comunidad no válida.",
@@ -32993,11 +33039,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("group_user_promo_confirm_"):
 
-        try:
+        code_id = extract_commercial_request_id(
+            data,
+            "group_user_promo_confirm_"
+        )
 
-            code_id = int(data.replace("group_user_promo_confirm_", "", 1))
-
-        except Exception:
+        if code_id is None:
 
             await query.message.reply_text(
                 "❌ Código no válido.",
