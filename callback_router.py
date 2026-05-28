@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import requests
 import secrets
 import shutil
@@ -2746,6 +2747,66 @@ def get_ad_promo_media_counts(campaign_id):
     return count_ad_promo_media(campaign_id)
 
 
+def extract_ad_promo_migrated_chat_id(error):
+
+    migrate_to_chat_id = getattr(error, "migrate_to_chat_id", None)
+
+    if migrate_to_chat_id is not None:
+
+        try:
+
+            return int(migrate_to_chat_id)
+
+        except Exception:
+
+            return None
+
+
+    error_text = str(error or "")
+    match = re.search(
+        r"Group migrated to supergroup\. New chat id:\s*(-?\d+)",
+        error_text,
+        flags=re.IGNORECASE
+    )
+
+    if not match:
+
+        return None
+
+
+    try:
+
+        return int(match.group(1))
+
+    except Exception:
+
+        return None
+
+
+def update_ad_promo_campaign_promo_chat_id(campaign_id, new_chat_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE ad_promo_campaigns
+            SET promo_group_telegram_id=%s,
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(AD_PROMO_CAMPAIGN_FIELDS)}
+
+        """, (
+            new_chat_id,
+            campaign_id
+        ))
+
+        row = cur.fetchone()
+        conn.commit()
+
+
+    return row_to_ad_promo_campaign(row)
+
+
 def fetch_ad_promo_media(campaign_id, limit=20):
 
     with conn.cursor() as cur:
@@ -3888,6 +3949,26 @@ async def delete_old_ad_promo_posts(context, campaign):
     return {"deleted": deleted, "failed": failed}
 
 
+async def send_ad_promo_video_message(context, chat_id, video_payload, caption):
+
+    if isinstance(video_payload, str) and os.path.exists(video_payload):
+
+        with open(video_payload, "rb") as video_file:
+
+            return await context.bot.send_video(
+                chat_id=chat_id,
+                video=video_file,
+                caption=caption
+            )
+
+
+    return await context.bot.send_video(
+        chat_id=chat_id,
+        video=video_payload,
+        caption=caption
+    )
+
+
 async def send_ad_promo_campaign_batch(context, campaign, test=False):
 
     media_counts = get_ad_promo_media_counts(campaign.get("id"))
@@ -3935,11 +4016,13 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
     sent = 0
     failed = 0
     last_error = None
+    migration_notice = None
 
     for media in media_rows:
 
         caption = await build_ad_promo_caption(context, campaign)
         prepared_video = None
+        target_chat_id = campaign.get("promo_group_telegram_id")
 
         try:
 
@@ -3951,23 +4034,64 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
             )
             video_payload = prepared_video.get("video")
 
-            if isinstance(video_payload, str) and os.path.exists(video_payload):
+            try:
 
-                with open(video_payload, "rb") as video_file:
+                message = await send_ad_promo_video_message(
+                    context,
+                    target_chat_id,
+                    video_payload,
+                    prepared_video.get("caption")
+                )
 
-                    message = await context.bot.send_video(
-                        chat_id=campaign.get("promo_group_telegram_id"),
-                        video=video_file,
-                        caption=prepared_video.get("caption")
+            except Exception as send_error:
+
+                migrated_chat_id = extract_ad_promo_migrated_chat_id(send_error)
+
+                if not migrated_chat_id:
+
+                    raise
+
+
+                old_chat_id = target_chat_id
+                campaign = update_ad_promo_campaign_promo_chat_id(
+                    campaign.get("id"),
+                    migrated_chat_id
+                ) or campaign
+                campaign["promo_group_telegram_id"] = migrated_chat_id
+                target_chat_id = migrated_chat_id
+                migration_notice = (
+                    "El grupo fue migrado a supergrupo. "
+                    f"Nuevo chat ID detectado: {migrated_chat_id}."
+                )
+                log_event(
+                    "ad_promo_chat_migrated",
+                    category="marketing",
+                    severity="info",
+                    scope="group",
+                    group_id=campaign.get("paid_group_id"),
+                    message="Chat destino de promoción migrado a supergrupo.",
+                    metadata={
+                        "campaign_id": campaign.get("id"),
+                        "old_chat_id": old_chat_id,
+                        "new_chat_id": migrated_chat_id,
+                        "field": "promo_group_telegram_id"
+                    }
+                )
+
+                try:
+
+                    message = await send_ad_promo_video_message(
+                        context,
+                        migrated_chat_id,
+                        video_payload,
+                        prepared_video.get("caption")
                     )
 
-            else:
+                except Exception as retry_error:
 
-                message = await context.bot.send_video(
-                    chat_id=campaign.get("promo_group_telegram_id"),
-                    video=video_payload,
-                    caption=prepared_video.get("caption")
-                )
+                    raise RuntimeError(
+                        f"Reintento fallido: {retry_error}"
+                    ) from retry_error
 
             with conn.cursor() as cur:
 
@@ -3986,7 +4110,7 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
 
                 """, (
                     campaign.get("id"),
-                    campaign.get("promo_group_telegram_id"),
+                    target_chat_id,
                     message.message_id,
                     media.get("id"),
                     batch_id,
@@ -4074,7 +4198,8 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
                     "sent": sent,
                     "failed": failed,
                     "reason": reason,
-                    "error": last_error
+                    "error": last_error,
+                    "migration_notice": migration_notice
                 }
             )
 
@@ -4091,7 +4216,8 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
                 "campaign_id": campaign.get("id"),
                 "batch_id": batch_id,
                 "sent": sent,
-                "failed": failed
+                "failed": failed,
+                "migration_notice": migration_notice
             }
         )
 
@@ -4122,6 +4248,7 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
         "reason": reason,
         "message": message,
         "error": last_error,
+        "migration_notice": migration_notice,
         "media_counts": media_counts,
         **delete_summary
     }
@@ -4423,10 +4550,13 @@ def build_ad_promo_test_result_text(result, watermark=False):
 
     if result.get("ok"):
 
+        migration_notice = result.get("migration_notice")
+
         return (
             "✅ Prueba enviada correctamente\n\n"
             f"Enviados: {result.get('sent', 0)}\n"
             f"Fallidos: {result.get('failed', 0)}"
+            + (f"\n\n{migration_notice}" if migration_notice else "")
         )
 
 
@@ -4455,12 +4585,14 @@ def build_ad_promo_test_result_text(result, watermark=False):
     if reason == "send_failed":
 
         error = result.get("error") or "Sin detalle técnico disponible."
+        migration_notice = result.get("migration_notice")
 
         return (
             "❌ La prueba no se pudo enviar.\n\n"
             f"Enviados: {result.get('sent', 0)}\n"
             f"Fallidos: {result.get('failed', 0)}\n"
-            f"Error: {str(error)[:500]}"
+            + (f"{migration_notice}\n" if migration_notice else "")
+            + f"Error: {str(error)[:500]}"
         )
 
 
