@@ -3734,8 +3734,9 @@ def deactivate_ad_promo_media(media_id):
     return row[0] if row else None
 
 
+AD_PROMO_GROUP_PAGE_SIZE = 8
+
 AD_PROMO_CREATE_STEPS = [
-    ("paid_group_id", "Introduce el ID interno de la comunidad de pago que quieres promocionar."),
     ("source_chat_id", "Introduce el chat_id del grupo/canal fuente donde el bot capturará vídeos nuevos."),
     ("promo_group_telegram_id", "Introduce el chat_id del grupo/canal gratuito donde se publicará la promoción."),
     ("batch_size", "¿Cuántos vídeos por tanda? Ejemplo: 5"),
@@ -3746,6 +3747,144 @@ AD_PROMO_CREATE_STEPS = [
     ("cta_text", "CTA. Ejemplo: Entra al bot y revisa los planes disponibles."),
     ("bot_link", "Link manual al bot/marketplace o escribe auto para generarlo automáticamente.")
 ]
+
+
+def fetch_ad_promo_selectable_groups(page=0, page_size=AD_PROMO_GROUP_PAGE_SIZE):
+
+    page = max(int(page or 0), 0)
+    offset = page * page_size
+
+    query = """
+
+        SELECT id,
+               name,
+               COALESCE(community_type, 'group'),
+               COALESCE(is_active, TRUE)
+        FROM groups
+        WHERE COALESCE(is_active, TRUE)=TRUE
+        ORDER BY created_at DESC NULLS LAST,
+                 id DESC
+        LIMIT %s
+        OFFSET %s
+
+    """
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(query, (
+                page_size + 1,
+                offset
+            ))
+
+            rows = cur.fetchall()
+
+    except Exception:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       name,
+                       COALESCE(community_type, 'group'),
+                       COALESCE(is_active, TRUE)
+                FROM groups
+                WHERE COALESCE(is_active, TRUE)=TRUE
+                ORDER BY id DESC
+                LIMIT %s
+                OFFSET %s
+
+            """, (
+                page_size + 1,
+                offset
+            ))
+
+            rows = cur.fetchall()
+
+
+    return rows[:page_size], len(rows) > page_size
+
+
+def fetch_ad_promo_selectable_group(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   name,
+                   COALESCE(community_type, 'group'),
+                   COALESCE(is_active, TRUE)
+            FROM groups
+            WHERE id=%s
+            AND COALESCE(is_active, TRUE)=TRUE
+            LIMIT 1
+
+        """, (group_id,))
+
+        return cur.fetchone()
+
+
+def build_ad_promo_group_selection_text():
+
+    return (
+        "📣 Crear campaña de promoción\n\n"
+        "Elige la comunidad de pago que quieres promocionar:"
+    )
+
+
+def build_ad_promo_group_selection_keyboard(page=0):
+
+    rows, has_next = fetch_ad_promo_selectable_groups(page)
+    keyboard = []
+
+
+    for group_id, name, community_type, _is_active in rows:
+
+        kind = format_community_kind_capitalized(
+            normalize_community_type(community_type)
+        )
+        display_name = (name or "Sin nombre")[:32]
+        label = f"🔥 {display_name} · ID {group_id} · {kind}"
+
+        keyboard.append([InlineKeyboardButton(
+            label,
+            callback_data=f"admin_ad_promo_select_group_{group_id}"
+        )])
+
+
+    nav_row = []
+
+    if page > 0:
+
+        nav_row.append(InlineKeyboardButton(
+            "⬅️ Anterior",
+            callback_data=f"admin_ad_promo_create_page_{page - 1}"
+        ))
+
+
+    if has_next:
+
+        nav_row.append(InlineKeyboardButton(
+            "➡️ Siguiente",
+            callback_data=f"admin_ad_promo_create_page_{page + 1}"
+        ))
+
+
+    if nav_row:
+
+        keyboard.append(nav_row)
+
+
+    keyboard.extend([
+        [InlineKeyboardButton("🔙 Volver", callback_data="admin_ad_promo")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 def parse_ad_promo_int(value, minimum=None):
@@ -3878,7 +4017,6 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
     step_index = wizard.get("step_index", 0)
     field, _prompt = AD_PROMO_CREATE_STEPS[step_index]
     int_fields = {
-        "paid_group_id": 1,
         "batch_size": 1,
         "interval_minutes": 5,
         "max_posts": 1
@@ -3943,6 +4081,7 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
     data["created_by_user_id"] = user_id
     campaign = create_ad_promo_campaign(data)
     context.user_data.pop("ad_promo_wizard", None)
+    context.user_data.pop("ad_promo_create", None)
 
     log_event(
         "ad_promo_campaign_created",
@@ -21433,16 +21572,75 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_ad_promo_create":
 
+        context.user_data.pop("ad_promo_wizard", None)
+        context.user_data["ad_promo_create"] = {}
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_group_selection_text(),
+            reply_markup=build_ad_promo_group_selection_keyboard(page=0)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_create_page_"):
+
+        page = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_create_page_"
+        )
+
+        if page is None:
+
+            page = 0
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_group_selection_text(),
+            reply_markup=build_ad_promo_group_selection_keyboard(page=page)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_select_group_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_select_group_"
+        )
+        group_row = fetch_ad_promo_selectable_group(group_id)
+
+        if not group_row:
+
+            await query.message.reply_text(
+                "❌ Comunidad no encontrada.",
+                reply_markup=build_ad_promo_group_selection_keyboard(page=0)
+            )
+
+            return
+
+
+        context.user_data["ad_promo_create"] = {
+            "paid_group_id": group_id
+        }
         context.user_data["ad_promo_wizard"] = {
             "step_index": 0,
-            "data": {}
+            "data": {
+                "paid_group_id": group_id
+            }
         }
 
         await query.message.reply_text(
-            "➕ Crear campaña de promoción\n\n"
+            "✅ Comunidad seleccionada.\n\n"
             f"{AD_PROMO_CREATE_STEPS[0][1]}",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancelar", callback_data="admin_ad_promo")]
+                [InlineKeyboardButton("🔙 Volver a elegir comunidad", callback_data="admin_ad_promo_create")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
 
