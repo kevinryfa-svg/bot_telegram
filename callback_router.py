@@ -2759,6 +2759,30 @@ def select_ad_promo_media_for_batch(campaign):
         if campaign.get("randomize_media")
         else "last_sent_at NULLS FIRST, usage_count ASC, created_at ASC"
     )
+    campaign_id = campaign.get("id")
+    batch_size = max(int(campaign.get("batch_size") or 1), 1)
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT COUNT(*)
+            FROM ad_promo_media
+            WHERE campaign_id=%s
+            AND is_active=TRUE
+
+        """, (campaign_id,))
+
+        active_count = cur.fetchone()[0]
+
+
+    recent_filter = ""
+
+    if campaign.get("randomize_media") and active_count > batch_size * 2:
+
+        recent_filter = "AND (last_sent_at IS NULL OR last_sent_at < NOW() - INTERVAL '12 hours')"
+
 
     with conn.cursor() as cur:
 
@@ -2768,15 +2792,37 @@ def select_ad_promo_media_for_batch(campaign):
             FROM ad_promo_media
             WHERE campaign_id=%s
             AND is_active=TRUE
+            {recent_filter}
             ORDER BY {order_sql}
             LIMIT %s
 
         """, (
-            campaign.get("id"),
-            max(int(campaign.get("batch_size") or 1), 1)
+            campaign_id,
+            batch_size
         ))
 
         rows = cur.fetchall()
+
+
+    if len(rows) < batch_size and recent_filter:
+
+        with conn.cursor() as cur:
+
+            cur.execute(f"""
+
+                SELECT {", ".join(AD_PROMO_MEDIA_FIELDS)}
+                FROM ad_promo_media
+                WHERE campaign_id=%s
+                AND is_active=TRUE
+                ORDER BY {order_sql}
+                LIMIT %s
+
+            """, (
+                campaign_id,
+                batch_size
+            ))
+
+            rows = cur.fetchall()
 
 
     return [row_to_ad_promo_media(row) for row in rows]
@@ -3060,11 +3106,33 @@ def fetch_ad_promo_copy_variant(campaign_id):
 
         cur.execute("""
 
+            SELECT COUNT(*)
+            FROM ad_promo_copy_variants
+            WHERE campaign_id=%s
+            AND is_active=TRUE
+
+        """, (campaign_id,))
+
+        active_count = cur.fetchone()[0]
+
+
+    freshness_filter = ""
+
+    if active_count > 3:
+
+        freshness_filter = "AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '6 hours')"
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
             SELECT id,
                    text
             FROM ad_promo_copy_variants
             WHERE campaign_id=%s
             AND is_active=TRUE
+            {freshness_filter}
             ORDER BY last_used_at NULLS FIRST,
                      usage_count ASC,
                      RANDOM()
@@ -3073,6 +3141,27 @@ def fetch_ad_promo_copy_variant(campaign_id):
         """, (campaign_id,))
 
         row = cur.fetchone()
+
+
+    if not row and freshness_filter:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       text
+                FROM ad_promo_copy_variants
+                WHERE campaign_id=%s
+                AND is_active=TRUE
+                ORDER BY last_used_at NULLS FIRST,
+                         usage_count ASC,
+                         RANDOM()
+                LIMIT 1
+
+            """, (campaign_id,))
+
+            row = cur.fetchone()
 
 
     if not row:
@@ -3122,6 +3211,154 @@ def save_ad_promo_copy_variant(campaign_id, text, source="ai"):
             text,
             source
         ))
+
+        row = cur.fetchone()
+
+
+    return row[0] if row else None
+
+
+AD_PROMO_CAPTION_ANGLES = [
+    ("curiosidad", "Despierta curiosidad sin revelar demasiado."),
+    ("prueba social", "Sugiere valor y confianza sin inventar cifras."),
+    ("exclusividad", "Enfatiza acceso para miembros."),
+    ("oferta", "Presenta oferta de forma clara y moderada."),
+    ("beneficio", "Explica el valor práctico para el usuario."),
+    ("urgencia suave", "Crea urgencia sin presión agresiva."),
+    ("fin de semana", "Usa un ángulo de oportunidad de fin de semana."),
+    ("contenido premium", "Enmarca el contenido como muestra premium."),
+    ("ahorro/valor", "Enfatiza relación valor/precio sin promesas falsas."),
+    ("llamada directa", "CTA directo a revisar planes en el bot.")
+]
+
+AD_PROMO_TEMPLATE_CAPTIONS = [
+    "🔥 Nueva muestra disponible.\nSi este contenido te interesa, el acceso completo está dentro del bot.",
+    "🎬 Mira este adelanto.\nEl contenido completo está disponible para miembros.",
+    "✨ Una pequeña muestra de lo que hay dentro.\nEntra al bot y revisa si esta comunidad encaja contigo.",
+    "📌 Acceso disponible desde el bot.\nConsulta planes, condiciones y elige con calma.",
+    "🚀 Contenido para quienes quieren ir un paso más allá.\nLa experiencia completa está en la comunidad privada.",
+    "⏳ Si estabas esperando una señal, aquí tienes una muestra.\nRevisa el acceso completo en el bot.",
+    "🎁 Muestra de fin de semana.\nDescubre la comunidad y mira los planes disponibles.",
+    "💎 Adelanto premium.\nEl acceso completo está reservado para miembros.",
+    "✅ Valora el contenido antes de entrar.\nEl bot te muestra opciones y precios disponibles.",
+    "👉 ¿Quieres ver más?\nEntra al bot y revisa el acceso a esta comunidad."
+]
+
+
+def generate_ad_promo_caption_variants(campaign, count=10):
+
+    group = fetch_group_basic_info(campaign.get("paid_group_id"))
+    group_name = group[1] if group else f"Comunidad {campaign.get('paid_group_id')}"
+    variants = []
+
+
+    if campaign.get("ai_copy_enabled") and is_ai_enabled():
+
+        for angle, instruction in AD_PROMO_CAPTION_ANGLES[:count]:
+
+            prompt = (
+                "Escribe un caption comercial breve para Telegram en español. "
+                "No incluyas enlaces. No menciones infraestructura, Codex, GitHub, Railway ni APIs. "
+                "No inventes promesas falsas ni cifras. "
+                f"Ángulo: {angle}. {instruction} "
+                f"Comunidad: {group_name}. "
+                f"Oferta: {campaign.get('offer_text') or '-'}. "
+                f"Precio: {campaign.get('price_text') or '-'}."
+            )
+            ok, answer = generate_ai_response(
+                prompt,
+                system_prompt=(
+                    "Eres especialista en copywriting ético de conversión para Telegram. "
+                    "Generas captions cortos, variados y orientados a que el usuario abra el bot."
+                )
+            )
+
+            if ok and answer:
+
+                variants.append((answer, "ai"))
+
+
+    for template in AD_PROMO_TEMPLATE_CAPTIONS:
+
+        if len(variants) >= count:
+
+            break
+
+
+        variants.append((template, "template"))
+
+
+    saved = []
+    saved_sources = set()
+
+    for text, source in variants[:count]:
+
+        saved_text = save_ad_promo_copy_variant(
+            campaign.get("id"),
+            text,
+            source=source
+        )
+
+        if saved_text:
+
+            saved.append(saved_text)
+            saved_sources.add(source)
+
+
+    if len(saved_sources) > 1:
+
+        source_summary = "mixed"
+
+    elif saved_sources:
+
+        source_summary = next(iter(saved_sources))
+
+    else:
+
+        source_summary = "none"
+
+
+    return saved, source_summary
+
+
+def fetch_ad_promo_copy_variants(campaign_id, limit=10):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   text,
+                   source,
+                   is_active,
+                   usage_count,
+                   last_used_at,
+                   created_at
+            FROM ad_promo_copy_variants
+            WHERE campaign_id=%s
+            ORDER BY created_at DESC
+            LIMIT %s
+
+        """, (
+            campaign_id,
+            limit
+        ))
+
+        return cur.fetchall()
+
+
+def disable_ad_promo_copy_variant(variant_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE ad_promo_copy_variants
+            SET is_active=FALSE
+            WHERE id=%s
+            RETURNING campaign_id
+
+        """, (variant_id,))
 
         row = cur.fetchone()
 
@@ -3643,8 +3880,12 @@ def build_ad_promo_campaign_detail_keyboard(campaign):
     pause_callback = f"admin_ad_promo_resume_{campaign_id}" if campaign.get("is_paused") else f"admin_ad_promo_pause_{campaign_id}"
 
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Diagnóstico", callback_data=f"admin_ad_promo_diagnostics_{campaign_id}")],
         [InlineKeyboardButton("📚 Biblioteca de vídeos", callback_data=f"admin_ad_promo_library_{campaign_id}")],
+        [InlineKeyboardButton("📝 Generar captions", callback_data=f"admin_ad_promo_generate_captions_{campaign_id}")],
+        [InlineKeyboardButton("📋 Ver captions", callback_data=f"admin_ad_promo_copy_variants_{campaign_id}")],
         [InlineKeyboardButton("🧪 Enviar prueba", callback_data=f"admin_ad_promo_test_{campaign_id}")],
+        [InlineKeyboardButton("🎲 Optimizar rotación", callback_data=f"admin_ad_promo_optimize_rotation_{campaign_id}")],
         [InlineKeyboardButton("🎲 Random ON/OFF", callback_data=f"admin_ad_promo_random_{campaign_id}")],
         [InlineKeyboardButton("🤖 IA textos ON/OFF", callback_data=f"admin_ad_promo_ai_{campaign_id}")],
         [InlineKeyboardButton("🎥 Captura ON/OFF", callback_data=f"admin_ad_promo_capture_{campaign_id}")],
@@ -3713,6 +3954,304 @@ def build_ad_promo_library_keyboard(campaign, media_rows):
     ])
 
     return InlineKeyboardMarkup(keyboard)
+
+
+def fetch_ad_promo_campaign_diagnostics(campaign_id):
+
+    campaign = fetch_ad_promo_campaign(campaign_id)
+
+    if not campaign:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT COUNT(*),
+                   MAX(created_at)
+            FROM ad_promo_media
+            WHERE campaign_id=%s
+            AND is_active=TRUE
+
+        """, (campaign_id,))
+        media_count_active, last_capture_at = cur.fetchone()
+
+        cur.execute("""
+
+            SELECT COUNT(*)
+            FROM ad_promo_sent_posts
+            WHERE campaign_id=%s
+            AND sent_at >= NOW() - INTERVAL '24 hours'
+
+        """, (campaign_id,))
+        sent_24h = cur.fetchone()[0]
+
+        cur.execute("""
+
+            SELECT COUNT(*),
+                   MAX(sent_at)
+            FROM ad_promo_sent_posts
+            WHERE campaign_id=%s
+            AND sent_at >= NOW() - INTERVAL '7 days'
+
+        """, (campaign_id,))
+        sent_7d, last_sent_at = cur.fetchone()
+
+        cur.execute("""
+
+            SELECT COUNT(*)
+            FROM ad_promo_sent_posts
+            WHERE campaign_id=%s
+            AND delete_error IS NOT NULL
+            AND sent_at >= NOW() - INTERVAL '7 days'
+
+        """, (campaign_id,))
+        delete_errors_7d = cur.fetchone()[0]
+
+        cur.execute("""
+
+            SELECT COUNT(*)
+            FROM ad_promo_copy_variants
+            WHERE campaign_id=%s
+            AND is_active=TRUE
+
+        """, (campaign_id,))
+        active_copy_variants = cur.fetchone()[0]
+
+
+    send_errors_7d = 0
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM audit_logs
+                WHERE event_type='ad_promo_send_failed'
+                AND created_at >= NOW() - INTERVAL '7 days'
+                AND metadata->>'campaign_id'=%s
+
+            """, (str(campaign_id),))
+
+            send_errors_7d = cur.fetchone()[0]
+
+    except Exception:
+
+        send_errors_7d = 0
+
+
+    batch_size = int(campaign.get("batch_size") or 1)
+    missing_link = not campaign.get("bot_link") and not campaign.get("marketplace_link")
+
+    return {
+        "campaign": campaign,
+        "media_count_active": media_count_active or 0,
+        "sent_24h": sent_24h or 0,
+        "sent_7d": sent_7d or 0,
+        "send_errors_7d": send_errors_7d or 0,
+        "delete_errors_7d": delete_errors_7d or 0,
+        "last_sent_at": last_sent_at,
+        "last_capture_at": last_capture_at,
+        "next_run_at": campaign.get("next_run_at"),
+        "active_copy_variants": active_copy_variants or 0,
+        "media_below_batch_size": int(media_count_active or 0) < batch_size,
+        "missing_link": missing_link
+    }
+
+
+def format_ad_promo_campaign_diagnostics(diagnostics):
+
+    campaign = diagnostics.get("campaign")
+    group = fetch_group_basic_info(campaign.get("paid_group_id"))
+    group_name = group[1] if group else f"Grupo {campaign.get('paid_group_id')}"
+    status = "pausada" if campaign.get("is_paused") else "activa" if campaign.get("is_active") else "inactiva"
+    alerts = []
+
+
+    if diagnostics.get("media_count_active") == 0:
+
+        alerts.append("⚠️ No hay vídeos capturados.")
+
+
+    if diagnostics.get("media_below_batch_size"):
+
+        alerts.append("⚠️ Hay menos vídeos activos que batch_size.")
+
+
+    if diagnostics.get("missing_link"):
+
+        alerts.append("⚠️ No hay bot_link ni marketplace_link.")
+
+
+    if diagnostics.get("send_errors_7d"):
+
+        alerts.append("⚠️ Hay errores recientes de envío.")
+
+
+    if diagnostics.get("delete_errors_7d"):
+
+        alerts.append("⚠️ Hay errores recientes de borrado.")
+
+
+    if campaign.get("is_active") and campaign.get("is_paused"):
+
+        alerts.append("⚠️ La campaña está activa pero pausada.")
+
+
+    if (
+        campaign.get("is_active")
+        and not campaign.get("is_paused")
+        and diagnostics.get("last_sent_at")
+        and campaign.get("interval_minutes")
+    ):
+
+        elapsed = datetime.now() - diagnostics.get("last_sent_at")
+        threshold = timedelta(minutes=max(int(campaign.get("interval_minutes") or 60) * 2, 120))
+
+        if elapsed > threshold:
+
+            alerts.append("⚠️ No se ha enviado nada en más de lo esperado para su frecuencia.")
+
+
+    if not alerts:
+
+        alerts.append("✅ Sin alertas críticas.")
+
+
+    return (
+        "📊 Diagnóstico de campaña\n\n"
+        f"Campaña: {group_name}\n"
+        f"Estado: {status}\n"
+        f"Vídeos activos capturados: {diagnostics.get('media_count_active')}\n"
+        f"Vídeos enviados últimas 24h: {diagnostics.get('sent_24h')}\n"
+        f"Vídeos enviados últimos 7 días: {diagnostics.get('sent_7d')}\n"
+        f"Errores de envío últimos 7 días: {diagnostics.get('send_errors_7d')}\n"
+        f"Errores de borrado últimos 7 días: {diagnostics.get('delete_errors_7d')}\n"
+        f"Último envío: {format_commercial_datetime(diagnostics.get('last_sent_at')) if diagnostics.get('last_sent_at') else '-'}\n"
+        f"Próximo envío: {format_commercial_datetime(diagnostics.get('next_run_at')) if diagnostics.get('next_run_at') else '-'}\n"
+        f"Última captura: {format_commercial_datetime(diagnostics.get('last_capture_at')) if diagnostics.get('last_capture_at') else '-'}\n"
+        f"Captions activos: {diagnostics.get('active_copy_variants')}\n"
+        f"Link CTA configurado: {'no' if diagnostics.get('missing_link') else 'sí'}\n"
+        f"IA textos: {'ON' if campaign.get('ai_copy_enabled') else 'OFF'}\n"
+        f"Random: {'ON' if campaign.get('randomize_media') else 'OFF'}\n\n"
+        "Alertas:\n"
+        + "\n".join(alerts)
+    )
+
+
+def build_ad_promo_diagnostics_keyboard(campaign_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧪 Enviar prueba", callback_data=f"admin_ad_promo_test_{campaign_id}")],
+        [InlineKeyboardButton("📝 Generar captions", callback_data=f"admin_ad_promo_generate_captions_{campaign_id}")],
+        [InlineKeyboardButton("🎲 Optimizar rotación", callback_data=f"admin_ad_promo_optimize_rotation_{campaign_id}")],
+        [InlineKeyboardButton("🔙 Volver campaña", callback_data=f"admin_ad_promo_campaign_{campaign_id}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_ad_promo_copy_variants_text(campaign, rows):
+
+    if not rows:
+
+        return "📋 Captions de campaña\n\nTodavía no hay captions guardados."
+
+
+    lines = [f"📋 Captions campaña #{campaign.get('id')}", ""]
+
+    for variant_id, text, source, is_active, usage_count, last_used_at, created_at in rows:
+
+        status = "activo" if is_active else "inactivo"
+        preview = sanitize_ad_promo_text(text).replace("\n", " ")[:140]
+        lines.extend([
+            f"#{variant_id} · {source or '-'} · {status}",
+            f"Uso: {usage_count or 0}",
+            f"Último uso: {format_commercial_datetime(last_used_at) if last_used_at else '-'}",
+            f"Texto: {preview}",
+            ""
+        ])
+
+
+    return "\n".join(lines)[:3900]
+
+
+def build_ad_promo_copy_variants_keyboard(campaign, rows):
+
+    keyboard = []
+
+    for variant_id, _text, _source, is_active, _usage_count, _last_used_at, _created_at in rows:
+
+        if is_active:
+
+            keyboard.append([InlineKeyboardButton(
+                f"🚫 Desactivar caption #{variant_id}",
+                callback_data=f"admin_ad_promo_copy_off_{variant_id}"
+            )])
+
+
+    keyboard.extend([
+        [InlineKeyboardButton("📝 Generar captions", callback_data=f"admin_ad_promo_generate_captions_{campaign.get('id')}")],
+        [InlineKeyboardButton("🔙 Volver campaña", callback_data=f"admin_ad_promo_campaign_{campaign.get('id')}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def optimize_ad_promo_rotation(campaign_id, actor_user_id=None):
+
+    campaign = fetch_ad_promo_campaign(campaign_id)
+
+    if not campaign:
+
+        return None
+
+
+    media_summary = count_ad_promo_media(campaign_id)
+    media_count = int(media_summary.get("active") or 0)
+    current_batch_size = int(campaign.get("batch_size") or 1)
+    new_batch_size = current_batch_size
+    new_max_posts = int(campaign.get("max_posts") or 50)
+    updates = {"randomize_media": True}
+    notes = ["Random: ON"]
+
+
+    if media_count and current_batch_size > media_count:
+
+        new_batch_size = media_count
+        updates["batch_size"] = new_batch_size
+        notes.append(f"Vídeos por tanda ajustado: {new_batch_size}")
+
+
+    minimum_max_posts = max(new_batch_size * 3, 1)
+
+    if new_max_posts < minimum_max_posts:
+
+        new_max_posts = minimum_max_posts
+        updates["max_posts"] = new_max_posts
+        notes.append(f"Cupo máximo ajustado: {new_max_posts}")
+
+
+    if media_count < current_batch_size:
+
+        notes.append(f"Aviso: tienes solo {media_count} vídeos activos para tandas de {current_batch_size}.")
+
+    elif media_count < current_batch_size * 2:
+
+        notes.append(f"Aviso: conviene capturar más vídeos para reducir repeticiones. Activos: {media_count}.")
+
+
+    updated = update_ad_promo_campaign(
+        campaign_id,
+        updates,
+        actor_user_id=actor_user_id
+    )
+
+    return updated, notes
 
 
 def deactivate_ad_promo_media(media_id):
@@ -22269,6 +22808,211 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "❌ Creación de campaña cancelada.",
             reply_markup=build_ad_promo_panel_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_diagnostics_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_diagnostics_"
+        )
+        diagnostics = fetch_ad_promo_campaign_diagnostics(campaign_id)
+
+        if not diagnostics:
+
+            await query.message.reply_text(
+                "❌ Campaña no encontrada.",
+                reply_markup=build_ad_promo_panel_keyboard()
+            )
+
+            return
+
+
+        campaign = diagnostics.get("campaign")
+        log_event(
+            "ad_promo_diagnostics_viewed",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            actor_user_id=user_id,
+            message="Diagnóstico de campaña promocional consultado.",
+            metadata={"campaign_id": campaign_id}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            format_ad_promo_campaign_diagnostics(diagnostics),
+            reply_markup=build_ad_promo_diagnostics_keyboard(campaign_id)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_generate_captions_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_generate_captions_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text(
+                "❌ Campaña no encontrada.",
+                reply_markup=build_ad_promo_panel_keyboard()
+            )
+
+            return
+
+
+        saved, source = generate_ad_promo_caption_variants(campaign)
+        log_event(
+            "ad_promo_captions_generated",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            actor_user_id=user_id,
+            message="Captions promocionales generados.",
+            metadata={
+                "campaign_id": campaign_id,
+                "count": len(saved),
+                "source": source
+            }
+        )
+
+        await query.message.reply_text(
+            f"✅ Se han generado {len(saved)} captions para esta campaña.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Ver captions", callback_data=f"admin_ad_promo_copy_variants_{campaign_id}")],
+                [InlineKeyboardButton("🧪 Enviar prueba", callback_data=f"admin_ad_promo_test_{campaign_id}")],
+                [InlineKeyboardButton("🔙 Volver campaña", callback_data=f"admin_ad_promo_campaign_{campaign_id}")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_copy_variants_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_copy_variants_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text(
+                "❌ Campaña no encontrada.",
+                reply_markup=build_ad_promo_panel_keyboard()
+            )
+
+            return
+
+
+        rows = fetch_ad_promo_copy_variants(campaign_id)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_copy_variants_text(campaign, rows),
+            reply_markup=build_ad_promo_copy_variants_keyboard(campaign, rows)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_copy_off_"):
+
+        variant_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_copy_off_"
+        )
+        campaign_id = disable_ad_promo_copy_variant(variant_id)
+
+        if not campaign_id:
+
+            await query.message.reply_text(
+                "❌ Caption no encontrado.",
+                reply_markup=build_ad_promo_panel_keyboard()
+            )
+
+            return
+
+
+        campaign = fetch_ad_promo_campaign(campaign_id)
+        rows = fetch_ad_promo_copy_variants(campaign_id)
+        log_event(
+            "ad_promo_copy_variant_disabled",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id") if campaign else None,
+            actor_user_id=user_id,
+            message="Caption promocional desactivado.",
+            metadata={
+                "campaign_id": campaign_id,
+                "variant_id": variant_id
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Caption desactivado.\n\n" + build_ad_promo_copy_variants_text(campaign, rows),
+            reply_markup=build_ad_promo_copy_variants_keyboard(campaign, rows)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_optimize_rotation_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_optimize_rotation_"
+        )
+        result = optimize_ad_promo_rotation(
+            campaign_id,
+            actor_user_id=user_id
+        )
+
+        if not result:
+
+            await query.message.reply_text(
+                "❌ Campaña no encontrada.",
+                reply_markup=build_ad_promo_panel_keyboard()
+            )
+
+            return
+
+
+        campaign, notes = result
+        log_event(
+            "ad_promo_rotation_optimized",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            actor_user_id=user_id,
+            message="Rotación de campaña promocional optimizada.",
+            metadata={
+                "campaign_id": campaign_id,
+                "notes": notes
+            }
+        )
+
+        await query.message.reply_text(
+            "✅ Rotación optimizada\n"
+            + "\n".join(f"- {note}" for note in notes),
+            reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
         )
 
         return
