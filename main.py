@@ -106,6 +106,10 @@ from admin_panel_handler import admin_panel
 import callback_router as callback_router_module
 from callback_router import (
     button,
+    capture_ad_promo_video,
+    process_ad_promo_daily_reviews,
+    process_due_ad_promo_campaigns,
+    receive_ad_promo_admin_text,
     receive_commercial_request_chat_message,
     receive_customer_satisfaction_text,
     receive_user_tracking_search_text,
@@ -188,6 +192,20 @@ BETA_MONITOR_SUMMARY_INTERVAL_SECONDS = int(
     os.environ.get(
         "BETA_MONITOR_SUMMARY_INTERVAL_SECONDS",
         str(6 * 60 * 60)
+    )
+)
+
+AD_PROMO_SCHEDULER_INTERVAL_SECONDS = int(
+    os.environ.get(
+        "AD_PROMO_SCHEDULER_INTERVAL_SECONDS",
+        "300"
+    )
+)
+
+AD_PROMO_DAILY_REVIEW_INTERVAL_SECONDS = int(
+    os.environ.get(
+        "AD_PROMO_DAILY_REVIEW_INTERVAL_SECONDS",
+        str(60 * 60)
     )
 )
 
@@ -582,6 +600,86 @@ def schedule_location_manual_review_expiry_job(application):
     return True
 
 
+async def ad_promo_scheduler_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        summary = await process_due_ad_promo_campaigns(context)
+
+        if int(summary.get("sent", 0) or 0) > 0 or int(summary.get("failed", 0) or 0) > 0:
+
+            print("Ad promo scheduler:", summary)
+
+            log_event(
+                "ad_promo_scheduler_activity",
+                category="marketing",
+                severity="info",
+                message="Scheduler de promoción automática ejecutado.",
+                metadata=summary
+            )
+
+    except Exception as e:
+
+        print("Ad promo scheduler: error:", e)
+
+        log_event(
+            "ad_promo_scheduler_error",
+            category="marketing",
+            severity="warning",
+            message="Error en scheduler de promoción automática.",
+            metadata={"error": sanitize_error_text(e)}
+        )
+
+
+async def ad_promo_daily_review_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        summary = await process_ad_promo_daily_reviews(context)
+
+        if int(summary.get("sent", 0) or 0) > 0:
+
+            print("Ad promo daily review:", summary)
+
+    except Exception as e:
+
+        print("Ad promo daily review: error:", e)
+
+
+def schedule_ad_promo_jobs(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Ad promo scheduler: JobQueue no disponible. "
+            "No se programó la promoción automática."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        ad_promo_scheduler_job,
+        interval=max(AD_PROMO_SCHEDULER_INTERVAL_SECONDS, 60),
+        first=180,
+        name="ad_promo_scheduler"
+    )
+
+    job_queue.run_repeating(
+        ad_promo_daily_review_job,
+        interval=max(AD_PROMO_DAILY_REVIEW_INTERVAL_SECONDS, 60 * 30),
+        first=300,
+        name="ad_promo_daily_review"
+    )
+
+    print("Ad promo scheduler programado.")
+
+    return True
+
+
 async def beta_monitor_summary_job(context: ContextTypes.DEFAULT_TYPE):
 
     if not is_beta_monitor_enabled():
@@ -827,6 +925,7 @@ def get_admin_groups(user_id):
 async def handle_media(update, context):
 
     if update.effective_chat and update.effective_chat.type != "private":
+        await capture_ad_promo_video(update, context)
         await capture_group_preview_video(update, context)
         await handle_group_backup_media(update, context)
         return
@@ -863,6 +962,13 @@ async def track_command_event(update, context):
 
 
 async def handle_text(update, context):
+
+    if (
+        context.user_data.get("ad_promo_wizard")
+        or context.user_data.get("ad_promo_edit")
+    ):
+        await receive_ad_promo_admin_text(update, context)
+        return
 
     if context.user_data.get("location_review_step"):
         await receive_location_manual_review_form(update, context)
@@ -2053,6 +2159,14 @@ def main():
 
     telegram_app.add_handler(
         MessageHandler(
+            filters.UpdateType.CHANNEL_POST & filters.VIDEO,
+            capture_ad_promo_video
+        ),
+        group=0
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
             filters.LOCATION,
             receive_location_gate
         )
@@ -2122,6 +2236,7 @@ def main():
 
     schedule_commercial_expiry_job(telegram_app)
     schedule_location_manual_review_expiry_job(telegram_app)
+    schedule_ad_promo_jobs(telegram_app)
     schedule_beta_monitor_job(telegram_app)
     schedule_beta_cycle_job(telegram_app)
 

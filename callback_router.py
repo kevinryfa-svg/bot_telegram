@@ -61,7 +61,12 @@ from ai_policy import (
     AI_CONTEXT_USER_TRACKING,
     AI_ROLE_BUYER,
     AI_ROLE_OWNER,
-    AI_ROLE_SUPERADMIN
+    AI_ROLE_SUPERADMIN,
+    sanitize_ai_text
+)
+from ai_service import (
+    generate_ai_response,
+    is_ai_enabled
 )
 from ai_response_service import (
     build_ai_feedback_keyboard_rows,
@@ -2522,6 +2527,1441 @@ async def notify_location_manual_review_admins(context, review, ticket):
             print("Error avisando revisión manual de ubicación:", recipient_id, e)
 
 
+AD_PROMO_CAMPAIGN_FIELDS = [
+    "id",
+    "paid_group_id",
+    "source_chat_id",
+    "source_chat_title",
+    "source_chat_type",
+    "promo_group_telegram_id",
+    "promo_group_title",
+    "promo_group_type",
+    "is_active",
+    "is_paused",
+    "auto_capture_enabled",
+    "randomize_media",
+    "ai_copy_enabled",
+    "batch_size",
+    "interval_minutes",
+    "max_posts",
+    "delete_old_posts",
+    "bot_link",
+    "marketplace_link",
+    "default_caption",
+    "offer_text",
+    "price_text",
+    "cta_text",
+    "tone",
+    "last_offer_check_at",
+    "next_offer_check_at",
+    "last_run_at",
+    "next_run_at",
+    "created_by_user_id",
+    "updated_by_user_id",
+    "created_at",
+    "updated_at"
+]
+
+AD_PROMO_MEDIA_FIELDS = [
+    "id",
+    "campaign_id",
+    "paid_group_id",
+    "source_chat_id",
+    "source_message_id",
+    "telegram_file_id",
+    "file_unique_id",
+    "media_type",
+    "duration",
+    "width",
+    "height",
+    "file_size",
+    "original_caption",
+    "is_active",
+    "usage_count",
+    "last_sent_at",
+    "created_at"
+]
+
+
+def row_to_ad_promo_campaign(row):
+
+    return dict(zip(AD_PROMO_CAMPAIGN_FIELDS, row)) if row else None
+
+
+def row_to_ad_promo_media(row):
+
+    return dict(zip(AD_PROMO_MEDIA_FIELDS, row)) if row else None
+
+
+def fetch_ad_promo_campaign(campaign_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(AD_PROMO_CAMPAIGN_FIELDS)}
+            FROM ad_promo_campaigns
+            WHERE id=%s
+            LIMIT 1
+
+        """, (campaign_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_ad_promo_campaign(row)
+
+
+def fetch_ad_promo_campaigns(limit=20):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(AD_PROMO_CAMPAIGN_FIELDS)}
+            FROM ad_promo_campaigns
+            ORDER BY is_active DESC,
+                     is_paused ASC,
+                     updated_at DESC
+            LIMIT %s
+
+        """, (limit,))
+
+        rows = cur.fetchall()
+
+
+    return [row_to_ad_promo_campaign(row) for row in rows]
+
+
+def fetch_ad_promo_capture_campaigns(source_chat_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(AD_PROMO_CAMPAIGN_FIELDS)}
+            FROM ad_promo_campaigns
+            WHERE source_chat_id=%s
+            AND is_active=TRUE
+            AND is_paused=FALSE
+            AND auto_capture_enabled=TRUE
+
+        """, (source_chat_id,))
+
+        rows = cur.fetchall()
+
+
+    return [row_to_ad_promo_campaign(row) for row in rows]
+
+
+def fetch_due_ad_promo_campaigns(limit=10):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(AD_PROMO_CAMPAIGN_FIELDS)}
+            FROM ad_promo_campaigns
+            WHERE is_active=TRUE
+            AND is_paused=FALSE
+            AND (
+                next_run_at IS NULL
+                OR next_run_at <= NOW()
+            )
+            ORDER BY next_run_at NULLS FIRST,
+                     updated_at ASC
+            LIMIT %s
+
+        """, (limit,))
+
+        rows = cur.fetchall()
+
+
+    return [row_to_ad_promo_campaign(row) for row in rows]
+
+
+def fetch_due_ad_promo_daily_reviews(limit=10):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(AD_PROMO_CAMPAIGN_FIELDS)}
+            FROM ad_promo_campaigns
+            WHERE is_active=TRUE
+            AND (
+                next_offer_check_at IS NULL
+                OR next_offer_check_at <= NOW()
+            )
+            ORDER BY next_offer_check_at NULLS FIRST,
+                     updated_at ASC
+            LIMIT %s
+
+        """, (limit,))
+
+        rows = cur.fetchall()
+
+
+    return [row_to_ad_promo_campaign(row) for row in rows]
+
+
+def count_ad_promo_media(campaign_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT COUNT(*),
+                   MAX(created_at)
+            FROM ad_promo_media
+            WHERE campaign_id=%s
+            AND is_active=TRUE
+
+        """, (campaign_id,))
+
+        row = cur.fetchone()
+
+
+    return {
+        "active": row[0] if row else 0,
+        "last_capture": row[1] if row else None
+    }
+
+
+def fetch_ad_promo_media(campaign_id, limit=20):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(AD_PROMO_MEDIA_FIELDS)}
+            FROM ad_promo_media
+            WHERE campaign_id=%s
+            ORDER BY is_active DESC,
+                     created_at DESC
+            LIMIT %s
+
+        """, (
+            campaign_id,
+            limit
+        ))
+
+        rows = cur.fetchall()
+
+
+    return [row_to_ad_promo_media(row) for row in rows]
+
+
+def select_ad_promo_media_for_batch(campaign):
+
+    order_sql = (
+        "RANDOM()"
+        if campaign.get("randomize_media")
+        else "last_sent_at NULLS FIRST, usage_count ASC, created_at ASC"
+    )
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(AD_PROMO_MEDIA_FIELDS)}
+            FROM ad_promo_media
+            WHERE campaign_id=%s
+            AND is_active=TRUE
+            ORDER BY {order_sql}
+            LIMIT %s
+
+        """, (
+            campaign.get("id"),
+            max(int(campaign.get("batch_size") or 1), 1)
+        ))
+
+        rows = cur.fetchall()
+
+
+    return [row_to_ad_promo_media(row) for row in rows]
+
+
+def create_ad_promo_campaign(data):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            INSERT INTO ad_promo_campaigns
+            (
+                paid_group_id,
+                source_chat_id,
+                source_chat_title,
+                source_chat_type,
+                promo_group_telegram_id,
+                promo_group_title,
+                promo_group_type,
+                batch_size,
+                interval_minutes,
+                max_posts,
+                bot_link,
+                offer_text,
+                price_text,
+                cta_text,
+                created_by_user_id,
+                updated_by_user_id,
+                next_run_at,
+                next_offer_check_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW() + INTERVAL '10 minutes', NOW() + INTERVAL '24 hours', NOW())
+            RETURNING {", ".join(AD_PROMO_CAMPAIGN_FIELDS)}
+
+        """, (
+            data.get("paid_group_id"),
+            data.get("source_chat_id"),
+            data.get("source_chat_title"),
+            data.get("source_chat_type"),
+            data.get("promo_group_telegram_id"),
+            data.get("promo_group_title"),
+            data.get("promo_group_type") or "group",
+            data.get("batch_size") or 5,
+            data.get("interval_minutes") or 60,
+            data.get("max_posts") or 50,
+            data.get("bot_link"),
+            data.get("offer_text"),
+            data.get("price_text"),
+            data.get("cta_text"),
+            data.get("created_by_user_id"),
+            data.get("created_by_user_id")
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_ad_promo_campaign(row)
+
+
+def update_ad_promo_campaign(campaign_id, updates, actor_user_id=None):
+
+    allowed_fields = {
+        "is_active",
+        "is_paused",
+        "auto_capture_enabled",
+        "randomize_media",
+        "ai_copy_enabled",
+        "batch_size",
+        "interval_minutes",
+        "max_posts",
+        "delete_old_posts",
+        "bot_link",
+        "marketplace_link",
+        "default_caption",
+        "offer_text",
+        "price_text",
+        "cta_text",
+        "tone",
+        "last_run_at",
+        "next_run_at",
+        "last_offer_check_at",
+        "next_offer_check_at"
+    }
+    set_parts = []
+    params = []
+
+
+    for field, value in updates.items():
+
+        if field not in allowed_fields:
+
+            continue
+
+
+        set_parts.append(f"{field}=%s")
+        params.append(value)
+
+
+    if actor_user_id is not None:
+
+        set_parts.append("updated_by_user_id=%s")
+        params.append(actor_user_id)
+
+
+    if not set_parts:
+
+        return fetch_ad_promo_campaign(campaign_id)
+
+
+    set_parts.append("updated_at=NOW()")
+    params.append(campaign_id)
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE ad_promo_campaigns
+            SET {", ".join(set_parts)}
+            WHERE id=%s
+            RETURNING {", ".join(AD_PROMO_CAMPAIGN_FIELDS)}
+
+        """, params)
+
+        row = cur.fetchone()
+
+
+    return row_to_ad_promo_campaign(row)
+
+
+def save_ad_promo_media(campaign, message, chat):
+
+    video = getattr(message, "video", None)
+
+    if not video:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            INSERT INTO ad_promo_media
+            (
+                campaign_id,
+                paid_group_id,
+                source_chat_id,
+                source_message_id,
+                telegram_file_id,
+                file_unique_id,
+                media_type,
+                duration,
+                width,
+                height,
+                file_size,
+                original_caption
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, 'video', %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            RETURNING {", ".join(AD_PROMO_MEDIA_FIELDS)}
+
+        """, (
+            campaign.get("id"),
+            campaign.get("paid_group_id"),
+            chat.id if chat else campaign.get("source_chat_id"),
+            message.message_id,
+            video.file_id,
+            video.file_unique_id,
+            video.duration,
+            video.width,
+            video.height,
+            video.file_size,
+            getattr(message, "caption", None)
+        ))
+
+        row = cur.fetchone()
+
+
+    return row_to_ad_promo_media(row)
+
+
+async def capture_ad_promo_video(update, context):
+
+    message = update.channel_post or update.message
+    chat = update.effective_chat
+
+
+    if not message or not chat or not getattr(message, "video", None):
+
+        return []
+
+
+    campaigns = fetch_ad_promo_capture_campaigns(chat.id)
+    captured = []
+
+
+    for campaign in campaigns:
+
+        media = save_ad_promo_media(campaign, message, chat)
+
+        if not media:
+
+            continue
+
+
+        captured.append(media)
+        log_event(
+            "ad_promo_media_captured",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            message="Vídeo capturado para biblioteca de promoción automática.",
+            metadata={
+                "campaign_id": campaign.get("id"),
+                "media_id": media.get("id"),
+                "source_chat_id": chat.id,
+                "source_message_id": message.message_id,
+                "file_unique_id": media.get("file_unique_id")
+            }
+        )
+
+
+    return captured
+
+
+def sanitize_ad_promo_text(text):
+
+    cleaned = sanitize_ai_text(text or "")
+
+    for word in ("Codex", "GitHub", "Railway", "userbot", "scraping"):
+
+        cleaned = cleaned.replace(word, "")
+
+
+    return cleaned.strip()[:900]
+
+
+def build_ad_promo_bot_link(campaign, bot_username=None):
+
+    if campaign.get("bot_link"):
+
+        return campaign.get("bot_link")
+
+
+    if bot_username:
+
+        return f"https://t.me/{bot_username}?start=group_{campaign.get('paid_group_id')}"
+
+
+    return campaign.get("marketplace_link") or "-"
+
+
+def build_local_ad_promo_copy(campaign):
+
+    hour = datetime.now().hour
+
+    if datetime.now().weekday() >= 5:
+
+        return "🎬 Muestra de fin de semana.\nUna forma rápida de descubrir si esta comunidad es para ti."
+
+
+    if hour < 12:
+
+        return "🔥 Nueva muestra disponible.\nSi este contenido te interesa, el acceso completo está dentro del bot."
+
+
+    if hour < 19:
+
+        return "🎬 Mira este adelanto.\nEl contenido completo está disponible para miembros desde el bot."
+
+
+    return "🌙 Adelanto para hoy.\nEntra al bot, revisa el acceso y decide si encaja contigo."
+
+
+def fetch_ad_promo_copy_variant(campaign_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   text
+            FROM ad_promo_copy_variants
+            WHERE campaign_id=%s
+            AND is_active=TRUE
+            ORDER BY last_used_at NULLS FIRST,
+                     usage_count ASC,
+                     RANDOM()
+            LIMIT 1
+
+        """, (campaign_id,))
+
+        row = cur.fetchone()
+
+
+    if not row:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE ad_promo_copy_variants
+            SET usage_count=usage_count + 1,
+                last_used_at=NOW()
+            WHERE id=%s
+
+        """, (row[0],))
+
+
+    return row[1]
+
+
+def save_ad_promo_copy_variant(campaign_id, text, source="ai"):
+
+    text = sanitize_ad_promo_text(text)
+
+    if not text:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO ad_promo_copy_variants
+            (
+                campaign_id,
+                text,
+                source
+            )
+            VALUES (%s, %s, %s)
+            RETURNING text
+
+        """, (
+            campaign_id,
+            text,
+            source
+        ))
+
+        row = cur.fetchone()
+
+
+    return row[0] if row else None
+
+
+def maybe_generate_ad_promo_ai_copy(campaign):
+
+    if not campaign.get("ai_copy_enabled") or not is_ai_enabled():
+
+        return None
+
+
+    group = fetch_group_basic_info(campaign.get("paid_group_id"))
+    group_name = group[1] if group else f"Comunidad {campaign.get('paid_group_id')}"
+    prompt = (
+        "Escribe un caption comercial breve para Telegram en español. "
+        "Objetivo: convertir usuarios hacia el bot/marketplace para una comunidad de pago. "
+        "No prometas resultados falsos, no menciones procesos internos, no menciones APIs ni infraestructura. "
+        "No incluyas enlaces; el enlace se añadirá después. "
+        f"Comunidad: {group_name}. "
+        f"Oferta: {campaign.get('offer_text') or '-'}. "
+        f"Precio: {campaign.get('price_text') or '-'}. "
+        f"Tono: {campaign.get('tone') or 'conversion'}."
+    )
+    ok, answer = generate_ai_response(
+        prompt,
+        system_prompt=(
+            "Eres experto en copywriting ético para Telegram. "
+            "Escribes textos persuasivos, claros y breves para promocionar comunidades de pago."
+        )
+    )
+
+
+    if not ok or not answer:
+
+        return None
+
+
+    text = save_ad_promo_copy_variant(
+        campaign.get("id"),
+        answer,
+        source="ai"
+    )
+
+    if text:
+
+        log_event(
+            "ad_promo_ai_copy_generated",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            message="Copy IA generado para campaña promocional.",
+            metadata={"campaign_id": campaign.get("id")}
+        )
+
+
+    return text
+
+
+async def build_ad_promo_caption(context, campaign):
+
+    bot_username = None
+
+    try:
+
+        bot_user = await context.bot.get_me()
+        bot_username = bot_user.username
+
+    except Exception:
+
+        bot_username = None
+
+
+    copy_text = fetch_ad_promo_copy_variant(campaign.get("id"))
+
+    if not copy_text:
+
+        copy_text = maybe_generate_ad_promo_ai_copy(campaign)
+
+    if not copy_text:
+
+        copy_text = campaign.get("default_caption") or build_local_ad_promo_copy(campaign)
+        save_ad_promo_copy_variant(
+            campaign.get("id"),
+            copy_text,
+            source="template"
+        )
+
+
+    parts = [sanitize_ad_promo_text(copy_text)]
+
+    for field in ("price_text", "offer_text", "cta_text"):
+
+        if campaign.get(field):
+
+            parts.append(sanitize_ad_promo_text(campaign.get(field)))
+
+
+    parts.append(f"👉 {build_ad_promo_bot_link(campaign, bot_username)}")
+
+    return "\n\n".join(part for part in parts if part)[:1024]
+
+
+async def delete_old_ad_promo_posts(context, campaign):
+
+    if not campaign.get("delete_old_posts"):
+
+        return {"deleted": 0, "failed": 0}
+
+
+    max_posts = int(campaign.get("max_posts") or 50)
+    deleted = 0
+    failed = 0
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   promo_group_telegram_id,
+                   message_id
+            FROM ad_promo_sent_posts
+            WHERE campaign_id=%s
+            AND deleted_at IS NULL
+            ORDER BY sent_at DESC
+            OFFSET %s
+
+        """, (
+            campaign.get("id"),
+            max_posts
+        ))
+
+        rows = cur.fetchall()
+
+
+    for row_id, chat_id, message_id in rows:
+
+        try:
+
+            await context.bot.delete_message(
+                chat_id=chat_id,
+                message_id=message_id
+            )
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE ad_promo_sent_posts
+                    SET deleted_at=NOW()
+                    WHERE id=%s
+
+                """, (row_id,))
+
+            deleted += 1
+            log_event(
+                "ad_promo_post_deleted",
+                category="marketing",
+                severity="info",
+                scope="group",
+                group_id=campaign.get("paid_group_id"),
+                message="Post promocional antiguo eliminado.",
+                metadata={"campaign_id": campaign.get("id"), "message_id": message_id}
+            )
+
+        except Exception as e:
+
+            failed += 1
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE ad_promo_sent_posts
+                    SET delete_error=%s
+                    WHERE id=%s
+
+                """, (
+                    str(e)[:500],
+                    row_id
+                ))
+
+            log_event(
+                "ad_promo_delete_failed",
+                category="marketing",
+                severity="warning",
+                scope="group",
+                group_id=campaign.get("paid_group_id"),
+                message="No se pudo borrar un post promocional antiguo.",
+                metadata={"campaign_id": campaign.get("id"), "message_id": message_id, "error": str(e)[:300]}
+            )
+
+
+    return {"deleted": deleted, "failed": failed}
+
+
+async def send_ad_promo_campaign_batch(context, campaign, test=False):
+
+    media_rows = select_ad_promo_media_for_batch(campaign)
+
+    if not media_rows:
+
+        return {"sent": 0, "failed": 0, "reason": "no_media"}
+
+
+    batch_id = secrets.token_hex(8)
+    sent = 0
+    failed = 0
+
+    for media in media_rows:
+
+        caption = await build_ad_promo_caption(context, campaign)
+
+        try:
+
+            message = await context.bot.send_video(
+                chat_id=campaign.get("promo_group_telegram_id"),
+                video=media.get("telegram_file_id"),
+                caption=caption
+            )
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    INSERT INTO ad_promo_sent_posts
+                    (
+                        campaign_id,
+                        promo_group_telegram_id,
+                        message_id,
+                        media_id,
+                        batch_id,
+                        caption_text
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+
+                """, (
+                    campaign.get("id"),
+                    campaign.get("promo_group_telegram_id"),
+                    message.message_id,
+                    media.get("id"),
+                    batch_id,
+                    caption
+                ))
+
+                cur.execute("""
+
+                    UPDATE ad_promo_media
+                    SET usage_count=usage_count + 1,
+                        last_sent_at=NOW()
+                    WHERE id=%s
+
+                """, (media.get("id"),))
+
+            sent += 1
+
+        except Exception as e:
+
+            failed += 1
+            log_event(
+                "ad_promo_send_failed",
+                category="marketing",
+                severity="warning",
+                scope="group",
+                group_id=campaign.get("paid_group_id"),
+                message="No se pudo enviar un vídeo promocional.",
+                metadata={"campaign_id": campaign.get("id"), "media_id": media.get("id"), "error": str(e)[:300]}
+            )
+
+
+    if not test:
+
+        update_ad_promo_campaign(
+            campaign.get("id"),
+            {
+                "last_run_at": datetime.now(),
+                "next_run_at": datetime.now() + timedelta(minutes=max(int(campaign.get("interval_minutes") or 60), 5))
+            }
+        )
+
+
+    delete_summary = await delete_old_ad_promo_posts(context, campaign)
+
+    if sent:
+
+        log_event(
+            "ad_promo_batch_sent",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            message="Tanda promocional enviada.",
+            metadata={
+                "campaign_id": campaign.get("id"),
+                "batch_id": batch_id,
+                "sent": sent,
+                "failed": failed,
+                "test": test,
+                "deleted": delete_summary.get("deleted")
+            }
+        )
+
+
+    return {"sent": sent, "failed": failed, **delete_summary}
+
+
+async def process_due_ad_promo_campaigns(context):
+
+    summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0}
+
+    for campaign in fetch_due_ad_promo_campaigns():
+
+        summary["campaigns"] += 1
+        result = await send_ad_promo_campaign_batch(context, campaign)
+
+        if result.get("reason") == "no_media":
+
+            summary["skipped"] += 1
+            update_ad_promo_campaign(
+                campaign.get("id"),
+                {
+                    "next_run_at": datetime.now() + timedelta(minutes=max(int(campaign.get("interval_minutes") or 60), 5))
+                }
+            )
+            continue
+
+
+        summary["sent"] += int(result.get("sent", 0) or 0)
+        summary["failed"] += int(result.get("failed", 0) or 0)
+
+
+    return summary
+
+
+def build_ad_promo_daily_review_text(campaign):
+
+    group = fetch_group_basic_info(campaign.get("paid_group_id"))
+    group_name = group[1] if group else f"Grupo {campaign.get('paid_group_id')}"
+    media_summary = count_ad_promo_media(campaign.get("id"))
+
+    return (
+        "📣 Revisión diaria de promoción\n\n"
+        f"Campaña: #{campaign.get('id')} · {group_name}\n"
+        f"Oferta actual: {campaign.get('offer_text') or '-'}\n"
+        f"Precio actual: {campaign.get('price_text') or '-'}\n"
+        f"Frecuencia: {campaign.get('interval_minutes') or '-'} min\n"
+        f"Vídeos por tanda: {campaign.get('batch_size') or '-'}\n"
+        f"Cupo máximo: {campaign.get('max_posts') or '-'}\n"
+        f"Vídeos capturados: {media_summary.get('active')}\n\n"
+        "¿Quieres cambiar algo?"
+    )
+
+
+def build_ad_promo_daily_review_keyboard(campaign_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 Cambiar oferta", callback_data=f"admin_ad_promo_edit_offer_{campaign_id}")],
+        [InlineKeyboardButton("💶 Cambiar precio", callback_data=f"admin_ad_promo_edit_price_{campaign_id}")],
+        [InlineKeyboardButton("⏱ Cambiar frecuencia", callback_data=f"admin_ad_promo_edit_frequency_{campaign_id}")],
+        [InlineKeyboardButton("🎬 Cambiar cantidad", callback_data=f"admin_ad_promo_edit_batch_{campaign_id}")],
+        [InlineKeyboardButton("🧹 Cambiar cupo", callback_data=f"admin_ad_promo_edit_maxposts_{campaign_id}")],
+        [InlineKeyboardButton("✅ Mantener igual", callback_data=f"admin_ad_promo_keep_offer_{campaign_id}")]
+    ])
+
+
+async def process_ad_promo_daily_reviews(context):
+
+    sent = 0
+
+    for campaign in fetch_due_ad_promo_daily_reviews():
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=build_ad_promo_daily_review_text(campaign),
+                reply_markup=build_ad_promo_daily_review_keyboard(campaign.get("id"))
+            )
+
+            update_ad_promo_campaign(
+                campaign.get("id"),
+                {
+                    "last_offer_check_at": datetime.now(),
+                    "next_offer_check_at": datetime.now() + timedelta(hours=24)
+                }
+            )
+            sent += 1
+
+            log_event(
+                "ad_promo_daily_review_sent",
+                category="marketing",
+                severity="info",
+                scope="group",
+                group_id=campaign.get("paid_group_id"),
+                message="Revisión diaria de promoción enviada al superadmin.",
+                metadata={"campaign_id": campaign.get("id")}
+            )
+
+        except Exception as e:
+
+            print("Error enviando revisión diaria promo:", e)
+
+
+    return {"sent": sent}
+
+
+def build_ad_promo_panel_text():
+
+    campaigns = fetch_ad_promo_campaigns()
+    active = len([campaign for campaign in campaigns if campaign.get("is_active") and not campaign.get("is_paused")])
+    paused = len([campaign for campaign in campaigns if campaign.get("is_paused")])
+
+    return (
+        "📣 Promoción automática\n\n"
+        f"Campañas registradas: {len(campaigns)}\n"
+        f"Activas: {active}\n"
+        f"Pausadas: {paused}\n\n"
+        "El bot solo puede usar vídeos que tenga capturados como file_id. "
+        "No puede recorrer histórico antiguo con Bot API. "
+        "A partir de ahora capturará los vídeos nuevos que vea en el grupo/canal fuente."
+    )
+
+
+def build_ad_promo_panel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Campañas", callback_data="admin_ad_promo_campaigns")],
+        [InlineKeyboardButton("➕ Crear campaña", callback_data="admin_ad_promo_create")],
+        [InlineKeyboardButton("⬅️ Herramientas internas", callback_data="admin_global_tools")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_ad_promo_campaigns_text(campaigns):
+
+    if not campaigns:
+
+        return "📋 Campañas de promoción\n\nTodavía no hay campañas registradas."
+
+
+    lines = ["📋 Campañas de promoción", ""]
+
+    for campaign in campaigns:
+
+        group = fetch_group_basic_info(campaign.get("paid_group_id"))
+        group_name = group[1] if group else f"Grupo {campaign.get('paid_group_id')}"
+        media_summary = count_ad_promo_media(campaign.get("id"))
+        status = "pausada" if campaign.get("is_paused") else "activa" if campaign.get("is_active") else "inactiva"
+        lines.extend([
+            f"#{campaign.get('id')} · {group_name}",
+            f"Estado: {status}",
+            f"Fuente: {campaign.get('source_chat_id') or '-'}",
+            f"Destino promo: {campaign.get('promo_group_telegram_id') or '-'}",
+            f"Vídeos activos: {media_summary.get('active')}",
+            f"Próxima tanda: {format_commercial_datetime(campaign.get('next_run_at')) if campaign.get('next_run_at') else '-'}",
+            ""
+        ])
+
+
+    return "\n".join(lines)[:3900]
+
+
+def build_ad_promo_campaigns_keyboard(campaigns):
+
+    keyboard = []
+
+    for campaign in campaigns:
+
+        keyboard.append([InlineKeyboardButton(
+            f"⚙️ Campaña #{campaign.get('id')}",
+            callback_data=f"admin_ad_promo_campaign_{campaign.get('id')}"
+        )])
+
+
+    keyboard.extend([
+        [InlineKeyboardButton("➕ Crear campaña", callback_data="admin_ad_promo_create")],
+        [InlineKeyboardButton("⬅️ Promoción automática", callback_data="admin_ad_promo")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_ad_promo_campaign_detail_text(campaign):
+
+    group = fetch_group_basic_info(campaign.get("paid_group_id"))
+    group_name = group[1] if group else f"Grupo {campaign.get('paid_group_id')}"
+    media_summary = count_ad_promo_media(campaign.get("id"))
+
+    return (
+        f"📣 Campaña #{campaign.get('id')}\n\n"
+        f"Comunidad de pago: {group_name} ({campaign.get('paid_group_id')})\n"
+        f"Fuente: {campaign.get('source_chat_title') or campaign.get('source_chat_id')}\n"
+        f"Destino promo: {campaign.get('promo_group_title') or campaign.get('promo_group_telegram_id')}\n"
+        f"Estado: {'pausada' if campaign.get('is_paused') else 'activa' if campaign.get('is_active') else 'inactiva'}\n"
+        f"Captura: {'ON' if campaign.get('auto_capture_enabled') else 'OFF'}\n"
+        f"Random: {'ON' if campaign.get('randomize_media') else 'OFF'}\n"
+        f"IA textos: {'ON' if campaign.get('ai_copy_enabled') else 'OFF'}\n"
+        f"Vídeos activos: {media_summary.get('active')}\n"
+        f"Última captura: {format_commercial_datetime(media_summary.get('last_capture')) if media_summary.get('last_capture') else '-'}\n"
+        f"Frecuencia: {campaign.get('interval_minutes')} min\n"
+        f"Vídeos por tanda: {campaign.get('batch_size')}\n"
+        f"Cupo máximo: {campaign.get('max_posts')}\n"
+        f"Borrado rotativo: {'ON' if campaign.get('delete_old_posts') else 'OFF'}\n\n"
+        f"Precio: {campaign.get('price_text') or '-'}\n"
+        f"Oferta: {campaign.get('offer_text') or '-'}\n"
+        f"CTA: {campaign.get('cta_text') or '-'}\n"
+        f"Bot link: {campaign.get('bot_link') or 'auto'}"
+    )
+
+
+def build_ad_promo_campaign_detail_keyboard(campaign):
+
+    campaign_id = campaign.get("id")
+    pause_label = "▶️ Reanudar" if campaign.get("is_paused") else "⏸ Pausar"
+    pause_callback = f"admin_ad_promo_resume_{campaign_id}" if campaign.get("is_paused") else f"admin_ad_promo_pause_{campaign_id}"
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📚 Biblioteca de vídeos", callback_data=f"admin_ad_promo_library_{campaign_id}")],
+        [InlineKeyboardButton("🧪 Enviar prueba", callback_data=f"admin_ad_promo_test_{campaign_id}")],
+        [InlineKeyboardButton("🎲 Random ON/OFF", callback_data=f"admin_ad_promo_random_{campaign_id}")],
+        [InlineKeyboardButton("🤖 IA textos ON/OFF", callback_data=f"admin_ad_promo_ai_{campaign_id}")],
+        [InlineKeyboardButton("🎥 Captura ON/OFF", callback_data=f"admin_ad_promo_capture_{campaign_id}")],
+        [InlineKeyboardButton("📝 Editar oferta", callback_data=f"admin_ad_promo_edit_offer_{campaign_id}")],
+        [InlineKeyboardButton("💶 Editar precio", callback_data=f"admin_ad_promo_edit_price_{campaign_id}")],
+        [InlineKeyboardButton("📣 Editar CTA", callback_data=f"admin_ad_promo_edit_cta_{campaign_id}")],
+        [InlineKeyboardButton("⏱ Frecuencia", callback_data=f"admin_ad_promo_edit_frequency_{campaign_id}")],
+        [InlineKeyboardButton("🎬 Vídeos por tanda", callback_data=f"admin_ad_promo_edit_batch_{campaign_id}")],
+        [InlineKeyboardButton("🧹 Cupo/borrado", callback_data=f"admin_ad_promo_edit_maxposts_{campaign_id}")],
+        [InlineKeyboardButton(pause_label, callback_data=pause_callback)],
+        [InlineKeyboardButton("🗑 Borrar antiguos", callback_data=f"admin_ad_promo_delete_old_{campaign_id}")],
+        [InlineKeyboardButton("⬅️ Campañas", callback_data="admin_ad_promo_campaigns")]
+    ])
+
+
+def build_ad_promo_library_text(campaign, media_rows):
+
+    media_summary = count_ad_promo_media(campaign.get("id"))
+    lines = [
+        f"📚 Biblioteca campaña #{campaign.get('id')}",
+        "",
+        f"Vídeos capturados activos: {media_summary.get('active')}",
+        f"Última captura: {format_commercial_datetime(media_summary.get('last_capture')) if media_summary.get('last_capture') else '-'}",
+        f"Source chat ID: {campaign.get('source_chat_id') or '-'}",
+        f"Captura automática: {'ON' if campaign.get('auto_capture_enabled') else 'OFF'}",
+        ""
+    ]
+
+    if not media_rows:
+
+        lines.append("Todavía no hay vídeos capturados.")
+
+    for media in media_rows:
+
+        lines.extend([
+            f"#{media.get('id')} · {'activo' if media.get('is_active') else 'inactivo'}",
+            f"Mensaje fuente: {media.get('source_message_id') or '-'}",
+            f"Uso: {media.get('usage_count') or 0}",
+            f"Último envío: {format_commercial_datetime(media.get('last_sent_at')) if media.get('last_sent_at') else '-'}",
+            f"Caption original: {format_location_review_reason_preview(media.get('original_caption'))}",
+            ""
+        ])
+
+
+    return "\n".join(lines)[:3900]
+
+
+def build_ad_promo_library_keyboard(campaign, media_rows):
+
+    keyboard = []
+
+    for media in media_rows[:10]:
+
+        if media.get("is_active"):
+
+            keyboard.append([InlineKeyboardButton(
+                f"🚫 Desactivar vídeo #{media.get('id')}",
+                callback_data=f"admin_ad_promo_media_off_{media.get('id')}"
+            )])
+
+
+    keyboard.extend([
+        [InlineKeyboardButton("🎥 Captura ON/OFF", callback_data=f"admin_ad_promo_capture_{campaign.get('id')}")],
+        [InlineKeyboardButton("⬅️ Campaña", callback_data=f"admin_ad_promo_campaign_{campaign.get('id')}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def deactivate_ad_promo_media(media_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE ad_promo_media
+            SET is_active=FALSE
+            WHERE id=%s
+            RETURNING campaign_id
+
+        """, (media_id,))
+
+        row = cur.fetchone()
+
+
+    return row[0] if row else None
+
+
+AD_PROMO_CREATE_STEPS = [
+    ("paid_group_id", "Introduce el ID interno de la comunidad de pago que quieres promocionar."),
+    ("source_chat_id", "Introduce el chat_id del grupo/canal fuente donde el bot capturará vídeos nuevos."),
+    ("promo_group_telegram_id", "Introduce el chat_id del grupo/canal gratuito donde se publicará la promoción."),
+    ("batch_size", "¿Cuántos vídeos por tanda? Ejemplo: 5"),
+    ("interval_minutes", "¿Cada cuántos minutos publicar? Ejemplo: 60"),
+    ("max_posts", "Cupo máximo de posts visibles antes de borrar antiguos. Ejemplo: 50"),
+    ("price_text", "Texto de precio. Ejemplo: Acceso desde 9,99 EUR/mes."),
+    ("offer_text", "Texto de oferta. Ejemplo: Promo activa esta semana."),
+    ("cta_text", "CTA. Ejemplo: Entra al bot y revisa los planes disponibles."),
+    ("bot_link", "Link manual al bot/marketplace o escribe auto para generarlo automáticamente.")
+]
+
+
+def parse_ad_promo_int(value, minimum=None):
+
+    text = str(value or "").strip()
+
+    if text.startswith("-"):
+
+        digits = text[1:]
+
+    else:
+
+        digits = text
+
+
+    if not digits.isdigit():
+
+        return None
+
+
+    number = int(text)
+
+    if minimum is not None and number < minimum:
+
+        return None
+
+
+    return number
+
+
+async def resolve_ad_promo_chat_details(context, chat_id):
+
+    try:
+
+        chat = await context.bot.get_chat(chat_id)
+
+        return {
+            "title": getattr(chat, "title", None) or getattr(chat, "username", None),
+            "type": getattr(chat, "type", None) or "group"
+        }
+
+    except Exception:
+
+        return {"title": None, "type": None}
+
+
+async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user_id = update.effective_user.id if update.effective_user else None
+
+    if not is_super_admin(user_id):
+
+        context.user_data.pop("ad_promo_wizard", None)
+        context.user_data.pop("ad_promo_edit", None)
+        return
+
+
+    text = (update.message.text or "").strip() if update.message else ""
+
+    if context.user_data.get("ad_promo_edit"):
+
+        edit_state = context.user_data.get("ad_promo_edit") or {}
+        campaign_id = edit_state.get("campaign_id")
+        field = edit_state.get("field")
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            context.user_data.pop("ad_promo_edit", None)
+            await update.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        numeric_fields = {
+            "interval_minutes": 5,
+            "batch_size": 1,
+            "max_posts": 1
+        }
+
+        if field in numeric_fields:
+
+            value = parse_ad_promo_int(text, minimum=numeric_fields[field])
+
+            if value is None:
+
+                await update.message.reply_text("❌ Valor no válido. Envía un número válido.")
+                return
+
+        elif field == "bot_link" and text.lower() == "auto":
+
+            value = None
+
+        else:
+
+            value = sanitize_ad_promo_text(text)
+
+
+        update_ad_promo_campaign(
+            campaign_id,
+            {field: value},
+            actor_user_id=user_id
+        )
+        context.user_data.pop("ad_promo_edit", None)
+
+        log_event(
+            "ad_promo_campaign_updated",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            actor_user_id=user_id,
+            message="Campaña de promoción actualizada.",
+            metadata={"campaign_id": campaign_id, "field": field}
+        )
+
+        await update.message.reply_text(
+            "✅ Campaña actualizada.",
+            reply_markup=build_ad_promo_campaign_detail_keyboard(fetch_ad_promo_campaign(campaign_id))
+        )
+        return
+
+
+    wizard = context.user_data.get("ad_promo_wizard")
+
+    if not wizard:
+
+        return
+
+
+    step_index = wizard.get("step_index", 0)
+    field, _prompt = AD_PROMO_CREATE_STEPS[step_index]
+    int_fields = {
+        "paid_group_id": 1,
+        "batch_size": 1,
+        "interval_minutes": 5,
+        "max_posts": 1
+    }
+    signed_int_fields = {
+        "source_chat_id",
+        "promo_group_telegram_id"
+    }
+
+
+    if field in int_fields:
+
+        value = parse_ad_promo_int(text, minimum=int_fields[field])
+
+        if value is None:
+
+            await update.message.reply_text("❌ Valor no válido. Envía un número válido.")
+            return
+
+    elif field in signed_int_fields:
+
+        value = parse_ad_promo_int(text)
+
+        if value is None:
+
+            await update.message.reply_text("❌ chat_id no válido. Envía el ID numérico completo.")
+            return
+
+    elif field == "bot_link" and text.lower() == "auto":
+
+        value = None
+
+    else:
+
+        value = sanitize_ad_promo_text(text)
+
+
+    wizard.setdefault("data", {})[field] = value
+    step_index += 1
+
+    if step_index < len(AD_PROMO_CREATE_STEPS):
+
+        wizard["step_index"] = step_index
+        context.user_data["ad_promo_wizard"] = wizard
+        await update.message.reply_text(AD_PROMO_CREATE_STEPS[step_index][1])
+        return
+
+
+    data = wizard.get("data") or {}
+    source_details = await resolve_ad_promo_chat_details(
+        context,
+        data.get("source_chat_id")
+    )
+    promo_details = await resolve_ad_promo_chat_details(
+        context,
+        data.get("promo_group_telegram_id")
+    )
+    data["source_chat_title"] = source_details.get("title")
+    data["source_chat_type"] = source_details.get("type")
+    data["promo_group_title"] = promo_details.get("title")
+    data["promo_group_type"] = promo_details.get("type") or "group"
+    data["created_by_user_id"] = user_id
+    campaign = create_ad_promo_campaign(data)
+    context.user_data.pop("ad_promo_wizard", None)
+
+    log_event(
+        "ad_promo_campaign_created",
+        category="marketing",
+        severity="info",
+        scope="group",
+        group_id=campaign.get("paid_group_id"),
+        actor_user_id=user_id,
+        message="Campaña de promoción automática creada.",
+        metadata={"campaign_id": campaign.get("id")}
+    )
+
+    await update.message.reply_text(
+        "✅ Campaña creada.\n\n"
+        "El bot capturará vídeos nuevos que reciba en el chat fuente configurado.",
+        reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
+    )
+
+
 async def continue_after_location_manual_review(context, chat_id, telegram_user, group_id, action, price_id=None, review=None):
 
     expires_at = review.get("expires_at") if review else None
@@ -3314,6 +4754,7 @@ def build_admin_global_tools_keyboard():
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🧠 Centro IA", callback_data="admin_ai_center")],
+        [InlineKeyboardButton("📣 Promoción automática", callback_data="admin_ad_promo")],
         [InlineKeyboardButton("🧪 Smoke Test Beta", callback_data="admin_smoke_test")],
         [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
         [InlineKeyboardButton("🧪 Auditoría de botones", callback_data="admin_button_audit")],
@@ -19953,6 +21394,341 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👑 Panel global del bot: índice principal de la plataforma.\n\n"
             "Desde aquí entras a monitor beta, satisfacción, soporte, marketplace, propietarios y los dos submenús separados de configuración y herramientas.",
             reply_markup=build_admin_global_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_ad_promo":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text("⛔ Solo superadmin.")
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_panel_text(),
+            reply_markup=build_ad_promo_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_ad_promo_campaigns":
+
+        campaigns = fetch_ad_promo_campaigns()
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_campaigns_text(campaigns),
+            reply_markup=build_ad_promo_campaigns_keyboard(campaigns)
+        )
+
+        return
+
+
+    if data == "admin_ad_promo_create":
+
+        context.user_data["ad_promo_wizard"] = {
+            "step_index": 0,
+            "data": {}
+        }
+
+        await query.message.reply_text(
+            "➕ Crear campaña de promoción\n\n"
+            f"{AD_PROMO_CREATE_STEPS[0][1]}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancelar", callback_data="admin_ad_promo")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_campaign_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_campaign_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text(
+                "❌ Campaña no encontrada.",
+                reply_markup=build_ad_promo_panel_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_campaign_detail_text(campaign),
+            reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_library_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_library_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        media_rows = fetch_ad_promo_media(campaign_id)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_library_text(campaign, media_rows),
+            reply_markup=build_ad_promo_library_keyboard(campaign, media_rows)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_media_off_"):
+
+        media_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_media_off_"
+        )
+        campaign_id = deactivate_ad_promo_media(media_id)
+
+        if not campaign_id:
+
+            await query.message.reply_text("❌ Vídeo no encontrado.")
+            return
+
+
+        campaign = fetch_ad_promo_campaign(campaign_id)
+        media_rows = fetch_ad_promo_media(campaign_id)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Vídeo desactivado.\n\n" + build_ad_promo_library_text(campaign, media_rows),
+            reply_markup=build_ad_promo_library_keyboard(campaign, media_rows)
+        )
+
+        return
+
+
+    ad_promo_toggle_prefixes = {
+        "admin_ad_promo_random_": "randomize_media",
+        "admin_ad_promo_ai_": "ai_copy_enabled",
+        "admin_ad_promo_capture_": "auto_capture_enabled"
+    }
+
+    for prefix, field in ad_promo_toggle_prefixes.items():
+
+        if data.startswith(prefix):
+
+            campaign_id = extract_commercial_request_id(data, prefix)
+            campaign = fetch_ad_promo_campaign(campaign_id)
+
+            if not campaign:
+
+                await query.message.reply_text("❌ Campaña no encontrada.")
+                return
+
+
+            campaign = update_ad_promo_campaign(
+                campaign_id,
+                {field: not campaign.get(field)},
+                actor_user_id=user_id
+            )
+
+            log_event(
+                "ad_promo_campaign_updated",
+                category="marketing",
+                severity="info",
+                scope="group",
+                group_id=campaign.get("paid_group_id"),
+                actor_user_id=user_id,
+                message="Configuración de campaña promocional actualizada.",
+                metadata={"campaign_id": campaign_id, "field": field}
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_ad_promo_campaign_detail_text(campaign),
+                reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
+            )
+
+            return
+
+
+    if data.startswith("admin_ad_promo_pause_") or data.startswith("admin_ad_promo_resume_"):
+
+        is_resume = data.startswith("admin_ad_promo_resume_")
+        prefix = "admin_ad_promo_resume_" if is_resume else "admin_ad_promo_pause_"
+        campaign_id = extract_commercial_request_id(data, prefix)
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        campaign = update_ad_promo_campaign(
+            campaign_id,
+            {"is_paused": not is_resume},
+            actor_user_id=user_id
+        )
+
+        log_event(
+            "ad_promo_campaign_resumed" if is_resume else "ad_promo_campaign_paused",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            actor_user_id=user_id,
+            message="Campaña promocional reanudada." if is_resume else "Campaña promocional pausada.",
+            metadata={"campaign_id": campaign_id}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_campaign_detail_text(campaign),
+            reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_test_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_test_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        result = await send_ad_promo_campaign_batch(
+            context,
+            campaign,
+            test=True
+        )
+
+        await query.message.reply_text(
+            "🧪 Prueba enviada\n\n"
+            f"Enviados: {result.get('sent', 0)}\n"
+            f"Fallidos: {result.get('failed', 0)}\n"
+            f"Borrados antiguos: {result.get('deleted', 0)}\n"
+            f"Estado: {result.get('reason') or 'ok'}",
+            reply_markup=build_ad_promo_campaign_detail_keyboard(fetch_ad_promo_campaign(campaign_id))
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_delete_old_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_delete_old_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        result = await delete_old_ad_promo_posts(context, campaign)
+
+        await query.message.reply_text(
+            "🗑 Borrado rotativo ejecutado\n\n"
+            f"Borrados: {result.get('deleted', 0)}\n"
+            f"Fallidos: {result.get('failed', 0)}",
+            reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
+        )
+
+        return
+
+
+    ad_promo_edit_prefixes = {
+        "admin_ad_promo_edit_offer_": ("offer_text", "Escribe el nuevo texto de oferta."),
+        "admin_ad_promo_edit_price_": ("price_text", "Escribe el nuevo texto de precio."),
+        "admin_ad_promo_edit_cta_": ("cta_text", "Escribe el nuevo CTA."),
+        "admin_ad_promo_edit_frequency_": ("interval_minutes", "Escribe la nueva frecuencia en minutos, mínimo 5."),
+        "admin_ad_promo_edit_batch_": ("batch_size", "Escribe cuántos vídeos por tanda, mínimo 1."),
+        "admin_ad_promo_edit_maxposts_": ("max_posts", "Escribe el nuevo cupo máximo de posts visibles, mínimo 1."),
+        "admin_ad_promo_edit_botlink_": ("bot_link", "Escribe el nuevo bot_link o auto.")
+    }
+
+    for prefix, (field, prompt) in ad_promo_edit_prefixes.items():
+
+        if data.startswith(prefix):
+
+            campaign_id = extract_commercial_request_id(data, prefix)
+
+            if not fetch_ad_promo_campaign(campaign_id):
+
+                await query.message.reply_text("❌ Campaña no encontrada.")
+                return
+
+
+            context.user_data["ad_promo_edit"] = {
+                "campaign_id": campaign_id,
+                "field": field
+            }
+
+            await query.message.reply_text(
+                prompt,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Cancelar", callback_data=f"admin_ad_promo_campaign_{campaign_id}")]
+                ])
+            )
+
+            return
+
+
+    if data.startswith("admin_ad_promo_keep_offer_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_keep_offer_"
+        )
+        campaign = update_ad_promo_campaign(
+            campaign_id,
+            {
+                "last_offer_check_at": datetime.now(),
+                "next_offer_check_at": datetime.now() + timedelta(hours=24)
+            },
+            actor_user_id=user_id
+        )
+
+        await query.message.reply_text(
+            "✅ Se mantiene la configuración actual.",
+            reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
         )
 
         return

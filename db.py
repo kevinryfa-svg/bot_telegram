@@ -1550,6 +1550,219 @@ def create_tables():
 
 
         # =========================
+        # TABLAS PROMOCIÓN AUTOMÁTICA SUPERADMIN
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS ad_promo_campaigns (
+
+            id SERIAL PRIMARY KEY,
+
+            paid_group_id INTEGER NOT NULL,
+
+            source_chat_id BIGINT,
+
+            source_chat_title TEXT,
+
+            source_chat_type TEXT,
+
+            promo_group_telegram_id BIGINT NOT NULL,
+
+            promo_group_title TEXT,
+
+            promo_group_type TEXT DEFAULT 'group',
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            is_paused BOOLEAN DEFAULT FALSE,
+
+            auto_capture_enabled BOOLEAN DEFAULT TRUE,
+
+            randomize_media BOOLEAN DEFAULT TRUE,
+
+            ai_copy_enabled BOOLEAN DEFAULT TRUE,
+
+            batch_size INTEGER DEFAULT 5,
+
+            interval_minutes INTEGER DEFAULT 60,
+
+            max_posts INTEGER DEFAULT 50,
+
+            delete_old_posts BOOLEAN DEFAULT TRUE,
+
+            bot_link TEXT,
+
+            marketplace_link TEXT,
+
+            default_caption TEXT,
+
+            offer_text TEXT,
+
+            price_text TEXT,
+
+            cta_text TEXT,
+
+            tone TEXT DEFAULT 'conversion',
+
+            last_offer_check_at TIMESTAMP,
+
+            next_offer_check_at TIMESTAMP,
+
+            last_run_at TIMESTAMP,
+
+            next_run_at TIMESTAMP,
+
+            created_by_user_id BIGINT,
+
+            updated_by_user_id BIGINT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS ad_promo_media (
+
+            id SERIAL PRIMARY KEY,
+
+            campaign_id INTEGER NOT NULL,
+
+            paid_group_id INTEGER,
+
+            source_chat_id BIGINT,
+
+            source_message_id BIGINT,
+
+            telegram_file_id TEXT NOT NULL,
+
+            file_unique_id TEXT,
+
+            media_type TEXT DEFAULT 'video',
+
+            duration INTEGER,
+
+            width INTEGER,
+
+            height INTEGER,
+
+            file_size BIGINT,
+
+            original_caption TEXT,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            usage_count INTEGER DEFAULT 0,
+
+            last_sent_at TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS ad_promo_sent_posts (
+
+            id SERIAL PRIMARY KEY,
+
+            campaign_id INTEGER NOT NULL,
+
+            promo_group_telegram_id BIGINT NOT NULL,
+
+            message_id BIGINT NOT NULL,
+
+            media_id INTEGER,
+
+            batch_id TEXT,
+
+            caption_text TEXT,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            deleted_at TIMESTAMP,
+
+            delete_error TEXT
+
+        );
+
+        """)
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS ad_promo_copy_variants (
+
+            id SERIAL PRIMARY KEY,
+
+            campaign_id INTEGER NOT NULL,
+
+            text TEXT NOT NULL,
+
+            source TEXT DEFAULT 'ai',
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            usage_count INTEGER DEFAULT 0,
+
+            last_used_at TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+        for index_name, index_sql in [
+            (
+                "idx_ad_promo_campaigns_active_next_run",
+                "CREATE INDEX IF NOT EXISTS idx_ad_promo_campaigns_active_next_run ON ad_promo_campaigns(is_active, is_paused, next_run_at)"
+            ),
+            (
+                "idx_ad_promo_campaigns_source_chat",
+                "CREATE INDEX IF NOT EXISTS idx_ad_promo_campaigns_source_chat ON ad_promo_campaigns(source_chat_id)"
+            ),
+            (
+                "idx_ad_promo_media_campaign_active",
+                "CREATE INDEX IF NOT EXISTS idx_ad_promo_media_campaign_active ON ad_promo_media(campaign_id, is_active)"
+            ),
+            (
+                "idx_ad_promo_sent_posts_campaign",
+                "CREATE INDEX IF NOT EXISTS idx_ad_promo_sent_posts_campaign ON ad_promo_sent_posts(campaign_id, deleted_at, sent_at)"
+            ),
+            (
+                "idx_ad_promo_copy_campaign_active",
+                "CREATE INDEX IF NOT EXISTS idx_ad_promo_copy_campaign_active ON ad_promo_copy_variants(campaign_id, is_active)"
+            ),
+            (
+                "idx_ad_promo_media_unique_file",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ad_promo_media_unique_file ON ad_promo_media(campaign_id, file_unique_id) WHERE file_unique_id IS NOT NULL"
+            ),
+            (
+                "idx_ad_promo_media_unique_source_message",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ad_promo_media_unique_source_message ON ad_promo_media(campaign_id, source_chat_id, source_message_id) WHERE source_chat_id IS NOT NULL AND source_message_id IS NOT NULL"
+            )
+        ]:
+
+            try:
+
+                cur.execute(index_sql)
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error creando índice {index_name}: {e}",
+                    "errors"
+                )
+
+
+        # =========================
         # TABLA SOLICITUDES COMERCIALES
         # =========================
 

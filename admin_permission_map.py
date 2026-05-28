@@ -129,6 +129,9 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_ai_codex_task": (SUPER_ADMIN_ONLY,),
     "admin_ai_feedback": (SUPER_ADMIN_ONLY,),
     "admin_ai_ask": (SUPER_ADMIN_ONLY,),
+    "admin_ad_promo": (SUPER_ADMIN_ONLY,),
+    "admin_ad_promo_campaigns": (SUPER_ADMIN_ONLY,),
+    "admin_ad_promo_create": (SUPER_ADMIN_ONLY,),
     "admin_button_audit": (SUPER_ADMIN_ONLY,),
     "admin_button_audit_detail": (SUPER_ADMIN_ONLY,),
     "admin_button_audit_refresh": (SUPER_ADMIN_ONLY,),
@@ -245,6 +248,7 @@ ADMIN_CALLBACK_PREFIX_PERMISSION_MAP = (
 
     ("allow_user_", ("can_manage_users",)),
     ("deny_user_", ("can_kick_users", "can_manage_users")),
+    ("admin_ad_promo_", (SUPER_ADMIN_ONLY,)),
     ("admin_support_", (SUPER_ADMIN_ONLY,)),
     ("admin_commercial_", (SUPER_ADMIN_ONLY,)),
     ("admin_satisfaction_confirm_", (SUPER_ADMIN_ONLY,)),
