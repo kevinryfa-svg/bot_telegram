@@ -3587,6 +3587,32 @@ def normalize_ad_promo_watermark_position(position):
     return position if position in AD_PROMO_WATERMARK_POSITIONS else "bottom_right"
 
 
+def parse_ad_promo_watermark_opacity(value):
+
+    text = str(value or "").strip().replace("%", "")
+
+    try:
+
+        number = float(text.replace(",", "."))
+
+    except Exception:
+
+        return None
+
+
+    if 10 <= number <= 100:
+
+        number = number / 100
+
+
+    if 0.1 <= number <= 1.0:
+
+        return round(number, 2)
+
+
+    return None
+
+
 def resolve_ad_promo_watermark_label(campaign, bot_username=None):
 
     text = sanitize_ad_promo_text(campaign.get("watermark_text") or "")
@@ -3663,10 +3689,13 @@ def build_watermark_filter(text, position, opacity):
         f"text='{safe_text}':"
         "fontcolor=white@"
         f"{opacity}:"
-        "fontsize=28:"
+        "fontsize=44:"
         "box=1:"
-        "boxcolor=black@0.35:"
-        "boxborderw=10:"
+        "boxcolor=black@0.55:"
+        "boxborderw=14:"
+        "shadowcolor=black@0.9:"
+        "shadowx=2:"
+        "shadowy=2:"
         f"{coordinates[position]}"
     )
 
@@ -3708,7 +3737,11 @@ async def prepare_ad_promo_watermarked_video(context, campaign, media, caption):
         return {
             "video": media.get("telegram_file_id"),
             "caption": caption,
-            "temp_paths": []
+            "temp_paths": [],
+            "watermark_status": {
+                "status": "none",
+                "message": "Marca de agua desactivada."
+            }
         }
 
 
@@ -3732,7 +3765,11 @@ async def prepare_ad_promo_watermarked_video(context, campaign, media, caption):
         return {
             "video": media.get("telegram_file_id"),
             "caption": caption_with_watermark,
-            "temp_paths": []
+            "temp_paths": [],
+            "watermark_status": {
+                "status": "caption",
+                "message": "Marca de agua añadida al caption."
+            }
         }
 
 
@@ -3756,14 +3793,24 @@ async def prepare_ad_promo_watermarked_video(context, campaign, media, caption):
                 "file_size": media.get("file_size"),
                 "duration": media.get("duration"),
                 "max_size_mb": campaign.get("watermark_max_file_size_mb"),
-                "max_duration_seconds": max_duration
+                "max_duration_seconds": max_duration,
+                "max_size_bytes": max_size
             }
         )
 
         return {
             "video": media.get("telegram_file_id"),
             "caption": caption_with_watermark,
-            "temp_paths": []
+            "temp_paths": [],
+            "watermark_status": {
+                "status": "skipped_limits",
+                "message": (
+                    "Marca incrustada omitida por límites. "
+                    f"Tamaño: {media.get('file_size') or '-'} bytes / límite: {max_size} bytes. "
+                    f"Duración: {media.get('duration') or '-'} s / límite: {max_duration} s. "
+                    "Se usó fallback en caption."
+                )
+            }
         }
 
 
@@ -3776,13 +3823,17 @@ async def prepare_ad_promo_watermarked_video(context, campaign, media, caption):
             scope="group",
             group_id=campaign.get("paid_group_id"),
             message="ffmpeg no disponible para incrustar marca de agua.",
-            metadata={"campaign_id": campaign.get("id"), "media_id": media.get("id")}
+            metadata={"campaign_id": campaign.get("id"), "media_id": media.get("id"), "watermark_mode": mode}
         )
 
         return {
             "video": media.get("telegram_file_id"),
             "caption": caption_with_watermark,
-            "temp_paths": []
+            "temp_paths": [],
+            "watermark_status": {
+                "status": "unavailable",
+                "message": "ffmpeg no está disponible. Se usó fallback en caption."
+            }
         }
 
 
@@ -3803,6 +3854,12 @@ async def prepare_ad_promo_watermarked_video(context, campaign, media, caption):
             campaign.get("watermark_position"),
             campaign.get("watermark_opacity")
         )
+        output_size = os.path.getsize(output_path) if os.path.exists(output_path) else None
+
+        if not output_size:
+
+            raise RuntimeError("ffmpeg no generó un archivo de salida válido.")
+
 
         log_event(
             "ad_promo_watermark_applied",
@@ -3811,13 +3868,23 @@ async def prepare_ad_promo_watermarked_video(context, campaign, media, caption):
             scope="group",
             group_id=campaign.get("paid_group_id"),
             message="Marca de agua incrustada en vídeo promocional.",
-            metadata={"campaign_id": campaign.get("id"), "media_id": media.get("id")}
+            metadata={
+                "campaign_id": campaign.get("id"),
+                "media_id": media.get("id"),
+                "output_file_size": output_size,
+                "watermark_opacity": campaign.get("watermark_opacity"),
+                "watermark_position": campaign.get("watermark_position")
+            }
         )
 
         return {
             "video": output_path,
             "caption": caption,
-            "temp_paths": temp_paths
+            "temp_paths": temp_paths,
+            "watermark_status": {
+                "status": "embedded",
+                "message": f"Marca de agua incrustada en vídeo. Tamaño salida: {output_size or '-'} bytes."
+            }
         }
 
     except Exception as e:
@@ -3832,7 +3899,7 @@ async def prepare_ad_promo_watermarked_video(context, campaign, media, caption):
             metadata={
                 "campaign_id": campaign.get("id"),
                 "media_id": media.get("id"),
-                "error": str(e)[:300]
+                "error": str(e)[:500]
             }
         )
 
@@ -3852,7 +3919,11 @@ async def prepare_ad_promo_watermarked_video(context, campaign, media, caption):
         return {
             "video": media.get("telegram_file_id"),
             "caption": caption_with_watermark,
-            "temp_paths": []
+            "temp_paths": [],
+            "watermark_status": {
+                "status": "failed",
+                "message": f"Falló el procesamiento ffmpeg. Se usó fallback en caption. Error: {str(e)[:300]}"
+            }
         }
 
 
@@ -4017,6 +4088,7 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
     failed = 0
     last_error = None
     migration_notice = None
+    watermark_statuses = []
 
     for media in media_rows:
 
@@ -4032,6 +4104,11 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
                 media,
                 caption
             )
+            if prepared_video.get("watermark_status"):
+
+                watermark_statuses.append(prepared_video.get("watermark_status"))
+
+
             video_payload = prepared_video.get("video")
 
             try:
@@ -4199,7 +4276,8 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
                     "failed": failed,
                     "reason": reason,
                     "error": last_error,
-                    "migration_notice": migration_notice
+                    "migration_notice": migration_notice,
+                    "watermark_statuses": watermark_statuses
                 }
             )
 
@@ -4217,7 +4295,8 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
                 "batch_id": batch_id,
                 "sent": sent,
                 "failed": failed,
-                "migration_notice": migration_notice
+                "migration_notice": migration_notice,
+                "watermark_statuses": watermark_statuses
             }
         )
 
@@ -4249,6 +4328,7 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
         "message": message,
         "error": last_error,
         "migration_notice": migration_notice,
+        "watermark_statuses": watermark_statuses,
         "media_counts": media_counts,
         **delete_summary
     }
@@ -4517,7 +4597,8 @@ def build_ad_promo_watermark_keyboard(campaign):
             InlineKeyboardButton("📝 Marca en caption", callback_data=f"admin_ad_promo_watermark_mode_{campaign_id}_caption")
         ],
         [InlineKeyboardButton("🎬 Marca incrustada en vídeo", callback_data=f"admin_ad_promo_watermark_mode_{campaign_id}_video")],
-        [InlineKeyboardButton("✏️ Cambiar texto", callback_data=f"admin_ad_promo_watermark_text_{campaign_id}")]
+        [InlineKeyboardButton("✏️ Cambiar texto", callback_data=f"admin_ad_promo_watermark_text_{campaign_id}")],
+        [InlineKeyboardButton("🌫 Cambiar opacidad", callback_data=f"admin_ad_promo_watermark_opacity_{campaign_id}")]
     ]
 
     positions = [
@@ -4546,6 +4627,38 @@ def build_ad_promo_watermark_keyboard(campaign):
     return InlineKeyboardMarkup(keyboard)
 
 
+def format_ad_promo_watermark_statuses(result):
+
+    statuses = result.get("watermark_statuses") or []
+
+    if not statuses:
+
+        return ""
+
+
+    labels = {
+        "embedded": "🎬 Marca incrustada en el vídeo",
+        "caption": "📝 Marca añadida solo al caption",
+        "skipped_limits": "⚠️ Marca en vídeo omitida por límites",
+        "unavailable": "⚠️ ffmpeg no disponible; marca solo en caption",
+        "failed": "⚠️ Falló ffmpeg; marca solo en caption",
+        "none": "🚫 Marca de agua desactivada"
+    }
+    lines = ["", "Marca de agua:"]
+
+    for status in statuses[:3]:
+
+        status_key = status.get("status")
+        lines.append(labels.get(status_key, status_key or "-"))
+
+        if status.get("message"):
+
+            lines.append(status.get("message")[:500])
+
+
+    return "\n".join(lines)
+
+
 def build_ad_promo_test_result_text(result, watermark=False):
 
     if result.get("ok"):
@@ -4557,6 +4670,7 @@ def build_ad_promo_test_result_text(result, watermark=False):
             f"Enviados: {result.get('sent', 0)}\n"
             f"Fallidos: {result.get('failed', 0)}"
             + (f"\n\n{migration_notice}" if migration_notice else "")
+            + (format_ad_promo_watermark_statuses(result) if watermark else "")
         )
 
 
@@ -4593,6 +4707,7 @@ def build_ad_promo_test_result_text(result, watermark=False):
             f"Fallidos: {result.get('failed', 0)}\n"
             + (f"{migration_notice}\n" if migration_notice else "")
             + f"Error: {str(error)[:500]}"
+            + (format_ad_promo_watermark_statuses(result) if watermark else "")
         )
 
 
@@ -4601,6 +4716,7 @@ def build_ad_promo_test_result_text(result, watermark=False):
         f"Enviados: {result.get('sent', 0)}\n"
         f"Fallidos: {result.get('failed', 0)}\n"
         f"Estado: {reason or 'nothing_sent'}"
+        + (format_ad_promo_watermark_statuses(result) if watermark else "")
     )
 
 
@@ -5590,6 +5706,34 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
 
             await update.message.reply_text(
                 "✅ Límites de marca de agua actualizados.",
+                reply_markup=build_ad_promo_watermark_keyboard(fetch_ad_promo_campaign(campaign_id))
+            )
+            return
+
+
+        if field == "watermark_opacity":
+
+            value = parse_ad_promo_watermark_opacity(text)
+
+            if value is None:
+
+                await update.message.reply_text(
+                    "❌ Opacidad no válida.\n\n"
+                    "Envía un decimal entre 0.1 y 1.0 o un porcentaje entre 10 y 100.\n"
+                    "Ejemplos: 0.75, 75, 100"
+                )
+                return
+
+
+            update_ad_promo_campaign(
+                campaign_id,
+                {"watermark_opacity": value},
+                actor_user_id=user_id
+            )
+            context.user_data.pop("ad_promo_edit", None)
+
+            await update.message.reply_text(
+                f"✅ Opacidad actualizada a {value}.",
                 reply_markup=build_ad_promo_watermark_keyboard(fetch_ad_promo_campaign(campaign_id))
             )
             return
@@ -23996,6 +24140,36 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "✏️ Escribe el nuevo texto de marca de agua, máximo 40 caracteres.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"admin_ad_promo_watermark_{campaign_id}")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_watermark_opacity_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_watermark_opacity_"
+        )
+
+        if not fetch_ad_promo_campaign(campaign_id):
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        context.user_data["ad_promo_edit"] = {
+            "campaign_id": campaign_id,
+            "field": "watermark_opacity"
+        }
+
+        await query.message.reply_text(
+            "🌫 Escribe la opacidad de la marca de agua.\n\n"
+            "Puedes enviar un decimal de 0.1 a 1.0 o un porcentaje de 10 a 100.\n"
+            "Ejemplos: 0.75, 75, 100",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("❌ Cancelar", callback_data=f"admin_ad_promo_watermark_{campaign_id}")]
             ])
