@@ -3,8 +3,11 @@ import json
 import os
 import requests
 import secrets
+import shutil
 import string
+import subprocess
 import time
+import tempfile
 import unicodedata
 
 from datetime import datetime, timedelta
@@ -2552,6 +2555,12 @@ AD_PROMO_CAMPAIGN_FIELDS = [
     "price_text",
     "cta_text",
     "tone",
+    "watermark_mode",
+    "watermark_text",
+    "watermark_position",
+    "watermark_max_file_size_mb",
+    "watermark_max_duration_seconds",
+    "watermark_opacity",
     "last_offer_check_at",
     "next_offer_check_at",
     "last_run_at",
@@ -2903,6 +2912,12 @@ def update_ad_promo_campaign(campaign_id, updates, actor_user_id=None):
         "price_text",
         "cta_text",
         "tone",
+        "watermark_mode",
+        "watermark_text",
+        "watermark_position",
+        "watermark_max_file_size_mb",
+        "watermark_max_duration_seconds",
+        "watermark_opacity",
         "last_run_at",
         "next_run_at",
         "last_offer_check_at",
@@ -3465,6 +3480,299 @@ async def build_ad_promo_caption(context, campaign):
     return "\n\n".join(part for part in parts if part)[:1024]
 
 
+AD_PROMO_WATERMARK_MODES = {"none", "caption", "video"}
+AD_PROMO_WATERMARK_POSITIONS = {
+    "bottom_right": "Abajo derecha",
+    "bottom_left": "Abajo izquierda",
+    "top_right": "Arriba derecha",
+    "top_left": "Arriba izquierda",
+    "center": "Centro"
+}
+
+
+def normalize_ad_promo_watermark_mode(mode):
+
+    mode = (mode or "caption").strip().lower()
+
+    return mode if mode in AD_PROMO_WATERMARK_MODES else "caption"
+
+
+def normalize_ad_promo_watermark_position(position):
+
+    position = (position or "bottom_right").strip().lower()
+
+    return position if position in AD_PROMO_WATERMARK_POSITIONS else "bottom_right"
+
+
+def resolve_ad_promo_watermark_label(campaign, bot_username=None):
+
+    text = sanitize_ad_promo_text(campaign.get("watermark_text") or "")
+
+    if text:
+
+        return text[:40]
+
+
+    if bot_username:
+
+        return f"@{bot_username}"[:40]
+
+
+    return "Ver acceso en el bot"
+
+
+def append_ad_promo_caption_watermark(caption, watermark_text):
+
+    watermark_text = sanitize_ad_promo_text(watermark_text)[:40]
+
+    if not watermark_text:
+
+        return caption
+
+
+    final_caption = f"{caption}\n\n💧 {watermark_text}" if caption else f"💧 {watermark_text}"
+
+    return final_caption[:1024]
+
+
+def is_ffmpeg_available():
+
+    return bool(shutil.which("ffmpeg"))
+
+
+def escape_ffmpeg_drawtext_text(text):
+
+    return (
+        sanitize_ad_promo_text(text)
+        .replace("\\", "\\\\")
+        .replace(":", "\\:")
+        .replace("'", "\\'")
+        .replace("%", "\\%")
+        .replace("\n", " ")
+    )[:40]
+
+
+def build_watermark_filter(text, position, opacity):
+
+    safe_text = escape_ffmpeg_drawtext_text(text)
+    position = normalize_ad_promo_watermark_position(position)
+
+    try:
+
+        opacity = float(opacity or 0.65)
+
+    except Exception:
+
+        opacity = 0.65
+
+
+    opacity = min(max(opacity, 0.1), 1.0)
+    coordinates = {
+        "bottom_right": "x=w-tw-24:y=h-th-24",
+        "bottom_left": "x=24:y=h-th-24",
+        "top_right": "x=w-tw-24:y=24",
+        "top_left": "x=24:y=24",
+        "center": "x=(w-tw)/2:y=(h-th)/2"
+    }
+
+    return (
+        "drawtext="
+        f"text='{safe_text}':"
+        "fontcolor=white@"
+        f"{opacity}:"
+        "fontsize=28:"
+        "box=1:"
+        "boxcolor=black@0.35:"
+        "boxborderw=10:"
+        f"{coordinates[position]}"
+    )
+
+
+def apply_video_watermark(input_path, output_path, text, position, opacity):
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-vf",
+        build_watermark_filter(text, position, opacity),
+        "-codec:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        output_path
+    ]
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=120
+    )
+
+    if result.returncode != 0:
+
+        raise RuntimeError((result.stderr or result.stdout or "ffmpeg failed")[:500])
+
+
+async def prepare_ad_promo_watermarked_video(context, campaign, media, caption):
+
+    mode = normalize_ad_promo_watermark_mode(campaign.get("watermark_mode"))
+
+    if mode == "none":
+
+        return {
+            "video": media.get("telegram_file_id"),
+            "caption": caption,
+            "temp_paths": []
+        }
+
+
+    bot_username = None
+
+    try:
+
+        bot_user = await context.bot.get_me()
+        bot_username = bot_user.username
+
+    except Exception:
+
+        bot_username = None
+
+
+    watermark_text = resolve_ad_promo_watermark_label(campaign, bot_username=bot_username)
+    caption_with_watermark = append_ad_promo_caption_watermark(caption, watermark_text)
+
+    if mode == "caption":
+
+        return {
+            "video": media.get("telegram_file_id"),
+            "caption": caption_with_watermark,
+            "temp_paths": []
+        }
+
+
+    max_size = int(campaign.get("watermark_max_file_size_mb") or 50) * 1024 * 1024
+    max_duration = int(campaign.get("watermark_max_duration_seconds") or 180)
+
+    if (media.get("file_size") and int(media.get("file_size") or 0) > max_size) or (
+        media.get("duration") and int(media.get("duration") or 0) > max_duration
+    ):
+
+        log_event(
+            "ad_promo_watermark_skipped_limits",
+            category="marketing",
+            severity="warning",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            message="Marca de agua de vídeo omitida por límites configurados.",
+            metadata={
+                "campaign_id": campaign.get("id"),
+                "media_id": media.get("id"),
+                "file_size": media.get("file_size"),
+                "duration": media.get("duration"),
+                "max_size_mb": campaign.get("watermark_max_file_size_mb"),
+                "max_duration_seconds": max_duration
+            }
+        )
+
+        return {
+            "video": media.get("telegram_file_id"),
+            "caption": caption_with_watermark,
+            "temp_paths": []
+        }
+
+
+    if not is_ffmpeg_available():
+
+        log_event(
+            "ad_promo_watermark_unavailable",
+            category="marketing",
+            severity="warning",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            message="ffmpeg no disponible para incrustar marca de agua.",
+            metadata={"campaign_id": campaign.get("id"), "media_id": media.get("id")}
+        )
+
+        return {
+            "video": media.get("telegram_file_id"),
+            "caption": caption_with_watermark,
+            "temp_paths": []
+        }
+
+
+    temp_paths = []
+
+    try:
+
+        token = secrets.token_hex(8)
+        input_path = os.path.join(tempfile.gettempdir(), f"ad_promo_{token}_in.mp4")
+        output_path = os.path.join(tempfile.gettempdir(), f"ad_promo_{token}_wm.mp4")
+        temp_paths.extend([input_path, output_path])
+        telegram_file = await context.bot.get_file(media.get("telegram_file_id"))
+        await telegram_file.download_to_drive(input_path)
+        apply_video_watermark(
+            input_path,
+            output_path,
+            watermark_text,
+            campaign.get("watermark_position"),
+            campaign.get("watermark_opacity")
+        )
+
+        log_event(
+            "ad_promo_watermark_applied",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            message="Marca de agua incrustada en vídeo promocional.",
+            metadata={"campaign_id": campaign.get("id"), "media_id": media.get("id")}
+        )
+
+        return {
+            "video": output_path,
+            "caption": caption,
+            "temp_paths": temp_paths
+        }
+
+    except Exception as e:
+
+        log_event(
+            "ad_promo_watermark_failed",
+            category="marketing",
+            severity="warning",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            message="No se pudo incrustar marca de agua en vídeo promocional.",
+            metadata={
+                "campaign_id": campaign.get("id"),
+                "media_id": media.get("id"),
+                "error": str(e)[:300]
+            }
+        )
+
+        for path in temp_paths:
+
+            if path and os.path.exists(path):
+
+                try:
+
+                    os.remove(path)
+
+                except Exception:
+
+                    pass
+
+
+        return {
+            "video": media.get("telegram_file_id"),
+            "caption": caption_with_watermark,
+            "temp_paths": []
+        }
+
+
 async def delete_old_ad_promo_posts(context, campaign):
 
     if not campaign.get("delete_old_posts"):
@@ -3574,14 +3882,35 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
     for media in media_rows:
 
         caption = await build_ad_promo_caption(context, campaign)
+        prepared_video = None
 
         try:
 
-            message = await context.bot.send_video(
-                chat_id=campaign.get("promo_group_telegram_id"),
-                video=media.get("telegram_file_id"),
-                caption=caption
+            prepared_video = await prepare_ad_promo_watermarked_video(
+                context,
+                campaign,
+                media,
+                caption
             )
+            video_payload = prepared_video.get("video")
+
+            if isinstance(video_payload, str) and os.path.exists(video_payload):
+
+                with open(video_payload, "rb") as video_file:
+
+                    message = await context.bot.send_video(
+                        chat_id=campaign.get("promo_group_telegram_id"),
+                        video=video_file,
+                        caption=prepared_video.get("caption")
+                    )
+
+            else:
+
+                message = await context.bot.send_video(
+                    chat_id=campaign.get("promo_group_telegram_id"),
+                    video=video_payload,
+                    caption=prepared_video.get("caption")
+                )
 
             with conn.cursor() as cur:
 
@@ -3604,7 +3933,7 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
                     message.message_id,
                     media.get("id"),
                     batch_id,
-                    caption
+                    prepared_video.get("caption")
                 ))
 
                 cur.execute("""
@@ -3630,6 +3959,21 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
                 message="No se pudo enviar un vídeo promocional.",
                 metadata={"campaign_id": campaign.get("id"), "media_id": media.get("id"), "error": str(e)[:300]}
             )
+
+
+        finally:
+
+            for path in (prepared_video or {}).get("temp_paths", []):
+
+                if path and os.path.exists(path):
+
+                    try:
+
+                        os.remove(path)
+
+                    except Exception:
+
+                        pass
 
 
     if not test:
@@ -3860,6 +4204,7 @@ def build_ad_promo_campaign_detail_text(campaign):
         f"Captura: {'ON' if campaign.get('auto_capture_enabled') else 'OFF'}\n"
         f"Random: {'ON' if campaign.get('randomize_media') else 'OFF'}\n"
         f"IA textos: {'ON' if campaign.get('ai_copy_enabled') else 'OFF'}\n"
+        f"Marca de agua: {normalize_ad_promo_watermark_mode(campaign.get('watermark_mode'))}\n"
         f"Vídeos activos: {media_summary.get('active')}\n"
         f"Última captura: {format_commercial_datetime(media_summary.get('last_capture')) if media_summary.get('last_capture') else '-'}\n"
         f"Frecuencia: {campaign.get('interval_minutes')} min\n"
@@ -3889,6 +4234,7 @@ def build_ad_promo_campaign_detail_keyboard(campaign):
         [InlineKeyboardButton("🎲 Random ON/OFF", callback_data=f"admin_ad_promo_random_{campaign_id}")],
         [InlineKeyboardButton("🤖 IA textos ON/OFF", callback_data=f"admin_ad_promo_ai_{campaign_id}")],
         [InlineKeyboardButton("🎥 Captura ON/OFF", callback_data=f"admin_ad_promo_capture_{campaign_id}")],
+        [InlineKeyboardButton("💧 Marca de agua", callback_data=f"admin_ad_promo_watermark_{campaign_id}")],
         [InlineKeyboardButton("📝 Editar oferta", callback_data=f"admin_ad_promo_edit_offer_{campaign_id}")],
         [InlineKeyboardButton("💶 Editar precio", callback_data=f"admin_ad_promo_edit_price_{campaign_id}")],
         [InlineKeyboardButton("📣 Editar CTA", callback_data=f"admin_ad_promo_edit_cta_{campaign_id}")],
@@ -3899,6 +4245,63 @@ def build_ad_promo_campaign_detail_keyboard(campaign):
         [InlineKeyboardButton("🗑 Borrar antiguos", callback_data=f"admin_ad_promo_delete_old_{campaign_id}")],
         [InlineKeyboardButton("⬅️ Campañas", callback_data="admin_ad_promo_campaigns")]
     ])
+
+
+def build_ad_promo_watermark_text(campaign):
+
+    mode = normalize_ad_promo_watermark_mode(campaign.get("watermark_mode"))
+    position = normalize_ad_promo_watermark_position(campaign.get("watermark_position"))
+
+    return (
+        "💧 Marca de agua\n\n"
+        "Estado actual:\n"
+        f"- Modo: {mode}\n"
+        f"- Texto: {campaign.get('watermark_text') or 'auto'}\n"
+        f"- Posición: {AD_PROMO_WATERMARK_POSITIONS.get(position)}\n"
+        f"- Límite tamaño: {campaign.get('watermark_max_file_size_mb') or 50} MB\n"
+        f"- Límite duración: {campaign.get('watermark_max_duration_seconds') or 180} segundos\n"
+        f"- Opacidad: {campaign.get('watermark_opacity') or 0.65}\n\n"
+        "Modo caption añade una línea discreta al texto. Modo vídeo intenta incrustarla con ffmpeg y usa fallback seguro si no se puede."
+    )
+
+
+def build_ad_promo_watermark_keyboard(campaign):
+
+    campaign_id = campaign.get("id")
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🚫 Sin marca", callback_data=f"admin_ad_promo_watermark_mode_{campaign_id}_none"),
+            InlineKeyboardButton("📝 Marca en caption", callback_data=f"admin_ad_promo_watermark_mode_{campaign_id}_caption")
+        ],
+        [InlineKeyboardButton("🎬 Marca incrustada en vídeo", callback_data=f"admin_ad_promo_watermark_mode_{campaign_id}_video")],
+        [InlineKeyboardButton("✏️ Cambiar texto", callback_data=f"admin_ad_promo_watermark_text_{campaign_id}")]
+    ]
+
+    positions = [
+        ("bottom_right", "↘️ Abajo derecha"),
+        ("bottom_left", "↙️ Abajo izquierda"),
+        ("top_right", "↗️ Arriba derecha"),
+        ("top_left", "↖️ Arriba izquierda"),
+        ("center", "⏺ Centro")
+    ]
+
+    for position, label in positions:
+
+        keyboard.append([InlineKeyboardButton(
+            label,
+            callback_data=f"admin_ad_promo_watermark_position_{campaign_id}_{position}"
+        )])
+
+
+    keyboard.extend([
+        [InlineKeyboardButton("⚙️ Cambiar límites", callback_data=f"admin_ad_promo_watermark_limits_{campaign_id}")],
+        [InlineKeyboardButton("🧪 Enviar prueba con marca", callback_data=f"admin_ad_promo_watermark_test_{campaign_id}")],
+        [InlineKeyboardButton("🔙 Volver campaña", callback_data=f"admin_ad_promo_campaign_{campaign_id}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 def build_ad_promo_library_text(campaign, media_rows):
@@ -4739,6 +5142,26 @@ def parse_ad_promo_callback_int(data, prefix, minimum=None):
     return parse_ad_promo_int(data.replace(prefix, "", 1), minimum=minimum)
 
 
+def parse_ad_promo_campaign_suffix(data, prefix):
+
+    if not isinstance(data, str) or not data.startswith(prefix):
+
+        return None, None
+
+
+    raw_value = data.replace(prefix, "", 1)
+
+    if "_" not in raw_value:
+
+        return None, None
+
+
+    campaign_id_text, suffix = raw_value.split("_", 1)
+    campaign_id = parse_ad_promo_int(campaign_id_text, minimum=1)
+
+    return campaign_id, suffix if campaign_id else None
+
+
 async def resolve_ad_promo_chat_details(context, chat_id):
 
     try:
@@ -4785,8 +5208,46 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
         numeric_fields = {
             "interval_minutes": 5,
             "batch_size": 1,
-            "max_posts": 1
+            "max_posts": 1,
+            "watermark_max_file_size_mb": 1,
+            "watermark_max_duration_seconds": 1
         }
+
+        if field == "watermark_limits":
+
+            parts = text.replace(",", " ").split()
+
+            if len(parts) < 2:
+
+                await update.message.reply_text("❌ Envía dos números: tamaño_mb duración_segundos. Ejemplo: 50 180")
+                return
+
+
+            max_size_mb = parse_ad_promo_int(parts[0], minimum=1)
+            max_duration = parse_ad_promo_int(parts[1], minimum=1)
+
+            if max_size_mb is None or max_duration is None:
+
+                await update.message.reply_text("❌ Límites no válidos. Ejemplo: 50 180")
+                return
+
+
+            update_ad_promo_campaign(
+                campaign_id,
+                {
+                    "watermark_max_file_size_mb": max_size_mb,
+                    "watermark_max_duration_seconds": max_duration
+                },
+                actor_user_id=user_id
+            )
+            context.user_data.pop("ad_promo_edit", None)
+
+            await update.message.reply_text(
+                "✅ Límites de marca de agua actualizados.",
+                reply_markup=build_ad_promo_watermark_keyboard(fetch_ad_promo_campaign(campaign_id))
+            )
+            return
+
 
         if field in numeric_fields:
 
@@ -4796,6 +5257,10 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
 
                 await update.message.reply_text("❌ Valor no válido. Envía un número válido.")
                 return
+
+        elif field == "watermark_text":
+
+            value = sanitize_ad_promo_text(text)[:40]
 
         elif field == "bot_link" and text.lower() == "auto":
 
@@ -4824,9 +5289,24 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
             metadata={"campaign_id": campaign_id, "field": field}
         )
 
+        if field == "watermark_text":
+
+            log_event(
+                "ad_promo_watermark_text_updated",
+                category="marketing",
+                severity="info",
+                scope="group",
+                group_id=campaign.get("paid_group_id"),
+                actor_user_id=user_id,
+                message="Texto de marca de agua actualizado.",
+                metadata={"campaign_id": campaign_id}
+            )
+
         await update.message.reply_text(
             "✅ Campaña actualizada.",
-            reply_markup=build_ad_promo_campaign_detail_keyboard(fetch_ad_promo_campaign(campaign_id))
+            reply_markup=build_ad_promo_watermark_keyboard(fetch_ad_promo_campaign(campaign_id))
+            if field.startswith("watermark_")
+            else build_ad_promo_campaign_detail_keyboard(fetch_ad_promo_campaign(campaign_id))
         )
         return
 
@@ -22946,6 +23426,189 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "❌ Creación de campaña cancelada.",
             reply_markup=build_ad_promo_panel_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_watermark_mode_"):
+
+        campaign_id, mode = parse_ad_promo_campaign_suffix(
+            data,
+            "admin_ad_promo_watermark_mode_"
+        )
+        mode = normalize_ad_promo_watermark_mode(mode)
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        campaign = update_ad_promo_campaign(
+            campaign_id,
+            {"watermark_mode": mode},
+            actor_user_id=user_id
+        )
+        log_event(
+            "ad_promo_watermark_mode_updated",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            actor_user_id=user_id,
+            message="Modo de marca de agua actualizado.",
+            metadata={"campaign_id": campaign_id, "watermark_mode": mode}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_watermark_text(campaign),
+            reply_markup=build_ad_promo_watermark_keyboard(campaign)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_watermark_position_"):
+
+        campaign_id, position = parse_ad_promo_campaign_suffix(
+            data,
+            "admin_ad_promo_watermark_position_"
+        )
+        position = normalize_ad_promo_watermark_position(position)
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        campaign = update_ad_promo_campaign(
+            campaign_id,
+            {"watermark_position": position},
+            actor_user_id=user_id
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_watermark_text(campaign),
+            reply_markup=build_ad_promo_watermark_keyboard(campaign)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_watermark_text_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_watermark_text_"
+        )
+
+        if not fetch_ad_promo_campaign(campaign_id):
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        context.user_data["ad_promo_edit"] = {
+            "campaign_id": campaign_id,
+            "field": "watermark_text"
+        }
+
+        await query.message.reply_text(
+            "✏️ Escribe el nuevo texto de marca de agua, máximo 40 caracteres.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"admin_ad_promo_watermark_{campaign_id}")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_watermark_limits_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_watermark_limits_"
+        )
+
+        if not fetch_ad_promo_campaign(campaign_id):
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        context.user_data["ad_promo_edit"] = {
+            "campaign_id": campaign_id,
+            "field": "watermark_limits"
+        }
+
+        await query.message.reply_text(
+            "⚙️ Envía límite de tamaño y duración como dos números.\n\nEjemplo: 50 180",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"admin_ad_promo_watermark_{campaign_id}")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_watermark_test_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_watermark_test_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        result = await send_ad_promo_campaign_batch(
+            context,
+            campaign,
+            test=True
+        )
+
+        await query.message.reply_text(
+            "🧪 Prueba con marca ejecutada\n\n"
+            f"Enviados: {result.get('sent', 0)}\n"
+            f"Fallidos: {result.get('failed', 0)}\n"
+            f"Estado: {result.get('reason') or 'ok'}",
+            reply_markup=build_ad_promo_watermark_keyboard(fetch_ad_promo_campaign(campaign_id))
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_watermark_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_watermark_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text("❌ Campaña no encontrada.")
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_watermark_text(campaign),
+            reply_markup=build_ad_promo_watermark_keyboard(campaign)
         )
 
         return
