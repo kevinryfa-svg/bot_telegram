@@ -5547,23 +5547,144 @@ async def continue_after_location_manual_review(context, chat_id, telegram_user,
 
     expires_at = review.get("expires_at") if review else None
     expires_text = format_commercial_datetime(expires_at) if expires_at else "-"
+    user_id = telegram_user.id if telegram_user else None
 
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            "📍 Tienes una revisión temporal activa\n\n"
-            f"Tu caso está en revisión temporal hasta {expires_text}.\n"
-            "Para continuar con esta comunidad, debes enviar una ubicación válida desde la zona permitida antes de esa fecha.\n\n"
-            "Esta revisión no sustituye la verificación real de ubicación."
+            "📍 Revisión temporal activa\n\n"
+            f"Tu revisión manual está aprobada hasta {expires_text}.\n"
+            "Puedes continuar ahora, aunque tu ubicación actual no coincida.\n\n"
+            "Esta aprobación es temporal y solo aplica a esta comunidad."
         ),
-        reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton(
-                "📍 Enviar ubicación ahora",
-                request_location=True
-            )]],
-            resize_keyboard=True,
-            one_time_keyboard=True
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+    log_event(
+        "location_manual_review_temp_access_used",
+        category="access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        message="Revisión temporal de ubicación usada para continuar flujo de acceso.",
+        metadata={
+            "review_id": review.get("id") if review else None,
+            "user_id": user_id,
+            "group_id": group_id,
+            "action": action,
+            "price_id": price_id,
+            "expires_at": str(expires_at) if expires_at else None
+        }
+    )
+
+    clear_location_gate_state(context)
+
+    if action == "free_access":
+
+        await create_free_access_for_user(
+            context,
+            chat_id,
+            telegram_user,
+            group_id
         )
+
+        return True
+
+
+    if action == "checkout":
+
+        await create_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return True
+
+
+    if action == "paypal_checkout":
+
+        await create_paypal_group_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return True
+
+
+    if action == "revolut_checkout":
+
+        await create_revolut_group_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return True
+
+
+    if action == "changenow_checkout":
+
+        await create_changenow_group_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return True
+
+
+    if action == "guardarian_checkout":
+
+        await create_guardarian_group_checkout_for_user(
+            context,
+            chat_id,
+            user_id,
+            group_id,
+            price_id
+        )
+
+        return True
+
+
+    if action == "location_only":
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "Tu revisión temporal sigue activa para esta comunidad.\n"
+                "Puedes volver al inicio o enviar una ubicación válida cuando estés en la zona permitida."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "📍 Enviar ubicación ahora",
+                    callback_data=f"location_review_send_location_{group_id}"
+                )],
+                [InlineKeyboardButton(
+                    "🏠 Inicio",
+                    callback_data="public_back_start"
+                )]
+            ])
+        )
+
+        return True
+
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="Tu revisión temporal está activa, pero no he podido continuar esta acción.",
+        reply_markup=build_group_recovery_keyboard(group_id)
     )
 
     return True
@@ -5823,7 +5944,8 @@ async def request_location_verification(
     group_id,
     action,
     price_id=None,
-    telegram_user=None
+    telegram_user=None,
+    allow_manual_review_bypass=True
 ):
 
     context.user_data["location_gate_pending"] = True
@@ -5850,7 +5972,7 @@ async def request_location_verification(
     )
 
 
-    if telegram_user:
+    if telegram_user and allow_manual_review_bypass:
 
         review = fetch_active_location_manual_review(
             telegram_user.id,
@@ -21299,7 +21421,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             group_id,
             context.user_data.get("location_review_action") or "location_only",
             price_id=context.user_data.get("location_review_price_id"),
-            telegram_user=query.from_user
+            telegram_user=query.from_user,
+            allow_manual_review_bypass=False
         )
 
         return
@@ -21387,15 +21510,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=approved_review.get("user_id"),
                 text=(
                     "📍 Revisión temporal aprobada\n\n"
-                    "Tu caso ha sido aprobado temporalmente.\n"
-                    f"Tienes hasta {expires_text} para enviar una ubicación válida para esta comunidad.\n\n"
+                    f"Tu caso ha sido aprobado temporalmente hasta {expires_text}.\n"
+                    "Durante este plazo podrás continuar el acceso a esta comunidad aunque tu ubicación actual no coincida.\n\n"
                     "Esta revisión no es permanente.\n"
-                    "Si no envías una ubicación válida antes de la fecha indicada, la revisión caducará."
+                    "Cuando caduque, tendrás que enviar una ubicación válida o solicitar una nueva revisión."
                 ),
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(
                         "📍 Enviar ubicación ahora",
                         callback_data=f"location_review_send_location_{approved_review.get('group_id')}"
+                    )],
+                    [InlineKeyboardButton(
+                        "🏠 Inicio",
+                        callback_data="public_back_start"
                     )]
                 ])
             )
