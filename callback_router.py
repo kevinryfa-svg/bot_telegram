@@ -2720,11 +2720,13 @@ def count_ad_promo_media(campaign_id):
 
         cur.execute("""
 
-            SELECT COUNT(*),
+            SELECT COUNT(*) FILTER (WHERE is_active=TRUE),
+                   COUNT(*) FILTER (WHERE is_active IS DISTINCT FROM TRUE),
+                   COUNT(*),
+                   MAX(created_at) FILTER (WHERE is_active=TRUE),
                    MAX(created_at)
             FROM ad_promo_media
             WHERE campaign_id=%s
-            AND is_active=TRUE
 
         """, (campaign_id,))
 
@@ -2733,8 +2735,15 @@ def count_ad_promo_media(campaign_id):
 
     return {
         "active": row[0] if row else 0,
-        "last_capture": row[1] if row else None
+        "inactive": row[1] if row else 0,
+        "total": row[2] if row else 0,
+        "last_capture": (row[3] or row[4]) if row else None
     }
+
+
+def get_ad_promo_media_counts(campaign_id):
+
+    return count_ad_promo_media(campaign_id)
 
 
 def fetch_ad_promo_media(campaign_id, limit=20):
@@ -2761,7 +2770,7 @@ def fetch_ad_promo_media(campaign_id, limit=20):
     return [row_to_ad_promo_media(row) for row in rows]
 
 
-def select_ad_promo_media_for_batch(campaign):
+def select_ad_promo_media_for_batch(campaign, test=False):
 
     order_sql = (
         "RANDOM()"
@@ -2769,7 +2778,20 @@ def select_ad_promo_media_for_batch(campaign):
         else "last_sent_at NULLS FIRST, usage_count ASC, created_at ASC"
     )
     campaign_id = campaign.get("id")
-    batch_size = max(int(campaign.get("batch_size") or 1), 1)
+    try:
+
+        batch_size = int(campaign.get("batch_size") or 1)
+
+    except Exception:
+
+        batch_size = 1
+
+
+    batch_size = max(batch_size, 1)
+
+    if test:
+
+        batch_size = max(batch_size, 1)
 
 
     with conn.cursor() as cur:
@@ -3868,16 +3890,51 @@ async def delete_old_ad_promo_posts(context, campaign):
 
 async def send_ad_promo_campaign_batch(context, campaign, test=False):
 
-    media_rows = select_ad_promo_media_for_batch(campaign)
+    media_counts = get_ad_promo_media_counts(campaign.get("id"))
+    media_rows = select_ad_promo_media_for_batch(campaign, test=test)
 
     if not media_rows:
 
-        return {"sent": 0, "failed": 0, "reason": "no_media"}
+        reason = "no_active_media" if media_counts.get("total") else "no_media"
+        message = (
+            "Hay vídeos guardados, pero ninguno está activo."
+            if reason == "no_active_media"
+            else "No hay vídeos activos capturados para esta campaña."
+        )
+
+        if test:
+
+            log_event(
+                "ad_promo_test_no_media",
+                category="marketing",
+                severity="warning",
+                scope="group",
+                group_id=campaign.get("paid_group_id"),
+                message=message,
+                metadata={
+                    "campaign_id": campaign.get("id"),
+                    "reason": reason,
+                    "total_media": media_counts.get("total"),
+                    "active_media": media_counts.get("active"),
+                    "inactive_media": media_counts.get("inactive")
+                }
+            )
+
+
+        return {
+            "ok": False,
+            "sent": 0,
+            "failed": 0,
+            "reason": reason,
+            "message": message,
+            "media_counts": media_counts
+        }
 
 
     batch_id = secrets.token_hex(8)
     sent = 0
     failed = 0
+    last_error = None
 
     for media in media_rows:
 
@@ -3950,6 +4007,7 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
         except Exception as e:
 
             failed += 1
+            last_error = str(e)[:500]
             log_event(
                 "ad_promo_send_failed",
                 category="marketing",
@@ -3957,7 +4015,7 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
                 scope="group",
                 group_id=campaign.get("paid_group_id"),
                 message="No se pudo enviar un vídeo promocional.",
-                metadata={"campaign_id": campaign.get("id"), "media_id": media.get("id"), "error": str(e)[:300]}
+                metadata={"campaign_id": campaign.get("id"), "media_id": media.get("id"), "error": str(e)[:300], "test": test}
             )
 
 
@@ -3988,6 +4046,54 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
 
 
     delete_summary = await delete_old_ad_promo_posts(context, campaign)
+    ok = sent > 0
+    reason = None
+    message = "Prueba enviada correctamente." if test and ok else "Tanda promocional enviada."
+
+    if not ok:
+
+        reason = "send_failed" if failed else "nothing_sent"
+        message = (
+            "La prueba no se pudo enviar."
+            if test and failed
+            else "No se envió ningún vídeo."
+        )
+
+        if test:
+
+            log_event(
+                "ad_promo_test_send_failed" if failed else "ad_promo_test_nothing_sent",
+                category="marketing",
+                severity="warning",
+                scope="group",
+                group_id=campaign.get("paid_group_id"),
+                message=message,
+                metadata={
+                    "campaign_id": campaign.get("id"),
+                    "batch_id": batch_id,
+                    "sent": sent,
+                    "failed": failed,
+                    "reason": reason,
+                    "error": last_error
+                }
+            )
+
+    elif test:
+
+        log_event(
+            "ad_promo_test_sent",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            message="Prueba de campaña promocional enviada.",
+            metadata={
+                "campaign_id": campaign.get("id"),
+                "batch_id": batch_id,
+                "sent": sent,
+                "failed": failed
+            }
+        )
 
     if sent:
 
@@ -4009,7 +4115,16 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
         )
 
 
-    return {"sent": sent, "failed": failed, **delete_summary}
+    return {
+        "ok": ok,
+        "sent": sent,
+        "failed": failed,
+        "reason": reason,
+        "message": message,
+        "error": last_error,
+        "media_counts": media_counts,
+        **delete_summary
+    }
 
 
 async def process_due_ad_promo_campaigns(context):
@@ -4021,7 +4136,7 @@ async def process_due_ad_promo_campaigns(context):
         summary["campaigns"] += 1
         result = await send_ad_promo_campaign_batch(context, campaign)
 
-        if result.get("reason") == "no_media":
+        if result.get("reason") in ("no_media", "no_active_media"):
 
             summary["skipped"] += 1
             update_ad_promo_campaign(
@@ -4304,18 +4419,117 @@ def build_ad_promo_watermark_keyboard(campaign):
     return InlineKeyboardMarkup(keyboard)
 
 
+def build_ad_promo_test_result_text(result, watermark=False):
+
+    if result.get("ok"):
+
+        return (
+            "✅ Prueba enviada correctamente\n\n"
+            f"Enviados: {result.get('sent', 0)}\n"
+            f"Fallidos: {result.get('failed', 0)}"
+        )
+
+
+    reason = result.get("reason")
+
+    if reason == "no_media":
+
+        return (
+            "⚠️ No hay vídeos activos para esta campaña.\n\n"
+            "El bot todavía no ha capturado vídeos del grupo/canal fuente.\n"
+            "Para solucionarlo:\n"
+            "1. Asegúrate de que el bot está en el grupo/canal fuente.\n"
+            "2. Publica o reenvía un vídeo nuevo allí para que el bot lo capture.\n"
+            "3. Vuelve a revisar la biblioteca de vídeos."
+        )
+
+
+    if reason == "no_active_media":
+
+        return (
+            "⚠️ Hay vídeos guardados, pero ninguno está activo.\n\n"
+            "Activa al menos un vídeo en la biblioteca antes de ejecutar la prueba."
+        )
+
+
+    if reason == "send_failed":
+
+        error = result.get("error") or "Sin detalle técnico disponible."
+
+        return (
+            "❌ La prueba no se pudo enviar.\n\n"
+            f"Enviados: {result.get('sent', 0)}\n"
+            f"Fallidos: {result.get('failed', 0)}\n"
+            f"Error: {str(error)[:500]}"
+        )
+
+
+    return (
+        "⚠️ No se envió ningún vídeo.\n\n"
+        f"Enviados: {result.get('sent', 0)}\n"
+        f"Fallidos: {result.get('failed', 0)}\n"
+        f"Estado: {reason or 'nothing_sent'}"
+    )
+
+
+def build_ad_promo_test_result_keyboard(campaign, result, watermark=False):
+
+    campaign_id = campaign.get("id")
+    retry_callback = (
+        f"admin_ad_promo_watermark_test_{campaign_id}"
+        if watermark
+        else f"admin_ad_promo_test_{campaign_id}"
+    )
+    keyboard = []
+    reason = result.get("reason")
+
+    if reason in ("no_media", "no_active_media"):
+
+        keyboard.append([InlineKeyboardButton("📚 Ver biblioteca", callback_data=f"admin_ad_promo_library_{campaign_id}")])
+
+
+    if reason != "no_active_media":
+
+        keyboard.append([InlineKeyboardButton("🔁 Reintentar prueba", callback_data=retry_callback)])
+
+
+    if reason == "send_failed":
+
+        keyboard.append([InlineKeyboardButton("⚙️ Revisar configuración", callback_data=f"admin_ad_promo_campaign_{campaign_id}")])
+
+
+    keyboard.append([InlineKeyboardButton("🔙 Volver campaña", callback_data=f"admin_ad_promo_campaign_{campaign_id}")])
+
+    if watermark:
+
+        keyboard.append([InlineKeyboardButton("💧 Marca de agua", callback_data=f"admin_ad_promo_watermark_{campaign_id}")])
+
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 def build_ad_promo_library_text(campaign, media_rows):
 
     media_summary = count_ad_promo_media(campaign.get("id"))
     lines = [
         f"📚 Biblioteca campaña #{campaign.get('id')}",
         "",
-        f"Vídeos capturados activos: {media_summary.get('active')}",
+        f"Total vídeos: {media_summary.get('total')}",
+        f"Activos: {media_summary.get('active')}",
+        f"Inactivos: {media_summary.get('inactive')}",
         f"Última captura: {format_commercial_datetime(media_summary.get('last_capture')) if media_summary.get('last_capture') else '-'}",
         f"Source chat ID: {campaign.get('source_chat_id') or '-'}",
         f"Captura automática: {'ON' if campaign.get('auto_capture_enabled') else 'OFF'}",
+        "",
+        "Para capturar vídeos, publica un vídeo nuevo en el grupo/canal fuente mientras el bot está dentro y con permisos.",
         ""
     ]
+
+    if not media_summary.get("active"):
+
+        lines.append("No hay vídeos activos. El bot solo puede publicar vídeos que haya capturado como file_id.")
+        lines.append("")
+
 
     if not media_rows:
 
@@ -23707,11 +23921,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         await query.message.reply_text(
-            "🧪 Prueba con marca ejecutada\n\n"
-            f"Enviados: {result.get('sent', 0)}\n"
-            f"Fallidos: {result.get('failed', 0)}\n"
-            f"Estado: {result.get('reason') or 'ok'}",
-            reply_markup=build_ad_promo_watermark_keyboard(fetch_ad_promo_campaign(campaign_id))
+            build_ad_promo_test_result_text(result, watermark=True),
+            reply_markup=build_ad_promo_test_result_keyboard(campaign, result, watermark=True)
         )
 
         return
@@ -24134,12 +24345,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         await query.message.reply_text(
-            "🧪 Prueba enviada\n\n"
-            f"Enviados: {result.get('sent', 0)}\n"
-            f"Fallidos: {result.get('failed', 0)}\n"
-            f"Borrados antiguos: {result.get('deleted', 0)}\n"
-            f"Estado: {result.get('reason') or 'ok'}",
-            reply_markup=build_ad_promo_campaign_detail_keyboard(fetch_ad_promo_campaign(campaign_id))
+            build_ad_promo_test_result_text(result),
+            reply_markup=build_ad_promo_test_result_keyboard(campaign, result)
         )
 
         return
