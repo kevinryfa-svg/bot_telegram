@@ -3737,8 +3737,6 @@ def deactivate_ad_promo_media(media_id):
 AD_PROMO_GROUP_PAGE_SIZE = 8
 
 AD_PROMO_CREATE_STEPS = [
-    ("source_chat_id", "Introduce el chat_id del grupo/canal fuente donde el bot capturará vídeos nuevos."),
-    ("promo_group_telegram_id", "Introduce el chat_id del grupo/canal gratuito donde se publicará la promoción."),
     ("batch_size", "¿Cuántos vídeos por tanda? Ejemplo: 5"),
     ("interval_minutes", "¿Cada cuántos minutos publicar? Ejemplo: 60"),
     ("max_posts", "Cupo máximo de posts visibles antes de borrar antiguos. Ejemplo: 50"),
@@ -3747,6 +3745,23 @@ AD_PROMO_CREATE_STEPS = [
     ("cta_text", "CTA. Ejemplo: Entra al bot y revisa los planes disponibles."),
     ("bot_link", "Link manual al bot/marketplace o escribe auto para generarlo automáticamente.")
 ]
+
+
+AD_PROMO_SOURCE_FORWARD_TEXT = (
+    "✅ Comunidad seleccionada.\n\n"
+    "Ahora configura el grupo/canal fuente de vídeos.\n\n"
+    "1. Añade este bot como administrador del grupo/canal fuente.\n"
+    "2. Reenvía aquí al bot cualquier mensaje de ese grupo/canal.\n"
+    "3. El bot detectará automáticamente de dónde viene y usará ese chat como fuente de vídeos.\n\n"
+    "No escribas IDs manualmente."
+)
+
+AD_PROMO_PROMO_FORWARD_TEXT = (
+    "Ahora configura el grupo/canal gratuito donde se publicará la publicidad.\n\n"
+    "1. Añade este bot como administrador del grupo/canal gratuito.\n"
+    "2. Reenvía aquí al bot cualquier mensaje de ese grupo/canal.\n"
+    "3. El bot detectará automáticamente el destino."
+)
 
 
 def fetch_ad_promo_selectable_groups(page=0, page_size=AD_PROMO_GROUP_PAGE_SIZE):
@@ -3887,6 +3902,51 @@ def build_ad_promo_group_selection_keyboard(page=0):
     return InlineKeyboardMarkup(keyboard)
 
 
+def build_ad_promo_forward_keyboard(manual_callback, back_callback="admin_ad_promo_create"):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✍️ Introducir ID manualmente", callback_data=manual_callback)],
+        [InlineKeyboardButton("🔙 Volver", callback_data=back_callback)],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="admin_ad_promo")]
+    ])
+
+
+def extract_forwarded_chat_from_message(message):
+
+    if not message:
+
+        return None
+
+
+    forward_origin = getattr(message, "forward_origin", None)
+    forward_chat = None
+
+
+    if forward_origin:
+
+        forward_chat = (
+            getattr(forward_origin, "chat", None)
+            or getattr(forward_origin, "sender_chat", None)
+        )
+
+
+    if not forward_chat:
+
+        forward_chat = getattr(message, "forward_from_chat", None)
+
+
+    if not forward_chat:
+
+        return None
+
+
+    return {
+        "chat_id": getattr(forward_chat, "id", None),
+        "title": getattr(forward_chat, "title", None) or getattr(forward_chat, "username", None),
+        "type": getattr(forward_chat, "type", None)
+    }
+
+
 def parse_ad_promo_int(value, minimum=None):
 
     text = str(value or "").strip()
@@ -4014,6 +4074,144 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
         return
 
 
+    wizard_step = wizard.get("step")
+
+    if wizard_step in ("source_forward", "promo_forward"):
+
+        forwarded_chat = extract_forwarded_chat_from_message(update.message)
+
+        if not forwarded_chat or not forwarded_chat.get("chat_id"):
+
+            await update.message.reply_text(
+                "No he podido detectar el grupo/canal de origen. "
+                "Reenvía un mensaje directamente desde el grupo/canal fuente y asegúrate de que el reenvío conserva el origen.",
+                reply_markup=build_ad_promo_forward_keyboard(
+                    "admin_ad_promo_manual_source"
+                    if wizard_step == "source_forward"
+                    else "admin_ad_promo_manual_promo"
+                )
+            )
+
+            return
+
+
+        try:
+
+            chat = await context.bot.get_chat(forwarded_chat.get("chat_id"))
+
+        except Exception:
+
+            await update.message.reply_text(
+                "No puedo acceder a ese grupo/canal. "
+                "Añade el bot como administrador y vuelve a reenviar un mensaje.",
+                reply_markup=build_ad_promo_forward_keyboard(
+                    "admin_ad_promo_manual_source"
+                    if wizard_step == "source_forward"
+                    else "admin_ad_promo_manual_promo"
+                )
+            )
+
+            return
+
+
+        chat_title = getattr(chat, "title", None) or forwarded_chat.get("title")
+        chat_type = getattr(chat, "type", None) or forwarded_chat.get("type")
+        wizard.setdefault("data", {})
+
+        if wizard_step == "source_forward":
+
+            wizard["data"]["source_chat_id"] = forwarded_chat.get("chat_id")
+            wizard["data"]["source_chat_title"] = chat_title
+            wizard["data"]["source_chat_type"] = chat_type
+            wizard["step"] = "promo_forward"
+            context.user_data["ad_promo_wizard"] = wizard
+
+            await update.message.reply_text(
+                "✅ Fuente configurada.\n\n"
+                f"{AD_PROMO_PROMO_FORWARD_TEXT}",
+                reply_markup=build_ad_promo_forward_keyboard(
+                    "admin_ad_promo_manual_promo",
+                    back_callback="admin_ad_promo_manual_source"
+                )
+            )
+
+            return
+
+
+        wizard["data"]["promo_group_telegram_id"] = forwarded_chat.get("chat_id")
+        wizard["data"]["promo_group_title"] = chat_title
+        wizard["data"]["promo_group_type"] = chat_type or "group"
+        wizard.pop("step", None)
+        wizard["step_index"] = 0
+        context.user_data["ad_promo_wizard"] = wizard
+
+        await update.message.reply_text(
+            "✅ Grupo/canal gratuito configurado.\n\n"
+            f"{AD_PROMO_CREATE_STEPS[0][1]}"
+        )
+
+        return
+
+
+    if wizard_step in ("manual_source", "manual_promo"):
+
+        chat_id = parse_ad_promo_int(text)
+
+        if chat_id is None:
+
+            await update.message.reply_text("❌ chat_id no válido. Envía el ID numérico completo.")
+            return
+
+
+        details = await resolve_ad_promo_chat_details(context, chat_id)
+
+        if not details.get("title") and not details.get("type"):
+
+            await update.message.reply_text(
+                "No puedo acceder a ese grupo/canal. "
+                "Añade el bot como administrador y vuelve a intentarlo."
+            )
+
+            return
+
+
+        wizard.setdefault("data", {})
+
+        if wizard_step == "manual_source":
+
+            wizard["data"]["source_chat_id"] = chat_id
+            wizard["data"]["source_chat_title"] = details.get("title")
+            wizard["data"]["source_chat_type"] = details.get("type")
+            wizard["step"] = "promo_forward"
+            context.user_data["ad_promo_wizard"] = wizard
+
+            await update.message.reply_text(
+                "✅ Fuente configurada.\n\n"
+                f"{AD_PROMO_PROMO_FORWARD_TEXT}",
+                reply_markup=build_ad_promo_forward_keyboard(
+                    "admin_ad_promo_manual_promo",
+                    back_callback="admin_ad_promo_manual_source"
+                )
+            )
+
+            return
+
+
+        wizard["data"]["promo_group_telegram_id"] = chat_id
+        wizard["data"]["promo_group_title"] = details.get("title")
+        wizard["data"]["promo_group_type"] = details.get("type") or "group"
+        wizard.pop("step", None)
+        wizard["step_index"] = 0
+        context.user_data["ad_promo_wizard"] = wizard
+
+        await update.message.reply_text(
+            "✅ Grupo/canal gratuito configurado.\n\n"
+            f"{AD_PROMO_CREATE_STEPS[0][1]}"
+        )
+
+        return
+
+
     step_index = wizard.get("step_index", 0)
     field, _prompt = AD_PROMO_CREATE_STEPS[step_index]
     int_fields = {
@@ -4021,12 +4219,6 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
         "interval_minutes": 5,
         "max_posts": 1
     }
-    signed_int_fields = {
-        "source_chat_id",
-        "promo_group_telegram_id"
-    }
-
-
     if field in int_fields:
 
         value = parse_ad_promo_int(text, minimum=int_fields[field])
@@ -4034,15 +4226,6 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
         if value is None:
 
             await update.message.reply_text("❌ Valor no válido. Envía un número válido.")
-            return
-
-    elif field in signed_int_fields:
-
-        value = parse_ad_promo_int(text)
-
-        if value is None:
-
-            await update.message.reply_text("❌ chat_id no válido. Envía el ID numérico completo.")
             return
 
     elif field == "bot_link" and text.lower() == "auto":
@@ -4074,10 +4257,10 @@ async def receive_ad_promo_admin_text(update: Update, context: ContextTypes.DEFA
         context,
         data.get("promo_group_telegram_id")
     )
-    data["source_chat_title"] = source_details.get("title")
-    data["source_chat_type"] = source_details.get("type")
-    data["promo_group_title"] = promo_details.get("title")
-    data["promo_group_type"] = promo_details.get("type") or "group"
+    data["source_chat_title"] = source_details.get("title") or data.get("source_chat_title")
+    data["source_chat_type"] = source_details.get("type") or data.get("source_chat_type")
+    data["promo_group_title"] = promo_details.get("title") or data.get("promo_group_title")
+    data["promo_group_type"] = promo_details.get("type") or data.get("promo_group_type") or "group"
     data["created_by_user_id"] = user_id
     campaign = create_ad_promo_campaign(data)
     context.user_data.pop("ad_promo_wizard", None)
@@ -21629,18 +21812,72 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "paid_group_id": group_id
         }
         context.user_data["ad_promo_wizard"] = {
-            "step_index": 0,
+            "step": "source_forward",
             "data": {
                 "paid_group_id": group_id
             }
         }
 
         await query.message.reply_text(
-            "✅ Comunidad seleccionada.\n\n"
-            f"{AD_PROMO_CREATE_STEPS[0][1]}",
+            AD_PROMO_SOURCE_FORWARD_TEXT,
+            reply_markup=build_ad_promo_forward_keyboard(
+                "admin_ad_promo_manual_source"
+            )
+        )
+
+        return
+
+
+    if data == "admin_ad_promo_manual_source":
+
+        wizard = context.user_data.get("ad_promo_wizard")
+
+        if not wizard:
+
+            await query.message.reply_text(
+                "⚠️ Primero elige la comunidad de pago.",
+                reply_markup=build_ad_promo_group_selection_keyboard(page=0)
+            )
+
+            return
+
+
+        wizard["step"] = "manual_source"
+        context.user_data["ad_promo_wizard"] = wizard
+
+        await query.message.reply_text(
+            "✍️ Introduce el chat_id del grupo/canal fuente.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Volver a elegir comunidad", callback_data="admin_ad_promo_create")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                [InlineKeyboardButton("🔙 Volver", callback_data="admin_ad_promo_create")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="admin_ad_promo")]
+            ])
+        )
+
+        return
+
+
+    if data == "admin_ad_promo_manual_promo":
+
+        wizard = context.user_data.get("ad_promo_wizard")
+
+        if not wizard or not (wizard.get("data") or {}).get("source_chat_id"):
+
+            await query.message.reply_text(
+                "⚠️ Primero configura el grupo/canal fuente.",
+                reply_markup=build_ad_promo_forward_keyboard("admin_ad_promo_manual_source")
+            )
+
+            return
+
+
+        wizard["step"] = "manual_promo"
+        context.user_data["ad_promo_wizard"] = wizard
+
+        await query.message.reply_text(
+            "✍️ Introduce el chat_id del grupo/canal gratuito donde se publicará la publicidad.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Volver a fuente", callback_data="admin_ad_promo_manual_source")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="admin_ad_promo")]
             ])
         )
 
