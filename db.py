@@ -1605,6 +1605,18 @@ def create_tables():
 
             tone TEXT DEFAULT 'conversion',
 
+            watermark_mode TEXT DEFAULT 'caption',
+
+            watermark_text TEXT,
+
+            watermark_position TEXT DEFAULT 'bottom_right',
+
+            watermark_max_file_size_mb INTEGER DEFAULT 50,
+
+            watermark_max_duration_seconds INTEGER DEFAULT 180,
+
+            watermark_opacity NUMERIC DEFAULT 0.65,
+
             last_offer_check_at TIMESTAMP,
 
             next_offer_check_at TIMESTAMP,
@@ -1622,6 +1634,47 @@ def create_tables():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
         );
+
+        """)
+
+        for column_name, column_sql in [
+            ("watermark_mode", "TEXT DEFAULT 'caption'"),
+            ("watermark_text", "TEXT"),
+            ("watermark_position", "TEXT DEFAULT 'bottom_right'"),
+            ("watermark_max_file_size_mb", "INTEGER DEFAULT 50"),
+            ("watermark_max_duration_seconds", "INTEGER DEFAULT 180"),
+            ("watermark_opacity", "NUMERIC DEFAULT 0.65")
+        ]:
+
+            try:
+
+                cur.execute(
+                    f"ALTER TABLE ad_promo_campaigns ADD COLUMN IF NOT EXISTS {column_name} {column_sql}"
+                )
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error añadiendo columna ad_promo_campaigns.{column_name}: {e}",
+                    "errors"
+                )
+
+
+        cur.execute("""
+
+            UPDATE ad_promo_campaigns
+            SET watermark_mode='caption'
+            WHERE watermark_mode IS NULL
+            OR watermark_mode NOT IN ('none', 'caption', 'video')
+
+        """)
+
+        cur.execute("""
+
+            UPDATE ad_promo_campaigns
+            SET watermark_position='bottom_right'
+            WHERE watermark_position IS NULL
+            OR watermark_position NOT IN ('bottom_right', 'bottom_left', 'top_right', 'top_left', 'center')
 
         """)
 
