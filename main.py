@@ -930,6 +930,10 @@ async def handle_media(update, context):
         await handle_group_backup_media(update, context)
         return
 
+    if context.user_data.get("ad_promo_wizard"):
+        await receive_ad_promo_admin_text(update, context)
+        return
+
     if context.user_data.get("marketplace_preview_media"):
         await receive_marketplace_preview_media(update, context)
         return
@@ -1048,6 +1052,13 @@ async def handle_text(update, context):
         return
 
     await receive_code(update, context)
+
+
+async def handle_private_ad_promo_forward(update, context):
+
+    if context.user_data.get("ad_promo_wizard"):
+        await receive_ad_promo_admin_text(update, context)
+        return
 
 
 # =========================
@@ -2191,6 +2202,13 @@ def main():
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             handle_text
+        )
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & ~filters.COMMAND,
+            handle_private_ad_promo_forward
         )
     )
 
