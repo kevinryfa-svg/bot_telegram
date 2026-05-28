@@ -1965,6 +1965,100 @@ def fetch_active_location_manual_review(user_id, group_id):
     return row_to_location_manual_review(row)
 
 
+def group_has_location_manual_reviews(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT 1
+            FROM location_manual_reviews
+            WHERE group_id=%s
+            LIMIT 1
+
+        """, (group_id,))
+
+        return cur.fetchone() is not None
+
+
+def should_show_owner_location_reviews_button(group_id):
+
+    location_enabled, _allowed_region, _region_type = get_group_location_gate(group_id)
+
+    return location_enabled is True or group_has_location_manual_reviews(group_id)
+
+
+def fetch_location_manual_review_status_counts(group_id):
+
+    counts = {
+        "pending": 0,
+        "approved_temp": 0,
+        "completed": 0,
+        "rejected": 0,
+        "expired": 0
+    }
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT status,
+                   COUNT(*)
+            FROM location_manual_reviews
+            WHERE group_id=%s
+            GROUP BY status
+
+        """, (group_id,))
+
+        rows = cur.fetchall()
+
+
+    for status, total in rows:
+
+        if status in counts:
+
+            counts[status] = total or 0
+
+
+    return counts
+
+
+def fetch_owner_location_manual_reviews(group_id, limit=10):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(LOCATION_MANUAL_REVIEW_FIELDS)}
+            FROM location_manual_reviews
+            WHERE group_id=%s
+            ORDER BY
+                CASE status
+                    WHEN 'pending' THEN 0
+                    WHEN 'approved_temp' THEN 1
+                    WHEN 'rejected' THEN 2
+                    WHEN 'completed' THEN 3
+                    WHEN 'expired' THEN 4
+                    ELSE 5
+                END,
+                updated_at DESC NULLS LAST,
+                created_at DESC NULLS LAST
+            LIMIT %s
+
+        """, (
+            group_id,
+            limit
+        ))
+
+        rows = cur.fetchall()
+
+
+    return [
+        row_to_location_manual_review(row)
+        for row in rows
+    ]
+
+
 def mark_location_manual_review_completed(user_id, group_id):
 
     with conn.cursor() as cur:
@@ -2226,6 +2320,148 @@ def format_location_manual_review_detail(review, ticket=None):
         f"2. Justificación residencia: {review.get('question_2_residence_proof') or '-'}\n"
         f"3. Cuándo podrá enviar ubicación válida: {review.get('question_3_valid_location_eta') or '-'}"
     )
+
+
+def format_location_review_status_label(status):
+
+    labels = {
+        "pending": "pendiente",
+        "approved_temp": "aprobada temporal",
+        "completed": "completada",
+        "expired": "caducada",
+        "rejected": "rechazada",
+        "cancelled": "cancelada"
+    }
+
+    return labels.get(status, status or "-")
+
+
+def format_location_review_reason_preview(reason):
+
+    if not reason:
+
+        return "-"
+
+
+    first_line = str(reason).strip().splitlines()[0].strip()
+
+    return first_line[:120] if first_line else "-"
+
+
+def build_owner_location_reviews_text(group_id, reviews, counts):
+
+    group_details = fetch_group_location_review_details(group_id) or {}
+    group_name = group_details.get("name") or group_id
+    lines = [
+        "📍 Revisiones manuales de ubicación",
+        f"Comunidad: {group_name}",
+        "",
+        f"Pendientes: {counts.get('pending', 0)}",
+        f"Aprobadas temporales: {counts.get('approved_temp', 0)}",
+        f"Completadas: {counts.get('completed', 0)}",
+        f"Rechazadas: {counts.get('rejected', 0)}",
+        f"Caducadas: {counts.get('expired', 0)}"
+    ]
+
+
+    if not reviews:
+
+        lines.extend([
+            "",
+            "Todavía no hay solicitudes de revisión manual de ubicación para esta comunidad."
+        ])
+
+        return "\n".join(lines)
+
+
+    lines.append("")
+
+
+    for review in reviews:
+
+        lines.extend([
+            f"#{review.get('id')}",
+            f"Usuario: {review.get('user_id') or '-'}",
+            f"Estado: {format_location_review_status_label(review.get('status'))}",
+            f"Creada: {format_commercial_datetime(review.get('created_at'))}",
+            f"Caduca: {format_commercial_datetime(review.get('expires_at')) if review.get('expires_at') else '-'}",
+            f"Motivo: {format_location_review_reason_preview(review.get('question_1_reason'))}",
+            ""
+        ])
+
+
+    return "\n".join(lines)[:3900]
+
+
+def build_owner_location_reviews_keyboard(group_id, reviews):
+
+    keyboard = []
+
+
+    for review in reviews:
+
+        keyboard.append([InlineKeyboardButton(
+            f"📍 Ver detalle #{review.get('id')}",
+            callback_data=f"owner_location_review_detail_{review.get('id')}"
+        )])
+
+
+    keyboard.extend([
+        [InlineKeyboardButton("⬅️ Volver al soporte", callback_data="owner_support_tickets")],
+        [InlineKeyboardButton("🔙 Volver al panel de comunidad", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_owner_location_review_detail_text(review, ticket=None):
+
+    base_text = format_location_manual_review_detail(review, ticket)
+
+    return (
+        f"{base_text}\n"
+        f"Creada: {format_commercial_datetime(review.get('created_at'))}\n"
+        f"Caduca: {format_commercial_datetime(review.get('expires_at')) if review.get('expires_at') else '-'}\n"
+        f"Completada: {format_commercial_datetime(review.get('completed_at')) if review.get('completed_at') else '-'}"
+    )
+
+
+def build_owner_location_review_detail_keyboard(review):
+
+    review_id = review.get("id")
+    group_id = review.get("group_id")
+    ticket_id = review.get("support_ticket_id")
+    keyboard = []
+
+
+    if review.get("status") == "pending":
+
+        keyboard.append([InlineKeyboardButton(
+            "✅ Aprobar revisión temporal 7 días",
+            callback_data=f"location_review_approve7_{review_id}"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            "❌ Rechazar revisión",
+            callback_data=f"location_review_reject_{review_id}"
+        )])
+
+
+    if ticket_id:
+
+        keyboard.append([InlineKeyboardButton(
+            "💬 Responder ticket",
+            callback_data=f"owner_support_reply_{ticket_id}"
+        )])
+
+
+    keyboard.extend([
+        [InlineKeyboardButton("🔙 Volver a revisiones", callback_data=f"owner_location_reviews_{group_id}")],
+        [InlineKeyboardButton("🔙 Volver al panel de comunidad", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 def build_location_manual_review_admin_keyboard(review):
@@ -9701,6 +9937,15 @@ def build_owner_section_keyboard(user_id, group_id, section):
 
         if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
             keyboard.append([InlineKeyboardButton("📍 Ubicación permitida", callback_data="owner_panel_location_info")])
+
+            if should_show_owner_location_reviews_button(group_id):
+
+                keyboard.append([InlineKeyboardButton(
+                    "📍 Revisiones de ubicación",
+                    callback_data=f"owner_location_reviews_{group_id}"
+                )])
+
+
             keyboard.append([InlineKeyboardButton("🛡 Anti-intrusos", callback_data="owner_panel_security_info")])
             keyboard.append([InlineKeyboardButton("🔗 Anti-links", callback_data="owner_panel_security_info")])
 
@@ -9735,10 +9980,17 @@ def build_owner_section_keyboard(user_id, group_id, section):
 
     elif section == "support":
 
-        keyboard.extend([
-            [InlineKeyboardButton("🛟 Ver solicitudes de soporte", callback_data="owner_support_tickets")],
-            [InlineKeyboardButton("💬 Abrir soporte sobre esta comunidad", callback_data=f"public_support_group_{group_id}")]
-        ])
+        keyboard.append([InlineKeyboardButton("🛟 Ver solicitudes de soporte", callback_data="owner_support_tickets")])
+
+        if should_show_owner_location_reviews_button(group_id):
+
+            keyboard.append([InlineKeyboardButton(
+                "📍 Revisiones de ubicación",
+                callback_data=f"owner_location_reviews_{group_id}"
+            )])
+
+
+        keyboard.append([InlineKeyboardButton("💬 Abrir soporte sobre esta comunidad", callback_data=f"public_support_group_{group_id}")])
 
     elif section == "backup":
 
@@ -9869,7 +10121,8 @@ OWNER_PANEL_ALLOWED_REPEATED_CALLBACKS = {
 OWNER_PANEL_ALLOWED_REPEATED_PREFIXES = (
     "owner_panel_help_",
     "owner_group_logs_",
-    "owner_group_users_"
+    "owner_group_users_",
+    "owner_location_"
 )
 
 
@@ -29104,6 +29357,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
 
 
+        if should_show_owner_location_reviews_button(group_id):
+
+            keyboard.append([InlineKeyboardButton(
+                "📍 Revisiones de ubicación",
+                callback_data=f"owner_location_reviews_{group_id}"
+            )])
+
+
         for ticket in tickets:
 
             username = format_support_username(ticket)
@@ -29133,6 +29394,83 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             build_support_tickets_text(tickets).replace("🛟 Tickets de soporte", "🛟 Tickets de soporte de esta comunidad"),
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    if data.startswith("owner_location_reviews_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "owner_location_reviews_"
+        )
+
+
+        if not group_id or not user_can_manage_location_manual_review(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver estas revisiones.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_owner_group"] = group_id
+        reviews = fetch_owner_location_manual_reviews(group_id)
+        counts = fetch_location_manual_review_status_counts(group_id)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_location_reviews_text(group_id, reviews, counts),
+            reply_markup=build_owner_location_reviews_keyboard(group_id, reviews)
+        )
+
+        return
+
+
+    if data.startswith("owner_location_review_detail_"):
+
+        review_id = extract_commercial_request_id(
+            data,
+            "owner_location_review_detail_"
+        )
+        review = fetch_location_manual_review(review_id)
+
+
+        if not review:
+
+            await query.message.reply_text(
+                "❌ Revisión de ubicación no encontrada.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = review.get("group_id")
+
+
+        if not user_can_manage_location_manual_review(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver estas revisiones.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_owner_group"] = group_id
+        ticket = fetch_support_ticket(review.get("support_ticket_id")) if review.get("support_ticket_id") else None
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_location_review_detail_text(review, ticket=ticket),
+            reply_markup=build_owner_location_review_detail_keyboard(review)
         )
 
         return
