@@ -661,6 +661,59 @@ def update_owner_addon_status(subscription_id, status):
     return row_to_owner_addon_subscription(row)
 
 
+def update_owner_addon_plan_from_stripe(
+    subscription_id,
+    addon_code,
+    stripe_price_id,
+    status=None,
+    current_period_start=None,
+    current_period_end=None,
+    cancel_at_period_end=None
+):
+
+    updates = [
+        "addon_code=%s",
+        "stripe_price_id=%s"
+    ]
+    params = [
+        addon_code,
+        stripe_price_id
+    ]
+
+    for field, value in [
+        ("status", status),
+        ("current_period_start", current_period_start),
+        ("current_period_end", current_period_end),
+        ("cancel_at_period_end", cancel_at_period_end)
+    ]:
+
+        if value is not None:
+
+            updates.append(f"{field}=%s")
+            params.append(value)
+
+
+    updates.append("updated_at=NOW()")
+    params.append(subscription_id)
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE owner_addon_subscriptions
+            SET {", ".join(updates)}
+            WHERE id=%s
+            RETURNING {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
+
+        """, params)
+
+        row = cur.fetchone()
+        conn.commit()
+
+
+    return row_to_owner_addon_subscription(row)
+
+
 def owner_has_active_addon(owner_user_id, addon_code, group_id=None):
 
     filters = [
