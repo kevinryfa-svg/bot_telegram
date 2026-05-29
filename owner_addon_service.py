@@ -2,6 +2,15 @@ from db import conn
 
 
 OWNER_ADDON_ACTIVE_STATUSES = ("active", "trialing")
+OWNER_ADDON_MANAGEMENT_STATUSES = (
+    "active",
+    "trialing",
+    "past_due",
+    "unpaid",
+    "incomplete",
+    "checkout_pending",
+    "canceled"
+)
 
 OWNER_ADDON_FEATURE_MAP = {
     "ad_promo": ("ad_promo", "bundle_ads_backups"),
@@ -252,6 +261,77 @@ def fetch_owner_addon_subscription_by_stripe_subscription_id(stripe_subscription
 
 
     return row_to_owner_addon_subscription(row)
+
+
+def fetch_owner_addon_subscription(subscription_id):
+
+    if not subscription_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
+            FROM owner_addon_subscriptions
+            WHERE id=%s
+            LIMIT 1
+
+        """, (subscription_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_owner_addon_subscription(row)
+
+
+def fetch_owner_addon_subscriptions_for_management(owner_user_id, group_id=None):
+
+    filters = [
+        "owner_user_id=%s",
+        "status = ANY(%s)"
+    ]
+    params = [
+        owner_user_id,
+        list(OWNER_ADDON_MANAGEMENT_STATUSES)
+    ]
+
+    if group_id is not None:
+
+        filters.append("(group_id=%s OR group_id IS NULL)")
+        params.append(group_id)
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
+            FROM owner_addon_subscriptions
+            WHERE {" AND ".join(filters)}
+            ORDER BY
+                CASE
+                    WHEN status IN ('active', 'trialing') THEN 0
+                    WHEN status IN ('past_due', 'unpaid') THEN 1
+                    WHEN status='checkout_pending' THEN 2
+                    WHEN status='incomplete' THEN 3
+                    WHEN status='canceled' THEN 4
+                    ELSE 5
+                END,
+                updated_at DESC,
+                id DESC
+
+        """, params)
+
+        rows = cur.fetchall()
+
+
+    return [
+        row_to_owner_addon_subscription(row)
+        for row in rows
+    ]
 
 
 def upsert_owner_addon_checkout_pending(
@@ -531,6 +611,54 @@ def cancel_owner_addon_subscription_from_stripe(
         status=status or "canceled",
         cancel_at_period_end=cancel_at_period_end
     )
+
+
+def update_owner_addon_cancel_at_period_end(subscription_id, cancel_at_period_end):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE owner_addon_subscriptions
+            SET cancel_at_period_end=%s,
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
+
+        """, (
+            cancel_at_period_end,
+            subscription_id
+        ))
+
+        row = cur.fetchone()
+        conn.commit()
+
+
+    return row_to_owner_addon_subscription(row)
+
+
+def update_owner_addon_status(subscription_id, status):
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE owner_addon_subscriptions
+            SET status=%s,
+                updated_at=NOW()
+            WHERE id=%s
+            RETURNING {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
+
+        """, (
+            status,
+            subscription_id
+        ))
+
+        row = cur.fetchone()
+        conn.commit()
+
+
+    return row_to_owner_addon_subscription(row)
 
 
 def owner_has_active_addon(owner_user_id, addon_code, group_id=None):
