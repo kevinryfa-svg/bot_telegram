@@ -122,6 +122,15 @@ from owner_addon_service import (
     update_owner_addon_subscription_from_stripe,
     upsert_owner_addon_checkout_pending
 )
+from owner_backup_service import (
+    create_owner_backup,
+    fetch_due_owner_backup_jobs,
+    fetch_owner_backup_file,
+    fetch_owner_backup_job,
+    fetch_owner_backups,
+    mark_owner_backup_job_run,
+    upsert_owner_backup_job
+)
 from group_registration_handler import (
     cancel_creator_group_link_request,
     confirm_backup_destination_token,
@@ -13448,7 +13457,7 @@ def build_owner_setup_assistant_keyboard(user_id, group_id):
         keyboard.append([InlineKeyboardButton("📜 Logs", callback_data="owner_panel_logs")])
 
     if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
-        keyboard.append([InlineKeyboardButton("🛡 Backup opcional", callback_data="owner_panel_backup")])
+        keyboard.append([InlineKeyboardButton("💾 Backups automáticos", callback_data="owner_panel_backup")])
 
 
     keyboard.extend(build_owner_panel_nav_keyboard().inline_keyboard)
@@ -13601,7 +13610,7 @@ def build_group_settings_keyboard(user_id, group_id):
         ])
 
         keyboard.append([
-            InlineKeyboardButton("🛡 Backup premium", callback_data="owner_panel_backup")
+            InlineKeyboardButton("💾 Backups automáticos", callback_data="owner_panel_backup")
         ])
 
 
@@ -14687,8 +14696,8 @@ OWNER_PANEL_SECTIONS = {
         "satisfaction"
     ),
     "owner_panel_backup": (
-        "🛡 Backup premium",
-        "Configura copia de seguridad de mensajes nuevos recibidos por el bot.",
+        "💾 Backups automáticos",
+        "Crea backups JSON manuales o automáticos de la configuración operativa de esta comunidad.",
         ["can_manage_groups"],
         "backup"
     ),
@@ -14733,7 +14742,8 @@ OWNER_PANEL_ALLOWED_REPEATED_PREFIXES = (
     "owner_panel_help_",
     "owner_group_logs_",
     "owner_group_users_",
-    "owner_location_"
+    "owner_location_",
+    "owner_backup_"
 )
 
 
@@ -14969,15 +14979,334 @@ def build_owner_backup_panel_text(group_id):
 
     group = fetch_group_basic_info(group_id)
     group_name = group[1] if group else f"Grupo {group_id}"
+    owner_user_id = get_group_owner_user_id(group_id)
+    job = fetch_owner_backup_job(owner_user_id, group_id) if owner_user_id else None
+    frequency = job.get("frequency") if job else "manual"
+    automatic_status = "Activo" if job and job.get("is_active") else "Manual"
+    next_run_at = format_commercial_datetime(job.get("next_run_at")) if job else "-"
 
     return (
-        "🛡 Backup premium\n\n"
+        "💾 Backups automáticos\n\n"
         f"Comunidad actual: {group_name or f'Grupo {group_id}'}\n\n"
-        "El backup premium copia mensajes nuevos que el bot recibe, usando solo Telegram Bot API. "
-        "No descarga archivos y no usa cuentas de usuario.\n\n"
-        "Desde aquí puedes abrir el panel real de backup, configurar origen/destino con código, "
-        "cambiar modo, revisar mensajes copiados y ver errores."
+        "Puedes crear un backup JSON manual o configurar backups automáticos de la configuración operativa de esta comunidad.\n\n"
+        "Incluye configuración básica, planes, permisos, resúmenes de códigos, links, campañas, servicios extra, encuestas, soporte y métricas.\n"
+        "No incluye secretos, tokens, datos de tarjetas, variables de entorno, conversaciones completas ni enlaces privados completos.\n\n"
+        f"Modo actual: {automatic_status}\n"
+        f"Frecuencia: {format_owner_backup_frequency(frequency)}\n"
+        f"Próximo backup: {next_run_at}"
     )
+
+
+def format_owner_backup_frequency(frequency):
+
+    labels = {
+        "manual": "Manual",
+        "daily": "Diario",
+        "weekly": "Semanal",
+        "monthly": "Mensual"
+    }
+
+    return labels.get((frequency or "manual").lower(), frequency or "-")
+
+
+def format_owner_backup_file_size(size):
+
+    try:
+
+        size = int(size or 0)
+
+    except Exception:
+
+        return "-"
+
+
+    if size >= 1024 * 1024:
+
+        return f"{size / (1024 * 1024):.1f} MB"
+
+    if size >= 1024:
+
+        return f"{size / 1024:.1f} KB"
+
+    return f"{size} B"
+
+
+def build_owner_backup_panel_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📥 Crear backup ahora", callback_data="owner_backup_create")],
+        [InlineKeyboardButton("📚 Ver últimos backups", callback_data="owner_backup_list")],
+        [InlineKeyboardButton("⚙️ Configurar frecuencia", callback_data="owner_backup_frequency")],
+        [InlineKeyboardButton("🛡 Backup de mensajes", callback_data="owner_backup_panel")],
+        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_backup_frequency_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Manual", callback_data="owner_backup_freq_manual")],
+        [InlineKeyboardButton("Diario", callback_data="owner_backup_freq_daily")],
+        [InlineKeyboardButton("Semanal", callback_data="owner_backup_freq_weekly")],
+        [InlineKeyboardButton("Mensual", callback_data="owner_backup_freq_monthly")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="owner_panel_backup")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def user_can_access_owner_backup(user_id, group_id):
+
+    if not group_id:
+
+        return False
+
+    if is_super_admin(user_id):
+
+        return True
+
+    owner_user_id = get_group_owner_user_id(group_id)
+
+    if owner_user_id and int(owner_user_id) == int(user_id):
+
+        return True
+
+    return user_has_group_permission_any(user_id, group_id, ["can_manage_groups"])
+
+
+def resolve_owner_backup_context(context, user_id):
+
+    group_id = get_selected_group_for_permissions(
+        context,
+        user_id,
+        ["can_manage_groups"]
+    )
+
+    if not group_id:
+
+        return None, None
+
+    owner_user_id = get_group_owner_user_id(group_id) or user_id
+
+    return owner_user_id, group_id
+
+
+def build_owner_backup_created_text(backup):
+
+    return (
+        "✅ Backup creado correctamente.\n\n"
+        f"ID: #{backup.get('id')}\n"
+        f"Tipo: {backup.get('backup_type') or '-'}\n"
+        f"Tamaño: {format_owner_backup_file_size(backup.get('file_size_bytes'))}\n"
+        f"Fecha: {format_commercial_datetime(backup.get('created_at'))}\n\n"
+        f"{backup.get('summary') or ''}"
+    )
+
+
+def build_owner_backup_list_text(owner_user_id, group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    rows = fetch_owner_backups(owner_user_id, group_id, limit=10)
+
+    if not rows:
+
+        return (
+            "📚 Últimos backups\n\n"
+            f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
+            "Todavía no hay backups creados para esta comunidad."
+        )
+
+    lines = [
+        "📚 Últimos backups",
+        "",
+        f"Comunidad: {group_name or f'Grupo {group_id}'}",
+        ""
+    ]
+
+    for backup in rows:
+
+        lines.append(
+            f"#{backup.get('id')} · {backup.get('backup_type') or '-'} · "
+            f"{backup.get('status') or '-'} · "
+            f"{format_owner_backup_file_size(backup.get('file_size_bytes'))} · "
+            f"{format_commercial_datetime(backup.get('created_at'))}"
+        )
+
+    return "\n".join(lines)
+
+
+def build_owner_backup_list_keyboard(owner_user_id, group_id):
+
+    rows = fetch_owner_backups(owner_user_id, group_id, limit=10)
+    keyboard = []
+
+    for backup in rows:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"Ver backup #{backup.get('id')}",
+                callback_data=f"owner_backup_view_{backup.get('id')}"
+            )
+        ])
+
+    keyboard.extend([
+        [InlineKeyboardButton("📥 Crear backup ahora", callback_data="owner_backup_create")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="owner_panel_backup")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_owner_backup_view_text(backup):
+
+    return (
+        "📦 Detalle de backup\n\n"
+        f"ID: #{backup.get('id')}\n"
+        f"Grupo: {backup.get('group_id')}\n"
+        f"Tipo: {backup.get('backup_type') or '-'}\n"
+        f"Estado: {backup.get('status') or '-'}\n"
+        f"Formato: {backup.get('file_format') or '-'}\n"
+        f"Tamaño: {format_owner_backup_file_size(backup.get('file_size_bytes'))}\n"
+        f"Creado: {format_commercial_datetime(backup.get('created_at'))}\n\n"
+        f"{backup.get('summary') or ''}"
+    )
+
+
+def build_owner_backup_view_keyboard(backup_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📎 Enviar archivo", callback_data=f"owner_backup_send_{backup_id}")],
+        [InlineKeyboardButton("⬅️ Backups", callback_data="owner_backup_list")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+async def send_owner_backup_document(context, chat_id, backup):
+
+    file_path = backup.get("file_path") if backup else None
+
+    if not file_path or not os.path.exists(file_path):
+
+        return False
+
+    try:
+
+        with open(file_path, "rb") as backup_file:
+
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=backup_file,
+                filename=os.path.basename(file_path),
+                caption=f"📎 Backup #{backup.get('id')} · {format_owner_backup_file_size(backup.get('file_size_bytes'))}"
+            )
+
+    except Exception:
+
+        return False
+
+    return True
+
+
+async def process_due_owner_backups(context):
+
+    summary = {
+        "processed": 0,
+        "created": 0,
+        "failed": 0
+    }
+
+    for job in fetch_due_owner_backup_jobs(limit=10):
+
+        summary["processed"] += 1
+
+        try:
+
+            backup = create_owner_backup(
+                job.get("owner_user_id"),
+                job.get("group_id"),
+                backup_type="automatic",
+                job_id=job.get("id")
+            )
+            mark_owner_backup_job_run(
+                job.get("id"),
+                job.get("frequency"),
+                success=True
+            )
+            summary["created"] += 1
+
+            log_event(
+                "owner_backup_auto_created",
+                category="backup",
+                severity="info",
+                scope="group",
+                group_id=job.get("group_id"),
+                actor_user_id=job.get("owner_user_id"),
+                target_user_id=job.get("owner_user_id"),
+                message="Backup automático creado.",
+                metadata={
+                    "owner_user_id": job.get("owner_user_id"),
+                    "group_id": job.get("group_id"),
+                    "job_id": job.get("id"),
+                    "backup_id": backup.get("id"),
+                    "file_size_bytes": backup.get("file_size_bytes"),
+                    "frequency": job.get("frequency")
+                }
+            )
+
+            try:
+
+                await context.bot.send_message(
+                    chat_id=job.get("owner_user_id"),
+                    text=(
+                        "✅ Backup automático creado.\n\n"
+                        f"Comunidad ID: {job.get('group_id')}\n"
+                        f"Backup: #{backup.get('id')}\n"
+                        f"Tamaño: {format_owner_backup_file_size(backup.get('file_size_bytes'))}"
+                    )
+                )
+
+            except Exception:
+
+                pass
+
+        except Exception as e:
+
+            try:
+
+                conn.rollback()
+
+            except Exception:
+
+                pass
+
+            mark_owner_backup_job_run(
+                job.get("id"),
+                job.get("frequency"),
+                success=False
+            )
+            summary["failed"] += 1
+
+            log_event(
+                "owner_backup_auto_failed",
+                category="backup",
+                severity="error",
+                scope="group",
+                group_id=job.get("group_id"),
+                actor_user_id=job.get("owner_user_id"),
+                target_user_id=job.get("owner_user_id"),
+                message="Error creando backup automático.",
+                metadata={
+                    "owner_user_id": job.get("owner_user_id"),
+                    "group_id": job.get("group_id"),
+                    "job_id": job.get("id"),
+                    "frequency": job.get("frequency"),
+                    "error": str(e)[:300]
+                }
+            )
+
+    return summary
 
 
 def build_owner_general_text(group_id):
@@ -27856,6 +28185,243 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data in (
+        "owner_backup_create",
+        "owner_backup_list",
+        "owner_backup_frequency"
+    ) or data.startswith("owner_backup_freq_"):
+
+        owner_user_id, group_id = resolve_owner_backup_context(context, user_id)
+
+        if not group_id or not user_can_access_owner_backup(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para gestionar backups de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if data == "owner_backup_create":
+
+            try:
+
+                backup = create_owner_backup(
+                    owner_user_id,
+                    group_id,
+                    backup_type="manual"
+                )
+
+                log_event(
+                    "owner_backup_created",
+                    category="backup",
+                    severity="info",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=user_id,
+                    target_user_id=owner_user_id,
+                    message="Backup manual creado.",
+                    metadata={
+                        "owner_user_id": owner_user_id,
+                        "group_id": group_id,
+                        "backup_id": backup.get("id"),
+                        "file_size_bytes": backup.get("file_size_bytes")
+                    }
+                )
+
+            except Exception as e:
+
+                try:
+
+                    conn.rollback()
+
+                except Exception:
+
+                    pass
+
+                log_event(
+                    "owner_backup_failed",
+                    category="backup",
+                    severity="error",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=user_id,
+                    target_user_id=owner_user_id,
+                    message="Error creando backup manual.",
+                    metadata={
+                        "owner_user_id": owner_user_id,
+                        "group_id": group_id,
+                        "error": str(e)[:300]
+                    }
+                )
+
+                await query.message.reply_text(
+                    f"❌ No he podido crear el backup: {str(e)[:300]}",
+                    reply_markup=build_owner_backup_panel_keyboard(group_id)
+                )
+
+                return
+
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_backup_created_text(backup),
+                reply_markup=build_owner_backup_view_keyboard(backup.get("id"))
+            )
+
+            if await send_owner_backup_document(context, query.message.chat_id, backup):
+
+                log_event(
+                    "owner_backup_file_sent",
+                    category="backup",
+                    severity="info",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=user_id,
+                    target_user_id=owner_user_id,
+                    message="Archivo de backup enviado.",
+                    metadata={
+                        "owner_user_id": owner_user_id,
+                        "group_id": group_id,
+                        "backup_id": backup.get("id"),
+                        "file_size_bytes": backup.get("file_size_bytes")
+                    }
+                )
+
+            return
+
+
+        if data == "owner_backup_list":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_backup_list_text(owner_user_id, group_id),
+                reply_markup=build_owner_backup_list_keyboard(owner_user_id, group_id)
+            )
+
+            return
+
+
+        if data == "owner_backup_frequency":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⚙️ Configurar frecuencia de backup\n\nElige cada cuánto quieres crear backups automáticos para esta comunidad.",
+                reply_markup=build_owner_backup_frequency_keyboard()
+            )
+
+            return
+
+
+        if data.startswith("owner_backup_freq_"):
+
+            frequency = data.replace("owner_backup_freq_", "", 1)
+
+            if frequency not in ("manual", "daily", "weekly", "monthly"):
+
+                await query.message.reply_text("❌ Frecuencia de backup no válida.")
+                return
+
+
+            job = upsert_owner_backup_job(owner_user_id, group_id, frequency)
+
+            log_event(
+                "owner_backup_frequency_updated",
+                category="backup",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                target_user_id=owner_user_id,
+                message="Frecuencia de backup actualizada.",
+                metadata={
+                    "owner_user_id": owner_user_id,
+                    "group_id": group_id,
+                    "job_id": job.get("id"),
+                    "frequency": job.get("frequency"),
+                    "is_active": job.get("is_active")
+                }
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Frecuencia actualizada.\n\n"
+                f"Frecuencia: {format_owner_backup_frequency(job.get('frequency'))}\n"
+                f"Automático: {'Sí' if job.get('is_active') else 'No'}\n"
+                f"Próximo backup: {format_commercial_datetime(job.get('next_run_at'))}",
+                reply_markup=build_owner_backup_panel_keyboard(group_id)
+            )
+
+            return
+
+
+    if data.startswith("owner_backup_view_") or data.startswith("owner_backup_send_"):
+
+        is_send = data.startswith("owner_backup_send_")
+        prefix = "owner_backup_send_" if is_send else "owner_backup_view_"
+        backup_id = extract_commercial_request_id(data, prefix)
+        backup = fetch_owner_backup_file(backup_id)
+
+        if not backup or not user_can_access_owner_backup(user_id, backup.get("group_id")):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver este backup.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = backup.get("group_id")
+        context.user_data["selected_owner_group"] = backup.get("group_id")
+
+        if not is_send:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_backup_view_text(backup),
+                reply_markup=build_owner_backup_view_keyboard(backup_id)
+            )
+
+            return
+
+
+        if not await send_owner_backup_document(context, query.message.chat_id, backup):
+
+            await query.message.reply_text(
+                "⚠️ El archivo ya no está disponible en almacenamiento temporal.",
+                reply_markup=build_owner_backup_view_keyboard(backup_id)
+            )
+
+            return
+
+
+        log_event(
+            "owner_backup_file_sent",
+            category="backup",
+            severity="info",
+            scope="group",
+            group_id=backup.get("group_id"),
+            actor_user_id=user_id,
+            target_user_id=backup.get("owner_user_id"),
+            message="Archivo de backup enviado.",
+            metadata={
+                "owner_user_id": backup.get("owner_user_id"),
+                "group_id": backup.get("group_id"),
+                "backup_id": backup.get("id"),
+                "file_size_bytes": backup.get("file_size_bytes")
+            }
+        )
+
+        return
+
+
     if data == "owner_backup_panel":
 
         groups = fetch_backup_owner_groups(user_id)
@@ -33468,11 +34034,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context,
                 query.message.chat_id,
                 build_owner_backup_panel_text(group_id),
-                reply_markup=build_owner_section_keyboard(
-                    user_id,
-                    group_id,
-                    section
-                )
+                reply_markup=build_owner_backup_panel_keyboard(group_id)
             )
 
             return
