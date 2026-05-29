@@ -180,6 +180,16 @@ from payment_access_service import (
     should_block_new_group_purchase
 )
 from payment_providers.guardarian_provider import process_guardarian_webhook
+from plan_payment_provider_helpers import (
+    PLAN_PAYMENT_PROVIDER_LABELS,
+    PLAN_PAYMENT_PROVIDER_CHANGENOW,
+    PLAN_PAYMENT_PROVIDER_GUARDARIAN,
+    PLAN_PAYMENT_PROVIDER_PAYPAL,
+    PLAN_PAYMENT_PROVIDER_REVOLUT,
+    PLAN_PAYMENT_PROVIDER_STRIPE,
+    format_plan_payment_provider,
+    normalize_plan_payment_provider
+)
 from payment_secret_store import (
     encrypt_provider_config,
     has_payment_encryption_key,
@@ -221,11 +231,11 @@ SERVER_URL = os.environ.get("SERVER_URL")
 revoke_link = None
 get_group_id = None
 
-OWNER_PAYMENT_PROVIDER_STRIPE = "stripe"
-OWNER_PAYMENT_PROVIDER_PAYPAL = "paypal"
-OWNER_PAYMENT_PROVIDER_REVOLUT = "revolut"
-OWNER_PAYMENT_PROVIDER_CHANGENOW = "changenow"
-OWNER_PAYMENT_PROVIDER_GUARDARIAN = "guardarian"
+OWNER_PAYMENT_PROVIDER_STRIPE = PLAN_PAYMENT_PROVIDER_STRIPE
+OWNER_PAYMENT_PROVIDER_PAYPAL = PLAN_PAYMENT_PROVIDER_PAYPAL
+OWNER_PAYMENT_PROVIDER_REVOLUT = PLAN_PAYMENT_PROVIDER_REVOLUT
+OWNER_PAYMENT_PROVIDER_CHANGENOW = PLAN_PAYMENT_PROVIDER_CHANGENOW
+OWNER_PAYMENT_PROVIDER_GUARDARIAN = PLAN_PAYMENT_PROVIDER_GUARDARIAN
 OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS = (
     "configuring_owner_payment_provider",
     "owner_payment_provider",
@@ -237,34 +247,6 @@ OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS = (
     "platform_payment_step",
     "platform_payment_payload"
 )
-
-
-PLAN_PAYMENT_PROVIDER_LABELS = {
-    OWNER_PAYMENT_PROVIDER_STRIPE: "💳 Stripe",
-    OWNER_PAYMENT_PROVIDER_PAYPAL: "🅿️ PayPal",
-    OWNER_PAYMENT_PROVIDER_REVOLUT: "🏦 Revolut",
-    OWNER_PAYMENT_PROVIDER_CHANGENOW: "💱 ChangeNOW",
-    OWNER_PAYMENT_PROVIDER_GUARDARIAN: "💳 Guardarian"
-}
-
-
-def normalize_plan_payment_provider(provider):
-
-    provider = (provider or OWNER_PAYMENT_PROVIDER_STRIPE).strip().lower()
-
-    if provider in PLAN_PAYMENT_PROVIDER_LABELS:
-
-        return provider
-
-    return OWNER_PAYMENT_PROVIDER_STRIPE
-
-
-def format_plan_payment_provider(provider):
-
-    return PLAN_PAYMENT_PROVIDER_LABELS.get(
-        normalize_plan_payment_provider(provider),
-        provider or "-"
-    )
 
 
 def get_group_plan_enabled_payment_providers(group_id):
@@ -314,31 +296,6 @@ def build_plan_provider_selection_keyboard(providers):
     keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="edit_group_plans")])
 
     return InlineKeyboardMarkup(keyboard)
-
-
-def get_plan_provider_id_prompt(provider):
-
-    provider = normalize_plan_payment_provider(provider)
-
-    if provider == OWNER_PAYMENT_PROVIDER_PAYPAL:
-
-        return (
-            "Paso 2️⃣\n\n"
-            "Envía el PayPal Plan ID, por ejemplo P-..."
-        )
-
-    if provider != OWNER_PAYMENT_PROVIDER_STRIPE:
-
-        return (
-            "Paso 2️⃣\n\n"
-            f"Envía una referencia interna para este plan de {format_plan_payment_provider(provider)}.\n"
-            "Ejemplo: mensual_vip"
-        )
-
-    return (
-        "Paso 2️⃣\n\n"
-        "Envía el Stripe Price ID, por ejemplo price_..."
-    )
 
 
 async def delete_query_message_safely(query):
@@ -31882,7 +31839,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                            price_id,
                            amount,
                            currency,
-                           COALESCE(payment_provider, 'stripe')
+                           COALESCE(NULLIF(payment_provider, ''), 'stripe')
 
                     FROM plans
 
@@ -38779,7 +38736,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                            amount,
                            currency,
                            duration_days,
-                           COALESCE(payment_provider, 'stripe')
+                           COALESCE(NULLIF(payment_provider, ''), 'stripe')
 
                     FROM plans
 
@@ -40773,7 +40730,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             cur.execute("""
 
-                SELECT COALESCE(payment_provider, 'stripe')
+                SELECT COALESCE(NULLIF(payment_provider, ''), 'stripe')
                 FROM plans
                 WHERE id=%s
                 AND group_id=%s
@@ -40805,7 +40762,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✏️ EDITAR PLAN\n\n"
 
             f"Método actual: {format_plan_payment_provider(plan_row[0])}\n"
-            "Para cambiar método de pago, crea un nuevo plan.\n\n"
+            "Para cambiar método de pago, crea un nuevo plan. "
+            "Puedes actualizar la referencia del proveedor actual.\n\n"
 
             "Paso 1️⃣\n"
             "Introduce el nuevo nombre del plan."
@@ -43321,7 +43279,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             cur.execute("""
 
-                SELECT COALESCE(payment_provider, 'stripe')
+                SELECT COALESCE(NULLIF(payment_provider, ''), 'stripe')
                 FROM plans
                 WHERE id=%s
                 AND group_id=%s
@@ -43758,7 +43716,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cur.execute("""
 
             SELECT id,
-                   COALESCE(payment_provider, 'stripe')
+                   COALESCE(NULLIF(payment_provider, ''), 'stripe')
             FROM plans
             WHERE price_id=%s
             AND group_id=%s

@@ -797,7 +797,7 @@ def stripe_webhook():
 
                     WHERE COALESCE(stripe_price_id, price_id)=%s
                     AND group_id=%s
-                    AND COALESCE(payment_provider, 'stripe')='stripe'
+                    AND COALESCE(NULLIF(payment_provider, ''), 'stripe')='stripe'
 
                 """, (
 

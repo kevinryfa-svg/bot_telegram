@@ -96,7 +96,7 @@ def register_checkout_routes(app):
                     WHERE COALESCE(stripe_price_id, price_id)=%s
                     AND group_id=%s
                     AND is_active=TRUE
-                    AND COALESCE(payment_provider, 'stripe')='stripe'
+                    AND COALESCE(NULLIF(payment_provider, ''), 'stripe')='stripe'
 
                 """, (
 

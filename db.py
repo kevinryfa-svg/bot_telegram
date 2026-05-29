@@ -413,6 +413,29 @@ def create_tables():
             pass
 
 
+        try:
+
+            cur.execute("""
+
+                UPDATE plans
+                SET payment_provider='stripe'
+                WHERE payment_provider IS NULL
+                OR payment_provider=''
+                OR payment_provider NOT IN (
+                    'stripe',
+                    'paypal',
+                    'revolut',
+                    'changenow',
+                    'guardarian'
+                )
+
+            """)
+
+        except Exception:
+
+            pass
+
+
         # =========================
         # TABLA SUSCRIPCIONES
         # =========================

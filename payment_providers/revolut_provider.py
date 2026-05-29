@@ -301,7 +301,7 @@ def fetch_revolut_group_plan(group_id, plan_id):
             WHERE p.id=%s
             AND p.group_id=%s
             AND p.is_active=TRUE
-            AND COALESCE(p.payment_provider, 'stripe')='revolut'
+            AND COALESCE(NULLIF(p.payment_provider, ''), 'stripe')='revolut'
             AND g.is_active=TRUE
             LIMIT 1
 
