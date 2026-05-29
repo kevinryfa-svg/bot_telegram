@@ -114,8 +114,12 @@ from owner_addon_service import (
     owner_addon_is_purchase_allowed,
     fetch_owner_addon_product,
     fetch_owner_addon_products,
+    fetch_owner_addon_subscription,
+    fetch_owner_addon_subscriptions_for_management,
     fetch_owner_addon_subscriptions,
     owner_has_feature,
+    update_owner_addon_cancel_at_period_end,
+    update_owner_addon_subscription_from_stripe,
     upsert_owner_addon_checkout_pending
 )
 from group_registration_handler import (
@@ -13834,14 +13838,13 @@ def build_owner_addons_active_text(owner_user_id, group_id):
 
     group = fetch_group_basic_info(group_id)
     group_name = group[1] if group else f"Comunidad {group_id}"
-    subscriptions = fetch_owner_addon_subscriptions(
+    subscriptions = fetch_owner_addon_subscriptions_for_management(
         owner_user_id,
-        group_id=group_id,
-        active_only=True
+        group_id=group_id
     )
 
     lines = [
-        "📦 Mis servicios activos",
+        "📦 Mis servicios",
         "",
         f"Comunidad: {group_name}"
     ]
@@ -13850,7 +13853,7 @@ def build_owner_addons_active_text(owner_user_id, group_id):
     if not subscriptions:
 
         lines.append("")
-        lines.append("No tienes servicios extra activos todavía.")
+        lines.append("No tienes servicios extra registrados todavía.")
         return "\n".join(lines)
 
 
@@ -13877,12 +13880,234 @@ def build_owner_addons_active_text(owner_user_id, group_id):
     return "\n".join(lines)
 
 
-def build_owner_addons_active_keyboard():
+def build_owner_addons_active_keyboard(owner_user_id=None, group_id=None):
 
-    return InlineKeyboardMarkup([
+    keyboard = []
+
+    if owner_user_id:
+
+        products = {
+            product.get("code"): product
+            for product in fetch_owner_addon_products(active_only=False)
+        }
+        subscriptions = fetch_owner_addon_subscriptions_for_management(
+            owner_user_id,
+            group_id=group_id
+        )
+
+        for subscription in subscriptions[:15]:
+
+            product = products.get(subscription.get("addon_code")) or {}
+            product_name = product.get("name") or subscription.get("addon_code")
+
+            keyboard.append([InlineKeyboardButton(
+                f"Gestionar · {product_name}",
+                callback_data=f"owner_addon_manage_{subscription.get('id')}"
+            )])
+
+
+    keyboard.extend([
         [InlineKeyboardButton("⬅️ Volver a servicios extra", callback_data="owner_addons_menu")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def mask_owner_addon_stripe_subscription_id(stripe_subscription_id):
+
+    if not stripe_subscription_id:
+
+        return "-"
+
+
+    return f"{str(stripe_subscription_id)[:8]}***"
+
+
+def owner_addon_status_meaning(status):
+
+    return {
+        "active": "Servicio activo",
+        "trialing": "Servicio activo",
+        "past_due": "Pago pendiente o fallido",
+        "unpaid": "Pago pendiente o fallido",
+        "checkout_pending": "Checkout creado, pago pendiente",
+        "canceled": "Servicio cancelado",
+        "incomplete": "Checkout o suscripción incompleta",
+        "incomplete_expired": "Checkout incompleto caducado"
+    }.get(status, "Estado no reconocido")
+
+
+def user_can_view_owner_addon_subscription(user_id, subscription):
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    group_id = subscription.get("group_id")
+
+    if group_id:
+
+        return user_has_group_permission_any(user_id, group_id, ["can_manage_groups"])
+
+
+    return int(subscription.get("owner_user_id") or 0) == int(user_id)
+
+
+def user_can_manage_owner_addon_billing(user_id, subscription):
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    return int(subscription.get("owner_user_id") or 0) == int(user_id)
+
+
+def build_owner_addon_manage_text(subscription):
+
+    product = fetch_owner_addon_product(subscription.get("addon_code")) or {}
+    group_id = subscription.get("group_id")
+    group = fetch_group_basic_info(group_id) if group_id else None
+    group_name = group[1] if group else "Todas tus comunidades" if group_id is None else f"Comunidad {group_id}"
+    status = subscription.get("status") or "-"
+    cancel_text = "sí" if subscription.get("cancel_at_period_end") else "no"
+
+    return (
+        "📦 Gestión de servicio extra\n\n"
+        f"Servicio: {product.get('name') or subscription.get('addon_code')}\n"
+        f"Comunidad: {group_name}\n"
+        f"Estado: {status}\n"
+        f"Significado: {owner_addon_status_meaning(status)}\n"
+        f"Precio: {format_owner_addon_price(product) if product else '-'}\n"
+        f"Fin del periodo: {format_commercial_datetime(subscription.get('current_period_end'))}\n"
+        f"Cancelación programada: {cancel_text}\n"
+        f"Stripe subscription: {mask_owner_addon_stripe_subscription_id(subscription.get('stripe_subscription_id'))}"
+    )
+
+
+def build_owner_addon_manage_keyboard(subscription, can_manage_billing=True):
+
+    keyboard = []
+    subscription_id = subscription.get("id")
+    status = subscription.get("status")
+
+    if status in ("active", "trialing") and can_manage_billing:
+
+        if subscription.get("cancel_at_period_end"):
+
+            keyboard.append([InlineKeyboardButton(
+                "✅ Reactivar renovación",
+                callback_data=f"owner_addon_reactivate_{subscription_id}"
+            )])
+
+        else:
+
+            keyboard.append([InlineKeyboardButton(
+                "🚫 Cancelar renovación",
+                callback_data=f"owner_addon_cancel_{subscription_id}"
+            )])
+
+
+    elif status in ("past_due", "unpaid"):
+
+        keyboard.append([InlineKeyboardButton("🧩 Ver servicios extra", callback_data="owner_addons_menu")])
+
+    elif status == "canceled":
+
+        keyboard.append([InlineKeyboardButton(
+            "💳 Contratar de nuevo",
+            callback_data=f"owner_addon_product_{subscription.get('addon_code')}"
+        )])
+
+
+    keyboard.extend([
+        [InlineKeyboardButton("⬅️ Mis servicios", callback_data="owner_addons_active")],
+        [InlineKeyboardButton("🧩 Servicios extra", callback_data="owner_addons_menu")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_owner_addon_cancel_confirm_text(subscription):
+
+    return (
+        "⚠️ ¿Seguro que quieres cancelar la renovación?\n\n"
+        "El servicio seguirá activo hasta el final del periodo actual.\n"
+        "Las herramientas premium seguirán disponibles hasta esa fecha si Stripe mantiene la suscripción activa.\n"
+        "No se procesan reembolsos desde el bot."
+    )
+
+
+def build_owner_addon_cancel_confirm_keyboard(subscription_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "✅ Sí, cancelar renovación",
+            callback_data=f"owner_addon_cancel_yes_{subscription_id}"
+        )],
+        [InlineKeyboardButton(
+            "❌ No, volver",
+            callback_data=f"owner_addon_manage_{subscription_id}"
+        )]
+    ])
+
+
+def apply_owner_addon_stripe_subscription_update(subscription_id, stripe_subscription):
+
+    status = stripe_subscription.get("status")
+    current_period_end = None
+
+    try:
+
+        current_period_end = datetime.fromtimestamp(
+            int(stripe_subscription.get("current_period_end"))
+        ) if stripe_subscription.get("current_period_end") else None
+
+    except Exception:
+
+        current_period_end = None
+
+
+    current_period_start = None
+
+    try:
+
+        current_period_start = datetime.fromtimestamp(
+            int(stripe_subscription.get("current_period_start"))
+        ) if stripe_subscription.get("current_period_start") else None
+
+    except Exception:
+
+        current_period_start = None
+
+
+    stripe_price_id = None
+    items = (stripe_subscription.get("items") or {}).get("data") or []
+
+    if items:
+
+        stripe_price_id = ((items[0].get("price") or {}).get("id"))
+
+
+    subscription = fetch_owner_addon_subscription(subscription_id)
+
+    if not subscription:
+
+        return None
+
+
+    return update_owner_addon_subscription_from_stripe(
+        subscription.get("stripe_subscription_id"),
+        stripe_customer_id=stripe_subscription.get("customer"),
+        stripe_price_id=stripe_price_id,
+        status=status,
+        current_period_start=current_period_start,
+        current_period_end=current_period_end,
+        cancel_at_period_end=stripe_subscription.get("cancel_at_period_end") is True
+    )
 
 
 def owner_can_use_ad_promo(user_id, group_id):
@@ -32623,6 +32848,290 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if (
+        data.startswith("owner_addon_manage_")
+        or data.startswith("owner_addon_cancel_yes_")
+        or data.startswith("owner_addon_cancel_")
+        or data.startswith("owner_addon_reactivate_")
+    ):
+
+        if data.startswith("owner_addon_manage_"):
+
+            subscription_id = extract_commercial_request_id(
+                data,
+                "owner_addon_manage_"
+            )
+            subscription = fetch_owner_addon_subscription(subscription_id)
+
+            if not subscription or not user_can_view_owner_addon_subscription(user_id, subscription):
+
+                await query.message.reply_text(
+                    "⛔ No tienes permiso para ver este servicio extra.",
+                    reply_markup=build_owner_panel_nav_keyboard()
+                )
+
+                return
+
+
+            if subscription.get("group_id"):
+
+                context.user_data["selected_group_admin"] = subscription.get("group_id")
+                context.user_data["selected_owner_group"] = subscription.get("group_id")
+
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_addon_manage_text(subscription),
+                reply_markup=build_owner_addon_manage_keyboard(
+                    subscription,
+                    can_manage_billing=user_can_manage_owner_addon_billing(user_id, subscription)
+                )
+            )
+
+            return
+
+
+        if data.startswith("owner_addon_cancel_yes_"):
+
+            subscription_id = extract_commercial_request_id(
+                data,
+                "owner_addon_cancel_yes_"
+            )
+            subscription = fetch_owner_addon_subscription(subscription_id)
+
+            if not subscription or not user_can_manage_owner_addon_billing(user_id, subscription):
+
+                await query.message.reply_text("⛔ No tienes permiso para cancelar esta renovación.")
+                return
+
+
+            if subscription.get("group_id"):
+
+                context.user_data["selected_group_admin"] = subscription.get("group_id")
+                context.user_data["selected_owner_group"] = subscription.get("group_id")
+
+
+            stripe_subscription_id = subscription.get("stripe_subscription_id")
+
+            if not stripe_subscription_id:
+
+                await query.message.reply_text(
+                    "⚠️ Esta suscripción no tiene ID de Stripe asociado. No puedo gestionarla desde el bot.",
+                    reply_markup=build_owner_addon_manage_keyboard(subscription)
+                )
+
+                return
+
+
+            try:
+
+                stripe_subscription = stripe.Subscription.modify(
+                    stripe_subscription_id,
+                    cancel_at_period_end=True
+                )
+                subscription = apply_owner_addon_stripe_subscription_update(
+                    subscription_id,
+                    stripe_subscription
+                ) or update_owner_addon_cancel_at_period_end(subscription_id, True)
+
+                log_event(
+                    "owner_addon_cancel_renewal_requested",
+                    category="billing",
+                    severity="info",
+                    scope="group",
+                    group_id=subscription.get("group_id"),
+                    actor_user_id=user_id,
+                    target_user_id=subscription.get("owner_user_id"),
+                    message="Cancelación de renovación de servicio extra solicitada.",
+                    metadata={
+                        "owner_user_id": subscription.get("owner_user_id"),
+                        "buyer_user_id": user_id,
+                        "group_id": subscription.get("group_id"),
+                        "addon_code": subscription.get("addon_code"),
+                        "stripe_subscription_id": stripe_subscription_id
+                    }
+                )
+
+            except Exception as e:
+
+                log_event(
+                    "owner_addon_cancel_renewal_failed",
+                    category="billing",
+                    severity="error",
+                    scope="group",
+                    group_id=subscription.get("group_id"),
+                    actor_user_id=user_id,
+                    target_user_id=subscription.get("owner_user_id"),
+                    message="Error cancelando renovación de servicio extra.",
+                    metadata={
+                        "owner_user_id": subscription.get("owner_user_id"),
+                        "buyer_user_id": user_id,
+                        "group_id": subscription.get("group_id"),
+                        "addon_code": subscription.get("addon_code"),
+                        "stripe_subscription_id": stripe_subscription_id,
+                        "error": str(e)[:300]
+                    }
+                )
+
+                await query.message.reply_text(
+                    f"❌ No he podido cancelar la renovación en Stripe: {str(e)[:300]}",
+                    reply_markup=build_owner_addon_manage_keyboard(subscription)
+                )
+
+                return
+
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Renovación cancelada. El servicio seguirá activo hasta el final del periodo.",
+                reply_markup=build_owner_addon_manage_keyboard(subscription)
+            )
+
+            return
+
+
+        if data.startswith("owner_addon_cancel_"):
+
+            subscription_id = extract_commercial_request_id(
+                data,
+                "owner_addon_cancel_"
+            )
+            subscription = fetch_owner_addon_subscription(subscription_id)
+
+            if not subscription or not user_can_manage_owner_addon_billing(user_id, subscription):
+
+                await query.message.reply_text("⛔ No tienes permiso para cancelar esta renovación.")
+                return
+
+
+            if subscription.get("group_id"):
+
+                context.user_data["selected_group_admin"] = subscription.get("group_id")
+                context.user_data["selected_owner_group"] = subscription.get("group_id")
+
+
+            if not subscription.get("stripe_subscription_id"):
+
+                await query.message.reply_text(
+                    "⚠️ Esta suscripción no tiene ID de Stripe asociado. No puedo gestionarla desde el bot.",
+                    reply_markup=build_owner_addon_manage_keyboard(subscription)
+                )
+
+                return
+
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_addon_cancel_confirm_text(subscription),
+                reply_markup=build_owner_addon_cancel_confirm_keyboard(subscription_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_addon_reactivate_"):
+
+            subscription_id = extract_commercial_request_id(
+                data,
+                "owner_addon_reactivate_"
+            )
+            subscription = fetch_owner_addon_subscription(subscription_id)
+
+            if not subscription or not user_can_manage_owner_addon_billing(user_id, subscription):
+
+                await query.message.reply_text("⛔ No tienes permiso para reactivar esta renovación.")
+                return
+
+
+            if subscription.get("group_id"):
+
+                context.user_data["selected_group_admin"] = subscription.get("group_id")
+                context.user_data["selected_owner_group"] = subscription.get("group_id")
+
+
+            stripe_subscription_id = subscription.get("stripe_subscription_id")
+
+            if not stripe_subscription_id:
+
+                await query.message.reply_text(
+                    "⚠️ Esta suscripción no tiene ID de Stripe asociado. No puedo gestionarla desde el bot.",
+                    reply_markup=build_owner_addon_manage_keyboard(subscription)
+                )
+
+                return
+
+
+            try:
+
+                stripe_subscription = stripe.Subscription.modify(
+                    stripe_subscription_id,
+                    cancel_at_period_end=False
+                )
+                subscription = apply_owner_addon_stripe_subscription_update(
+                    subscription_id,
+                    stripe_subscription
+                ) or update_owner_addon_cancel_at_period_end(subscription_id, False)
+
+                log_event(
+                    "owner_addon_renewal_reactivated",
+                    category="billing",
+                    severity="info",
+                    scope="group",
+                    group_id=subscription.get("group_id"),
+                    actor_user_id=user_id,
+                    target_user_id=subscription.get("owner_user_id"),
+                    message="Renovación de servicio extra reactivada.",
+                    metadata={
+                        "owner_user_id": subscription.get("owner_user_id"),
+                        "buyer_user_id": user_id,
+                        "group_id": subscription.get("group_id"),
+                        "addon_code": subscription.get("addon_code"),
+                        "stripe_subscription_id": stripe_subscription_id
+                    }
+                )
+
+            except Exception as e:
+
+                log_event(
+                    "owner_addon_renewal_reactivate_failed",
+                    category="billing",
+                    severity="error",
+                    scope="group",
+                    group_id=subscription.get("group_id"),
+                    actor_user_id=user_id,
+                    target_user_id=subscription.get("owner_user_id"),
+                    message="Error reactivando renovación de servicio extra.",
+                    metadata={
+                        "owner_user_id": subscription.get("owner_user_id"),
+                        "buyer_user_id": user_id,
+                        "group_id": subscription.get("group_id"),
+                        "addon_code": subscription.get("addon_code"),
+                        "stripe_subscription_id": stripe_subscription_id,
+                        "error": str(e)[:300]
+                    }
+                )
+
+                await query.message.reply_text(
+                    f"❌ No he podido reactivar la renovación en Stripe: {str(e)[:300]}",
+                    reply_markup=build_owner_addon_manage_keyboard(subscription)
+                )
+
+                return
+
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Renovación reactivada.",
+                reply_markup=build_owner_addon_manage_keyboard(subscription)
+            )
+
+            return
+
+
+    if (
         data in ("owner_addons_menu", "owner_addons_active")
         or data.startswith("owner_addon_product_")
         or data.startswith("owner_addon_checkout_")
@@ -32669,7 +33178,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context,
                 query.message.chat_id,
                 build_owner_addons_active_text(addon_owner_user_id, group_id),
-                reply_markup=build_owner_addons_active_keyboard()
+                reply_markup=build_owner_addons_active_keyboard(
+                    addon_owner_user_id,
+                    group_id=group_id
+                )
             )
 
             return
@@ -32770,7 +33282,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     context,
                     query.message.chat_id,
                     "✅ Este servicio ya está activo para esta comunidad.",
-                    reply_markup=build_owner_addons_active_keyboard()
+                    reply_markup=build_owner_addons_active_keyboard(
+                        owner_user_id,
+                        group_id=group_id
+                    )
                 )
 
                 return
