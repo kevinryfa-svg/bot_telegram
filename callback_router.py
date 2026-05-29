@@ -14198,6 +14198,107 @@ def build_ad_promo_owner_addon_required_keyboard():
     ])
 
 
+def owner_can_use_backups(user_id, group_id):
+
+    if is_super_admin(user_id):
+
+        return True, get_group_owner_user_id(group_id) if group_id else user_id
+
+
+    if not group_id:
+
+        return False, None
+
+
+    owner_user_id = get_group_owner_user_id(group_id)
+
+    if not owner_user_id:
+
+        return False, None
+
+
+    if int(owner_user_id) != int(user_id) and not user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
+
+        return False, owner_user_id
+
+
+    return (
+        owner_has_feature(
+            owner_user_id,
+            "backups",
+            group_id=group_id
+        ),
+        owner_user_id
+    )
+
+
+def build_owner_backup_addon_required_text(group_id=None):
+
+    lines = [
+        "💾 Backups automáticos",
+        "",
+        "Este servicio es un extra mensual para dueños de comunidades.",
+        "Permite crear backups manuales y programar backups automáticos.",
+        "Incluye configuración, resúmenes operativos, campañas, addons, encuestas y métricas.",
+        "No incluye secretos, tokens, tarjetas ni enlaces completos de invitación.",
+        "",
+        "Para usarlo necesitas activar Backups automáticos o Pack Publicidad + Backups."
+    ]
+
+    products = [
+        fetch_owner_addon_product("backups"),
+        fetch_owner_addon_product("bundle_ads_backups")
+    ]
+    products = [
+        product
+        for product in products
+        if product and product.get("is_active")
+    ]
+
+
+    if products:
+
+        lines.append("")
+        lines.append("Servicios disponibles:")
+
+        for product in products:
+
+            lines.append(f"- {product.get('name')}: {format_owner_addon_price(product)}")
+
+
+    return "\n".join(lines)
+
+
+def build_owner_backup_addon_required_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧩 Ver servicios extra", callback_data="owner_addons_menu")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def log_owner_backup_addon_gate(event_name, user_id, owner_user_id, group_id, action):
+
+    log_event(
+        event_name,
+        category="backup",
+        severity="info" if event_name.endswith("_allowed") else "warning",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=owner_user_id,
+        message="Puerta de addon de backups evaluada.",
+        metadata={
+            "user_id": user_id,
+            "owner_user_id": owner_user_id,
+            "group_id": group_id,
+            "callback": action,
+            "required_feature": "backups"
+        }
+    )
+
+
 def parse_ad_promo_callback_leading_int(data, prefix):
 
     if not data.startswith(prefix):
@@ -15057,21 +15158,7 @@ def build_owner_backup_frequency_keyboard():
 
 def user_can_access_owner_backup(user_id, group_id):
 
-    if not group_id:
-
-        return False
-
-    if is_super_admin(user_id):
-
-        return True
-
-    owner_user_id = get_group_owner_user_id(group_id)
-
-    if owner_user_id and int(owner_user_id) == int(user_id):
-
-        return True
-
-    return user_has_group_permission_any(user_id, group_id, ["can_manage_groups"])
+    return owner_can_use_backups(user_id, group_id)[0]
 
 
 def resolve_owner_backup_context(context, user_id):
@@ -15220,11 +15307,42 @@ async def process_due_owner_backups(context):
     for job in fetch_due_owner_backup_jobs(limit=10):
 
         summary["processed"] += 1
+        owner_user_id = get_group_owner_user_id(job.get("group_id")) or job.get("owner_user_id")
+
+        if not owner_user_id or not owner_has_feature(owner_user_id, "backups", group_id=job.get("group_id")):
+
+            summary["skipped_missing_addon"] = int(summary.get("skipped_missing_addon", 0) or 0) + 1
+
+            log_event(
+                "owner_backup_auto_skipped_missing_addon",
+                category="backup",
+                severity="warning",
+                scope="group",
+                group_id=job.get("group_id"),
+                actor_user_id=owner_user_id,
+                target_user_id=owner_user_id,
+                message="Backup automático omitido porque falta addon activo.",
+                metadata={
+                    "owner_user_id": owner_user_id,
+                    "group_id": job.get("group_id"),
+                    "job_id": job.get("id"),
+                    "frequency": job.get("frequency"),
+                    "required_feature": "backups"
+                }
+            )
+
+            mark_owner_backup_job_run(
+                job.get("id"),
+                job.get("frequency"),
+                success=False
+            )
+
+            continue
 
         try:
 
             backup = create_owner_backup(
-                job.get("owner_user_id"),
+                owner_user_id,
                 job.get("group_id"),
                 backup_type="automatic",
                 job_id=job.get("id")
@@ -15242,11 +15360,11 @@ async def process_due_owner_backups(context):
                 severity="info",
                 scope="group",
                 group_id=job.get("group_id"),
-                actor_user_id=job.get("owner_user_id"),
-                target_user_id=job.get("owner_user_id"),
+                actor_user_id=owner_user_id,
+                target_user_id=owner_user_id,
                 message="Backup automático creado.",
                 metadata={
-                    "owner_user_id": job.get("owner_user_id"),
+                    "owner_user_id": owner_user_id,
                     "group_id": job.get("group_id"),
                     "job_id": job.get("id"),
                     "backup_id": backup.get("id"),
@@ -15258,7 +15376,7 @@ async def process_due_owner_backups(context):
             try:
 
                 await context.bot.send_message(
-                    chat_id=job.get("owner_user_id"),
+                    chat_id=owner_user_id,
                     text=(
                         "✅ Backup automático creado.\n\n"
                         f"Comunidad ID: {job.get('group_id')}\n"
@@ -15294,11 +15412,11 @@ async def process_due_owner_backups(context):
                 severity="error",
                 scope="group",
                 group_id=job.get("group_id"),
-                actor_user_id=job.get("owner_user_id"),
-                target_user_id=job.get("owner_user_id"),
+                actor_user_id=owner_user_id,
+                target_user_id=owner_user_id,
                 message="Error creando backup automático.",
                 metadata={
-                    "owner_user_id": job.get("owner_user_id"),
+                    "owner_user_id": owner_user_id,
                     "group_id": job.get("group_id"),
                     "job_id": job.get("id"),
                     "frequency": job.get("frequency"),
@@ -28193,17 +28311,47 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         owner_user_id, group_id = resolve_owner_backup_context(context, user_id)
 
-        if not group_id or not user_can_access_owner_backup(user_id, group_id):
+        if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para gestionar backups de esta comunidad.",
+                "⚠️ No he podido resolver la comunidad para gestionar backups.",
                 reply_markup=build_owner_panel_nav_keyboard()
             )
 
             return
 
 
+        allowed, owner_user_id = owner_can_use_backups(user_id, group_id)
+
+        if not allowed:
+
+            log_owner_backup_addon_gate(
+                "owner_backup_addon_required",
+                user_id,
+                owner_user_id,
+                group_id,
+                data
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_backup_addon_required_text(group_id),
+                reply_markup=build_owner_backup_addon_required_keyboard()
+            )
+
+            return
+
+
         if data == "owner_backup_create":
+
+            log_owner_backup_addon_gate(
+                "owner_backup_addon_allowed",
+                user_id,
+                owner_user_id,
+                group_id,
+                data
+            )
 
             try:
 
@@ -28329,6 +28477,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             job = upsert_owner_backup_job(owner_user_id, group_id, frequency)
 
+            log_owner_backup_addon_gate(
+                "owner_backup_addon_allowed",
+                user_id,
+                owner_user_id,
+                group_id,
+                data
+            )
+
             log_event(
                 "owner_backup_frequency_updated",
                 category="backup",
@@ -28367,7 +28523,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         backup_id = extract_commercial_request_id(data, prefix)
         backup = fetch_owner_backup_file(backup_id)
 
-        if not backup or not user_can_access_owner_backup(user_id, backup.get("group_id")):
+        if not backup:
 
             await query.message.reply_text(
                 "⛔ No tienes permiso para ver este backup.",
@@ -28379,6 +28535,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["selected_group_admin"] = backup.get("group_id")
         context.user_data["selected_owner_group"] = backup.get("group_id")
+
+        allowed, owner_user_id = owner_can_use_backups(user_id, backup.get("group_id"))
+
+        if not allowed:
+
+            log_owner_backup_addon_gate(
+                "owner_backup_addon_required",
+                user_id,
+                owner_user_id,
+                backup.get("group_id"),
+                data
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_backup_addon_required_text(backup.get("group_id")),
+                reply_markup=build_owner_backup_addon_required_keyboard()
+            )
+
+            return
+
 
         if not is_send:
 
@@ -28402,6 +28580,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        log_owner_backup_addon_gate(
+            "owner_backup_addon_allowed",
+            user_id,
+            owner_user_id,
+            backup.get("group_id"),
+            data
+        )
+
         log_event(
             "owner_backup_file_sent",
             category="backup",
@@ -28420,6 +28606,79 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
+
+
+    old_owner_backup_callbacks = (
+        data == "owner_backup_panel"
+        or data in (
+            "owner_backup_activate",
+            "owner_backup_change_destination",
+            "owner_backup_destination_token",
+            "owner_backup_change_mode",
+            "owner_backup_toggle_author",
+            "owner_backup_pause",
+            "owner_backup_messages",
+            "owner_backup_errors"
+        )
+        or data.startswith("owner_backup_mode_config_")
+        or data.startswith("owner_backup_set_mode_")
+        or data.startswith("owner_backup_author_config_")
+        or data.startswith("owner_backup_confirm_destination_")
+        or data.startswith("owner_backup_source_")
+        or data.startswith("owner_backup_dest_")
+    )
+
+    if old_owner_backup_callbacks:
+
+        _backup_owner_user_id, backup_group_id = resolve_owner_backup_context(context, user_id)
+
+        if not backup_group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido resolver la comunidad para gestionar backups.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        allowed, backup_owner_user_id = owner_can_use_backups(user_id, backup_group_id)
+
+        if not allowed:
+
+            log_owner_backup_addon_gate(
+                "owner_backup_addon_required",
+                user_id,
+                backup_owner_user_id,
+                backup_group_id,
+                data
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_backup_addon_required_text(backup_group_id),
+                reply_markup=build_owner_backup_addon_required_keyboard()
+            )
+
+            return
+
+
+        if data in (
+            "owner_backup_panel",
+            "owner_backup_activate",
+            "owner_backup_destination_token",
+            "owner_backup_change_mode",
+            "owner_backup_pause"
+        ):
+
+            log_owner_backup_addon_gate(
+                "owner_backup_addon_allowed",
+                user_id,
+                backup_owner_user_id,
+                backup_group_id,
+                data
+            )
 
 
     if data == "owner_backup_panel":
@@ -34029,6 +34288,36 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         if data == "owner_panel_backup":
+
+            allowed, owner_user_id = owner_can_use_backups(user_id, group_id)
+
+            if not allowed:
+
+                log_owner_backup_addon_gate(
+                    "owner_backup_addon_required",
+                    user_id,
+                    owner_user_id,
+                    group_id,
+                    data
+                )
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    build_owner_backup_addon_required_text(group_id),
+                    reply_markup=build_owner_backup_addon_required_keyboard()
+                )
+
+                return
+
+
+            log_owner_backup_addon_gate(
+                "owner_backup_addon_allowed",
+                user_id,
+                owner_user_id,
+                group_id,
+                data
+            )
 
             await send_clean_message(
                 context,
