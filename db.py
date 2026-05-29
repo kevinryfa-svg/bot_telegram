@@ -1363,6 +1363,214 @@ def create_tables():
 
 
         # =========================
+        # SERVICIOS EXTRA PARA OWNERS
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS owner_addon_products (
+
+            id SERIAL PRIMARY KEY,
+
+            code TEXT UNIQUE NOT NULL,
+
+            name TEXT NOT NULL,
+
+            description TEXT,
+
+            monthly_price_cents INTEGER NOT NULL DEFAULT 0,
+
+            currency TEXT NOT NULL DEFAULT 'eur',
+
+            stripe_price_id TEXT,
+
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+            created_at TIMESTAMP DEFAULT NOW(),
+
+            updated_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS owner_addon_subscriptions (
+
+            id SERIAL PRIMARY KEY,
+
+            owner_user_id BIGINT NOT NULL,
+
+            group_id INTEGER,
+
+            addon_code TEXT NOT NULL,
+
+            stripe_customer_id TEXT,
+
+            stripe_subscription_id TEXT,
+
+            stripe_price_id TEXT,
+
+            status TEXT NOT NULL DEFAULT 'inactive',
+
+            current_period_start TIMESTAMP,
+
+            current_period_end TIMESTAMP,
+
+            cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+
+            created_at TIMESTAMP DEFAULT NOW(),
+
+            updated_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
+
+        for column_name, column_sql in [
+            ("code", "TEXT"),
+            ("name", "TEXT"),
+            ("description", "TEXT"),
+            ("monthly_price_cents", "INTEGER NOT NULL DEFAULT 0"),
+            ("currency", "TEXT NOT NULL DEFAULT 'eur'"),
+            ("stripe_price_id", "TEXT"),
+            ("is_active", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("created_at", "TIMESTAMP DEFAULT NOW()"),
+            ("updated_at", "TIMESTAMP DEFAULT NOW()")
+        ]:
+
+            try:
+
+                cur.execute(
+                    f"ALTER TABLE owner_addon_products ADD COLUMN IF NOT EXISTS {column_name} {column_sql}"
+                )
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error añadiendo columna owner_addon_products.{column_name}: {e}",
+                    "errors"
+                )
+
+
+        for column_name, column_sql in [
+            ("owner_user_id", "BIGINT"),
+            ("group_id", "INTEGER"),
+            ("addon_code", "TEXT"),
+            ("stripe_customer_id", "TEXT"),
+            ("stripe_subscription_id", "TEXT"),
+            ("stripe_price_id", "TEXT"),
+            ("status", "TEXT NOT NULL DEFAULT 'inactive'"),
+            ("current_period_start", "TIMESTAMP"),
+            ("current_period_end", "TIMESTAMP"),
+            ("cancel_at_period_end", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("created_at", "TIMESTAMP DEFAULT NOW()"),
+            ("updated_at", "TIMESTAMP DEFAULT NOW()")
+        ]:
+
+            try:
+
+                cur.execute(
+                    f"ALTER TABLE owner_addon_subscriptions ADD COLUMN IF NOT EXISTS {column_name} {column_sql}"
+                )
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error añadiendo columna owner_addon_subscriptions.{column_name}: {e}",
+                    "errors"
+                )
+
+
+        for index_name, index_sql in [
+            (
+                "idx_owner_addon_products_code",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_addon_products_code ON owner_addon_products(code)"
+            ),
+            (
+                "idx_owner_addon_subscriptions_owner_user_id",
+                "CREATE INDEX IF NOT EXISTS idx_owner_addon_subscriptions_owner_user_id ON owner_addon_subscriptions(owner_user_id)"
+            ),
+            (
+                "idx_owner_addon_subscriptions_group_id",
+                "CREATE INDEX IF NOT EXISTS idx_owner_addon_subscriptions_group_id ON owner_addon_subscriptions(group_id)"
+            ),
+            (
+                "idx_owner_addon_subscriptions_addon_code",
+                "CREATE INDEX IF NOT EXISTS idx_owner_addon_subscriptions_addon_code ON owner_addon_subscriptions(addon_code)"
+            ),
+            (
+                "idx_owner_addon_subscriptions_status",
+                "CREATE INDEX IF NOT EXISTS idx_owner_addon_subscriptions_status ON owner_addon_subscriptions(status)"
+            ),
+            (
+                "idx_owner_addon_subscriptions_stripe_subscription_id",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_addon_subscriptions_stripe_subscription_id ON owner_addon_subscriptions(stripe_subscription_id) WHERE stripe_subscription_id IS NOT NULL"
+            )
+        ]:
+
+            try:
+
+                cur.execute(index_sql)
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error creando índice {index_name}: {e}",
+                    "errors"
+                )
+
+
+        for code, name, description, monthly_price_cents, currency in [
+            (
+                "ad_promo",
+                "Publicidad automática",
+                "Publica vídeos promocionales de tu comunidad en canales/grupos publicitarios.",
+                1999,
+                "eur"
+            ),
+            (
+                "backups",
+                "Backups automáticos",
+                "Guarda copias de seguridad periódicas de la configuración y datos operativos de tu comunidad.",
+                999,
+                "eur"
+            ),
+            (
+                "bundle_ads_backups",
+                "Pack Publicidad + Backups",
+                "Incluye publicidad automática y backups automáticos para tu comunidad.",
+                2499,
+                "eur"
+            )
+        ]:
+
+            cur.execute("""
+
+                INSERT INTO owner_addon_products
+                (
+                    code,
+                    name,
+                    description,
+                    monthly_price_cents,
+                    currency
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (code) DO NOTHING
+
+            """, (
+                code,
+                name,
+                description,
+                monthly_price_cents,
+                currency
+            ))
+
+
+        # =========================
         # TABLA CONFIG
         # =========================
 
