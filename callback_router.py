@@ -109,6 +109,11 @@ from commercial_form_handler import (
 )
 from db import conn
 from formatters import format_tiempo_restante
+from owner_addon_service import (
+    fetch_owner_addon_product,
+    fetch_owner_addon_products,
+    fetch_owner_addon_subscriptions
+)
 from group_registration_handler import (
     cancel_creator_group_link_request,
     confirm_backup_destination_token,
@@ -13532,6 +13537,10 @@ def build_group_settings_keyboard(user_id, group_id):
     ):
 
         keyboard.append([
+            InlineKeyboardButton("🧩 Servicios extra", callback_data="owner_addons_menu")
+        ])
+
+        keyboard.append([
             InlineKeyboardButton("🛡 Backup premium", callback_data="owner_panel_backup")
         ])
 
@@ -13581,6 +13590,158 @@ def build_owner_panel_nav_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
         [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def format_owner_addon_price(product):
+
+    cents = product.get("monthly_price_cents") or 0
+    currency = (product.get("currency") or "eur").upper()
+
+    try:
+
+        amount = int(cents) / 100
+
+    except Exception:
+
+        amount = 0
+
+
+    if amount <= 0:
+
+        return f"0 {currency}/mes"
+
+
+    return f"{amount:.2f}".replace(".", ",") + f" {currency}/mes"
+
+
+def build_owner_addons_menu_text(owner_user_id, group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Comunidad {group_id}"
+    products = fetch_owner_addon_products(active_only=True)
+
+    lines = [
+        "🧩 Servicios extra",
+        "",
+        f"Comunidad: {group_name}",
+        "",
+        "Estos servicios son complementos mensuales para owners. No cambian las suscripciones de usuarios ni los accesos actuales."
+    ]
+
+
+    if not products:
+
+        lines.append("")
+        lines.append("Ahora mismo no hay servicios extra activos para mostrar.")
+        return "\n".join(lines)
+
+
+    for product in products:
+
+        lines.append("")
+        lines.append(f"• {product.get('name')}")
+        lines.append(f"  Precio: {format_owner_addon_price(product)}")
+        lines.append(f"  {product.get('description') or 'Sin descripción.'}")
+
+
+    return "\n".join(lines)
+
+
+def build_owner_addons_menu_keyboard():
+
+    keyboard = []
+    products = fetch_owner_addon_products(active_only=True)
+
+
+    for product in products:
+
+        keyboard.append([InlineKeyboardButton(
+            f"Ver / contratar · {product.get('name')}",
+            callback_data=f"owner_addon_product_{product.get('code')}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton("📦 Mis servicios activos", callback_data="owner_addons_active")])
+    keyboard.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_owner_addon_product_text(product, group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Comunidad {group_id}"
+
+    return (
+        "🧩 Servicio extra\n\n"
+        f"Comunidad: {group_name}\n"
+        f"Servicio: {product.get('name')}\n"
+        f"Precio: {format_owner_addon_price(product)}\n\n"
+        f"{product.get('description') or 'Sin descripción.'}\n\n"
+        "Próximamente: contratación mensual desde Stripe."
+    )
+
+
+def build_owner_addon_product_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Volver a servicios extra", callback_data="owner_addons_menu")],
+        [InlineKeyboardButton("📦 Mis servicios activos", callback_data="owner_addons_active")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_addons_active_text(owner_user_id, group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Comunidad {group_id}"
+    subscriptions = fetch_owner_addon_subscriptions(
+        owner_user_id,
+        group_id=group_id,
+        active_only=True
+    )
+
+    lines = [
+        "📦 Mis servicios activos",
+        "",
+        f"Comunidad: {group_name}"
+    ]
+
+
+    if not subscriptions:
+
+        lines.append("")
+        lines.append("No tienes servicios extra activos todavía.")
+        return "\n".join(lines)
+
+
+    products = {
+        product.get("code"): product
+        for product in fetch_owner_addon_products(active_only=False)
+    }
+
+    for subscription in subscriptions:
+
+        product = products.get(subscription.get("addon_code")) or {}
+        scope = "todas tus comunidades" if subscription.get("group_id") is None else f"comunidad {subscription.get('group_id')}"
+        period_end = format_commercial_datetime(subscription.get("current_period_end"))
+
+        lines.append("")
+        lines.append(f"• {product.get('name') or subscription.get('addon_code')}")
+        lines.append(f"  Estado: {subscription.get('status')}")
+        lines.append(f"  Ámbito: {scope}")
+        lines.append(f"  Fin del periodo: {period_end}")
+
+
+    return "\n".join(lines)
+
+
+def build_owner_addons_active_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Volver a servicios extra", callback_data="owner_addons_menu")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
 
@@ -13830,6 +13991,8 @@ OWNER_PANEL_ALLOWED_REPEATED_CALLBACKS = {
     "owner_panel_satisfaction",
     "owner_panel_backup",
     "owner_panel_general",
+    "owner_addons_menu",
+    "owner_addons_active",
     "owner_panel_commercial_config",
     "edit_group_name",
     "edit_group_preview",
@@ -31939,6 +32102,81 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             text,
             reply_markup=build_owner_panel_audit_keyboard()
+        )
+
+        return
+
+
+    if data in ("owner_addons_menu", "owner_addons_active") or data.startswith("owner_addon_product_"):
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para gestionar servicios extra de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+
+        if data == "owner_addons_menu":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_addons_menu_text(user_id, group_id),
+                reply_markup=build_owner_addons_menu_keyboard()
+            )
+
+            return
+
+
+        if data == "owner_addons_active":
+
+            addon_owner_user_id = get_group_owner_user_id(group_id) or user_id
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_addons_active_text(addon_owner_user_id, group_id),
+                reply_markup=build_owner_addons_active_keyboard()
+            )
+
+            return
+
+
+        addon_code = data.replace("owner_addon_product_", "", 1)
+        product = fetch_owner_addon_product(addon_code)
+
+
+        if not product or not product.get("is_active"):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⚠️ Servicio extra no encontrado o no disponible.",
+                reply_markup=build_owner_addons_menu_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_addon_product_text(product, group_id),
+            reply_markup=build_owner_addon_product_keyboard()
         )
 
         return
