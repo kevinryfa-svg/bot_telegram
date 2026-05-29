@@ -795,8 +795,9 @@ def stripe_webhook():
 
                     FROM plans
 
-                    WHERE price_id=%s
+                    WHERE COALESCE(stripe_price_id, price_id)=%s
                     AND group_id=%s
+                    AND COALESCE(NULLIF(payment_provider, ''), 'stripe')='stripe'
 
                 """, (
 

@@ -8,6 +8,7 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from db import conn
+from audit_log_service import log_event
 from bot_config import TOKEN
 from code_flow_handler import (
     receive_code,
@@ -19,6 +20,13 @@ from invite_link_service import (
     revoke_telegram_invite_link
 )
 from rbac_helpers import get_admin_group_ids
+from plan_payment_provider_helpers import (
+    PLAN_PAYMENT_PROVIDER_PAYPAL,
+    PLAN_PAYMENT_PROVIDER_STRIPE,
+    format_plan_payment_provider,
+    get_plan_provider_id_prompt,
+    normalize_plan_payment_provider
+)
 
 
 GROUP_ADMIN_PERMISSION_OPTIONS = [
@@ -457,12 +465,15 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
             context.user_data["edit_plan_name"] = text
             context.user_data["edit_plan_step"] = 2
+            provider = normalize_plan_payment_provider(
+                context.user_data.get("edit_plan_provider")
+            )
 
             await update.message.reply_text(
 
-                "Paso 2️⃣\n\n"
-
-                "Introduce el nuevo PRICE ID."
+                get_plan_provider_id_prompt(provider, editing=True)
+                + "\n\nPara cambiar método de pago, crea un nuevo plan. "
+                "Puedes actualizar la referencia del proveedor actual."
 
             )
 
@@ -475,7 +486,25 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         if step == 2:
 
-            context.user_data["edit_plan_price"] = text
+            provider = normalize_plan_payment_provider(
+                context.user_data.get("edit_plan_provider")
+            )
+            context.user_data["edit_plan_provider_price_id"] = text
+
+            if provider == PLAN_PAYMENT_PROVIDER_PAYPAL:
+
+                context.user_data["edit_plan_price"] = None
+                context.user_data["edit_plan_paypal_plan_id"] = text
+
+            elif provider == PLAN_PAYMENT_PROVIDER_STRIPE:
+
+                context.user_data["edit_plan_price"] = text
+                context.user_data["edit_plan_stripe_price_id"] = text
+
+            else:
+
+                context.user_data["edit_plan_price"] = None
+
             context.user_data["edit_plan_step"] = 3
 
             await update.message.reply_text(
@@ -578,6 +607,12 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
             name = context.user_data.get("edit_plan_name")
 
             price_id = context.user_data.get("edit_plan_price")
+            provider = normalize_plan_payment_provider(
+                context.user_data.get("edit_plan_provider")
+            )
+            provider_price_id = context.user_data.get("edit_plan_provider_price_id")
+            stripe_price_id = context.user_data.get("edit_plan_stripe_price_id")
+            paypal_plan_id = context.user_data.get("edit_plan_paypal_plan_id")
 
             duration_days = context.user_data.get("edit_plan_duration")
 
@@ -595,6 +630,10 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                         SET
                             name=%s,
                             price_id=%s,
+                            payment_provider=%s,
+                            stripe_price_id=%s,
+                            paypal_plan_id=%s,
+                            provider_price_id=%s,
                             duration_days=%s,
                             amount=%s,
                             currency=%s
@@ -606,6 +645,10 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
                         name,
                         price_id,
+                        provider,
+                        stripe_price_id,
+                        paypal_plan_id,
+                        provider_price_id,
                         duration_days,
                         amount,
                         currency,
@@ -628,10 +671,17 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
             context.user_data["editing_plan"] = False
+            context.user_data.pop("edit_plan_provider", None)
+            context.user_data.pop("edit_plan_provider_price_id", None)
+            context.user_data.pop("edit_plan_stripe_price_id", None)
+            context.user_data.pop("edit_plan_paypal_plan_id", None)
 
             await update.message.reply_text(
 
-                "✅ Plan actualizado correctamente."
+                "✅ Plan actualizado correctamente.\n\n"
+                f"Método: {format_plan_payment_provider(provider)}\n"
+                "Para cambiar método de pago, crea un nuevo plan. "
+                "Puedes actualizar la referencia del proveedor actual."
 
             )
 
@@ -661,11 +711,13 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
             context.user_data["new_plan"]["name"] = text
             context.user_data["add_plan_step"] = 2
+            provider = normalize_plan_payment_provider(
+                context.user_data["new_plan"].get("payment_provider")
+            )
 
             await update.message.reply_text(
 
-                "Paso 2️⃣\n\n"
-                "Introduce el PRICE ID."
+                get_plan_provider_id_prompt(provider)
 
             )
 
@@ -678,7 +730,27 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         if step == 2:
 
-            context.user_data["new_plan"]["price_id"] = text
+            provider = normalize_plan_payment_provider(
+                context.user_data["new_plan"].get("payment_provider")
+            )
+
+            context.user_data["new_plan"]["payment_provider"] = provider
+            context.user_data["new_plan"]["provider_price_id"] = text
+
+            if provider == PLAN_PAYMENT_PROVIDER_PAYPAL:
+
+                context.user_data["new_plan"]["paypal_plan_id"] = text
+                context.user_data["new_plan"]["price_id"] = None
+
+            elif provider == PLAN_PAYMENT_PROVIDER_STRIPE:
+
+                context.user_data["new_plan"]["stripe_price_id"] = text
+                context.user_data["new_plan"]["price_id"] = text
+
+            else:
+
+                context.user_data["new_plan"]["price_id"] = None
+
             context.user_data["add_plan_step"] = 3
 
             await update.message.reply_text(
@@ -773,6 +845,12 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
             currency = text.upper()
 
             plan = context.user_data["new_plan"]
+            provider = normalize_plan_payment_provider(
+                plan.get("payment_provider")
+            )
+            provider_price_id = plan.get("provider_price_id")
+            stripe_price_id = plan.get("stripe_price_id")
+            paypal_plan_id = plan.get("paypal_plan_id")
 
             try:
 
@@ -785,25 +863,52 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                             group_id,
                             name,
                             price_id,
+                            payment_provider,
+                            stripe_price_id,
+                            paypal_plan_id,
+                            provider_price_id,
                             duration_days,
                             amount,
                             currency
                         )
 
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
 
                     """, (
 
                         group_id,
                         plan["name"],
-                        plan["price_id"],
+                        plan.get("price_id"),
+                        provider,
+                        stripe_price_id,
+                        paypal_plan_id,
+                        provider_price_id,
                         plan["duration_days"],
                         plan["amount"],
                         currency
 
                     ))
 
+                    plan_id = cur.fetchone()[0]
                     conn.commit()
+
+                log_event(
+                    "plan_created_for_provider",
+                    category="payment",
+                    severity="info",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=update.effective_user.id,
+                    target_user_id=update.effective_user.id,
+                    message="Plan creado para proveedor de pago.",
+                    metadata={
+                        "group_id": group_id,
+                        "user_id": update.effective_user.id,
+                        "provider": provider,
+                        "plan_id": plan_id
+                    }
+                )
 
             except Exception as e:
 
@@ -821,7 +926,8 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
             await update.message.reply_text(
 
-                "✅ Plan creado correctamente."
+                "✅ Plan creado correctamente.\n\n"
+                f"Método: {format_plan_payment_provider(provider)}"
 
             )
 

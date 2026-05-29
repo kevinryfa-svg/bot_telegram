@@ -181,6 +181,16 @@ from payment_access_service import (
     should_block_new_group_purchase
 )
 from payment_providers.guardarian_provider import process_guardarian_webhook
+from plan_payment_provider_helpers import (
+    PLAN_PAYMENT_PROVIDER_LABELS,
+    PLAN_PAYMENT_PROVIDER_CHANGENOW,
+    PLAN_PAYMENT_PROVIDER_GUARDARIAN,
+    PLAN_PAYMENT_PROVIDER_PAYPAL,
+    PLAN_PAYMENT_PROVIDER_REVOLUT,
+    PLAN_PAYMENT_PROVIDER_STRIPE,
+    format_plan_payment_provider,
+    normalize_plan_payment_provider
+)
 from payment_secret_store import (
     encrypt_provider_config,
     has_payment_encryption_key,
@@ -222,10 +232,11 @@ SERVER_URL = os.environ.get("SERVER_URL")
 revoke_link = None
 get_group_id = None
 
-OWNER_PAYMENT_PROVIDER_PAYPAL = "paypal"
-OWNER_PAYMENT_PROVIDER_REVOLUT = "revolut"
-OWNER_PAYMENT_PROVIDER_CHANGENOW = "changenow"
-OWNER_PAYMENT_PROVIDER_GUARDARIAN = "guardarian"
+OWNER_PAYMENT_PROVIDER_STRIPE = PLAN_PAYMENT_PROVIDER_STRIPE
+OWNER_PAYMENT_PROVIDER_PAYPAL = PLAN_PAYMENT_PROVIDER_PAYPAL
+OWNER_PAYMENT_PROVIDER_REVOLUT = PLAN_PAYMENT_PROVIDER_REVOLUT
+OWNER_PAYMENT_PROVIDER_CHANGENOW = PLAN_PAYMENT_PROVIDER_CHANGENOW
+OWNER_PAYMENT_PROVIDER_GUARDARIAN = PLAN_PAYMENT_PROVIDER_GUARDARIAN
 OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS = (
     "configuring_owner_payment_provider",
     "owner_payment_provider",
@@ -237,6 +248,55 @@ OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS = (
     "platform_payment_step",
     "platform_payment_payload"
 )
+
+
+def get_group_plan_enabled_payment_providers(group_id):
+
+    providers = []
+
+    if is_stripe_payments_enabled():
+
+        providers.append(OWNER_PAYMENT_PROVIDER_STRIPE)
+
+
+    if is_paypal_group_checkout_available(group_id):
+
+        providers.append(OWNER_PAYMENT_PROVIDER_PAYPAL)
+
+
+    if is_revolut_group_checkout_available(group_id):
+
+        providers.append(OWNER_PAYMENT_PROVIDER_REVOLUT)
+
+
+    if is_changenow_group_checkout_available(group_id):
+
+        providers.append(OWNER_PAYMENT_PROVIDER_CHANGENOW)
+
+
+    if is_guardarian_group_checkout_available(group_id):
+
+        providers.append(OWNER_PAYMENT_PROVIDER_GUARDARIAN)
+
+
+    return providers
+
+
+def build_plan_provider_selection_keyboard(providers):
+
+    keyboard = []
+
+    for provider in providers:
+
+        keyboard.append([InlineKeyboardButton(
+            format_plan_payment_provider(provider),
+            callback_data=f"add_group_plan_provider_{provider}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="edit_group_plans")])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 async def delete_query_message_safely(query):
@@ -31989,7 +32049,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                            name,
                            price_id,
                            amount,
-                           currency
+                           currency,
+                           COALESCE(NULLIF(payment_provider, ''), 'stripe')
 
                     FROM plans
 
@@ -32079,7 +32140,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         guardarian_available = is_guardarian_group_checkout_available(group_id)
 
 
-        for plan_id, name, price_id, amount, currency in plans:
+        for plan_id, name, price_id, amount, currency, payment_provider in plans:
+
+            payment_provider = normalize_plan_payment_provider(payment_provider)
 
             if amount and currency:
 
@@ -32090,20 +32153,26 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 button_text = name
 
 
-            keyboard.append([
+            if payment_provider == OWNER_PAYMENT_PROVIDER_STRIPE:
 
-                InlineKeyboardButton(
+                if not price_id:
 
-                    f"💳 Tarjeta / Stripe — {button_text}",
+                    continue
 
-                    callback_data=price_id
+                keyboard.append([
 
-                )
+                    InlineKeyboardButton(
 
-            ])
+                        f"💳 Tarjeta / Stripe — {button_text}",
+
+                        callback_data=price_id
+
+                    )
+
+                ])
 
 
-            if paypal_available:
+            if payment_provider == OWNER_PAYMENT_PROVIDER_PAYPAL and paypal_available:
 
                 keyboard.append([
 
@@ -32118,7 +32187,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ])
 
 
-            if revolut_available:
+            if payment_provider == OWNER_PAYMENT_PROVIDER_REVOLUT and revolut_available:
 
                 keyboard.append([
 
@@ -32133,7 +32202,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ])
 
 
-            if changenow_available:
+            if payment_provider == OWNER_PAYMENT_PROVIDER_CHANGENOW and changenow_available:
 
                 keyboard.append([
 
@@ -32148,7 +32217,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ])
 
 
-            if guardarian_available:
+            if payment_provider == OWNER_PAYMENT_PROVIDER_GUARDARIAN and guardarian_available:
 
                 keyboard.append([
 
@@ -38962,14 +39031,74 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        providers = get_group_plan_enabled_payment_providers(group_id)
+
+        if not providers:
+
+            log_event(
+                "plan_provider_missing_config",
+                category="payment",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Intento de crear plan sin proveedores de pago configurados.",
+                metadata={
+                    "group_id": group_id,
+                    "user_id": user_id
+                }
+            )
+
+            await query.message.reply_text(
+                "⚠️ Primero configura al menos un método de pago para esta comunidad.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⚙️ Configurar pagos", callback_data="owner_panel_payments")],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data="edit_group_plans")]
+                ])
+            )
+
+            return
+
+
+        if len(providers) > 1:
+
+            await query.message.reply_text(
+                "➕ CREAR NUEVO PLAN\n\n"
+                "Elige para qué método de pago quieres crear este plan:",
+                reply_markup=build_plan_provider_selection_keyboard(providers)
+            )
+
+            return
+
+
         context.user_data["adding_plan"] = True
         context.user_data["add_plan_step"] = 1
-        context.user_data["new_plan"] = {}
+        context.user_data["new_plan"] = {
+            "payment_provider": providers[0]
+        }
+
+        log_event(
+            "plan_wizard_provider_selected",
+            category="payment",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Proveedor único seleccionado automáticamente para nuevo plan.",
+            metadata={
+                "group_id": group_id,
+                "user_id": user_id,
+                "provider": providers[0]
+            }
+        )
 
 
         await query.message.reply_text(
 
             "➕ CREAR NUEVO PLAN\n\n"
+            f"Método seleccionado: {format_plan_payment_provider(providers[0])}\n\n"
 
             "Paso 1️⃣\n"
             "Introduce el nombre del plan.\n\n"
@@ -38977,6 +39106,83 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Ejemplo:\n"
             "VIP Mensual"
 
+        )
+
+        return
+
+
+    if data.startswith("add_group_plan_provider_"):
+
+        provider = data.replace("add_group_plan_provider_", "", 1).strip().lower()
+
+        if provider not in PLAN_PAYMENT_PROVIDER_LABELS:
+
+            await query.message.reply_text(
+                "⚠️ Método de pago no reconocido.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups"]
+        )
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permisos para gestionar planes de este grupo."
+            )
+
+            return
+
+
+        providers = get_group_plan_enabled_payment_providers(group_id)
+
+        if provider not in providers:
+
+            await query.message.reply_text(
+                "⚠️ Este método de pago no está configurado para esta comunidad.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⚙️ Configurar pagos", callback_data="owner_panel_payments")],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data="edit_group_plans")]
+                ])
+            )
+
+            return
+
+
+        context.user_data["adding_plan"] = True
+        context.user_data["add_plan_step"] = 1
+        context.user_data["new_plan"] = {
+            "payment_provider": provider
+        }
+
+        log_event(
+            "plan_wizard_provider_selected",
+            category="payment",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Proveedor seleccionado para nuevo plan.",
+            metadata={
+                "group_id": group_id,
+                "user_id": user_id,
+                "provider": provider
+            }
+        )
+
+        await query.message.reply_text(
+            "➕ CREAR NUEVO PLAN\n\n"
+            f"Método seleccionado: {format_plan_payment_provider(provider)}\n\n"
+            "Paso 1️⃣\n"
+            "Introduce el nombre del plan.\n\n"
+            "Ejemplo:\n"
+            "VIP Mensual"
         )
 
         return
@@ -39020,7 +39226,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                            name,
                            amount,
                            currency,
-                           duration_days
+                           duration_days,
+                           COALESCE(NULLIF(payment_provider, ''), 'stripe')
 
                     FROM plans
 
@@ -39069,7 +39276,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         texto = "📋 PLANES DEL GRUPO\n\n"
 
 
-        for plan_id, name, amount, currency, duration in plans:
+        for plan_id, name, amount, currency, duration, payment_provider in plans:
 
             if duration == 0:
 
@@ -39096,6 +39303,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📦 {name}\n"
 
                 f"💰 {precio_texto}\n"
+
+                f"💳 Método: {format_plan_payment_provider(payment_provider)}\n"
 
                 f"⏳ {duracion_texto}\n\n"
 
@@ -41012,7 +41221,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             cur.execute("""
 
-                SELECT 1
+                SELECT COALESCE(NULLIF(payment_provider, ''), 'stripe')
                 FROM plans
                 WHERE id=%s
                 AND group_id=%s
@@ -41036,11 +41245,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["editing_plan"] = True
         context.user_data["editing_plan_id"] = plan_id
+        context.user_data["edit_plan_provider"] = normalize_plan_payment_provider(plan_row[0])
         context.user_data["edit_plan_step"] = 1
 
         await query.message.reply_text(
 
             "✏️ EDITAR PLAN\n\n"
+
+            f"Método actual: {format_plan_payment_provider(plan_row[0])}\n"
+            "Para cambiar método de pago, crea un nuevo plan. "
+            "Puedes actualizar la referencia del proveedor actual.\n\n"
 
             "Paso 1️⃣\n"
             "Introduce el nuevo nombre del plan."
@@ -43552,6 +43766,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         plan_id = int(parts[1])
         context.user_data["selected_group"] = group_id
 
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(NULLIF(payment_provider, ''), 'stripe')
+                FROM plans
+                WHERE id=%s
+                AND group_id=%s
+                AND is_active=TRUE
+                LIMIT 1
+
+            """, (
+                plan_id,
+                group_id
+            ))
+
+            plan_provider_row = cur.fetchone()
+
+
+        if not plan_provider_row or normalize_plan_payment_provider(plan_provider_row[0]) != OWNER_PAYMENT_PROVIDER_PAYPAL:
+
+            await query.message.reply_text(
+                "⚠️ Este plan no está configurado para PayPal.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
 
         if not is_paypal_group_checkout_available(group_id):
 
@@ -43578,6 +43820,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             return
+
+        log_event(
+            "plan_checkout_provider_routed",
+            category="payment",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Checkout de plan ruteado por proveedor.",
+            metadata={
+                "group_id": group_id,
+                "user_id": user_id,
+                "provider": OWNER_PAYMENT_PROVIDER_PAYPAL,
+                "plan_id": plan_id
+            }
+        )
 
 
         if group_requires_location_gate(group_id):
@@ -43941,6 +44200,53 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   COALESCE(NULLIF(payment_provider, ''), 'stripe')
+            FROM plans
+            WHERE price_id=%s
+            AND group_id=%s
+            AND is_active=TRUE
+            LIMIT 1
+
+        """, (
+            data,
+            group_id
+        ))
+
+        stripe_plan_row = cur.fetchone()
+
+
+    if not stripe_plan_row or normalize_plan_payment_provider(stripe_plan_row[1]) != OWNER_PAYMENT_PROVIDER_STRIPE:
+
+        await query.message.reply_text(
+            "⚠️ Este plan no está configurado para Stripe.",
+            reply_markup=build_group_recovery_keyboard(group_id)
+        )
+
+        return
+
+    log_event(
+        "plan_checkout_provider_routed",
+        category="payment",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        message="Checkout de plan ruteado por proveedor.",
+        metadata={
+            "group_id": group_id,
+            "user_id": user_id,
+            "provider": OWNER_PAYMENT_PROVIDER_STRIPE,
+            "plan_id": stripe_plan_row[0]
+        }
+    )
 
 
     if group_requires_location_gate(group_id):
