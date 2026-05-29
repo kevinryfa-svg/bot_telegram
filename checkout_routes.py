@@ -89,13 +89,14 @@ def register_checkout_routes(app):
 
                 cur.execute("""
 
-                    SELECT price_id
+                    SELECT COALESCE(stripe_price_id, price_id)
 
                     FROM plans
 
-                    WHERE price_id=%s
+                    WHERE COALESCE(stripe_price_id, price_id)=%s
                     AND group_id=%s
                     AND is_active=TRUE
+                    AND COALESCE(payment_provider, 'stripe')='stripe'
 
                 """, (
 

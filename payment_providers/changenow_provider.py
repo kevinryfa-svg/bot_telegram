@@ -131,6 +131,7 @@ def fetch_group_plan(group_id, plan_id):
             WHERE p.id=%s
             AND p.group_id=%s
             AND p.is_active=TRUE
+            AND COALESCE(p.payment_provider, 'stripe')='changenow'
             AND g.is_active=TRUE
             LIMIT 1
 

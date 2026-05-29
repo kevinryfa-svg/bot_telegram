@@ -347,6 +347,14 @@ def create_tables():
 
             price_id TEXT,
 
+            payment_provider TEXT DEFAULT 'stripe',
+
+            stripe_price_id TEXT,
+
+            paypal_plan_id TEXT,
+
+            provider_price_id TEXT,
+
             amount INTEGER,
 
             currency TEXT,
@@ -360,6 +368,49 @@ def create_tables():
         );
 
         """)
+
+
+        for column_name, column_type in [
+            ("payment_provider", "TEXT DEFAULT 'stripe'"),
+            ("stripe_price_id", "TEXT"),
+            ("paypal_plan_id", "TEXT"),
+            ("provider_price_id", "TEXT")
+        ]:
+
+            try:
+
+                cur.execute(f"""
+
+                    ALTER TABLE plans
+                    ADD COLUMN IF NOT EXISTS {column_name} {column_type}
+
+                """)
+
+            except Exception:
+
+                pass
+
+
+        try:
+
+            cur.execute("""
+
+                UPDATE plans
+                SET payment_provider=COALESCE(payment_provider, 'stripe'),
+                    stripe_price_id=COALESCE(stripe_price_id, price_id),
+                    provider_price_id=COALESCE(provider_price_id, price_id)
+                WHERE price_id IS NOT NULL
+                AND (
+                    payment_provider IS NULL
+                    OR stripe_price_id IS NULL
+                    OR provider_price_id IS NULL
+                )
+
+            """)
+
+        except Exception:
+
+            pass
 
 
         # =========================
