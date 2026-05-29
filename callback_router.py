@@ -2807,6 +2807,60 @@ def update_ad_promo_campaign_promo_chat_id(campaign_id, new_chat_id):
     return row_to_ad_promo_campaign(row)
 
 
+def delete_ad_promo_campaign(campaign_id):
+
+    campaign = fetch_ad_promo_campaign(campaign_id)
+
+    if not campaign:
+
+        return None
+
+
+    deleted_counts = {}
+
+    try:
+
+        with conn.cursor() as cur:
+
+            for table_name, key in [
+                ("ad_promo_sent_posts", "sent_posts"),
+                ("ad_promo_media", "media"),
+                ("ad_promo_copy_variants", "copy_variants")
+            ]:
+
+                cur.execute(f"""
+
+                    DELETE FROM {table_name}
+                    WHERE campaign_id=%s
+
+                """, (campaign_id,))
+
+                deleted_counts[key] = cur.rowcount
+
+
+            cur.execute("""
+
+                DELETE FROM ad_promo_campaigns
+                WHERE id=%s
+
+            """, (campaign_id,))
+
+            deleted_counts["campaigns"] = cur.rowcount
+
+
+        conn.commit()
+
+    except Exception:
+
+        conn.rollback()
+        raise
+
+
+    campaign["deleted_related_counts"] = deleted_counts
+
+    return campaign
+
+
 def fetch_ad_promo_media(campaign_id, limit=20):
 
     with conn.cursor() as cur:
@@ -4565,7 +4619,40 @@ def build_ad_promo_campaign_detail_keyboard(campaign):
         [InlineKeyboardButton("🧹 Cupo/borrado", callback_data=f"admin_ad_promo_edit_maxposts_{campaign_id}")],
         [InlineKeyboardButton(pause_label, callback_data=pause_callback)],
         [InlineKeyboardButton("🗑 Borrar antiguos", callback_data=f"admin_ad_promo_delete_old_{campaign_id}")],
+        [InlineKeyboardButton("🗑 Eliminar campaña", callback_data=f"admin_ad_promo_delete_campaign_{campaign_id}")],
         [InlineKeyboardButton("⬅️ Campañas", callback_data="admin_ad_promo_campaigns")]
+    ])
+
+
+def build_ad_promo_delete_campaign_text(campaign):
+
+    return (
+        "⚠️ ¿Seguro que quieres eliminar esta campaña?\n\n"
+        f"Campaña: #{campaign.get('id')}\n\n"
+        "Esta acción elimina solo la campaña promocional.\n\n"
+        "Puede eliminar también sus filas relacionadas de promoción:\n"
+        "- vídeos promocionales capturados\n"
+        "- posts promocionales enviados\n"
+        "- variantes de copy/captions\n\n"
+        "No elimina la comunidad de pago.\n"
+        "No elimina usuarios.\n"
+        "No elimina pagos.\n"
+        "No elimina suscripciones.\n"
+        "No elimina invite links ni códigos de acceso."
+    )
+
+
+def build_ad_promo_delete_campaign_keyboard(campaign_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "✅ Sí, eliminar campaña",
+            callback_data=f"admin_ad_promo_delete_campaign_yes_{campaign_id}"
+        )],
+        [InlineKeyboardButton(
+            "❌ Cancelar",
+            callback_data=f"admin_ad_promo_campaign_{campaign_id}"
+        )]
     ])
 
 
@@ -24458,6 +24545,93 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ Rotación optimizada\n"
             + "\n".join(f"- {note}" for note in notes),
             reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_delete_campaign_yes_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_delete_campaign_yes_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text(
+                "⚠️ La campaña ya no existe o ya fue eliminada.",
+                reply_markup=build_ad_promo_campaigns_keyboard(fetch_ad_promo_campaigns())
+            )
+
+            return
+
+
+        try:
+
+            deleted_campaign = delete_ad_promo_campaign(campaign_id)
+
+        except Exception as e:
+
+            await query.message.reply_text(
+                f"❌ No se pudo eliminar la campaña: {str(e)[:300]}",
+                reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
+            )
+
+            return
+
+
+        log_event(
+            "ad_promo_campaign_deleted",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=deleted_campaign.get("paid_group_id"),
+            actor_user_id=user_id,
+            message="Campaña de promoción automática eliminada.",
+            metadata={
+                "campaign_id": deleted_campaign.get("id"),
+                "paid_group_id": deleted_campaign.get("paid_group_id"),
+                "source_chat_id": deleted_campaign.get("source_chat_id"),
+                "promo_group_telegram_id": deleted_campaign.get("promo_group_telegram_id"),
+                "deleted_related_counts": deleted_campaign.get("deleted_related_counts")
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Campaña eliminada correctamente.",
+            reply_markup=build_ad_promo_campaigns_keyboard(fetch_ad_promo_campaigns())
+        )
+
+        return
+
+
+    if data.startswith("admin_ad_promo_delete_campaign_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "admin_ad_promo_delete_campaign_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text(
+                "⚠️ La campaña no existe o ya fue eliminada.",
+                reply_markup=build_ad_promo_campaigns_keyboard(fetch_ad_promo_campaigns())
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_ad_promo_delete_campaign_text(campaign),
+            reply_markup=build_ad_promo_delete_campaign_keyboard(campaign_id)
         )
 
         return
