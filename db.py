@@ -1571,6 +1571,167 @@ def create_tables():
 
 
         # =========================
+        # BACKUPS AUTOMÁTICOS PARA OWNERS
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS owner_backup_jobs (
+
+            id SERIAL PRIMARY KEY,
+
+            owner_user_id BIGINT NOT NULL,
+
+            group_id INTEGER NOT NULL,
+
+            frequency TEXT NOT NULL DEFAULT 'weekly',
+
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+            last_run_at TIMESTAMP,
+
+            next_run_at TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT NOW(),
+
+            updated_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS owner_backup_files (
+
+            id SERIAL PRIMARY KEY,
+
+            owner_user_id BIGINT NOT NULL,
+
+            group_id INTEGER NOT NULL,
+
+            job_id INTEGER,
+
+            backup_type TEXT NOT NULL DEFAULT 'manual',
+
+            status TEXT NOT NULL DEFAULT 'created',
+
+            file_format TEXT NOT NULL DEFAULT 'json',
+
+            file_path TEXT,
+
+            file_size_bytes INTEGER,
+
+            summary TEXT,
+
+            created_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
+
+        for column_name, column_sql in [
+            ("owner_user_id", "BIGINT NOT NULL"),
+            ("group_id", "INTEGER NOT NULL"),
+            ("frequency", "TEXT NOT NULL DEFAULT 'weekly'"),
+            ("is_active", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("last_run_at", "TIMESTAMP"),
+            ("next_run_at", "TIMESTAMP"),
+            ("created_at", "TIMESTAMP DEFAULT NOW()"),
+            ("updated_at", "TIMESTAMP DEFAULT NOW()")
+        ]:
+
+            try:
+
+                cur.execute(
+                    f"ALTER TABLE owner_backup_jobs ADD COLUMN IF NOT EXISTS {column_name} {column_sql}"
+                )
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error añadiendo columna owner_backup_jobs.{column_name}: {e}",
+                    "errors"
+                )
+
+
+        for column_name, column_sql in [
+            ("owner_user_id", "BIGINT NOT NULL"),
+            ("group_id", "INTEGER NOT NULL"),
+            ("job_id", "INTEGER"),
+            ("backup_type", "TEXT NOT NULL DEFAULT 'manual'"),
+            ("status", "TEXT NOT NULL DEFAULT 'created'"),
+            ("file_format", "TEXT NOT NULL DEFAULT 'json'"),
+            ("file_path", "TEXT"),
+            ("file_size_bytes", "INTEGER"),
+            ("summary", "TEXT"),
+            ("created_at", "TIMESTAMP DEFAULT NOW()")
+        ]:
+
+            try:
+
+                cur.execute(
+                    f"ALTER TABLE owner_backup_files ADD COLUMN IF NOT EXISTS {column_name} {column_sql}"
+                )
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error añadiendo columna owner_backup_files.{column_name}: {e}",
+                    "errors"
+                )
+
+
+        for index_name, index_sql in [
+            (
+                "idx_owner_backup_jobs_owner_user_id",
+                "CREATE INDEX IF NOT EXISTS idx_owner_backup_jobs_owner_user_id ON owner_backup_jobs(owner_user_id)"
+            ),
+            (
+                "idx_owner_backup_jobs_group_id",
+                "CREATE INDEX IF NOT EXISTS idx_owner_backup_jobs_group_id ON owner_backup_jobs(group_id)"
+            ),
+            (
+                "idx_owner_backup_jobs_is_active",
+                "CREATE INDEX IF NOT EXISTS idx_owner_backup_jobs_is_active ON owner_backup_jobs(is_active)"
+            ),
+            (
+                "idx_owner_backup_jobs_next_run_at",
+                "CREATE INDEX IF NOT EXISTS idx_owner_backup_jobs_next_run_at ON owner_backup_jobs(next_run_at)"
+            ),
+            (
+                "idx_owner_backup_jobs_owner_group_unique",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_backup_jobs_owner_group_unique ON owner_backup_jobs(owner_user_id, group_id)"
+            ),
+            (
+                "idx_owner_backup_files_owner_user_id",
+                "CREATE INDEX IF NOT EXISTS idx_owner_backup_files_owner_user_id ON owner_backup_files(owner_user_id)"
+            ),
+            (
+                "idx_owner_backup_files_group_id",
+                "CREATE INDEX IF NOT EXISTS idx_owner_backup_files_group_id ON owner_backup_files(group_id)"
+            ),
+            (
+                "idx_owner_backup_files_created_at",
+                "CREATE INDEX IF NOT EXISTS idx_owner_backup_files_created_at ON owner_backup_files(created_at)"
+            )
+        ]:
+
+            try:
+
+                cur.execute(index_sql)
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error creando índice {index_name}: {e}",
+                    "errors"
+                )
+
+
+        # =========================
         # TABLA CONFIG
         # =========================
 

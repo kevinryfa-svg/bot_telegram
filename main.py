@@ -108,6 +108,7 @@ from callback_router import (
     button,
     capture_ad_promo_video,
     process_ad_promo_daily_reviews,
+    process_due_owner_backups,
     process_due_ad_promo_campaigns,
     receive_ad_promo_admin_text,
     receive_commercial_request_chat_message,
@@ -205,6 +206,13 @@ AD_PROMO_SCHEDULER_INTERVAL_SECONDS = int(
 AD_PROMO_DAILY_REVIEW_INTERVAL_SECONDS = int(
     os.environ.get(
         "AD_PROMO_DAILY_REVIEW_INTERVAL_SECONDS",
+        str(60 * 60)
+    )
+)
+
+OWNER_BACKUP_SCHEDULER_INTERVAL_SECONDS = int(
+    os.environ.get(
+        "OWNER_BACKUP_SCHEDULER_INTERVAL_SECONDS",
         str(60 * 60)
     )
 )
@@ -676,6 +684,64 @@ def schedule_ad_promo_jobs(application):
     )
 
     print("Ad promo scheduler programado.")
+
+    return True
+
+
+async def owner_backup_scheduler_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        summary = await process_due_owner_backups(context)
+
+        if int(summary.get("created", 0) or 0) > 0 or int(summary.get("failed", 0) or 0) > 0:
+
+            print("Owner backup scheduler:", summary)
+
+            log_event(
+                "owner_backup_scheduler_activity",
+                category="backup",
+                severity="info",
+                message="Scheduler de backups automáticos ejecutado.",
+                metadata=summary
+            )
+
+    except Exception as e:
+
+        print("Owner backup scheduler: error:", e)
+
+        log_event(
+            "owner_backup_scheduler_error",
+            category="backup",
+            severity="warning",
+            message="Error en scheduler de backups automáticos.",
+            metadata={"error": str(e)[:300]}
+        )
+
+
+def schedule_owner_backup_jobs(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Owner backup scheduler: JobQueue no disponible. "
+            "No se programaron backups automáticos."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        owner_backup_scheduler_job,
+        interval=max(OWNER_BACKUP_SCHEDULER_INTERVAL_SECONDS, 60 * 15),
+        first=420,
+        name="owner_backup_scheduler"
+    )
+
+    print("Owner backup scheduler programado.")
 
     return True
 
@@ -2255,6 +2321,7 @@ def main():
     schedule_commercial_expiry_job(telegram_app)
     schedule_location_manual_review_expiry_job(telegram_app)
     schedule_ad_promo_jobs(telegram_app)
+    schedule_owner_backup_jobs(telegram_app)
     schedule_beta_monitor_job(telegram_app)
     schedule_beta_cycle_job(telegram_app)
 
