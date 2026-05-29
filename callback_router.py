@@ -13864,12 +13864,14 @@ def build_owner_addons_active_text(owner_user_id, group_id):
         product = products.get(subscription.get("addon_code")) or {}
         scope = "todas tus comunidades" if subscription.get("group_id") is None else f"comunidad {subscription.get('group_id')}"
         period_end = format_commercial_datetime(subscription.get("current_period_end"))
+        cancel_text = "sí" if subscription.get("cancel_at_period_end") else "no"
 
         lines.append("")
         lines.append(f"• {product.get('name') or subscription.get('addon_code')}")
         lines.append(f"  Estado: {subscription.get('status')}")
         lines.append(f"  Ámbito: {scope}")
         lines.append(f"  Fin del periodo: {period_end}")
+        lines.append(f"  Cancelación programada: {cancel_text}")
 
 
     return "\n".join(lines)

@@ -11,7 +11,13 @@ from db import conn
 from group_service import format_community_kind, normalize_community_type
 from invite_link_service import create_telegram_invite_link
 from notification_service import notify_super_admins, send_telegram_message
-from owner_addon_service import activate_owner_addon_subscription_from_stripe
+from owner_addon_service import (
+    activate_owner_addon_subscription_from_stripe,
+    cancel_owner_addon_subscription_from_stripe,
+    fetch_owner_addon_subscription_by_stripe_subscription_id,
+    mark_owner_addon_subscription_payment_failed,
+    update_owner_addon_subscription_from_stripe
+)
 from payment_gateway_config import (
     PAYMENT_PROVIDER_STRIPE,
     PAYMENT_SCOPE_PLATFORM,
@@ -95,6 +101,128 @@ def mask_invite_link(invite_link):
     return f"{str(invite_link)[:12]}***"
 
 
+def stripe_timestamp_to_datetime(value):
+
+    if not value:
+
+        return None
+
+
+    try:
+
+        return datetime.fromtimestamp(int(value))
+
+    except Exception:
+
+        return None
+
+
+def format_owner_addon_log_datetime(value):
+
+    if not value:
+
+        return None
+
+
+    try:
+
+        return value.isoformat()
+
+    except Exception:
+
+        return str(value)
+
+
+def extract_owner_addon_subscription_payload(subscription):
+
+    if not subscription:
+
+        return {}
+
+
+    items = (subscription.get("items") or {}).get("data") or []
+    first_item = items[0] if items else {}
+    price = first_item.get("price") or {}
+
+    return {
+        "stripe_subscription_id": subscription.get("id"),
+        "stripe_customer_id": subscription.get("customer"),
+        "stripe_price_id": price.get("id"),
+        "status": subscription.get("status"),
+        "current_period_start": stripe_timestamp_to_datetime(
+            subscription.get("current_period_start")
+        ),
+        "current_period_end": stripe_timestamp_to_datetime(
+            subscription.get("current_period_end")
+        ),
+        "cancel_at_period_end": subscription.get("cancel_at_period_end")
+    }
+
+
+def extract_stripe_subscription_id(value):
+
+    if isinstance(value, dict):
+
+        return value.get("id")
+
+
+    return value
+
+
+def owner_addon_subscription_metadata(subscription):
+
+    return subscription.get("metadata") or {}
+
+
+def is_owner_addon_subscription_object(subscription):
+
+    metadata = owner_addon_subscription_metadata(subscription)
+
+    return metadata.get("purpose") == "owner_addon"
+
+
+def safe_notify_owner_addon(owner_user_id, text):
+
+    if not owner_user_id:
+
+        return None
+
+
+    try:
+
+        return send_telegram_message(
+            TOKEN,
+            owner_user_id,
+            text
+        )
+
+    except Exception as e:
+
+        print("Error notificando owner addon:", e)
+        return None
+
+
+def build_owner_addon_lifecycle_metadata(subscription_row, payload, event_type):
+
+    subscription_row = subscription_row or {}
+    payload = payload or {}
+
+    return {
+        "owner_user_id": subscription_row.get("owner_user_id"),
+        "group_id": subscription_row.get("group_id"),
+        "addon_code": subscription_row.get("addon_code"),
+        "stripe_subscription_id": payload.get("stripe_subscription_id") or subscription_row.get("stripe_subscription_id"),
+        "stripe_customer_id": payload.get("stripe_customer_id") or subscription_row.get("stripe_customer_id"),
+        "stripe_price_id": payload.get("stripe_price_id") or subscription_row.get("stripe_price_id"),
+        "status": payload.get("status") or subscription_row.get("status"),
+        "current_period_end": format_owner_addon_log_datetime(
+            payload.get("current_period_end") or subscription_row.get("current_period_end")
+        ),
+        "cancel_at_period_end": payload.get("cancel_at_period_end"),
+        "event_type": event_type
+    }
+
+
 def process_owner_addon_checkout_completed(session):
 
     metadata = session.get("metadata") or {}
@@ -106,7 +234,9 @@ def process_owner_addon_checkout_completed(session):
         buyer_user_id = int(metadata.get("buyer_user_id") or owner_user_id)
         group_id = int(metadata.get("group_id"))
         addon_code = metadata.get("addon_code")
-        stripe_subscription_id = session.get("subscription")
+        stripe_subscription_id = extract_stripe_subscription_id(
+            session.get("subscription")
+        )
         stripe_customer_id = session.get("customer")
         payment_status = session.get("payment_status")
         subscription_status = None
@@ -121,6 +251,7 @@ def process_owner_addon_checkout_completed(session):
         current_period_end = None
         stripe_price_id = None
         resolved_status = "checkout_pending"
+        cancel_at_period_end = False
 
         if stripe_subscription_id:
 
@@ -128,23 +259,12 @@ def process_owner_addon_checkout_completed(session):
 
                 subscription = stripe.Subscription.retrieve(stripe_subscription_id)
                 subscription_retrieved = True
-                subscription_status = subscription.get("status")
-                current_period_start = (
-                    datetime.fromtimestamp(subscription.get("current_period_start"))
-                    if subscription.get("current_period_start")
-                    else None
-                )
-                current_period_end = (
-                    datetime.fromtimestamp(subscription.get("current_period_end"))
-                    if subscription.get("current_period_end")
-                    else None
-                )
-
-                items = (subscription.get("items") or {}).get("data") or []
-
-                if items:
-
-                    stripe_price_id = ((items[0].get("price") or {}).get("id"))
+                payload = extract_owner_addon_subscription_payload(subscription)
+                subscription_status = payload.get("status")
+                current_period_start = payload.get("current_period_start")
+                current_period_end = payload.get("current_period_end")
+                stripe_price_id = payload.get("stripe_price_id")
+                cancel_at_period_end = payload.get("cancel_at_period_end") is True
 
             except Exception as e:
 
@@ -171,6 +291,7 @@ def process_owner_addon_checkout_completed(session):
             stripe_price_id=stripe_price_id,
             current_period_start=current_period_start,
             current_period_end=current_period_end,
+            cancel_at_period_end=cancel_at_period_end,
             status=resolved_status
         )
 
@@ -207,7 +328,7 @@ def process_owner_addon_checkout_completed(session):
                 "Ya puedes usar las herramientas asociadas a este servicio."
             )
 
-        return True
+        return False
 
     except Exception as e:
 
@@ -237,6 +358,303 @@ def process_owner_addon_checkout_completed(session):
         return False
 
 
+def process_owner_addon_subscription_updated(subscription, event_type):
+
+    payload = extract_owner_addon_subscription_payload(subscription)
+    stripe_subscription_id = payload.get("stripe_subscription_id")
+    existing_row = fetch_owner_addon_subscription_by_stripe_subscription_id(
+        stripe_subscription_id
+    )
+
+    if not is_owner_addon_subscription_object(subscription) and not existing_row:
+
+        return False
+
+
+    subscription_row = update_owner_addon_subscription_from_stripe(**payload)
+
+    if not subscription_row:
+
+        subscription_row = existing_row
+
+
+    if not subscription_row:
+
+        return False
+
+
+    log_event(
+        "owner_addon_subscription_updated",
+        category="billing",
+        severity="info",
+        scope="group",
+        group_id=subscription_row.get("group_id"),
+        actor_user_id=subscription_row.get("owner_user_id"),
+        target_user_id=subscription_row.get("owner_user_id"),
+        message="Suscripción Stripe de servicio extra actualizada.",
+        metadata=build_owner_addon_lifecycle_metadata(
+            subscription_row,
+            payload,
+            event_type
+        )
+    )
+
+    if payload.get("cancel_at_period_end") is True:
+
+        safe_notify_owner_addon(
+            subscription_row.get("owner_user_id"),
+            "ℹ️ Tu servicio extra seguirá activo hasta el final del periodo."
+        )
+
+    elif payload.get("status") in ("active", "trialing"):
+
+        safe_notify_owner_addon(
+            subscription_row.get("owner_user_id"),
+            "✅ Servicio extra actualizado."
+        )
+
+
+    return True
+
+
+def process_owner_addon_subscription_deleted(subscription, event_type):
+
+    payload = extract_owner_addon_subscription_payload(subscription)
+    stripe_subscription_id = payload.get("stripe_subscription_id")
+    existing_row = fetch_owner_addon_subscription_by_stripe_subscription_id(
+        stripe_subscription_id
+    )
+
+    if not is_owner_addon_subscription_object(subscription) and not existing_row:
+
+        return False
+
+
+    subscription_row = cancel_owner_addon_subscription_from_stripe(
+        stripe_subscription_id,
+        status="canceled",
+        cancel_at_period_end=payload.get("cancel_at_period_end")
+    ) or existing_row
+
+    if not subscription_row:
+
+        return False
+
+
+    log_event(
+        "owner_addon_subscription_canceled",
+        category="billing",
+        severity="info",
+        scope="group",
+        group_id=subscription_row.get("group_id"),
+        actor_user_id=subscription_row.get("owner_user_id"),
+        target_user_id=subscription_row.get("owner_user_id"),
+        message="Suscripción Stripe de servicio extra cancelada.",
+        metadata=build_owner_addon_lifecycle_metadata(
+            subscription_row,
+            payload,
+            event_type
+        )
+    )
+
+    safe_notify_owner_addon(
+        subscription_row.get("owner_user_id"),
+        "❌ Servicio extra cancelado. Las herramientas premium asociadas dejarán de estar disponibles."
+    )
+
+    return True
+
+
+def process_owner_addon_invoice_paid(invoice, event_type):
+
+    stripe_subscription_id = extract_stripe_subscription_id(
+        invoice.get("subscription")
+    )
+    subscription_row = fetch_owner_addon_subscription_by_stripe_subscription_id(
+        stripe_subscription_id
+    )
+
+    if not subscription_row:
+
+        return False
+
+
+    payload = {
+        "stripe_subscription_id": stripe_subscription_id,
+        "stripe_customer_id": invoice.get("customer")
+    }
+
+    try:
+
+        subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+        payload.update(extract_owner_addon_subscription_payload(subscription))
+
+    except Exception as e:
+
+        print("No se pudo obtener suscripción Stripe en invoice.paid owner addon:", e)
+        payload["status"] = subscription_row.get("status")
+
+
+    updated_row = update_owner_addon_subscription_from_stripe(**payload) or subscription_row
+
+    log_event(
+        "owner_addon_invoice_paid",
+        category="billing",
+        severity="info",
+        scope="group",
+        group_id=updated_row.get("group_id"),
+        actor_user_id=updated_row.get("owner_user_id"),
+        target_user_id=updated_row.get("owner_user_id"),
+        message="Pago mensual de servicio extra recibido.",
+        metadata=build_owner_addon_lifecycle_metadata(
+            updated_row,
+            payload,
+            event_type
+        )
+    )
+
+    safe_notify_owner_addon(
+        updated_row.get("owner_user_id"),
+        "✅ Pago mensual recibido. Tu servicio extra sigue activo."
+    )
+
+    return True
+
+
+def process_owner_addon_invoice_payment_failed(invoice, event_type):
+
+    stripe_subscription_id = extract_stripe_subscription_id(
+        invoice.get("subscription")
+    )
+    subscription_row = fetch_owner_addon_subscription_by_stripe_subscription_id(
+        stripe_subscription_id
+    )
+
+    if not subscription_row:
+
+        return False
+
+
+    payload = {
+        "stripe_subscription_id": stripe_subscription_id,
+        "stripe_customer_id": invoice.get("customer"),
+        "status": "past_due"
+    }
+
+    try:
+
+        subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+        payload.update(extract_owner_addon_subscription_payload(subscription))
+        payload["status"] = payload.get("status") or "past_due"
+
+    except Exception as e:
+
+        print("No se pudo obtener suscripción Stripe en invoice.payment_failed owner addon:", e)
+
+
+    updated_row = mark_owner_addon_subscription_payment_failed(
+        stripe_subscription_id,
+        stripe_customer_id=payload.get("stripe_customer_id"),
+        status=payload.get("status") or "past_due"
+    ) or subscription_row
+
+    if payload.get("stripe_price_id") or payload.get("current_period_end") or payload.get("cancel_at_period_end") is not None:
+
+        updated_row = update_owner_addon_subscription_from_stripe(
+            stripe_subscription_id,
+            stripe_customer_id=payload.get("stripe_customer_id"),
+            stripe_price_id=payload.get("stripe_price_id"),
+            status=payload.get("status") or "past_due",
+            current_period_start=payload.get("current_period_start"),
+            current_period_end=payload.get("current_period_end"),
+            cancel_at_period_end=payload.get("cancel_at_period_end")
+        ) or updated_row
+
+
+    log_event(
+        "owner_addon_invoice_payment_failed",
+        category="billing",
+        severity="warning",
+        scope="group",
+        group_id=updated_row.get("group_id"),
+        actor_user_id=updated_row.get("owner_user_id"),
+        target_user_id=updated_row.get("owner_user_id"),
+        message="Falló el pago mensual de servicio extra.",
+        metadata=build_owner_addon_lifecycle_metadata(
+            updated_row,
+            payload,
+            event_type
+        )
+    )
+
+    safe_notify_owner_addon(
+        updated_row.get("owner_user_id"),
+        "⚠️ Ha fallado el pago mensual de tu servicio extra. Revisa tu método de pago para evitar perder el acceso."
+    )
+
+    return True
+
+
+def process_owner_addon_lifecycle_event(event):
+
+    event_type = event.get("type")
+    data_object = event["data"]["object"]
+
+    try:
+
+        if event_type == "customer.subscription.updated":
+
+            return process_owner_addon_subscription_updated(
+                data_object,
+                event_type
+            )
+
+
+        if event_type == "customer.subscription.deleted":
+
+            return process_owner_addon_subscription_deleted(
+                data_object,
+                event_type
+            )
+
+
+        if event_type == "invoice.paid":
+
+            return process_owner_addon_invoice_paid(
+                data_object,
+                event_type
+            )
+
+
+        if event_type == "invoice.payment_failed":
+
+            return process_owner_addon_invoice_payment_failed(
+                data_object,
+                event_type
+            )
+
+    except Exception as e:
+
+        print("Error procesando lifecycle owner addon:", e)
+
+        log_event(
+            "owner_addon_lifecycle_webhook_failed",
+            category="billing",
+            severity="error",
+            scope="global",
+            message="Error procesando webhook lifecycle de servicio extra.",
+            metadata={
+                "event_type": event_type,
+                "error": str(e)[:300]
+            }
+        )
+
+        return True
+
+
+    return False
+
+
 # =========================
 # WEBHOOK STRIPE
 # =========================
@@ -258,6 +676,18 @@ def stripe_webhook():
 
         print("Webhook error:", e)
         return "Error", 400
+
+
+    if event["type"] in (
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+        "invoice.paid",
+        "invoice.payment_failed"
+    ):
+
+        if process_owner_addon_lifecycle_event(event):
+
+            return "OK"
 
 
     if event["type"] == "checkout.session.completed":
