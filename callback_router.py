@@ -10,6 +10,7 @@ import subprocess
 import time
 import tempfile
 import unicodedata
+import stripe
 
 from datetime import datetime, timedelta
 
@@ -110,10 +111,12 @@ from commercial_form_handler import (
 from db import conn
 from formatters import format_tiempo_restante
 from owner_addon_service import (
+    owner_addon_is_purchase_allowed,
     fetch_owner_addon_product,
     fetch_owner_addon_products,
     fetch_owner_addon_subscriptions,
-    owner_has_feature
+    owner_has_feature,
+    upsert_owner_addon_checkout_pending
 )
 from group_registration_handler import (
     cancel_creator_group_link_request,
@@ -13726,24 +13729,105 @@ def build_owner_addon_product_text(product, group_id):
 
     group = fetch_group_basic_info(group_id)
     group_name = group[1] if group else f"Comunidad {group_id}"
+    stripe_status = (
+        "configurado"
+        if product.get("stripe_price_id")
+        else "pendiente de configuración"
+    )
 
-    return (
+    text = (
         "🧩 Servicio extra\n\n"
         f"Comunidad: {group_name}\n"
         f"Servicio: {product.get('name')}\n"
-        f"Precio: {format_owner_addon_price(product)}\n\n"
-        f"{product.get('description') or 'Sin descripción.'}\n\n"
-        "Próximamente: contratación mensual desde Stripe."
+        f"Precio: {format_owner_addon_price(product)}\n"
+        f"Stripe: {stripe_status}\n\n"
+        f"{product.get('description') or 'Sin descripción.'}"
     )
 
 
-def build_owner_addon_product_keyboard():
+    if not product.get("stripe_price_id"):
 
-    return InlineKeyboardMarkup([
+        text += "\n\n⚠️ Este servicio todavía no tiene precio de Stripe configurado."
+
+
+    return text
+
+
+def build_owner_addon_product_keyboard(product):
+
+    keyboard = []
+
+    if product.get("stripe_price_id"):
+
+        keyboard.append([InlineKeyboardButton(
+            "💳 Contratar mensual",
+            callback_data=f"owner_addon_checkout_{product.get('code')}"
+        )])
+
+
+    keyboard.extend([
         [InlineKeyboardButton("⬅️ Volver a servicios extra", callback_data="owner_addons_menu")],
         [InlineKeyboardButton("📦 Mis servicios activos", callback_data="owner_addons_active")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_owner_addon_checkout_keyboard(product, checkout_url):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Pagar en Stripe", url=checkout_url)],
+        [InlineKeyboardButton("⬅️ Volver a servicios extra", callback_data="owner_addons_menu")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_addon_checkout_urls():
+
+    base_url = (SERVER_URL or "").rstrip("/")
+
+    if not base_url:
+
+        return "https://t.me/TheStarVipBOT", "https://t.me/TheStarVipBOT"
+
+
+    return (
+        f"{base_url}/owner-addon-success?session_id={{CHECKOUT_SESSION_ID}}",
+        f"{base_url}/owner-addon-cancel"
+    )
+
+
+def create_owner_addon_stripe_checkout_session(
+    product,
+    owner_user_id,
+    buyer_user_id,
+    group_id
+):
+
+    success_url, cancel_url = build_owner_addon_checkout_urls()
+    metadata = {
+        "purpose": "owner_addon",
+        "owner_user_id": str(owner_user_id),
+        "buyer_user_id": str(buyer_user_id),
+        "group_id": str(group_id),
+        "addon_code": str(product.get("code"))
+    }
+
+    return stripe.checkout.Session.create(
+        mode="subscription",
+        line_items=[{
+            "price": product.get("stripe_price_id"),
+            "quantity": 1
+        }],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        client_reference_id=f"owner_addon:{owner_user_id}:{group_id}:{product.get('code')}",
+        metadata=metadata,
+        subscription_data={
+            "metadata": metadata
+        }
+    )
 
 
 def build_owner_addons_active_text(owner_user_id, group_id):
@@ -32536,7 +32620,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data in ("owner_addons_menu", "owner_addons_active") or data.startswith("owner_addon_product_"):
+    if (
+        data in ("owner_addons_menu", "owner_addons_active")
+        or data.startswith("owner_addon_product_")
+        or data.startswith("owner_addon_checkout_")
+    ):
 
         group_id = get_selected_group_for_permissions(
             context,
@@ -32585,6 +32673,180 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if data.startswith("owner_addon_checkout_"):
+
+            addon_code = data.replace("owner_addon_checkout_", "", 1)
+            product = fetch_owner_addon_product(addon_code)
+            owner_user_id = get_group_owner_user_id(group_id) or user_id
+
+
+            if not is_super_admin(user_id) and int(owner_user_id) != int(user_id):
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "⛔ Solo el dueño real de la comunidad puede contratar servicios extra.",
+                    reply_markup=build_owner_addons_menu_keyboard()
+                )
+
+                return
+
+
+            if not product or not product.get("is_active"):
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "⚠️ Servicio extra no encontrado o no disponible.",
+                    reply_markup=build_owner_addons_menu_keyboard()
+                )
+
+                return
+
+
+            if not product.get("stripe_price_id"):
+
+                log_event(
+                    "owner_addon_checkout_blocked_no_stripe_price",
+                    category="billing",
+                    severity="warning",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=user_id,
+                    target_user_id=owner_user_id,
+                    message="Checkout de servicio extra bloqueado por falta de stripe_price_id.",
+                    metadata={
+                        "owner_user_id": owner_user_id,
+                        "buyer_user_id": user_id,
+                        "group_id": group_id,
+                        "addon_code": addon_code
+                    }
+                )
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "⚠️ Este servicio todavía no tiene precio de Stripe configurado.",
+                    reply_markup=build_owner_addon_product_keyboard(product)
+                )
+
+                return
+
+
+            if not is_stripe_payments_enabled():
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "⚠️ Stripe no está habilitado ahora mismo. No puedo crear el checkout mensual.",
+                    reply_markup=build_owner_addon_product_keyboard(product)
+                )
+
+                return
+
+
+            if not owner_addon_is_purchase_allowed(owner_user_id, addon_code, group_id=group_id):
+
+                log_event(
+                    "owner_addon_checkout_blocked_already_active",
+                    category="billing",
+                    severity="info",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=user_id,
+                    target_user_id=owner_user_id,
+                    message="Checkout de servicio extra bloqueado porque ya está activo.",
+                    metadata={
+                        "owner_user_id": owner_user_id,
+                        "buyer_user_id": user_id,
+                        "group_id": group_id,
+                        "addon_code": addon_code
+                    }
+                )
+
+                await send_clean_message(
+                    context,
+                    query.message.chat_id,
+                    "✅ Este servicio ya está activo para esta comunidad.",
+                    reply_markup=build_owner_addons_active_keyboard()
+                )
+
+                return
+
+
+            try:
+
+                session = create_owner_addon_stripe_checkout_session(
+                    product,
+                    owner_user_id,
+                    user_id,
+                    group_id
+                )
+
+                upsert_owner_addon_checkout_pending(
+                    owner_user_id=owner_user_id,
+                    group_id=group_id,
+                    addon_code=addon_code,
+                    stripe_price_id=product.get("stripe_price_id"),
+                    stripe_customer_id=session.get("customer")
+                )
+
+                log_event(
+                    "owner_addon_checkout_created",
+                    category="billing",
+                    severity="info",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=user_id,
+                    target_user_id=owner_user_id,
+                    message="Checkout Stripe de servicio extra creado.",
+                    metadata={
+                        "owner_user_id": owner_user_id,
+                        "buyer_user_id": user_id,
+                        "group_id": group_id,
+                        "addon_code": addon_code,
+                        "stripe_session_id": session.get("id")
+                    }
+                )
+
+            except Exception as e:
+
+                log_event(
+                    "owner_addon_checkout_failed",
+                    category="billing",
+                    severity="error",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=user_id,
+                    target_user_id=owner_user_id,
+                    message="Error creando checkout Stripe de servicio extra.",
+                    metadata={
+                        "owner_user_id": owner_user_id,
+                        "buyer_user_id": user_id,
+                        "group_id": group_id,
+                        "addon_code": addon_code,
+                        "error": str(e)[:300]
+                    }
+                )
+
+                await query.message.reply_text(
+                    f"❌ No he podido crear el checkout de Stripe: {str(e)[:300]}",
+                    reply_markup=build_owner_addons_menu_keyboard()
+                )
+
+                return
+
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Checkout creado. Completa el pago mensual en Stripe para activar el servicio.",
+                reply_markup=build_owner_addon_checkout_keyboard(product, session.url)
+            )
+
+            return
+
+
         addon_code = data.replace("owner_addon_product_", "", 1)
         product = fetch_owner_addon_product(addon_code)
 
@@ -32605,7 +32867,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             build_owner_addon_product_text(product, group_id),
-            reply_markup=build_owner_addon_product_keyboard()
+            reply_markup=build_owner_addon_product_keyboard(product)
         )
 
         return

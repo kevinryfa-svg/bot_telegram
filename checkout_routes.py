@@ -53,6 +53,18 @@ from payment_providers.guardarian_provider import (
 
 def register_checkout_routes(app):
 
+    @app.route("/owner-addon-success", methods=["GET"])
+    def owner_addon_success():
+
+        return redirect("https://t.me/TheStarVipBOT")
+
+
+    @app.route("/owner-addon-cancel", methods=["GET"])
+    def owner_addon_cancel():
+
+        return redirect("https://t.me/TheStarVipBOT")
+
+
     # =========================
     # STRIPE CHECKOUT
     # =========================

@@ -11,6 +11,7 @@ from db import conn
 from group_service import format_community_kind, normalize_community_type
 from invite_link_service import create_telegram_invite_link
 from notification_service import notify_super_admins, send_telegram_message
+from owner_addon_service import activate_owner_addon_subscription_from_stripe
 from payment_gateway_config import (
     PAYMENT_PROVIDER_STRIPE,
     PAYMENT_SCOPE_PLATFORM,
@@ -94,6 +95,148 @@ def mask_invite_link(invite_link):
     return f"{str(invite_link)[:12]}***"
 
 
+def process_owner_addon_checkout_completed(session):
+
+    metadata = session.get("metadata") or {}
+    stripe_session_id = session.get("id")
+
+    try:
+
+        owner_user_id = int(metadata.get("owner_user_id"))
+        buyer_user_id = int(metadata.get("buyer_user_id") or owner_user_id)
+        group_id = int(metadata.get("group_id"))
+        addon_code = metadata.get("addon_code")
+        stripe_subscription_id = session.get("subscription")
+        stripe_customer_id = session.get("customer")
+        payment_status = session.get("payment_status")
+        subscription_status = None
+        subscription_retrieved = False
+
+        if not addon_code:
+
+            raise ValueError("addon_code ausente")
+
+
+        current_period_start = None
+        current_period_end = None
+        stripe_price_id = None
+        resolved_status = "checkout_pending"
+
+        if stripe_subscription_id:
+
+            try:
+
+                subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+                subscription_retrieved = True
+                subscription_status = subscription.get("status")
+                current_period_start = (
+                    datetime.fromtimestamp(subscription.get("current_period_start"))
+                    if subscription.get("current_period_start")
+                    else None
+                )
+                current_period_end = (
+                    datetime.fromtimestamp(subscription.get("current_period_end"))
+                    if subscription.get("current_period_end")
+                    else None
+                )
+
+                items = (subscription.get("items") or {}).get("data") or []
+
+                if items:
+
+                    stripe_price_id = ((items[0].get("price") or {}).get("id"))
+
+            except Exception as e:
+
+                print("No se pudo obtener suscripción Stripe owner addon:", e)
+
+
+        if subscription_retrieved:
+
+            if subscription_status in ("active", "trialing"):
+
+                resolved_status = subscription_status
+
+        elif payment_status == "paid":
+
+            resolved_status = "active"
+
+
+        activate_owner_addon_subscription_from_stripe(
+            owner_user_id=owner_user_id,
+            group_id=group_id,
+            addon_code=addon_code,
+            stripe_customer_id=stripe_customer_id,
+            stripe_subscription_id=stripe_subscription_id,
+            stripe_price_id=stripe_price_id,
+            current_period_start=current_period_start,
+            current_period_end=current_period_end,
+            status=resolved_status
+        )
+
+        log_event(
+            "owner_addon_checkout_completed",
+            category="billing",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=buyer_user_id,
+            target_user_id=owner_user_id,
+            message="Checkout Stripe de servicio extra completado.",
+            metadata={
+                "owner_user_id": owner_user_id,
+                "buyer_user_id": buyer_user_id,
+                "group_id": group_id,
+                "addon_code": addon_code,
+                "status": resolved_status,
+                "payment_status": payment_status,
+                "subscription_status": subscription_status,
+                "stripe_session_id": stripe_session_id,
+                "stripe_subscription_id": stripe_subscription_id
+            }
+        )
+
+        if resolved_status in ("active", "trialing"):
+
+            send_telegram_message(
+                TOKEN,
+                owner_user_id,
+                "✅ Servicio extra activado\n\n"
+                f"Servicio: {addon_code}\n"
+                f"Comunidad: {group_id}\n\n"
+                "Ya puedes usar las herramientas asociadas a este servicio."
+            )
+
+        return True
+
+    except Exception as e:
+
+        print("Error procesando checkout owner addon:", e)
+
+        log_event(
+            "owner_addon_checkout_failed",
+            category="billing",
+            severity="error",
+            scope="group",
+            group_id=metadata.get("group_id"),
+            actor_user_id=metadata.get("buyer_user_id"),
+            target_user_id=metadata.get("owner_user_id"),
+            message="Error procesando webhook Stripe de servicio extra.",
+            metadata={
+                "owner_user_id": metadata.get("owner_user_id"),
+                "buyer_user_id": metadata.get("buyer_user_id"),
+                "group_id": metadata.get("group_id"),
+                "addon_code": metadata.get("addon_code"),
+                "stripe_session_id": stripe_session_id,
+                "stripe_subscription_id": session.get("subscription"),
+                "payment_status": session.get("payment_status"),
+                "error": str(e)[:300]
+            }
+        )
+
+        return False
+
+
 # =========================
 # WEBHOOK STRIPE
 # =========================
@@ -120,6 +263,12 @@ def stripe_webhook():
     if event["type"] == "checkout.session.completed":
 
         session = event["data"]["object"]
+        metadata = session.get("metadata") or {}
+
+        if metadata.get("purpose") == "owner_addon":
+
+            process_owner_addon_checkout_completed(session)
+            return "OK"
 
         user_id = int(
             session["metadata"]["telegram_id"]
