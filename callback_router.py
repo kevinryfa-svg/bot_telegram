@@ -112,7 +112,8 @@ from formatters import format_tiempo_restante
 from owner_addon_service import (
     fetch_owner_addon_product,
     fetch_owner_addon_products,
-    fetch_owner_addon_subscriptions
+    fetch_owner_addon_subscriptions,
+    owner_has_feature
 )
 from group_registration_handler import (
     cancel_creator_group_link_request,
@@ -2648,6 +2649,34 @@ def fetch_ad_promo_campaigns(limit=20):
     return [row_to_ad_promo_campaign(row) for row in rows]
 
 
+def fetch_visible_ad_promo_campaigns(user_id, group_id=None, limit=20):
+
+    campaigns = fetch_ad_promo_campaigns(limit=limit)
+
+    if is_super_admin(user_id):
+
+        return campaigns
+
+
+    visible_campaigns = []
+
+    for campaign in campaigns:
+
+        paid_group_id = campaign.get("paid_group_id")
+
+        if group_id and paid_group_id != group_id:
+
+            continue
+
+
+        if owner_can_use_ad_promo(user_id, paid_group_id)[0]:
+
+            visible_campaigns.append(campaign)
+
+
+    return visible_campaigns
+
+
 def fetch_ad_promo_capture_campaigns(source_chat_id):
 
     with conn.cursor() as cur:
@@ -4493,9 +4522,9 @@ async def process_ad_promo_daily_reviews(context):
     return {"sent": sent}
 
 
-def build_ad_promo_panel_text():
+def build_ad_promo_panel_text(campaigns=None):
 
-    campaigns = fetch_ad_promo_campaigns()
+    campaigns = campaigns if campaigns is not None else fetch_ad_promo_campaigns()
     active = len([campaign for campaign in campaigns if campaign.get("is_active") and not campaign.get("is_paused")])
     paused = len([campaign for campaign in campaigns if campaign.get("is_paused")])
 
@@ -5256,10 +5285,25 @@ AD_PROMO_PROMO_FORWARD_TEXT = (
 )
 
 
-def fetch_ad_promo_selectable_groups(page=0, page_size=AD_PROMO_GROUP_PAGE_SIZE):
+def fetch_ad_promo_selectable_groups(page=0, page_size=AD_PROMO_GROUP_PAGE_SIZE, user_id=None):
 
     page = max(int(page or 0), 0)
     offset = page * page_size
+    params = [page_size + 1, offset]
+    group_filter_sql = ""
+
+    if user_id and not is_super_admin(user_id):
+
+        group_ids = get_admin_group_ids(user_id, ["can_manage_groups"])
+
+        if not group_ids:
+
+            return [], False
+
+
+        # get_admin_group_ids returns internal groups.id values, not Telegram chat ids.
+        group_filter_sql = "AND id = ANY(%s)"
+        params.insert(0, group_ids)
 
     query = """
 
@@ -5270,22 +5314,20 @@ def fetch_ad_promo_selectable_groups(page=0, page_size=AD_PROMO_GROUP_PAGE_SIZE)
                COALESCE(is_active, TRUE)
         FROM groups
         WHERE COALESCE(is_active, TRUE)=TRUE
+        {group_filter_sql}
         ORDER BY created_at DESC NULLS LAST,
                  id DESC
         LIMIT %s
         OFFSET %s
 
-    """
+    """.format(group_filter_sql=group_filter_sql)
 
 
     try:
 
         with conn.cursor() as cur:
 
-            cur.execute(query, (
-                page_size + 1,
-                offset
-            ))
+            cur.execute(query, params)
 
             rows = cur.fetchall()
 
@@ -5302,16 +5344,23 @@ def fetch_ad_promo_selectable_groups(page=0, page_size=AD_PROMO_GROUP_PAGE_SIZE)
                        COALESCE(is_active, TRUE)
                 FROM groups
                 WHERE COALESCE(is_active, TRUE)=TRUE
+                {group_filter_sql}
                 ORDER BY id DESC
                 LIMIT %s
                 OFFSET %s
 
-            """, (
-                page_size + 1,
-                offset
-            ))
+            """.format(group_filter_sql=group_filter_sql), params)
 
             rows = cur.fetchall()
+
+
+    if user_id and not is_super_admin(user_id):
+
+        rows = [
+            row
+            for row in rows
+            if owner_can_use_ad_promo(user_id, row[0])[0]
+        ]
 
 
     return rows[:page_size], len(rows) > page_size
@@ -5346,9 +5395,9 @@ def build_ad_promo_group_selection_text():
     )
 
 
-def build_ad_promo_group_selection_keyboard(page=0):
+def build_ad_promo_group_selection_keyboard(page=0, user_id=None):
 
-    rows, has_next = fetch_ad_promo_selectable_groups(page)
+    rows, has_next = fetch_ad_promo_selectable_groups(page, user_id=user_id)
     keyboard = []
 
 
@@ -13541,6 +13590,10 @@ def build_group_settings_keyboard(user_id, group_id):
         ])
 
         keyboard.append([
+            InlineKeyboardButton("📣 Promoción automática", callback_data="admin_ad_promo")
+        ])
+
+        keyboard.append([
             InlineKeyboardButton("🛡 Backup premium", callback_data="owner_panel_backup")
         ])
 
@@ -13744,6 +13797,369 @@ def build_owner_addons_active_keyboard():
         [InlineKeyboardButton("⬅️ Volver a servicios extra", callback_data="owner_addons_menu")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
+
+
+def owner_can_use_ad_promo(user_id, group_id):
+
+    if is_super_admin(user_id):
+
+        return True, get_group_owner_user_id(group_id) if group_id else user_id
+
+
+    if not group_id:
+
+        return False, None
+
+
+    if not user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
+
+        return False, get_group_owner_user_id(group_id)
+
+
+    owner_user_id = get_group_owner_user_id(group_id)
+
+    if not owner_user_id:
+
+        return False, None
+
+
+    return (
+        owner_has_feature(
+            owner_user_id,
+            "ad_promo",
+            group_id=group_id
+        ),
+        owner_user_id
+    )
+
+
+def build_ad_promo_owner_addon_required_text(group_id=None):
+
+    lines = [
+        "📣 Publicidad automática",
+        "",
+        "Este servicio es un extra mensual para dueños de comunidades.",
+        "Permite publicar vídeos promocionales automáticamente.",
+        "Incluye capturas, rotación, captions, diagnóstico y marca de agua.",
+        "",
+        "Para usarlo necesitas activar Publicidad automática o Pack Publicidad + Backups."
+    ]
+
+    products = [
+        fetch_owner_addon_product("ad_promo"),
+        fetch_owner_addon_product("bundle_ads_backups")
+    ]
+    products = [
+        product
+        for product in products
+        if product and product.get("is_active")
+    ]
+
+
+    if products:
+
+        lines.append("")
+        lines.append("Servicios disponibles:")
+
+        for product in products:
+
+            lines.append(f"- {product.get('name')}: {format_owner_addon_price(product)}")
+
+
+    return "\n".join(lines)
+
+
+def build_ad_promo_owner_addon_required_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧩 Ver servicios extra", callback_data="owner_addons_menu")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="edit_group_back")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def parse_ad_promo_callback_leading_int(data, prefix):
+
+    if not data.startswith(prefix):
+
+        return None
+
+
+    value = data.replace(prefix, "", 1).split("_", 1)[0]
+
+    return int(value) if value.isdigit() else None
+
+
+def fetch_ad_promo_media_campaign_id(media_id):
+
+    if not media_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT campaign_id
+            FROM ad_promo_media
+            WHERE id=%s
+            LIMIT 1
+
+        """, (media_id,))
+
+        row = cur.fetchone()
+
+
+    return row[0] if row else None
+
+
+def fetch_ad_promo_copy_variant_campaign_id(variant_id):
+
+    if not variant_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT campaign_id
+            FROM ad_promo_copy_variants
+            WHERE id=%s
+            LIMIT 1
+
+        """, (variant_id,))
+
+        row = cur.fetchone()
+
+
+    return row[0] if row else None
+
+
+def resolve_ad_promo_group_id_for_callback(data, context):
+
+    if data.startswith("admin_ad_promo_select_group_"):
+
+        return extract_commercial_request_id(
+            data,
+            "admin_ad_promo_select_group_"
+        )
+
+
+    wizard = context.user_data.get("ad_promo_wizard") or {}
+    wizard_data = wizard.get("data") or {}
+
+    for key in (
+        "paid_group_id",
+        "selected_group_admin",
+        "selected_owner_group"
+    ):
+
+        if key in wizard_data:
+
+            return wizard_data.get(key)
+
+
+    for prefix in (
+        "admin_ad_promo_watermark_mode_",
+        "admin_ad_promo_watermark_position_",
+        "admin_ad_promo_watermark_text_",
+        "admin_ad_promo_watermark_opacity_",
+        "admin_ad_promo_watermark_limits_",
+        "admin_ad_promo_watermark_test_",
+        "admin_ad_promo_watermark_",
+        "admin_ad_promo_diagnostics_",
+        "admin_ad_promo_generate_captions_",
+        "admin_ad_promo_copy_variants_",
+        "admin_ad_promo_optimize_rotation_",
+        "admin_ad_promo_delete_campaign_yes_",
+        "admin_ad_promo_delete_campaign_",
+        "admin_ad_promo_campaign_",
+        "admin_ad_promo_library_",
+        "admin_ad_promo_random_",
+        "admin_ad_promo_ai_",
+        "admin_ad_promo_capture_",
+        "admin_ad_promo_pause_",
+        "admin_ad_promo_resume_",
+        "admin_ad_promo_test_",
+        "admin_ad_promo_delete_old_",
+        "admin_ad_promo_edit_offer_",
+        "admin_ad_promo_edit_price_",
+        "admin_ad_promo_edit_cta_",
+        "admin_ad_promo_edit_frequency_",
+        "admin_ad_promo_edit_batch_",
+        "admin_ad_promo_edit_maxposts_",
+        "admin_ad_promo_edit_botlink_",
+        "admin_ad_promo_keep_offer_"
+    ):
+
+        campaign_id = parse_ad_promo_callback_leading_int(data, prefix)
+
+        if campaign_id:
+
+            campaign = fetch_ad_promo_campaign(campaign_id)
+
+            return campaign.get("paid_group_id") if campaign else None
+
+
+    if data.startswith("admin_ad_promo_media_off_"):
+
+        media_id = extract_commercial_request_id(data, "admin_ad_promo_media_off_")
+        campaign_id = fetch_ad_promo_media_campaign_id(media_id)
+        campaign = fetch_ad_promo_campaign(campaign_id) if campaign_id else None
+
+        return campaign.get("paid_group_id") if campaign else None
+
+
+    if data.startswith("admin_ad_promo_copy_off_"):
+
+        variant_id = extract_commercial_request_id(data, "admin_ad_promo_copy_off_")
+        campaign_id = fetch_ad_promo_copy_variant_campaign_id(variant_id)
+        campaign = fetch_ad_promo_campaign(campaign_id) if campaign_id else None
+
+        return campaign.get("paid_group_id") if campaign else None
+
+
+    return get_selected_group_for_permissions(
+        context,
+        context.user_data.get("_ad_promo_gate_user_id"),
+        ["can_manage_groups"]
+    )
+
+
+def should_log_ad_promo_owner_addon_gate(data):
+
+    if data in (
+        "admin_ad_promo",
+        "admin_ad_promo_campaigns",
+        "admin_ad_promo_create"
+    ):
+
+        return True
+
+
+    return any(data.startswith(prefix) for prefix in (
+        "admin_ad_promo_select_group_",
+        "admin_ad_promo_campaign_",
+        "admin_ad_promo_library_",
+        "admin_ad_promo_diagnostics_",
+        "admin_ad_promo_test_",
+        "admin_ad_promo_watermark_",
+        "admin_ad_promo_delete_campaign_",
+        "admin_ad_promo_generate_captions_",
+        "admin_ad_promo_optimize_rotation_"
+    ))
+
+
+def is_ad_promo_ui_callback(data):
+
+    return data == "admin_ad_promo" or data.startswith("admin_ad_promo_")
+
+
+async def enforce_ad_promo_owner_addon_gate(query, context, data, user_id):
+
+    if not is_ad_promo_ui_callback(data):
+
+        return True
+
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    context.user_data["_ad_promo_gate_user_id"] = user_id
+    group_id = resolve_ad_promo_group_id_for_callback(data, context)
+    context.user_data.pop("_ad_promo_gate_user_id", None)
+
+
+    if not group_id:
+
+        await query.message.reply_text(
+            "⚠️ No he podido identificar la comunidad para esta acción de publicidad automática.",
+            reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return False
+
+
+    try:
+
+        group_id = int(group_id)
+
+    except Exception:
+
+        await query.message.reply_text(
+            "⚠️ La comunidad asociada a esta acción no es válida.",
+            reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return False
+
+
+    if not user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
+
+        await query.message.reply_text(
+            "⛔ No tienes permiso para gestionar publicidad automática de esta comunidad.",
+            reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return False
+
+
+    allowed, owner_user_id = owner_can_use_ad_promo(user_id, group_id)
+    metadata = {
+        "user_id": user_id,
+        "owner_user_id": owner_user_id,
+        "group_id": group_id,
+        "callback_data": data[:120],
+        "required_feature": "ad_promo"
+    }
+
+
+    if allowed:
+
+        if should_log_ad_promo_owner_addon_gate(data):
+
+            log_event(
+                "ad_promo_owner_addon_allowed",
+                category="marketing",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Acceso a publicidad automática permitido por addon owner.",
+                metadata=metadata
+            )
+
+
+        return True
+
+
+    if should_log_ad_promo_owner_addon_gate(data):
+
+        log_event(
+            "ad_promo_owner_addon_required",
+            category="marketing",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Publicidad automática requiere addon owner activo.",
+            metadata=metadata
+        )
+
+
+    await send_clean_message(
+        context,
+        query.message.chat_id,
+        build_ad_promo_owner_addon_required_text(group_id),
+        reply_markup=build_ad_promo_owner_addon_required_keyboard()
+    )
+
+    return False
 
 
 def build_owner_section_keyboard(user_id, group_id, section):
@@ -23834,6 +24250,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+    if is_ad_promo_ui_callback(data):
+
+        if not await enforce_ad_promo_owner_addon_gate(query, context, data, user_id):
+
+            return
+
+
     if data == "admin_global_panel":
 
         await send_clean_message(
@@ -23849,16 +24272,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_ad_promo":
 
-        if not is_super_admin(user_id):
-
-            await query.message.reply_text("⛔ Solo superadmin.")
-            return
-
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups"]
+        )
+        campaigns = fetch_visible_ad_promo_campaigns(user_id, group_id=group_id)
 
         await send_clean_message(
             context,
             query.message.chat_id,
-            build_ad_promo_panel_text(),
+            build_ad_promo_panel_text(campaigns),
             reply_markup=build_ad_promo_panel_keyboard()
         )
 
@@ -23867,7 +24291,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_ad_promo_campaigns":
 
-        campaigns = fetch_ad_promo_campaigns()
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups"]
+        )
+        campaigns = fetch_visible_ad_promo_campaigns(user_id, group_id=group_id)
 
         await send_clean_message(
             context,
@@ -23888,7 +24317,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             build_ad_promo_group_selection_text(),
-            reply_markup=build_ad_promo_group_selection_keyboard(page=0)
+            reply_markup=build_ad_promo_group_selection_keyboard(page=0, user_id=user_id)
         )
 
         return
@@ -23910,7 +24339,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             query.message.chat_id,
             build_ad_promo_group_selection_text(),
-            reply_markup=build_ad_promo_group_selection_keyboard(page=page)
+            reply_markup=build_ad_promo_group_selection_keyboard(page=page, user_id=user_id)
         )
 
         return
@@ -23928,7 +24357,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "❌ Comunidad no encontrada.",
-                reply_markup=build_ad_promo_group_selection_keyboard(page=0)
+                reply_markup=build_ad_promo_group_selection_keyboard(page=0, user_id=user_id)
             )
 
             return
@@ -23962,7 +24391,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "⚠️ Primero elige la comunidad de pago.",
-                reply_markup=build_ad_promo_group_selection_keyboard(page=0)
+                reply_markup=build_ad_promo_group_selection_keyboard(page=0, user_id=user_id)
             )
 
             return
@@ -24006,7 +24435,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "⚠️ Primero elige la comunidad de pago.",
-                reply_markup=build_ad_promo_group_selection_keyboard(page=0)
+                reply_markup=build_ad_promo_group_selection_keyboard(page=0, user_id=user_id)
             )
 
             return
@@ -24031,7 +24460,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "⚠️ Primero elige la comunidad de pago.",
-                reply_markup=build_ad_promo_group_selection_keyboard(page=0)
+                reply_markup=build_ad_promo_group_selection_keyboard(page=0, user_id=user_id)
             )
 
             return
@@ -24062,7 +24491,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "⚠️ Primero elige la comunidad de pago.",
-                reply_markup=build_ad_promo_group_selection_keyboard(page=0)
+                reply_markup=build_ad_promo_group_selection_keyboard(page=0, user_id=user_id)
             )
 
             return
