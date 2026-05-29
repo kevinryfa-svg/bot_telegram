@@ -230,6 +230,30 @@ def fetch_active_owner_addon_subscription(owner_user_id, addon_code, group_id=No
     return row_to_owner_addon_subscription(row)
 
 
+def fetch_owner_addon_subscription_by_stripe_subscription_id(stripe_subscription_id):
+
+    if not stripe_subscription_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
+            FROM owner_addon_subscriptions
+            WHERE stripe_subscription_id=%s
+            LIMIT 1
+
+        """, (stripe_subscription_id,))
+
+        row = cur.fetchone()
+
+
+    return row_to_owner_addon_subscription(row)
+
+
 def upsert_owner_addon_checkout_pending(
     owner_user_id,
     group_id,
@@ -323,6 +347,7 @@ def activate_owner_addon_subscription_from_stripe(
     stripe_price_id=None,
     current_period_start=None,
     current_period_end=None,
+    cancel_at_period_end=False,
     status="active"
 ):
 
@@ -364,7 +389,7 @@ def activate_owner_addon_subscription_from_stripe(
                     status=%s,
                     current_period_start=COALESCE(%s, current_period_start),
                     current_period_end=COALESCE(%s, current_period_end),
-                    cancel_at_period_end=FALSE,
+                    cancel_at_period_end=%s,
                     updated_at=NOW()
                 WHERE id=%s
                 RETURNING {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
@@ -376,6 +401,7 @@ def activate_owner_addon_subscription_from_stripe(
                 status,
                 current_period_start,
                 current_period_end,
+                cancel_at_period_end,
                 row[0]
             ))
 
@@ -398,7 +424,7 @@ def activate_owner_addon_subscription_from_stripe(
                     created_at,
                     updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, NOW(), NOW())
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                 RETURNING {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
 
             """, (
@@ -410,7 +436,8 @@ def activate_owner_addon_subscription_from_stripe(
                 stripe_price_id,
                 status,
                 current_period_start,
-                current_period_end
+                current_period_end,
+                cancel_at_period_end
             ))
 
 
@@ -419,6 +446,91 @@ def activate_owner_addon_subscription_from_stripe(
 
 
     return row_to_owner_addon_subscription(subscription_row)
+
+
+def update_owner_addon_subscription_from_stripe(
+    stripe_subscription_id,
+    stripe_customer_id=None,
+    stripe_price_id=None,
+    status=None,
+    current_period_start=None,
+    current_period_end=None,
+    cancel_at_period_end=None
+):
+
+    if not stripe_subscription_id:
+
+        return None
+
+
+    updates = []
+    params = []
+
+    for field, value in [
+        ("stripe_customer_id", stripe_customer_id),
+        ("stripe_price_id", stripe_price_id),
+        ("status", status),
+        ("current_period_start", current_period_start),
+        ("current_period_end", current_period_end),
+        ("cancel_at_period_end", cancel_at_period_end)
+    ]:
+
+        if value is not None:
+
+            updates.append(f"{field}=%s")
+            params.append(value)
+
+
+    if not updates:
+
+        return fetch_owner_addon_subscription_by_stripe_subscription_id(stripe_subscription_id)
+
+
+    updates.append("updated_at=NOW()")
+    params.append(stripe_subscription_id)
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE owner_addon_subscriptions
+            SET {", ".join(updates)}
+            WHERE stripe_subscription_id=%s
+            RETURNING {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
+
+        """, params)
+
+        row = cur.fetchone()
+        conn.commit()
+
+
+    return row_to_owner_addon_subscription(row)
+
+
+def mark_owner_addon_subscription_payment_failed(
+    stripe_subscription_id,
+    stripe_customer_id=None,
+    status="past_due"
+):
+
+    return update_owner_addon_subscription_from_stripe(
+        stripe_subscription_id,
+        stripe_customer_id=stripe_customer_id,
+        status=status or "past_due"
+    )
+
+
+def cancel_owner_addon_subscription_from_stripe(
+    stripe_subscription_id,
+    status="canceled",
+    cancel_at_period_end=None
+):
+
+    return update_owner_addon_subscription_from_stripe(
+        stripe_subscription_id,
+        status=status or "canceled",
+        cancel_at_period_end=cancel_at_period_end
+    )
 
 
 def owner_has_active_addon(owner_user_id, addon_code, group_id=None):
