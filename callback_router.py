@@ -281,6 +281,120 @@ def get_group_plan_enabled_payment_providers(group_id):
     return providers
 
 
+def get_group_payment_provider_status(provider_statuses, provider):
+
+    for provider_status in provider_statuses:
+
+        if provider_status.get("provider") == provider:
+
+            return provider_status
+
+    return None
+
+
+def is_group_provider_configurable_for_plan(provider_status):
+
+    if not provider_status:
+
+        return False
+
+    provider = provider_status.get("provider")
+
+    if provider == OWNER_PAYMENT_PROVIDER_STRIPE:
+
+        return provider_status.get("global_enabled") is True
+
+    if provider in (
+        OWNER_PAYMENT_PROVIDER_PAYPAL,
+        OWNER_PAYMENT_PROVIDER_REVOLUT,
+        OWNER_PAYMENT_PROVIDER_CHANGENOW,
+        OWNER_PAYMENT_PROVIDER_GUARDARIAN
+    ):
+
+        return (
+            provider_status.get("group_enabled") is True
+            and provider_status.get("status") == "active"
+            and provider_status.get("has_encrypted_config") is True
+        )
+
+    return False
+
+
+def is_group_provider_globally_disabled(provider_status):
+
+    return bool(provider_status and provider_status.get("global_enabled") is not True)
+
+
+def get_group_plan_configurable_payment_providers(group_id):
+
+    provider_statuses = list_group_payment_provider_statuses(group_id)
+    stripe_status = get_group_payment_provider_status(
+        provider_statuses,
+        OWNER_PAYMENT_PROVIDER_STRIPE
+    )
+    paypal_status = get_group_payment_provider_status(
+        provider_statuses,
+        OWNER_PAYMENT_PROVIDER_PAYPAL
+    )
+    providers = []
+
+
+    for provider in (
+        OWNER_PAYMENT_PROVIDER_STRIPE,
+        OWNER_PAYMENT_PROVIDER_PAYPAL,
+        OWNER_PAYMENT_PROVIDER_REVOLUT,
+        OWNER_PAYMENT_PROVIDER_CHANGENOW,
+        OWNER_PAYMENT_PROVIDER_GUARDARIAN
+    ):
+
+        provider_status = get_group_payment_provider_status(
+            provider_statuses,
+            provider
+        )
+
+        if is_group_provider_configurable_for_plan(provider_status):
+
+            providers.append(provider)
+
+
+    log_event(
+        "plan_provider_detection",
+        category="payment",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        message="Detección de proveedores configurables para creación de planes.",
+        metadata={
+            "group_id": group_id,
+            "stripe_configurable": is_group_provider_configurable_for_plan(stripe_status),
+            "stripe_checkout_available": is_stripe_payments_enabled(),
+            "paypal_configurable": is_group_provider_configurable_for_plan(paypal_status),
+            "paypal_checkout_available": is_paypal_group_checkout_available(group_id),
+            "providers_for_plan_creation": providers
+        }
+    )
+
+    return providers
+
+
+def build_plan_provider_global_warning(group_id, provider):
+
+    provider_status = get_group_payment_provider_status(
+        list_group_payment_provider_statuses(group_id),
+        provider
+    )
+
+    if provider == OWNER_PAYMENT_PROVIDER_PAYPAL and is_group_provider_globally_disabled(provider_status):
+
+        return (
+            "⚠️ PayPal está configurado para esta comunidad, pero el pago PayPal está "
+            "deshabilitado globalmente. Podrás crear el plan, pero los clientes no podrán "
+            "pagarlo hasta que se active ENABLE_PAYPAL_PAYMENTS.\n\n"
+        )
+
+    return ""
+
+
 def build_plan_provider_selection_keyboard(providers):
 
     keyboard = []
@@ -38540,7 +38654,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        providers = get_group_plan_enabled_payment_providers(group_id)
+        providers = get_group_plan_configurable_payment_providers(group_id)
 
         if not providers:
 
@@ -38586,6 +38700,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["new_plan"] = {
             "payment_provider": providers[0]
         }
+        provider_warning = build_plan_provider_global_warning(group_id, providers[0])
 
         log_event(
             "plan_wizard_provider_selected",
@@ -38608,6 +38723,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             "➕ CREAR NUEVO PLAN\n\n"
             f"Método seleccionado: {format_plan_payment_provider(providers[0])}\n\n"
+            f"{provider_warning}"
 
             "Paso 1️⃣\n"
             "Introduce el nombre del plan.\n\n"
@@ -38648,7 +38764,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        providers = get_group_plan_enabled_payment_providers(group_id)
+        providers = get_group_plan_configurable_payment_providers(group_id)
 
         if provider not in providers:
 
@@ -38668,6 +38784,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["new_plan"] = {
             "payment_provider": provider
         }
+        provider_warning = build_plan_provider_global_warning(group_id, provider)
 
         log_event(
             "plan_wizard_provider_selected",
@@ -38688,6 +38805,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "➕ CREAR NUEVO PLAN\n\n"
             f"Método seleccionado: {format_plan_payment_provider(provider)}\n\n"
+            f"{provider_warning}"
             "Paso 1️⃣\n"
             "Introduce el nombre del plan.\n\n"
             "Ejemplo:\n"
@@ -38783,9 +38901,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         texto = "📋 PLANES DEL GRUPO\n\n"
+        provider_statuses = list_group_payment_provider_statuses(group_id)
 
 
         for plan_id, name, amount, currency, duration, payment_provider in plans:
+
+            payment_provider = normalize_plan_payment_provider(payment_provider)
+            provider_status = get_group_payment_provider_status(
+                provider_statuses,
+                payment_provider
+            )
+            provider_state_line = ""
+
+            if payment_provider == OWNER_PAYMENT_PROVIDER_PAYPAL and is_group_provider_globally_disabled(provider_status):
+
+                provider_state_line = "Estado: deshabilitado globalmente\n"
 
             if duration == 0:
 
@@ -38814,6 +38944,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💰 {precio_texto}\n"
 
                 f"💳 Método: {format_plan_payment_provider(payment_provider)}\n"
+
+                f"{provider_state_line}"
 
                 f"⏳ {duracion_texto}\n\n"
 
@@ -43306,8 +43438,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not is_paypal_group_checkout_available(group_id):
 
+            provider_status = get_group_payment_provider_status(
+                list_group_payment_provider_statuses(group_id),
+                OWNER_PAYMENT_PROVIDER_PAYPAL
+            )
+            unavailable_text = "PayPal todavía no está configurado para esta comunidad."
+
+            if is_group_provider_globally_disabled(provider_status):
+
+                unavailable_text = (
+                    "⚠️ PayPal está configurado para este plan, pero actualmente "
+                    "está deshabilitado en la plataforma."
+                )
+
             await query.message.reply_text(
-                "PayPal todavía no está configurado para esta comunidad.",
+                unavailable_text,
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 
