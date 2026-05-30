@@ -22971,6 +22971,22 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
         if response.status_code >= 400 or not response_data.get("url"):
 
+            log_event(
+                "paypal_group_checkout_failed",
+                category="payment",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="No se pudo crear checkout PayPal de grupo.",
+                metadata={
+                    "plan_id": plan_id,
+                    "status_code": response.status_code,
+                    "error": response_data.get("error")
+                }
+            )
+
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=response_data.get("error") or "PayPal no está disponible para esta comunidad.",
@@ -22983,17 +22999,18 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
-                "🅿️ Paga con PayPal aquí:\n"
-                f"{response_data['url']}\n\n"
+                "✅ Checkout PayPal creado. Completa el pago para recibir acceso.\n\n"
                 "El acceso se enviará cuando PayPal confirme el pago por webhook verificado."
             ),
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🅿️ Pagar con PayPal", url=response_data["url"])]
+            ])
         )
 
     except Exception as e:
 
         log_event(
-            "paypal_group_checkout_creation_error",
+            "paypal_group_checkout_failed",
             category="payment",
             severity="error",
             scope="group",
@@ -35625,10 +35642,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Necesitarás estos datos de tu cuenta PayPal Developer:\n"
                 "- PAYPAL_CLIENT_ID\n"
                 "- PAYPAL_CLIENT_SECRET\n"
-                "- PAYPAL_WEBHOOK_ID opcional, para una fase posterior\n"
+                "- PAYPAL_WEBHOOK_ID\n"
                 "- modo sandbox o live\n\n"
                 "Las claves se cifran antes de guardarse, no se muestran completas y no deben enviarse por soporte.\n\n"
-                "Importante: esto solo prepara la configuración. Todavía no activa cobros PayPal reales para compradores del grupo.",
+                "Importante: los cobros PayPal reales para compradores solo estarán disponibles si ENABLE_PAYPAL_PAYMENTS está activo y el plan usa PayPal.",
                 reply_markup=build_owner_paypal_mode_keyboard(group_id)
             )
 
@@ -36532,8 +36549,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ("✅ PayPal guardado de forma segura\n\n" if saved else "⚠️ No pude guardar PayPal\n\n")
             + (
                 f"{build_owner_paypal_safe_summary(payload)}\n\n"
-                "Estado: pendiente de verificación.\n"
-                "Los cobros PayPal reales para compradores del grupo siguen desactivados hasta una fase posterior."
+                "Estado: configurado, pendiente de prueba real.\n"
+                "Los cobros PayPal reales respetan ENABLE_PAYPAL_PAYMENTS y solo conceden acceso tras webhook verificado."
                 if saved
                 else "Revisa la configuración y vuelve a intentarlo."
             ),

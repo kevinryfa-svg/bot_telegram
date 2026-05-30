@@ -1645,10 +1645,10 @@ def build_group_payment_provider_detail_text(group_id, group_name, provider_stat
             "Conectar PayPal pide estos datos dentro del bot:",
             "- client_id",
             "- client_secret",
-            "- webhook_id opcional",
+            "- webhook_id",
             "- modo sandbox/live",
             "",
-            "Los secretos se guardan cifrados si PAYMENT_CONFIG_ENCRYPTION_KEY está configurada. Si incluye webhook_id, PayPal queda disponible para checkout real de grupo."
+            "Los secretos se guardan cifrados si PAYMENT_CONFIG_ENCRYPTION_KEY está configurada. Con webhook_id y ENABLE_PAYPAL_PAYMENTS activo, PayPal queda disponible para checkout real de grupo."
         ])
 
 
