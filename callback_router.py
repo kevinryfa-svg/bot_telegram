@@ -31615,7 +31615,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
-        telegram_group_id = int(
+        requested_group_ref = int(
             mysub_parts[1]
         )
 
@@ -31630,14 +31630,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
-                    SELECT name,
+                    SELECT id,
+                           name,
+                           telegram_group_id,
                            COALESCE(community_type, 'group')
 
                     FROM groups
 
                     WHERE telegram_group_id=%s
+                    OR id=%s
+                    LIMIT 1
 
-                """, (telegram_group_id,))
+                """, (
+                    requested_group_ref,
+                    requested_group_ref
+                ))
 
                 group_row = cur.fetchone()
 
@@ -31651,38 +31658,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
 
-                group_name = group_row[0]
-                community_type = normalize_community_type(group_row[1])
+                real_group_id = group_row[0]
+                group_name = group_row[1]
+                telegram_group_id = group_row[2]
+                community_type = normalize_community_type(group_row[3])
                 community_kind = format_community_kind(community_type)
-
-
-                # =========================
-                # OBTENER group_id REAL
-                # =========================
-
-                cur.execute("""
-
-                    SELECT id
-
-                    FROM groups
-
-                    WHERE telegram_group_id=%s
-
-                """, (telegram_group_id,))
-
-                group_id_row = cur.fetchone()
-
-
-                if not group_id_row:
-
-                    await query.message.reply_text(
-                        "❌ Grupo no encontrado."
-                    )
-
-                    return
-
-
-                real_group_id = group_id_row[0]
 
 
                 # =========================
@@ -31715,7 +31695,32 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_row = cur.fetchone()
 
 
-                if not user_row:
+                access_state = await resolve_group_access_state_for_user(
+                    context,
+                    user_id,
+                    real_group_id
+                )
+
+
+                if not user_row and not access_state.get("has_active_access"):
+
+                    log_event(
+                        "access_recovery_denied_no_active_access",
+                        category="access",
+                        severity="info",
+                        scope="group",
+                        group_id=real_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Recuperación de acceso denegada por no tener acceso activo.",
+                        metadata={
+                            "user_id": user_id,
+                            "group_id": real_group_id,
+                            "telegram_group_id": telegram_group_id,
+                            "access_source": access_state.get("access_source"),
+                            "reason": access_state.get("reason")
+                        }
+                    )
 
                     await reply_with_recover_navigation(
                         query,
@@ -31725,7 +31730,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
 
-                expiration = user_row[0]
+                expiration = user_row[0] if user_row else access_state.get("expires_at")
+
+
+                if access_state.get("has_active_access") and expiration is None:
+
+                    log_event(
+                        "access_recovery_permanent_access_allowed",
+                        category="access",
+                        severity="info",
+                        scope="group",
+                        group_id=real_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Recuperación permitida por acceso permanente/free activo.",
+                        metadata={
+                            "user_id": user_id,
+                            "group_id": real_group_id,
+                            "telegram_group_id": telegram_group_id,
+                            "access_source": access_state.get("access_source"),
+                            "reason": access_state.get("reason")
+                        }
+                    )
 
 
                 # =========================
@@ -31970,9 +31996,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
 
+        access_intro = (
+            f"✅ Tienes acceso permanente activo a este {community_kind}.\n\n"
+            if expiration is None
+            else ""
+        )
+
+
         mensaje = (
 
             f"📦 {group_name}\n\n"
+
+            f"{access_intro}"
 
             f"⏳ Tiempo restante:\n"
             f"{tiempo_texto}\n\n"
