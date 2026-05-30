@@ -269,6 +269,7 @@ def register_checkout_routes(app):
             "provider": PAYMENT_PROVIDER_PAYPAL,
             "payment_scope": "group",
             "order_id": order.get("order_id"),
+            "subscription_id": order.get("subscription_id"),
             "url": order.get("approval_url")
         })
 

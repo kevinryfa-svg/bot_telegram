@@ -413,6 +413,8 @@ def fetch_group_paypal_plan(group_id, plan_id):
                    p.amount,
                    p.currency,
                    p.duration_days,
+                   p.paypal_plan_id,
+                   p.provider_price_id,
                    g.name
             FROM plans p
             JOIN groups g ON g.id=p.group_id
@@ -442,8 +444,18 @@ def fetch_group_paypal_plan(group_id, plan_id):
         "amount": row[2],
         "currency": row[3],
         "duration_days": row[4],
-        "group_name": row[5]
+        "paypal_plan_id": row[5],
+        "provider_price_id": row[6],
+        "group_name": row[7]
     }
+
+
+def get_group_paypal_plan_id(plan):
+
+    return (
+        plan.get("paypal_plan_id")
+        or plan.get("provider_price_id")
+    )
 
 
 def create_group_paypal_order(
@@ -473,6 +485,15 @@ def create_group_paypal_order(
 
         raise ValueError("Plan inválido para esta comunidad.")
 
+    paypal_plan_id = get_group_paypal_plan_id(plan)
+
+
+    if not paypal_plan_id:
+
+        raise PaymentProviderUnavailable(
+            "PayPal para suscripciones todavía no está disponible para este plan."
+        )
+
 
     amount_minor = int(plan.get("amount") or 0)
 
@@ -487,13 +508,14 @@ def create_group_paypal_order(
     internal_reference = f"paypal_group_{uuid.uuid4().hex}"
     safe_metadata = sanitize_payment_metadata(metadata or {})
     safe_metadata.update({
-        "source": "paypal_group_create_order",
+        "source": "paypal_group_create_subscription",
         "paypal_mode": credentials.get("mode"),
         "internal_reference": internal_reference,
-        "provider_config_id": credentials.get("provider_config_id")
+        "provider_config_id": credentials.get("provider_config_id"),
+        "paypal_plan_id": paypal_plan_id
     })
 
-    create_payment_transaction(
+    pending_transaction_id = create_payment_transaction(
         PAYMENT_PROVIDER_PAYPAL,
         status=PAYMENT_STATUS_PENDING,
         payment_scope=PAYMENT_SCOPE_GROUP,
@@ -510,96 +532,120 @@ def create_group_paypal_order(
         metadata=safe_metadata
     )
 
-    access_token = get_paypal_access_token_for_credentials(
-        credentials.get("client_id"),
-        credentials.get("client_secret"),
-        credentials.get("mode")
-    )
-    payload = {
-        "intent": "CAPTURE",
-        "purchase_units": [{
-            "reference_id": internal_reference,
-            "custom_id": internal_reference,
-            "description": f"Acceso a {plan.get('group_name') or 'comunidad'} · {plan.get('name') or 'Plan'}",
-            "amount": {
-                "currency_code": currency_code,
-                "value": format_paypal_amount(amount_minor)
-            }
-        }],
-        "application_context": {
-            "brand_name": "TheStarVipBOT",
-            "landing_page": "LOGIN",
-            "user_action": "PAY_NOW",
-            "return_url": get_paypal_redirect_url("return"),
-            "cancel_url": get_paypal_redirect_url("cancel")
-        }
-    }
 
-    response = requests.post(
-        f"{get_paypal_base_url_for_mode(credentials.get('mode'))}/v2/checkout/orders",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "PayPal-Request-Id": internal_reference
-        },
-        json=payload,
-        timeout=20
-    )
-    response.raise_for_status()
-
-    order = response.json()
-    order_id = order.get("id")
-    approval_url = None
-
-
-    for link in order.get("links", []):
-
-        if link.get("rel") == "approve":
-
-            approval_url = link.get("href")
-            break
-
-
-    if not order_id or not approval_url:
+    if not pending_transaction_id:
 
         raise PaymentProviderUnavailable(
-            "PayPal no devolvió una URL de aprobación."
+            "No se pudo registrar la transacción pendiente PayPal."
         )
 
 
-    create_payment_transaction(
-        PAYMENT_PROVIDER_PAYPAL,
-        status=PAYMENT_STATUS_PENDING,
-        payment_scope=PAYMENT_SCOPE_GROUP,
-        purchase_type=PURCHASE_TYPE_GROUP_ACCESS,
-        user_id=user_id,
-        owner_user_id=credentials.get("owner_user_id"),
-        group_id=group_id,
-        plan_id=plan_id,
-        provider_config_id=credentials.get("provider_config_id"),
-        provider_config_scope=PROVIDER_CONFIG_SCOPE_GROUP,
-        amount=amount_minor,
-        currency=currency_code,
-        external_checkout_id=order_id,
-        idempotency_key=internal_reference,
-        metadata={
-            **safe_metadata,
-            "approval_url": approval_url,
-            "paypal_order_id": order_id
+    try:
+
+        access_token = get_paypal_access_token_for_credentials(
+            credentials.get("client_id"),
+            credentials.get("client_secret"),
+            credentials.get("mode")
+        )
+        payload = {
+            "plan_id": paypal_plan_id,
+            "custom_id": internal_reference,
+            "quantity": "1",
+            "application_context": {
+                "brand_name": "TheStarVipBOT",
+                "user_action": "PAY_NOW",
+                "return_url": get_paypal_redirect_url("return"),
+                "cancel_url": get_paypal_redirect_url("cancel")
+            }
         }
-    )
+
+        response = requests.post(
+            f"{get_paypal_base_url_for_mode(credentials.get('mode'))}/v1/billing/subscriptions",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+                "PayPal-Request-Id": internal_reference
+            },
+            json=payload,
+            timeout=20
+        )
+        response.raise_for_status()
+
+        subscription = response.json()
+        subscription_id = subscription.get("id")
+        approval_url = None
+
+
+        for link in subscription.get("links", []):
+
+            if link.get("rel") == "approve":
+
+                approval_url = link.get("href")
+                break
+
+
+        if not subscription_id or not approval_url:
+
+            raise PaymentProviderUnavailable(
+                "PayPal no devolvió una URL de aprobación."
+            )
+
+
+        update_paypal_transaction_status(
+            pending_transaction_id,
+            PAYMENT_STATUS_PENDING,
+            external_checkout_id=subscription_id,
+            metadata={
+                **safe_metadata,
+                "approval_url": approval_url,
+                "paypal_subscription_id": subscription_id
+            }
+        )
+
+    except Exception as exc:
+
+        update_paypal_transaction_status(
+            pending_transaction_id,
+            PAYMENT_STATUS_FAILED,
+            metadata={
+                **safe_metadata,
+                "paypal_checkout_error": str(exc)[:500],
+                "activation_status": "subscription_creation_failed"
+            }
+        )
+
+        log_event(
+            "paypal_group_checkout_failed",
+            category="payment",
+            severity="error",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="No se pudo crear la suscripción PayPal del grupo.",
+            metadata={
+                "transaction_id": pending_transaction_id,
+                "plan_id": plan_id,
+                "paypal_mode": credentials.get("mode"),
+                "provider_config_id": credentials.get("provider_config_id"),
+                "error": str(exc)[:500]
+            }
+        )
+
+        raise
+
 
     log_event(
-        "paypal_group_order_created",
+        "paypal_group_checkout_created",
         category="payment",
         severity="info",
         scope="group",
         group_id=group_id,
         actor_user_id=user_id,
         target_user_id=user_id,
-        message="Orden PayPal de grupo creada.",
+        message="Checkout de suscripción PayPal de grupo creado.",
         metadata={
-            "paypal_order_id": order_id,
+            "paypal_subscription_id": subscription_id,
             "plan_id": plan_id,
             "amount": amount_minor,
             "currency": currency_code,
@@ -609,7 +655,8 @@ def create_group_paypal_order(
     )
 
     return {
-        "order_id": order_id,
+        "order_id": subscription_id,
+        "subscription_id": subscription_id,
         "approval_url": approval_url,
         "internal_reference": internal_reference
     }
@@ -700,6 +747,62 @@ def fetch_paypal_transaction(order_id=None, internal_reference=None):
     return None
 
 
+def fetch_paypal_transaction_by_subscription_id(subscription_id):
+
+    if not subscription_id:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   provider,
+                   status,
+                   payment_scope,
+                   purchase_type,
+                   user_id,
+                   owner_user_id,
+                   group_id,
+                   plan_id,
+                   platform_product_key,
+                   provider_config_id,
+                   amount,
+                   currency,
+                   external_payment_id,
+                   external_checkout_id,
+                   idempotency_key,
+                   metadata_json
+            FROM payment_transactions
+            WHERE provider=%s
+            AND (
+                external_checkout_id=%s
+                OR COALESCE(metadata_json, '{}'::jsonb)->>'paypal_subscription_id'=%s
+                OR COALESCE(metadata, '{}'::jsonb)->>'paypal_subscription_id'=%s
+            )
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+            LIMIT 1
+
+        """, (
+            PAYMENT_PROVIDER_PAYPAL,
+            subscription_id,
+            subscription_id,
+            subscription_id
+        ))
+
+        row = cur.fetchone()
+
+
+        if row:
+
+            return row_to_paypal_transaction(row)
+
+
+    return None
+
+
 def row_to_paypal_transaction(row):
 
     metadata_json = row[16] or {}
@@ -737,7 +840,7 @@ def row_to_paypal_transaction(row):
     }
 
 
-def update_paypal_transaction_status(transaction_id, status, external_payment_id=None, metadata=None):
+def update_paypal_transaction_status(transaction_id, status, external_payment_id=None, external_checkout_id=None, metadata=None):
 
     safe_metadata = sanitize_payment_metadata(metadata or {})
 
@@ -748,6 +851,7 @@ def update_paypal_transaction_status(transaction_id, status, external_payment_id
             UPDATE payment_transactions
             SET status=%s,
                 external_payment_id=COALESCE(%s, external_payment_id),
+                external_checkout_id=COALESCE(%s, external_checkout_id),
                 metadata_json=COALESCE(metadata_json, '{}'::jsonb) || %s::jsonb,
                 metadata=COALESCE(metadata, '{}'::jsonb) || %s::jsonb,
                 updated_at=CURRENT_TIMESTAMP
@@ -756,6 +860,7 @@ def update_paypal_transaction_status(transaction_id, status, external_payment_id
         """, (
             status,
             external_payment_id,
+            external_checkout_id,
             json.dumps(safe_metadata),
             json.dumps(safe_metadata),
             transaction_id
@@ -856,6 +961,20 @@ def extract_paypal_capture_context(event_body):
 
 def get_paypal_status_from_event(event_type):
 
+    if event_type == "PAYMENT.SALE.COMPLETED":
+
+        return PAYMENT_STATUS_PAID
+
+
+    if event_type in (
+        "PAYMENT.SALE.DENIED",
+        "PAYMENT.SALE.REFUNDED",
+        "PAYMENT.SALE.REVERSED"
+    ):
+
+        return PAYMENT_STATUS_FAILED
+
+
     if event_type == "PAYMENT.CAPTURE.COMPLETED":
 
         return PAYMENT_STATUS_PAID
@@ -872,7 +991,437 @@ def get_paypal_status_from_event(event_type):
     return None
 
 
+def extract_paypal_subscription_payment_context(event_body):
+
+    resource = event_body.get("resource") or {}
+    event_type = event_body.get("event_type")
+
+
+    if event_type not in (
+        "PAYMENT.SALE.COMPLETED",
+        "PAYMENT.SALE.DENIED",
+        "PAYMENT.SALE.REFUNDED",
+        "PAYMENT.SALE.REVERSED"
+    ):
+
+        return None
+
+
+    amount = resource.get("amount") or {}
+    amount_value = amount.get("total") or amount.get("value") or "0"
+    currency = amount.get("currency") or amount.get("currency_code") or ""
+
+    return {
+        "subscription_id": resource.get("billing_agreement_id"),
+        "sale_id": resource.get("id"),
+        "status": resource.get("state") or resource.get("status"),
+        "amount": paypal_amount_to_minor(amount_value),
+        "currency": currency.upper(),
+        "event_type": event_type,
+        "event_id": event_body.get("id")
+    }
+
+
+def extract_paypal_subscription_lifecycle_context(event_body):
+
+    resource = event_body.get("resource") or {}
+    event_type = event_body.get("event_type")
+
+
+    if event_type not in (
+        "BILLING.SUBSCRIPTION.ACTIVATED",
+        "BILLING.SUBSCRIPTION.CANCELLED",
+        "BILLING.SUBSCRIPTION.SUSPENDED",
+        "BILLING.SUBSCRIPTION.EXPIRED",
+        "BILLING.SUBSCRIPTION.PAYMENT.FAILED"
+    ):
+
+        return None
+
+
+    return {
+        "subscription_id": resource.get("id"),
+        "status": resource.get("status"),
+        "event_type": event_type,
+        "event_id": event_body.get("id")
+    }
+
+
+def log_paypal_webhook_verified(transaction, event_body):
+
+    log_event(
+        "paypal_webhook_verified",
+        category="payment",
+        severity="info",
+        scope="group" if transaction.get("payment_scope") == PAYMENT_SCOPE_GROUP else "global",
+        group_id=transaction.get("group_id"),
+        actor_user_id=transaction.get("user_id"),
+        target_user_id=transaction.get("user_id"),
+        message="Webhook PayPal verificado correctamente.",
+        metadata={
+            "transaction_id": transaction.get("id"),
+            "payment_scope": transaction.get("payment_scope"),
+            "event_type": event_body.get("event_type"),
+            "event_id": event_body.get("id")
+        }
+    )
+
+
+def log_paypal_webhook_unverified(transaction, event_body):
+
+    log_event(
+        "paypal_webhook_unverified",
+        category="payment",
+        severity="warning",
+        scope="group" if transaction and transaction.get("payment_scope") == PAYMENT_SCOPE_GROUP else "global",
+        group_id=transaction.get("group_id") if transaction else None,
+        actor_user_id=transaction.get("user_id") if transaction else None,
+        target_user_id=transaction.get("user_id") if transaction else None,
+        message="Webhook PayPal rechazado por firma no válida.",
+        metadata={
+            "transaction_id": transaction.get("id") if transaction else None,
+            "payment_scope": transaction.get("payment_scope") if transaction else None,
+            "event_type": event_body.get("event_type"),
+            "event_id": event_body.get("id")
+        }
+    )
+
+
+def process_paypal_group_subscription_payment(transaction, payment_context):
+
+    if transaction.get("purchase_type") != PURCHASE_TYPE_GROUP_ACCESS:
+
+        return {
+            "ok": False,
+            "status_code": 400,
+            "message": "Invalid group purchase type"
+        }
+
+
+    if (
+        transaction.get("status") == PAYMENT_STATUS_PAID
+        and transaction.get("external_payment_id") == payment_context.get("sale_id")
+    ):
+
+        return {
+            "ok": True,
+            "status_code": 200,
+            "message": "Already processed"
+        }
+
+
+    expected_amount = int(transaction.get("amount") or 0)
+    expected_currency = (transaction.get("currency") or "").upper()
+
+
+    if expected_amount != payment_context.get("amount") or expected_currency != payment_context.get("currency"):
+
+        log_event(
+            "paypal_amount_mismatch",
+            category="payment",
+            severity="error",
+            scope="group",
+            group_id=transaction.get("group_id"),
+            actor_user_id=transaction.get("user_id"),
+            target_user_id=transaction.get("user_id"),
+            message="Webhook PayPal de suscripción rechazado por importe o moneda no coincidente.",
+            metadata={
+                "transaction_id": transaction.get("id"),
+                "expected_amount": expected_amount,
+                "received_amount": payment_context.get("amount"),
+                "expected_currency": expected_currency,
+                "received_currency": payment_context.get("currency"),
+                "event_id": payment_context.get("event_id")
+            }
+        )
+
+        return {
+            "ok": False,
+            "status_code": 400,
+            "message": "Amount mismatch"
+        }
+
+
+    new_status = get_paypal_status_from_event(
+        payment_context.get("event_type")
+    )
+
+
+    if not new_status:
+
+        return {
+            "ok": True,
+            "status_code": 200,
+            "message": "Ignored PayPal event"
+        }
+
+
+    activation_status = "payment_failed_no_access"
+
+
+    if new_status == PAYMENT_STATUS_PAID:
+
+        grant_result = grant_group_access_after_payment(
+            PAYMENT_PROVIDER_PAYPAL,
+            transaction.get("user_id"),
+            transaction.get("group_id"),
+            transaction.get("plan_id"),
+            external_payment_id=payment_context.get("sale_id"),
+            external_checkout_id=payment_context.get("subscription_id"),
+            amount=expected_amount,
+            currency=expected_currency,
+            transaction_id=transaction.get("id")
+        )
+
+
+        if not grant_result.get("ok"):
+
+            return {
+                "ok": False,
+                "status_code": 500,
+                "message": "Access grant failed"
+            }
+
+
+        activation_status = "access_granted"
+
+        log_event(
+            "paypal_group_access_activated",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=transaction.get("group_id"),
+            actor_user_id=transaction.get("user_id"),
+            target_user_id=transaction.get("user_id"),
+            message="Acceso de grupo activado tras pago PayPal verificado.",
+            metadata={
+                "transaction_id": transaction.get("id"),
+                "plan_id": transaction.get("plan_id"),
+                "paypal_subscription_id": payment_context.get("subscription_id"),
+                "paypal_sale_id": payment_context.get("sale_id")
+            }
+        )
+
+
+    update_paypal_transaction_status(
+        transaction.get("id"),
+        new_status,
+        external_payment_id=payment_context.get("sale_id"),
+        metadata={
+            "paypal_event_id": payment_context.get("event_id"),
+            "paypal_subscription_id": payment_context.get("subscription_id"),
+            "paypal_sale_id": payment_context.get("sale_id"),
+            "paypal_event_type": payment_context.get("event_type"),
+            "activation_status": activation_status
+        }
+    )
+
+    log_event(
+        "paypal_group_payment_completed" if new_status == PAYMENT_STATUS_PAID else "paypal_group_payment_failed",
+        category="payment",
+        severity="info" if new_status == PAYMENT_STATUS_PAID else "warning",
+        scope="group",
+        group_id=transaction.get("group_id"),
+        actor_user_id=transaction.get("user_id"),
+        target_user_id=transaction.get("user_id"),
+        message="Pago PayPal de suscripción de grupo procesado por webhook verificado.",
+        metadata={
+            "transaction_id": transaction.get("id"),
+            "plan_id": transaction.get("plan_id"),
+            "paypal_subscription_id": payment_context.get("subscription_id"),
+            "paypal_sale_id": payment_context.get("sale_id"),
+            "paypal_event_type": payment_context.get("event_type"),
+            "payment_status": new_status,
+            "amount": expected_amount,
+            "currency": expected_currency
+        }
+    )
+
+    return {
+        "ok": True,
+        "status_code": 200,
+        "message": "PayPal group subscription payment processed"
+    }
+
+
+def process_paypal_group_subscription_lifecycle(transaction, lifecycle_context):
+
+    event_type = lifecycle_context.get("event_type")
+
+
+    if event_type == "BILLING.SUBSCRIPTION.ACTIVATED":
+
+        update_paypal_transaction_status(
+            transaction.get("id"),
+            PAYMENT_STATUS_PENDING,
+            metadata={
+                "paypal_event_id": lifecycle_context.get("event_id"),
+                "paypal_subscription_id": lifecycle_context.get("subscription_id"),
+                "paypal_subscription_status": lifecycle_context.get("status"),
+                "activation_status": "subscription_active_waiting_payment"
+            }
+        )
+
+        log_event(
+            "paypal_group_payment_ignored",
+            category="payment",
+            severity="info",
+            scope="group",
+            group_id=transaction.get("group_id"),
+            actor_user_id=transaction.get("user_id"),
+            target_user_id=transaction.get("user_id"),
+            message="Suscripción PayPal activada, esperando confirmación de pago antes de conceder acceso.",
+            metadata={
+                "transaction_id": transaction.get("id"),
+                "plan_id": transaction.get("plan_id"),
+                "paypal_subscription_id": lifecycle_context.get("subscription_id"),
+                "paypal_event_type": event_type
+            }
+        )
+
+        return {
+            "ok": True,
+            "status_code": 200,
+            "message": "Subscription activated without access grant"
+        }
+
+
+    status = PAYMENT_STATUS_FAILED
+    event_name = "paypal_group_payment_failed"
+
+
+    if event_type in (
+        "BILLING.SUBSCRIPTION.CANCELLED",
+        "BILLING.SUBSCRIPTION.EXPIRED"
+    ):
+
+        status = PAYMENT_STATUS_CANCELLED
+        event_name = "paypal_group_subscription_cancelled"
+
+
+    if event_type == "BILLING.SUBSCRIPTION.SUSPENDED":
+
+        event_name = "paypal_group_subscription_suspended"
+
+
+    update_paypal_transaction_status(
+        transaction.get("id"),
+        status,
+        metadata={
+            "paypal_event_id": lifecycle_context.get("event_id"),
+            "paypal_subscription_id": lifecycle_context.get("subscription_id"),
+            "paypal_subscription_status": lifecycle_context.get("status"),
+            "paypal_event_type": event_type,
+            "activation_status": "subscription_lifecycle_no_new_access"
+        }
+    )
+
+    log_event(
+        event_name,
+        category="payment",
+        severity="warning",
+        scope="group",
+        group_id=transaction.get("group_id"),
+        actor_user_id=transaction.get("user_id"),
+        target_user_id=transaction.get("user_id"),
+        message="Evento de ciclo de vida PayPal procesado sin conceder acceso nuevo.",
+        metadata={
+            "transaction_id": transaction.get("id"),
+            "plan_id": transaction.get("plan_id"),
+            "paypal_subscription_id": lifecycle_context.get("subscription_id"),
+            "paypal_event_type": event_type,
+            "payment_status": status
+        }
+    )
+
+    return {
+        "ok": True,
+        "status_code": 200,
+        "message": "PayPal subscription lifecycle processed"
+    }
+
+
 def process_paypal_webhook(event_body, headers):
+
+    subscription_payment_context = extract_paypal_subscription_payment_context(event_body)
+    subscription_lifecycle_context = extract_paypal_subscription_lifecycle_context(event_body)
+    subscription_context = subscription_payment_context or subscription_lifecycle_context
+
+
+    if subscription_context:
+
+        transaction = fetch_paypal_transaction_by_subscription_id(
+            subscription_context.get("subscription_id")
+        )
+
+
+        if not transaction:
+
+            log_event(
+                "paypal_transaction_not_found",
+                category="payment",
+                severity="warning",
+                message="Webhook PayPal de suscripción recibido sin transacción interna asociada.",
+                metadata=subscription_context
+            )
+
+            return {
+                "ok": False,
+                "status_code": 404,
+                "message": "Transaction not found"
+            }
+
+
+        if not verify_paypal_webhook(headers, event_body, transaction=transaction):
+
+            log_paypal_webhook_unverified(transaction, event_body)
+
+            return {
+                "ok": False,
+                "status_code": 400,
+                "message": "Invalid webhook signature"
+            }
+
+
+        log_paypal_webhook_verified(transaction, event_body)
+
+
+        if transaction.get("payment_scope") != PAYMENT_SCOPE_GROUP:
+
+            log_event(
+                "paypal_group_payment_ignored",
+                category="payment",
+                severity="warning",
+                actor_user_id=transaction.get("user_id"),
+                target_user_id=transaction.get("user_id"),
+                message="Webhook PayPal de suscripción ignorado por scope no group.",
+                metadata={
+                    "transaction_id": transaction.get("id"),
+                    "payment_scope": transaction.get("payment_scope"),
+                    "event_id": subscription_context.get("event_id")
+                }
+            )
+
+            return {
+                "ok": True,
+                "status_code": 200,
+                "message": "Ignored non-group PayPal subscription event"
+            }
+
+
+        if subscription_payment_context:
+
+            return process_paypal_group_subscription_payment(
+                transaction,
+                subscription_payment_context
+            )
+
+
+        return process_paypal_group_subscription_lifecycle(
+            transaction,
+            subscription_lifecycle_context
+        )
+
 
     capture_context = extract_paypal_capture_context(event_body)
 
@@ -911,6 +1460,8 @@ def process_paypal_webhook(event_body, headers):
 
     if not verify_paypal_webhook(headers, event_body, transaction=transaction):
 
+        log_paypal_webhook_unverified(transaction, event_body)
+
         log_event(
             "paypal_webhook_verification_failed",
             category="payment",
@@ -933,6 +1484,9 @@ def process_paypal_webhook(event_body, headers):
             "status_code": 400,
             "message": "Invalid webhook signature"
         }
+
+
+    log_paypal_webhook_verified(transaction, event_body)
 
 
     if transaction.get("status") == PAYMENT_STATUS_PAID:
@@ -1205,6 +1759,14 @@ def capture_paypal_order(order_id):
 
     transaction = fetch_paypal_transaction(order_id=order_id)
     mode = get_paypal_mode()
+
+
+    if transaction and (transaction.get("metadata_json") or {}).get("paypal_subscription_id"):
+
+        return {
+            "ok": True,
+            "message": "PayPal subscription return received; waiting for webhook"
+        }
 
 
     if transaction and transaction.get("payment_scope") == PAYMENT_SCOPE_GROUP:
