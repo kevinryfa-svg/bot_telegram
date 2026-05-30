@@ -224,6 +224,10 @@ from user_activity_logger import (
     log_user_event,
     log_user_event_by_ids
 )
+from wizard_state_helpers import (
+    clear_owner_payment_provider_wizard_state,
+    clear_plan_wizard_state
+)
 
 
 TOKEN = os.environ.get("TOKEN")
@@ -461,11 +465,18 @@ def build_unknown_callback_keyboard():
     ])
 
 
-def clear_owner_payment_provider_wizard(context):
+def clear_owner_payment_provider_wizard(context, user_id=None, action=None):
 
-    for key in OWNER_PAYMENT_PROVIDER_CONTEXT_KEYS:
-
-        context.user_data.pop(key, None)
+    clear_plan_wizard_state(
+        context,
+        user_id=user_id,
+        action=action or "owner_payment_provider_wizard"
+    )
+    clear_owner_payment_provider_wizard_state(
+        context,
+        user_id=user_id,
+        action=action or "owner_payment_provider_wizard"
+    )
 
 
 def build_owner_paypal_cancel_keyboard(group_id):
@@ -11772,6 +11783,12 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
         chat_id = update.effective_chat.id if update.effective_chat else None
         text = (update.message.text or "").strip() if update.message else ""
 
+        clear_plan_wizard_state(
+            context,
+            user_id=user_id,
+            action="receive_platform_payment_provider_text"
+        )
+
 
         if provider not in (OWNER_PAYMENT_PROVIDER_CHANGENOW, OWNER_PAYMENT_PROVIDER_GUARDARIAN) or not is_super_admin(user_id):
 
@@ -12227,6 +12244,12 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
 
 
     text = (update.message.text or "").strip() if update.message else ""
+
+    clear_plan_wizard_state(
+        context,
+        user_id=user_id,
+        action="receive_owner_payment_provider_text"
+    )
 
 
     if text.lower() in ("cancelar", "/cancel", "cancel"):
@@ -35588,7 +35611,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
 
-            clear_owner_payment_provider_wizard(context)
+            clear_owner_payment_provider_wizard(context, user_id=user_id, action="start_owner_payment_provider_config")
             context.user_data["configuring_owner_payment_provider"] = True
             context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_PAYPAL
             context.user_data["owner_payment_group_id"] = group_id
@@ -35630,7 +35653,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
 
-            clear_owner_payment_provider_wizard(context)
+            clear_owner_payment_provider_wizard(context, user_id=user_id, action="start_owner_payment_provider_config")
             context.user_data["configuring_owner_payment_provider"] = True
             context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_REVOLUT
             context.user_data["owner_payment_group_id"] = group_id
@@ -35672,7 +35695,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
 
-            clear_owner_payment_provider_wizard(context)
+            clear_owner_payment_provider_wizard(context, user_id=user_id, action="start_owner_payment_provider_config")
             context.user_data["configuring_owner_payment_provider"] = True
             context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_CHANGENOW
             context.user_data["owner_payment_group_id"] = group_id
@@ -35709,7 +35732,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
 
-            clear_owner_payment_provider_wizard(context)
+            clear_owner_payment_provider_wizard(context, user_id=user_id, action="start_owner_payment_provider_config")
             context.user_data["configuring_owner_payment_provider"] = True
             context.user_data["owner_payment_provider"] = OWNER_PAYMENT_PROVIDER_GUARDARIAN
             context.user_data["owner_payment_group_id"] = group_id
@@ -35775,6 +35798,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        clear_plan_wizard_state(
+            context,
+            user_id=user_id,
+            action="owner_payment_changenow_mode"
+        )
+
         if not context.user_data.get("configuring_owner_payment_provider"):
 
             context.user_data["configuring_owner_payment_provider"] = True
@@ -35833,6 +35862,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
+
+        clear_plan_wizard_state(
+            context,
+            user_id=user_id,
+            action="owner_payment_guardarian_mode"
+        )
 
         if not context.user_data.get("configuring_owner_payment_provider"):
 
@@ -35895,6 +35930,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        clear_plan_wizard_state(
+            context,
+            user_id=user_id,
+            action="owner_payment_paypal_mode"
+        )
+
         if not context.user_data.get("configuring_owner_payment_provider"):
 
             context.user_data["configuring_owner_payment_provider"] = True
@@ -35954,6 +35995,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
+
+        clear_plan_wizard_state(
+            context,
+            user_id=user_id,
+            action="owner_payment_revolut_mode"
+        )
 
         if not context.user_data.get("configuring_owner_payment_provider"):
 
@@ -39180,6 +39227,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        clear_plan_wizard_state(
+            context,
+            user_id=user_id,
+            action="start_add_group_plan"
+        )
+        clear_owner_payment_provider_wizard_state(
+            context,
+            user_id=user_id,
+            action="start_add_group_plan"
+        )
+
         providers = get_group_plan_configurable_payment_providers(group_id)
 
         if not providers:
@@ -39304,6 +39362,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
+
+        clear_plan_wizard_state(
+            context,
+            user_id=user_id,
+            action="start_add_group_plan_provider"
+        )
+        clear_owner_payment_provider_wizard_state(
+            context,
+            user_id=user_id,
+            action="start_add_group_plan_provider"
+        )
 
         context.user_data["adding_plan"] = True
         context.user_data["add_plan_step"] = 1
@@ -41409,6 +41478,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             return
+
+        clear_plan_wizard_state(
+            context,
+            user_id=user_id,
+            action="start_edit_plan"
+        )
+        clear_owner_payment_provider_wizard_state(
+            context,
+            user_id=user_id,
+            action="start_edit_plan"
+        )
 
         context.user_data["editing_plan"] = True
         context.user_data["editing_plan_id"] = plan_id
