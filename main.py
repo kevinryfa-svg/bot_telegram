@@ -1060,6 +1060,13 @@ async def handle_text(update, context):
         await receive_admin_inputs(update, context)
         return
 
+    if (
+        context.user_data.get("configuring_owner_payment_provider")
+        or context.user_data.get("configuring_platform_payment_provider")
+    ):
+        await receive_owner_payment_provider_text(update, context)
+        return
+
     if context.user_data.get("editing_plan"):
         await receive_admin_inputs(update, context)
         return
@@ -1074,13 +1081,6 @@ async def handle_text(update, context):
 
     if context.user_data.get("group_user_promo_waiting"):
         await receive_group_user_promo_code(update, context)
-        return
-
-    if (
-        context.user_data.get("configuring_owner_payment_provider")
-        or context.user_data.get("configuring_platform_payment_provider")
-    ):
-        await receive_owner_payment_provider_text(update, context)
         return
 
     if (

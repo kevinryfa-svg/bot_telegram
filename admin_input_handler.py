@@ -27,6 +27,7 @@ from plan_payment_provider_helpers import (
     get_plan_provider_id_prompt,
     normalize_plan_payment_provider
 )
+from wizard_state_helpers import clear_plan_wizard_state
 
 
 GROUP_ADMIN_PERMISSION_OPTIONS = [
@@ -303,6 +304,14 @@ def build_group_admin_add_group_keyboard(groups):
 
 
 async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if (
+        context.user_data.get("configuring_owner_payment_provider")
+        or context.user_data.get("configuring_platform_payment_provider")
+    ):
+
+        return
+
 
     if context.user_data.get("adding_group_admin"):
 
@@ -670,11 +679,11 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
 
 
-            context.user_data["editing_plan"] = False
-            context.user_data.pop("edit_plan_provider", None)
-            context.user_data.pop("edit_plan_provider_price_id", None)
-            context.user_data.pop("edit_plan_stripe_price_id", None)
-            context.user_data.pop("edit_plan_paypal_plan_id", None)
+            clear_plan_wizard_state(
+                context,
+                user_id=update.effective_user.id,
+                action="edit_plan_completed"
+            )
 
             await update.message.reply_text(
 
@@ -921,8 +930,11 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
 
 
-            context.user_data["adding_plan"] = False
-            context.user_data.pop("new_plan", None)
+            clear_plan_wizard_state(
+                context,
+                user_id=update.effective_user.id,
+                action="add_plan_completed"
+            )
 
             await update.message.reply_text(
 
