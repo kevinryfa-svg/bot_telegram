@@ -16224,6 +16224,8 @@ def sync_known_free_community_users(group_id, telegram_group_id, actor_user_id, 
     updated_count = 0
     skipped_count = 0
     error_count = 0
+    users_total_after_sync = None
+    users_free_active_after_sync = None
 
 
     for known_user in known_users.values():
@@ -16343,13 +16345,52 @@ def sync_known_free_community_users(group_id, telegram_group_id, actor_user_id, 
             )
 
 
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM users
+                WHERE group_id=%s
+
+            """, (group_id,))
+            users_total_after_sync = cur.fetchone()[0]
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM users
+                WHERE group_id=%s
+                AND COALESCE(subscription_active, FALSE)=TRUE
+                AND expiration IS NULL
+
+            """, (group_id,))
+            users_free_active_after_sync = cur.fetchone()[0]
+
+    except Exception as e:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        print("free_community_known_users_sync_count_error:", str(e)[:500])
+
+
     result = {
         "ok": True,
         "found_count": len(known_users),
         "inserted_count": inserted_count,
         "updated_count": updated_count,
         "skipped_count": skipped_count,
-        "error_count": error_count
+        "error_count": error_count,
+        "users_total_after_sync": users_total_after_sync,
+        "users_free_active_after_sync": users_free_active_after_sync
     }
 
     log_event(
@@ -16371,6 +16412,9 @@ def fetch_community_user_rows(group_id):
 
     user_ids = set()
     profiles = {}
+    users_source_count = 0
+    group = fetch_free_community_for_known_user_sync(group_id)
+    is_free_group = bool(group)
 
 
     try:
@@ -16398,6 +16442,7 @@ def fetch_community_user_rows(group_id):
                     continue
 
 
+                users_source_count += 1
                 user_ids.add(row[0])
                 profiles[row[0]] = {
                     "user_id": row[0],
@@ -16447,7 +16492,40 @@ def fetch_community_user_rows(group_id):
             "subscription_active": False,
             "created_at": None
         }
-        access_state = get_user_group_access_state(target_user_id, group_id)
+
+        access_state = None
+
+        try:
+
+            access_state = get_user_group_access_state(target_user_id, group_id)
+
+        except Exception as e:
+
+            try:
+
+                conn.rollback()
+
+            except Exception:
+
+                pass
+
+            print("community_user_access_state_error:", str(e)[:500])
+            log_event(
+                "community_user_access_state_error",
+                category="access",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                target_user_id=target_user_id,
+                message="No se pudo resolver estado de acceso para usuario de comunidad.",
+                metadata={"error": str(e)[:500]}
+            )
+            access_state = {
+                "has_active_access": False,
+                "access_source": "unknown",
+                "subscription_status": "unknown",
+                "expires_at": None
+            }
 
         try:
 
@@ -16461,10 +16539,48 @@ def fetch_community_user_rows(group_id):
         row["is_active"] = bool(access_state.get("has_active_access"))
         row["expires_at"] = access_state.get("expires_at") or row.get("expiration")
         row["access_type"] = format_community_user_access_type(access_state)
+
+        local_expiration = row.get("expiration")
+        local_active = bool(row.get("subscription_active")) and (
+            local_expiration is None or local_expiration > datetime.now()
+        )
+
+        if is_free_group and local_active and not row["is_active"]:
+
+            row["is_active"] = True
+            row["expires_at"] = local_expiration
+            row["access_type"] = "permanente/free"
+            row["access_state"] = {
+                **(access_state or {}),
+                "has_active_access": True,
+                "access_source": "free",
+                "subscription_status": "active",
+                "expires_at": local_expiration,
+                "reason": "local_free_access"
+            }
+
         rows.append(row)
 
 
     rows.sort(key=lambda item: (0 if item.get("is_active") else 1, item.get("expires_at") or datetime.max, item.get("user_id") or 0))
+
+    active_count = sum(1 for row in rows if row.get("is_active"))
+    inactive_count = len(rows) - active_count
+    log_event(
+        "community_users_panel_debug_counts",
+        category="access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        message="Conteos internos del panel de usuarios de comunidad.",
+        metadata={
+            "users_source_count": users_source_count,
+            "user_ids_count": len(user_ids),
+            "active_count": active_count,
+            "inactive_count": inactive_count,
+            "is_free_group": is_free_group
+        }
+    )
 
     return rows
 
@@ -36961,7 +37077,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Insertados nuevos: {result.get('inserted_count')}\n"
             f"Actualizados: {result.get('updated_count')}\n"
             f"Omitidos: {result.get('skipped_count')}\n"
-            f"Errores: {result.get('error_count')}\n\n"
+            f"Errores: {result.get('error_count')}\n"
+            f"Usuarios en DB de esta comunidad: {result.get('users_total_after_sync') if result.get('users_total_after_sync') is not None else '-'}\n"
+            f"Usuarios free activos en DB: {result.get('users_free_active_after_sync') if result.get('users_free_active_after_sync') is not None else '-'}\n\n"
             "Ahora puedes volver a “Ver usuarios de esta comunidad”."
         )
 
