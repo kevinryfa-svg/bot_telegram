@@ -152,7 +152,10 @@ from invite_link_service import (
 from publicity_invite_link_service import (
     create_publicity_invite_link,
     get_active_publicity_invite_link,
-    revoke_publicity_invite_link
+    get_publicity_invite_link_by_id,
+    list_publicity_invite_links,
+    revoke_publicity_invite_link,
+    revoke_publicity_invite_link_by_id
 )
 from payment_service import (
     build_group_payment_provider_detail_text,
@@ -15494,9 +15497,12 @@ def build_owner_publicity_group_text(group_id):
     telegram_group_id = group[2] if group else None
     active_link = get_active_publicity_invite_link(
         group_id=group_id,
-        telegram_group_id=telegram_group_id
+        telegram_group_id=telegram_group_id,
+        source="bot"
     )
-    status_text = "✅ Desbloqueado para publicidad" if active_link else "🔒 Sin link público activo"
+    active_links = list_publicity_invite_links(group_id, telegram_group_id, active_only=True)
+    manual_links = [link for link in active_links if link.get("source") == "manual"]
+    status_text = "✅ Desbloqueado para publicidad" if active_links else "🔒 Sin link público activo"
     link_text = active_link.get("invite_link") if active_link else "-"
 
     return (
@@ -15505,7 +15511,8 @@ def build_owner_publicity_group_text(group_id):
         f"ID interno: {group_id}\n"
         f"Telegram chat ID: {telegram_group_id or '-'}\n\n"
         f"Estado: {status_text}\n"
-        f"Link actual:\n{link_text}\n\n"
+        f"Link generado por bot:\n{link_text}\n\n"
+        f"Links manuales autorizados: {len(manual_links)}\n\n"
         "Este link está pensado para publicar el grupo en webs/listados de Telegram. "
         "Los usuarios que entren por este link no serán expulsados por el anti-intrusos."
     )
@@ -15517,11 +15524,14 @@ def build_owner_publicity_group_keyboard(group_id):
     telegram_group_id = group[2] if group else None
     active_link = get_active_publicity_invite_link(
         group_id=group_id,
-        telegram_group_id=telegram_group_id
+        telegram_group_id=telegram_group_id,
+        source="bot"
     )
     keyboard = [
         [InlineKeyboardButton("🔓 Desbloquear grupo para publicidad", callback_data=f"owner_publicity_unlock_{group_id}")],
-        [InlineKeyboardButton("🔁 Crear nuevo link público", callback_data=f"owner_publicity_new_{group_id}")]
+        [InlineKeyboardButton("🔁 Crear nuevo link público", callback_data=f"owner_publicity_new_{group_id}")],
+        [InlineKeyboardButton("🔗 Autorizar link existente", callback_data=f"owner_publicity_authorize_existing_{group_id}")],
+        [InlineKeyboardButton("📋 Ver links autorizados", callback_data=f"owner_publicity_links_{group_id}")]
     ]
 
 
@@ -15531,6 +15541,60 @@ def build_owner_publicity_group_keyboard(group_id):
 
 
     keyboard.append([InlineKeyboardButton("⬅️ Volver a seguridad", callback_data="owner_panel_security")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_owner_publicity_links_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    telegram_group_id = group[2] if group else None
+    links = list_publicity_invite_links(group_id, telegram_group_id, active_only=False)
+    text = (
+        "📋 Links autorizados para publicidad\n\n"
+        f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
+    )
+
+
+    if not links:
+
+        return text + "No hay links públicos registrados todavía."
+
+
+    for link in links:
+
+        source_label = "Bot" if link.get("source") == "bot" else "Manual"
+        status_label = "activo" if link.get("is_active") else "inactivo"
+        label = link.get("label") or "-"
+        text += (
+            f"#{link.get('id')} · {source_label} · {status_label}\n"
+            f"Etiqueta: {label}\n"
+            f"{link.get('invite_link')}\n\n"
+        )
+
+
+    return text
+
+
+def build_owner_publicity_links_keyboard(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    telegram_group_id = group[2] if group else None
+    links = list_publicity_invite_links(group_id, telegram_group_id, active_only=True)
+    keyboard = []
+
+
+    for link in links:
+
+        keyboard.append([InlineKeyboardButton(
+            f"🚫 Revocar #{link.get('id')} · {'Bot' if link.get('source') == 'bot' else 'Manual'}",
+            callback_data=f"owner_publicity_link_revoke_{link.get('id')}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=f"owner_publicity_group_{group_id}")])
     keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
 
     return InlineKeyboardMarkup(keyboard)
@@ -35688,6 +35752,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("owner_publicity_group_"):
 
         group_id = extract_commercial_request_id(data, "owner_publicity_group_")
+        context.user_data.pop("publicity_authorize_existing_group_id", None)
 
 
         if not user_can_manage_publicity_invite_links(user_id, group_id):
@@ -35708,6 +35773,143 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             build_owner_publicity_group_text(group_id),
             reply_markup=build_owner_publicity_group_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_publicity_authorize_existing_"):
+
+        group_id = extract_commercial_request_id(data, "owner_publicity_authorize_existing_")
+
+
+        if not user_can_manage_publicity_invite_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para autorizar links públicos de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group = fetch_group_basic_info(group_id)
+        telegram_group_id = group[2] if group else None
+
+
+        if not telegram_group_id:
+
+            await query.message.reply_text(
+                "⚠️ Esta comunidad no tiene telegram_group_id configurado.",
+                reply_markup=build_owner_publicity_group_keyboard(group_id)
+            )
+
+            return
+
+
+        context.user_data["publicity_authorize_existing_group_id"] = group_id
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "🔗 Autorizar link existente\n\n"
+                "Pega aquí el link de invitación existente que ya tienes publicado en webs/listados de Telegram.\n\n"
+                "Ejemplos válidos:\n"
+                "https://t.me/+xxxx\n"
+                "https://t.me/joinchat/xxxx\n"
+                "https://t.me/nombregrupo\n\n"
+                "Importante: para detección más fiable se recomiendan links de invitación tipo t.me/+..."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_publicity_group_{group_id}")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("owner_publicity_links_"):
+
+        group_id = extract_commercial_request_id(data, "owner_publicity_links_")
+
+
+        if not user_can_manage_publicity_invite_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para ver links públicos de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_publicity_links_text(group_id),
+            reply_markup=build_owner_publicity_links_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_publicity_link_revoke_yes_"):
+
+        link_id = extract_commercial_request_id(data, "owner_publicity_link_revoke_yes_")
+        link = get_publicity_invite_link_by_id(link_id)
+        group_id = link.get("group_id") if link else None
+
+
+        if not link or not user_can_manage_publicity_invite_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para revocar este link público.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        revoke_publicity_invite_link_by_id(TOKEN, link_id, user_id)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_publicity_links_text(group_id),
+            reply_markup=build_owner_publicity_links_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_publicity_link_revoke_"):
+
+        link_id = extract_commercial_request_id(data, "owner_publicity_link_revoke_")
+        link = get_publicity_invite_link_by_id(link_id)
+        group_id = link.get("group_id") if link else None
+
+
+        if not link or not user_can_manage_publicity_invite_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para revocar este link público.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "⚠️ ¿Seguro que quieres revocar este link público de publicidad?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Sí, revocar link", callback_data=f"owner_publicity_link_revoke_yes_{link_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_publicity_links_{group_id}")]
+            ])
         )
 
         return
@@ -35744,7 +35946,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         current = get_active_publicity_invite_link(
             group_id=group_id,
-            telegram_group_id=telegram_group_id
+            telegram_group_id=telegram_group_id,
+            source="bot"
         )
 
 
@@ -35779,7 +35982,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("owner_publicity_new_"):
+    if data.startswith("owner_publicity_new_") and not data.startswith("owner_publicity_new_yes_"):
 
         group_id = extract_commercial_request_id(data, "owner_publicity_new_")
 
@@ -35810,7 +36013,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         active_link = get_active_publicity_invite_link(
             group_id=group_id,
-            telegram_group_id=telegram_group_id
+            telegram_group_id=telegram_group_id,
+            source="bot"
         )
 
 
@@ -35916,7 +36120,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("owner_publicity_revoke_"):
+    if data.startswith("owner_publicity_revoke_") and not data.startswith("owner_publicity_revoke_yes_"):
 
         group_id = extract_commercial_request_id(data, "owner_publicity_revoke_")
 
@@ -35963,7 +36167,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         telegram_group_id = group[2] if group else None
         current = get_active_publicity_invite_link(
             group_id=group_id,
-            telegram_group_id=telegram_group_id
+            telegram_group_id=telegram_group_id,
+            source="bot"
         )
 
 

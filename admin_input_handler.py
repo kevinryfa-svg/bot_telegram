@@ -19,7 +19,16 @@ from invite_link_service import (
     create_telegram_invite_link,
     revoke_telegram_invite_link
 )
-from rbac_helpers import get_admin_group_ids
+from publicity_invite_link_service import (
+    authorize_existing_publicity_invite_link,
+    normalize_telegram_invite_url
+)
+from rbac_helpers import (
+    get_admin_group_ids,
+    get_group_owner_user_id,
+    has_group_permission,
+    is_super_admin
+)
 from plan_payment_provider_helpers import (
     PLAN_PAYMENT_PROVIDER_PAYPAL,
     PLAN_PAYMENT_PROVIDER_STRIPE,
@@ -64,6 +73,54 @@ def revoke_link(chat_id, link):
             "Error revoke_link:",
             e
         )
+
+
+def fetch_publicity_input_group(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   name,
+                   telegram_group_id
+            FROM groups
+            WHERE id=%s
+            LIMIT 1
+
+        """, (group_id,))
+
+        return cur.fetchone()
+
+
+def user_can_authorize_publicity_invite_link(user_id, group_id):
+
+    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
+
+        return True
+
+
+    return has_group_permission(user_id, group_id, "can_manage_groups")
+
+
+def build_publicity_authorize_existing_back_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Volver al grupo de publicidad", callback_data=f"owner_publicity_group_{group_id}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def is_public_t_me_username_link(invite_link):
+
+    if not invite_link:
+
+        return False
+
+
+    suffix = invite_link.replace("https://t.me/", "", 1)
+
+    return bool(suffix and not suffix.startswith("+") and not suffix.startswith("joinchat/"))
 
 
 def lookup_group_admin_target_user(raw_text):
@@ -304,6 +361,100 @@ def build_group_admin_add_group_keyboard(groups):
 
 
 async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if context.user_data.get("publicity_authorize_existing_group_id"):
+
+        group_id = context.user_data.get("publicity_authorize_existing_group_id")
+        user_id = update.effective_user.id
+        raw_link = (update.message.text or "").strip()
+        invite_link = normalize_telegram_invite_url(raw_link)
+
+
+        if not user_can_authorize_publicity_invite_link(user_id, group_id):
+
+            context.user_data.pop("publicity_authorize_existing_group_id", None)
+
+            await update.message.reply_text(
+                "⛔ No tienes permiso para autorizar links públicos de esta comunidad.",
+                reply_markup=build_publicity_authorize_existing_back_keyboard(group_id)
+            )
+
+            return
+
+
+        if not invite_link:
+
+            log_event(
+                "publicity_invite_existing_link_invalid",
+                category="access",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="Intento de autorizar un link público de publicidad con formato inválido.",
+                metadata={}
+            )
+
+            await update.message.reply_text(
+                "⚠️ Ese texto no parece un link válido de Telegram. Pega un enlace que empiece por https://t.me/ o t.me/.",
+                reply_markup=build_publicity_authorize_existing_back_keyboard(group_id)
+            )
+
+            return
+
+
+        group = fetch_publicity_input_group(group_id)
+        telegram_group_id = group[2] if group else None
+
+
+        if not telegram_group_id:
+
+            context.user_data.pop("publicity_authorize_existing_group_id", None)
+
+            await update.message.reply_text(
+                "⚠️ Esta comunidad no tiene telegram_group_id configurado.",
+                reply_markup=build_publicity_authorize_existing_back_keyboard(group_id)
+            )
+
+            return
+
+
+        saved = authorize_existing_publicity_invite_link(
+            group_id,
+            telegram_group_id,
+            invite_link,
+            user_id,
+            label="Autorizado manualmente"
+        )
+        context.user_data.pop("publicity_authorize_existing_group_id", None)
+        warning = (
+            "\n\n⚠️ Si Telegram no informa este link en el evento de entrada, puede que el bot no pueda detectarlo. "
+            "Para mayor fiabilidad se recomiendan enlaces tipo https://t.me/+... o https://t.me/joinchat/..."
+        ) if is_public_t_me_username_link(invite_link) else ""
+
+
+        if not saved:
+
+            await update.message.reply_text(
+                "❌ No he podido autorizar ese link ahora mismo.",
+                reply_markup=build_publicity_authorize_existing_back_keyboard(group_id)
+            )
+
+            return
+
+
+        await update.message.reply_text(
+            (
+                "✅ Link existente autorizado para publicidad.\n\n"
+                "A partir de ahora, si Telegram informa ese link en la entrada al grupo, "
+                "el bot no expulsará a los usuarios que entren por él."
+                f"{warning}"
+            ),
+            reply_markup=build_publicity_authorize_existing_back_keyboard(group_id)
+        )
+
+        return
+
 
     if (
         context.user_data.get("configuring_owner_payment_provider")
