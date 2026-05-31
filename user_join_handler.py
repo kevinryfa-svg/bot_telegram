@@ -266,7 +266,7 @@ async def send_publicity_invite_welcome(update, context, member, group_id, teleg
             reply_markup=keyboard
         )
 
-        return
+        return True
 
     except Exception as e:
 
@@ -285,45 +285,8 @@ async def send_publicity_invite_welcome(update, context, member, group_id, teleg
             }
         )
 
-
-    try:
-
-        display_name = member.first_name or "bienvenido"
-
-        await update.message.reply_text(
-            f"👋 Bienvenido/a, {display_name}. Este grupo forma parte de nuestra red de comunidades. Abre el bot para descubrir grupos gratuitos y premium.",
-            reply_markup=keyboard
-        )
-
-        log_event(
-            "publicity_invite_welcome_group_fallback_sent",
-            category="access",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            telegram_group_id=telegram_group_id,
-            actor_user_id=member.id,
-            target_user_id=member.id,
-            message="Bienvenida de publicidad enviada como fallback en grupo.",
-            metadata={}
-        )
-
-    except Exception as e:
-
-        log_event(
-            "publicity_invite_welcome_group_fallback_failed",
-            category="access",
-            severity="warning",
-            scope="group",
-            group_id=group_id,
-            telegram_group_id=telegram_group_id,
-            actor_user_id=member.id,
-            target_user_id=member.id,
-            message="No se pudo enviar bienvenida de publicidad como fallback en grupo.",
-            metadata={
-                "error": str(e)[:300]
-            }
-        )
+    # No enviamos fallback en grupo para no ensuciar comunidades públicas.
+    return False
 
 
 async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
