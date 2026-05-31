@@ -11,8 +11,12 @@ from telegram.ext import ContextTypes
 from audit_log_service import log_event
 from bot_config import TOKEN, ADMIN_ID
 from db import conn
+from invite_link_service import mask_invite_link
 from message_templates import unauthorized_access_detected_text
-from publicity_invite_link_service import is_active_publicity_invite_link
+from publicity_invite_link_service import (
+    is_active_publicity_invite_link,
+    normalize_telegram_invite_url
+)
 from telegram_group_actions import kick_chat_member
 
 
@@ -29,10 +33,16 @@ async def send_publicity_invite_welcome(update, context, member, group_id, teleg
         [InlineKeyboardButton("🏠 Abrir menú principal", url=bot_url)]
     ])
     text = (
-        f"👋 Bienvenido a \"{group_title}\".\n\n"
-        "Este grupo forma parte de nuestra red de comunidades.\n"
-        "Desde el menú puedes descubrir comunidades, gestionar accesos o ver opciones disponibles.\n\n"
-        "Pulsa abajo para abrir el menú principal."
+        f"👋 ¡Bienvenido/a a {group_title}!\n\n"
+        "Has entrado en una comunidad conectada a nuestro bot.\n\n"
+        "Aquí podrás descubrir grupos gratuitos y también comunidades premium con contenido exclusivo, "
+        "accesos privados y experiencias más cuidadas.\n\n"
+        "Desde el menú principal puedes:\n"
+        "• Ver comunidades disponibles\n"
+        "• Entrar en grupos gratuitos\n"
+        "• Suscribirte a grupos premium\n"
+        "• Gestionar tus accesos\n\n"
+        "Pulsa el botón de abajo para abrir el menú principal 👇"
     )
 
 
@@ -69,13 +79,39 @@ async def send_publicity_invite_welcome(update, context, member, group_id, teleg
         display_name = member.first_name or "bienvenido"
 
         await update.message.reply_text(
-            f"👋 Bienvenido, {display_name}. Pulsa aquí para abrir el bot y ver el menú.",
+            f"👋 Bienvenido/a, {display_name}. Este grupo forma parte de nuestra red de comunidades. Abre el bot para descubrir grupos gratuitos y premium.",
             reply_markup=keyboard
+        )
+
+        log_event(
+            "publicity_invite_welcome_group_fallback_sent",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            actor_user_id=member.id,
+            target_user_id=member.id,
+            message="Bienvenida de publicidad enviada como fallback en grupo.",
+            metadata={}
         )
 
     except Exception as e:
 
-        print("publicity_invite_group_fallback_failed:", str(e)[:200])
+        log_event(
+            "publicity_invite_welcome_group_fallback_failed",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            actor_user_id=member.id,
+            target_user_id=member.id,
+            message="No se pudo enviar bienvenida de publicidad como fallback en grupo.",
+            metadata={
+                "error": str(e)[:300]
+            }
+        )
 
 
 async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,7 +136,7 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Evitar verificar al propio bot
 
         if user_id == context.bot.id:
-            return
+            continue
 
 
         log_event(
@@ -142,6 +178,20 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if not group_row:
 
+                    invite_link_used = None
+
+
+                    try:
+
+                        if update.message.invite_link:
+
+                            invite_link_used = update.message.invite_link.invite_link
+
+                    except Exception:
+
+                        invite_link_used = None
+
+
                     print(
                         "Grupo no encontrado en DB:",
                         telegram_group_id
@@ -156,6 +206,25 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         actor_user_id=user_id,
                         target_user_id=user_id,
                         message="Usuario entró en un grupo no registrado."
+                    )
+
+                    log_event(
+                        "publicity_invite_link_not_matched",
+                        category="access",
+                        severity="warning",
+                        scope="group",
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="No se pudo validar link de publicidad porque no se resolvió group_id.",
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "invite_link_present": invite_link_used is not None,
+                            "invite_link": mask_invite_link(invite_link_used),
+                            "reason": "group_id_not_resolved"
+                        }
                     )
 
                     return
@@ -202,10 +271,141 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     invite_link_used = None
 
 
-                if (
-                    invite_link_used
-                    and is_active_publicity_invite_link(invite_link_used, telegram_group_id)
-                ):
+                normalized_publicity_invite_link = normalize_telegram_invite_url(invite_link_used)
+                publicity_link_matched = False
+                publicity_check_reason = "no_invite_link_reported" if not invite_link_used else "invite_link_not_authorized"
+
+
+                if invite_link_used:
+
+                    try:
+
+                        publicity_link_matched = is_active_publicity_invite_link(invite_link_used, telegram_group_id)
+                        publicity_check_reason = "matched" if publicity_link_matched else "invite_link_not_authorized"
+
+                    except Exception as e:
+
+                        try:
+
+                            conn.rollback()
+
+                        except Exception:
+
+                            pass
+
+                        publicity_link_matched = False
+                        publicity_check_reason = "publicity_check_error"
+                        log_event(
+                            "publicity_invite_link_not_matched",
+                            category="access",
+                            severity="warning",
+                            scope="group",
+                            group_id=group_id,
+                            telegram_group_id=telegram_group_id,
+                            actor_user_id=user_id,
+                            target_user_id=user_id,
+                            message="Error comprobando link autorizado de publicidad.",
+                            metadata={
+                                "user_id": user_id,
+                                "username": username,
+                                "first_name": first_name,
+                                "invite_link_present": True,
+                                "invite_link": mask_invite_link(invite_link_used),
+                                "normalized_invite_link": mask_invite_link(normalized_publicity_invite_link),
+                                "reason": publicity_check_reason,
+                                "error": str(e)[:300]
+                            }
+                        )
+
+
+                log_event(
+                    "publicity_invite_join_detected",
+                    category="access",
+                    severity="info",
+                    scope="group",
+                    group_id=group_id,
+                    telegram_group_id=telegram_group_id,
+                    actor_user_id=user_id,
+                    target_user_id=user_id,
+                    message="Entrada evaluada contra links autorizados de publicidad.",
+                    metadata={
+                        "user_id": user_id,
+                        "username": username,
+                        "first_name": first_name,
+                        "invite_link_present": invite_link_used is not None,
+                        "invite_link": mask_invite_link(invite_link_used),
+                        "normalized_invite_link": mask_invite_link(normalized_publicity_invite_link),
+                        "publicity_link_matched": publicity_link_matched,
+                        "reason": publicity_check_reason
+                    }
+                )
+
+
+                if not invite_link_used:
+
+                    log_event(
+                        "publicity_invite_link_missing_on_join",
+                        category="access",
+                        severity="warning",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Telegram no informó invite_link en una entrada al grupo.",
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "reason": "no_invite_link_reported"
+                        }
+                    )
+
+                elif publicity_link_matched:
+
+                    log_event(
+                        "publicity_invite_link_matched",
+                        category="access",
+                        severity="info",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Usuario entró con link autorizado de publicidad.",
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "invite_link": mask_invite_link(invite_link_used),
+                            "normalized_invite_link": mask_invite_link(normalized_publicity_invite_link)
+                        }
+                    )
+
+                else:
+
+                    log_event(
+                        "publicity_invite_link_not_matched",
+                        category="access",
+                        severity="warning",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Usuario entró con invite_link no autorizado como publicidad.",
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "invite_link": mask_invite_link(invite_link_used),
+                            "normalized_invite_link": mask_invite_link(normalized_publicity_invite_link),
+                            "reason": publicity_check_reason
+                        }
+                    )
+
+
+                if publicity_link_matched:
 
                     log_event(
                         "publicity_invite_link_used",
@@ -389,7 +589,7 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
 
 
-                    return
+                    continue
 
 
                 if not link_is_valid:
@@ -529,7 +729,7 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
 
-                    return
+                    continue
 
 
         except Exception as e:
