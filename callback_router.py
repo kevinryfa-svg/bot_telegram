@@ -14998,7 +14998,7 @@ def build_owner_section_keyboard(user_id, group_id, section):
 
     if section == "users":
 
-        if user_has_group_permission_any(user_id, group_id, ["can_view_users", "can_manage_users"]):
+        if user_can_view_community_users(user_id, group_id):
             keyboard.append([InlineKeyboardButton("📋 Ver usuarios de esta comunidad", callback_data=f"owner_group_users_{group_id}")])
 
         if user_has_group_permission_any(user_id, group_id, ["can_kick_users", "can_manage_users"]):
@@ -15482,6 +15482,456 @@ def build_owner_users_panel_text(group_id):
         "- Gestionar warnings si tu rol lo permite.\n"
         "- Reenviar o recuperar enlaces de acceso."
     )
+
+
+COMMUNITY_USERS_PAGE_SIZE = 6
+
+
+def user_can_view_community_users(user_id, group_id):
+
+    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
+
+        return True
+
+
+    return user_has_group_permission_any(user_id, group_id, ["can_manage_users", "can_manage_groups"])
+
+
+def user_can_manage_community_user_access(user_id, group_id):
+
+    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
+
+        return True
+
+
+    return user_has_group_permission_any(user_id, group_id, ["can_manage_users"])
+
+
+def parse_community_user_callback(data, prefix, include_days=False):
+
+    if not data.startswith(prefix):
+
+        return None
+
+
+    parts = data.replace(prefix, "", 1).split("_")
+    expected = 3 if include_days else 2
+
+
+    if len(parts) != expected or not all(part.isdigit() for part in parts):
+
+        return None
+
+
+    return tuple(int(part) for part in parts)
+
+
+def format_community_user_display_name(row):
+
+    if row.get("username"):
+
+        return f"@{row.get('username')}"
+
+
+    if row.get("first_name"):
+
+        return row.get("first_name")
+
+
+    return f"ID {row.get('user_id')}"
+
+
+def format_community_user_access_type(access_state):
+
+    if access_state.get("is_group_owner"):
+
+        return "owner"
+
+
+    if access_state.get("has_active_access") and not access_state.get("expires_at"):
+
+        return "permanente/free"
+
+
+    labels = {
+        "paid": "pagado",
+        "free": "free",
+        "code": "código",
+        "telegram_member": "miembro Telegram",
+        "unknown": "manual"
+    }
+
+    return labels.get(access_state.get("access_source"), access_state.get("access_source") or "manual")
+
+
+def fetch_community_user_rows(group_id):
+
+    user_ids = set()
+    profiles = {}
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT user_id,
+                   username,
+                   first_name,
+                   expiration,
+                   COALESCE(subscription_active, FALSE),
+                   created_at
+            FROM users
+            WHERE group_id=%s
+
+        """, (group_id,))
+
+
+        for row in cur.fetchall():
+
+            if not row[0]:
+
+                continue
+
+
+            user_ids.add(row[0])
+            profiles[row[0]] = {
+                "user_id": row[0],
+                "username": row[1],
+                "first_name": row[2],
+                "expiration": row[3],
+                "subscription_active": row[4],
+                "created_at": row[5]
+            }
+
+
+        for table_name in ("subscriptions", "payment_transactions", "invite_links"):
+
+            cur.execute(f"""
+
+                SELECT DISTINCT user_id
+                FROM {table_name}
+                WHERE group_id=%s
+                AND user_id IS NOT NULL
+
+            """, (group_id,))
+            user_ids.update(row[0] for row in cur.fetchall() if row and row[0])
+
+
+    rows = []
+
+
+    for target_user_id in sorted(user_ids):
+
+        row = profiles.get(target_user_id) or {
+            "user_id": target_user_id,
+            "username": None,
+            "first_name": None,
+            "expiration": None,
+            "subscription_active": False,
+            "created_at": None
+        }
+        access_state = get_user_group_access_state(target_user_id, group_id)
+        row["access_state"] = access_state
+        row["is_active"] = bool(access_state.get("has_active_access"))
+        row["expires_at"] = access_state.get("expires_at") or row.get("expiration")
+        row["access_type"] = format_community_user_access_type(access_state)
+        rows.append(row)
+
+
+    rows.sort(key=lambda item: (0 if item.get("is_active") else 1, item.get("expires_at") or datetime.max, item.get("user_id") or 0))
+
+    return rows
+
+
+def build_community_users_page(group_id, segment="active", page=0):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    rows = fetch_community_user_rows(group_id)
+    active_rows = [row for row in rows if row.get("is_active")]
+    inactive_rows = [row for row in rows if not row.get("is_active")]
+    selected_rows = active_rows if segment == "active" else inactive_rows
+    total_pages = max(1, (len(selected_rows) + COMMUNITY_USERS_PAGE_SIZE - 1) // COMMUNITY_USERS_PAGE_SIZE)
+    page = max(0, min(int(page or 0), total_pages - 1))
+    offset = page * COMMUNITY_USERS_PAGE_SIZE
+    page_rows = selected_rows[offset:offset + COMMUNITY_USERS_PAGE_SIZE]
+    segment_title = "✅ Usuarios con acceso activo" if segment == "active" else "⚠️ Usuarios sin acceso activo / expirado"
+    text = (
+        f"👥 Usuarios de {group_name or f'Grupo {group_id}'}\n\n"
+        f"✅ Activos: {len(active_rows)}\n"
+        f"⚠️ Inactivos/expirados: {len(inactive_rows)}\n\n"
+        f"{segment_title}\n"
+        f"Página {page + 1}/{total_pages}\n\n"
+    )
+
+
+    if not page_rows:
+
+        text += "No hay usuarios en esta sección."
+
+    else:
+
+        for index, row in enumerate(page_rows, start=offset + 1):
+
+            access_state = row.get("access_state") or {}
+            expires_at = row.get("expires_at")
+            expires_text = "permanente" if row.get("is_active") and not expires_at else format_commercial_datetime(expires_at)
+            status_text = "activo" if row.get("is_active") else access_state.get("subscription_status") or "inactivo"
+            text += (
+                f"{index}. {format_community_user_display_name(row)} / ID: {row.get('user_id')}\n"
+                f"Estado: {status_text}\n"
+                f"Expira: {expires_text}\n"
+                f"Tipo: {row.get('access_type')}\n\n"
+            )
+
+
+    keyboard = [[InlineKeyboardButton(
+        "⚠️ Ver inactivos/expirados" if segment == "active" else "✅ Ver activos",
+        callback_data=f"community_users_{group_id}_{'inactive' if segment == 'active' else 'active'}_0"
+    )]]
+
+
+    for row in page_rows:
+
+        keyboard.append([InlineKeyboardButton(
+            f"Gestionar · {format_community_user_display_name(row)}",
+            callback_data=f"community_user_manage_{group_id}_{row.get('user_id')}"
+        )])
+
+
+    nav_row = []
+
+
+    if page > 0:
+
+        nav_row.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"community_users_{group_id}_{segment}_{page - 1}"))
+
+
+    if page + 1 < total_pages:
+
+        nav_row.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"community_users_{group_id}_{segment}_{page + 1}"))
+
+
+    if nav_row:
+
+        keyboard.append(nav_row)
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver a usuarios y accesos", callback_data="owner_panel_users")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def fetch_community_user_profile(group_id, target_user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT username,
+                   first_name,
+                   expiration,
+                   COALESCE(subscription_active, FALSE)
+            FROM users
+            WHERE user_id=%s
+            AND group_id=%s
+            LIMIT 1
+
+        """, (target_user_id, group_id))
+        row = cur.fetchone()
+
+
+    return {
+        "user_id": target_user_id,
+        "username": row[0] if row else None,
+        "first_name": row[1] if row else None,
+        "expiration": row[2] if row else None,
+        "subscription_active": row[3] if row else False
+    }
+
+
+def build_community_user_manage_keyboard(group_id, target_user_id):
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("+1 día", callback_data=f"community_user_add_days_{group_id}_{target_user_id}_1"),
+            InlineKeyboardButton("+15 días", callback_data=f"community_user_add_days_{group_id}_{target_user_id}_15"),
+            InlineKeyboardButton("+30 días", callback_data=f"community_user_add_days_{group_id}_{target_user_id}_30")
+        ],
+        [
+            InlineKeyboardButton("-1 día", callback_data=f"community_user_subtract_days_{group_id}_{target_user_id}_1"),
+            InlineKeyboardButton("-15 días", callback_data=f"community_user_subtract_days_{group_id}_{target_user_id}_15"),
+            InlineKeyboardButton("-30 días", callback_data=f"community_user_subtract_days_{group_id}_{target_user_id}_30")
+        ],
+        [InlineKeyboardButton("🚫 Revocar acceso", callback_data=f"community_user_revoke_access_{group_id}_{target_user_id}")],
+        [InlineKeyboardButton("🗑 Eliminar usuario de BD", callback_data=f"community_user_delete_{group_id}_{target_user_id}")],
+        [InlineKeyboardButton("⬅️ Volver a lista", callback_data=f"community_users_{group_id}_active_0")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+async def build_community_user_detail_text(context, group_id, target_user_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    profile = fetch_community_user_profile(group_id, target_user_id)
+    access_state = await resolve_group_access_state_for_user(context, target_user_id, group_id)
+    expires_at = access_state.get("expires_at") or profile.get("expiration")
+    expires_text = "permanente" if access_state.get("has_active_access") and not expires_at else format_commercial_datetime(expires_at)
+
+    return (
+        "👤 Gestión de usuario\n\n"
+        f"Usuario: {format_community_user_display_name(profile)}\n"
+        f"ID: {target_user_id}\n"
+        f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
+        f"Estado actual: {'activo' if access_state.get('has_active_access') else access_state.get('subscription_status') or 'inactivo'}\n"
+        f"Expiración: {expires_text}\n"
+        f"Tipo/fuente: {format_community_user_access_type(access_state)}\n"
+        f"Acceso permanente: {'sí' if access_state.get('has_active_access') and not expires_at else 'no'}"
+    )
+
+
+def upsert_community_user_access(group_id, target_user_id, expiration, active=True):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO users (user_id, group_id, expiration, subscription_active, created_at)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id, group_id) DO UPDATE
+            SET expiration=EXCLUDED.expiration,
+                subscription_active=EXCLUDED.subscription_active
+
+        """, (target_user_id, group_id, expiration, active))
+
+        cur.execute("""
+
+            UPDATE subscriptions
+            SET end_date=%s,
+                status=%s
+            WHERE id=(
+                SELECT id
+                FROM subscriptions
+                WHERE user_id=%s
+                AND group_id=%s
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
+
+        """, (expiration, "active" if active else "revoked", target_user_id, group_id))
+
+
+        if cur.rowcount == 0 and active:
+
+            cur.execute("""
+
+                INSERT INTO subscriptions (user_id, group_id, status, start_date, end_date)
+                VALUES (%s, %s, 'active', CURRENT_TIMESTAMP, %s)
+
+            """, (target_user_id, group_id, expiration))
+
+    conn.commit()
+
+
+def adjust_community_user_access_days(group_id, target_user_id, days, operation):
+
+    access_state = get_user_group_access_state(target_user_id, group_id)
+    expires_at = access_state.get("expires_at")
+
+
+    if access_state.get("has_active_access") and not expires_at:
+
+        return {"ok": False, "reason": "permanent_access"}
+
+
+    now = datetime.now()
+
+
+    if operation == "add":
+
+        base = expires_at if expires_at and expires_at > now else now
+        new_expiration = base + timedelta(days=days)
+        upsert_community_user_access(group_id, target_user_id, new_expiration, active=True)
+
+        return {"ok": True, "expiration": new_expiration}
+
+
+    if not expires_at:
+
+        return {"ok": False, "reason": "permanent_access"}
+
+
+    new_expiration = expires_at - timedelta(days=days)
+    active = new_expiration > now
+
+
+    if not active:
+
+        new_expiration = now
+
+
+    upsert_community_user_access(group_id, target_user_id, new_expiration, active=active)
+
+    return {"ok": True, "expiration": new_expiration}
+
+
+def revoke_community_user_access(group_id, target_user_id):
+
+    now = datetime.now()
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("UPDATE users SET subscription_active=FALSE, expiration=%s WHERE user_id=%s AND group_id=%s", (now, target_user_id, group_id))
+        users_count = cur.rowcount
+        cur.execute("UPDATE subscriptions SET status='revoked', end_date=%s WHERE user_id=%s AND group_id=%s", (now, target_user_id, group_id))
+        subscriptions_count = cur.rowcount
+        cur.execute("UPDATE invite_links SET is_active=FALSE, revoked_at=CURRENT_TIMESTAMP WHERE user_id=%s AND group_id=%s", (target_user_id, group_id))
+        invite_links_count = cur.rowcount
+
+    conn.commit()
+
+    return {"users": users_count, "subscriptions": subscriptions_count, "invite_links": invite_links_count}
+
+
+def delete_community_user_records(group_id, target_user_id):
+
+    deleted_counts = {}
+
+
+    with conn.cursor() as cur:
+
+        for table_name in ("group_user_promo_redemptions", "invite_links", "subscriptions", "users"):
+
+            cur.execute(f"DELETE FROM {table_name} WHERE user_id=%s AND group_id=%s", (target_user_id, group_id))
+            deleted_counts[table_name] = cur.rowcount
+
+    conn.commit()
+
+    return deleted_counts
+
+
+async def notify_community_user_access_change(context, target_user_id, text, group_id, actor_user_id):
+
+    try:
+
+        await context.bot.send_message(chat_id=target_user_id, text=text)
+
+    except Exception as e:
+
+        log_event(
+            "community_user_access_notification_failed",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=actor_user_id,
+            target_user_id=target_user_id,
+            message="No se pudo notificar al usuario sobre un cambio de acceso.",
+            metadata={"error": str(e)[:300]}
+        )
 
 
 def build_owner_backup_panel_text(group_id):
@@ -35130,7 +35580,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-        if not user_can_view_group_panel(user_id, group_id, ["can_view_users", "can_manage_users"]):
+        if not user_can_view_community_users(user_id, group_id):
 
             await query.message.reply_text(
                 "⛔ No tienes permiso para ver usuarios de esta comunidad.",
@@ -35143,29 +35593,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["selected_group_admin"] = group_id
         context.user_data["selected_owner_group"] = group_id
 
-        group = fetch_group_basic_info(group_id)
-        group_name = group[1] if group else f"Grupo {group_id}"
-
         try:
 
-            with conn.cursor() as cur:
-
-                cur.execute("""
-
-                    SELECT user_id,
-                           username,
-                           first_name,
-                           expiration,
-                           subscription_active
-                    FROM users
-                    WHERE group_id=%s
-                    ORDER BY expiration DESC NULLS LAST,
-                             created_at DESC
-                    LIMIT 50
-
-                """, (group_id,))
-
-                rows = cur.fetchall()
+            text, keyboard = build_community_users_page(group_id, "active", 0)
 
         except Exception as e:
 
@@ -35179,48 +35609,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Volver a usuarios y accesos", callback_data="owner_panel_users")],
-            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
-            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-        ])
-
-
-        if not rows:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                f"👥 Usuarios de esta comunidad\n\nComunidad: {group_name or f'Grupo {group_id}'}\n\nTodavía no hay usuarios activos registrados en esta comunidad.",
-                reply_markup=keyboard
-            )
-
-            return
-
-
-        text = f"👥 Usuarios de esta comunidad\n\nComunidad: {group_name or f'Grupo {group_id}'}\nUsuarios mostrados: {len(rows)}\n\n"
-
-
-        for member_user_id, username, first_name, expiration, subscription_active in rows:
-
-            name = first_name or "Sin nombre"
-
-            if username:
-
-                name += f" (@{username})"
-
-
-            expiration_text = expiration.strftime("%Y-%m-%d") if expiration else "♾️ Permanente"
-            active_text = "activo" if subscription_active else "registrado"
-
-            text += (
-                f"Usuario: {member_user_id}\n"
-                f"Nombre: {name}\n"
-                f"Acceso: {active_text}\n"
-                f"Expira: {expiration_text}\n\n"
-            )
-
-
         await send_clean_message(
             context,
             query.message.chat_id,
@@ -35228,6 +35616,265 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard
         )
 
+        log_event(
+            "community_users_panel_opened",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Panel de usuarios de comunidad abierto.",
+            metadata={"segment": "active", "page": 0}
+        )
+
+        return
+
+
+    if data.startswith("community_users_"):
+
+        payload = data.replace("community_users_", "", 1)
+        parts = payload.split("_")
+
+
+        if len(parts) != 3 or not parts[0].isdigit() or parts[1] not in ("active", "inactive") or not parts[2].isdigit():
+
+            await query.message.reply_text("⚠️ No he podido identificar la lista de usuarios.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id = int(parts[0])
+        segment = parts[1]
+        page = int(parts[2])
+
+
+        if not user_can_view_community_users(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para ver usuarios de esta comunidad.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        text, keyboard = build_community_users_page(group_id, segment, page)
+        await send_clean_message(context, query.message.chat_id, text, reply_markup=keyboard)
+        return
+
+
+    if data.startswith("community_user_manage_"):
+
+        parsed = parse_community_user_callback(data, "community_user_manage_")
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_view_community_users(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para ver este usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        text = await build_community_user_detail_text(context, group_id, target_user_id)
+        await send_clean_message(context, query.message.chat_id, text, reply_markup=build_community_user_manage_keyboard(group_id, target_user_id))
+        return
+
+
+    if data.startswith("community_user_add_days_") or data.startswith("community_user_subtract_days_"):
+
+        is_add = data.startswith("community_user_add_days_")
+        prefix = "community_user_add_days_" if is_add else "community_user_subtract_days_"
+        parsed = parse_community_user_callback(data, prefix, include_days=True)
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar la acción.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id, days = parsed
+
+
+        if days not in (1, 15, 30) or not user_can_manage_community_user_access(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para modificar este acceso.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        result = adjust_community_user_access_days(group_id, target_user_id, days, "add" if is_add else "subtract")
+
+
+        if not result.get("ok"):
+
+            message = "Este usuario tiene acceso permanente. No se pueden añadir días sin convertir el acceso." if is_add else "Este usuario tiene acceso permanente. No se pueden restar días."
+            await query.message.reply_text(message, reply_markup=build_community_user_manage_keyboard(group_id, target_user_id))
+            return
+
+
+        group = fetch_group_basic_info(group_id)
+        group_name = group[1] if group else f"Grupo {group_id}"
+        expiration_text = format_commercial_datetime(result.get("expiration"))
+        log_event(
+            "community_user_access_days_added" if is_add else "community_user_access_days_subtracted",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=target_user_id,
+            message="Acceso de usuario modificado desde panel owner.",
+            metadata={"days": days, "operation": "add" if is_add else "subtract", "new_expiration": expiration_text}
+        )
+        await notify_community_user_access_change(
+            context,
+            target_user_id,
+            f"{'✅' if is_add else '⚠️'} Se te han {'añadido' if is_add else 'restado'} {days} días de suscripción/acceso a la comunidad \"{group_name}\".\nNueva fecha de expiración: {expiration_text}",
+            group_id,
+            user_id
+        )
+        text = await build_community_user_detail_text(context, group_id, target_user_id)
+        await send_clean_message(context, query.message.chat_id, f"{text}\n\n✅ Cambio aplicado. Nueva expiración: {expiration_text}", reply_markup=build_community_user_manage_keyboard(group_id, target_user_id))
+        return
+
+
+    if data.startswith("community_user_revoke_access_") and not data.startswith("community_user_revoke_access_yes_"):
+
+        parsed = parse_community_user_callback(data, "community_user_revoke_access_")
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_manage_community_user_access(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para revocar este acceso.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "⚠️ ¿Seguro que quieres revocar el acceso de este usuario?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Sí, revocar acceso", callback_data=f"community_user_revoke_access_yes_{group_id}_{target_user_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"community_user_manage_{group_id}_{target_user_id}")]
+            ])
+        )
+        return
+
+
+    if data.startswith("community_user_revoke_access_yes_"):
+
+        parsed = parse_community_user_callback(data, "community_user_revoke_access_yes_")
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_manage_community_user_access(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para revocar este acceso.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        counts = revoke_community_user_access(group_id, target_user_id)
+        group = fetch_group_basic_info(group_id)
+        group_name = group[1] if group else f"Grupo {group_id}"
+        log_event("community_user_access_revoked", category="access", severity="warning", scope="group", group_id=group_id, actor_user_id=user_id, target_user_id=target_user_id, message="Acceso de usuario revocado desde panel owner.", metadata={"updated_counts": counts})
+        await notify_community_user_access_change(context, target_user_id, f"🚫 Tu acceso a la comunidad \"{group_name}\" ha sido revocado.", group_id, user_id)
+        text = await build_community_user_detail_text(context, group_id, target_user_id)
+        await send_clean_message(context, query.message.chat_id, f"{text}\n\n✅ Acceso revocado.", reply_markup=build_community_user_manage_keyboard(group_id, target_user_id))
+        return
+
+
+    if data.startswith("community_user_delete_") and not data.startswith("community_user_delete_yes_"):
+
+        parsed = parse_community_user_callback(data, "community_user_delete_")
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_manage_community_user_access(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para eliminar registros de este usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        log_event("community_user_delete_confirmation_opened", category="access", severity="warning", scope="group", group_id=group_id, actor_user_id=user_id, target_user_id=target_user_id, message="Confirmación de eliminación de usuario abierta.", metadata={})
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "⚠️ ¿Seguro que quieres eliminar este usuario de la base de datos?\n\n"
+                "Se eliminarán registros locales relacionados con esta comunidad donde sea posible.\n"
+                "No necesariamente banea al usuario en Telegram.\n"
+                "No emite reembolsos.\n"
+                "No cancela suscripciones Stripe/PayPal.\n"
+                "Esta acción es más difícil de recuperar."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Sí, eliminar de la base de datos", callback_data=f"community_user_delete_yes_{group_id}_{target_user_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"community_user_manage_{group_id}_{target_user_id}")]
+            ])
+        )
+        return
+
+
+    if data.startswith("community_user_delete_yes_"):
+
+        parsed = parse_community_user_callback(data, "community_user_delete_yes_")
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_manage_community_user_access(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para eliminar registros de este usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        deleted_counts = delete_community_user_records(group_id, target_user_id)
+        log_event("community_user_deleted_from_db", category="access", severity="warning", scope="group", group_id=group_id, actor_user_id=user_id, target_user_id=target_user_id, message="Registros locales de usuario eliminados para una comunidad.", metadata={"deleted_counts": deleted_counts})
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Usuario eliminado de los registros locales de esta comunidad.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👥 Volver a usuarios activos", callback_data=f"community_users_{group_id}_active_0")],
+                [InlineKeyboardButton("⚠️ Ver inactivos/expirados", callback_data=f"community_users_{group_id}_inactive_0")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
         return
 
 
