@@ -123,6 +123,61 @@ def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, me
         return None
 
 
+def create_telegram_public_invite_link(token, telegram_group_id, name=None, community_type=None):
+
+    payload = {
+        "chat_id": telegram_group_id
+    }
+
+
+    if name:
+
+        payload["name"] = name[:32]
+
+
+    try:
+
+        response = requests.post(
+
+            f"https://api.telegram.org/bot{token}/createChatInviteLink",
+
+            json=payload
+
+        ).json()
+
+
+        if "result" not in response:
+
+            kind = format_community_kind(community_type)
+
+            print(
+                f"Error creando invite link público para {kind}:",
+                sanitize_log_value(
+                    response,
+                    token=token
+                )
+            )
+
+            return None
+
+
+        return response["result"]["invite_link"]
+
+    except Exception as e:
+
+        kind = format_community_kind(community_type)
+
+        print(
+            f"Excepción creando invite link público para {kind}:",
+            sanitize_log_value(
+                e,
+                token=token
+            )
+        )
+
+        return None
+
+
 # =========================
 # INVITE LINKS — REVOKE TELEGRAM LINK
 # =========================

@@ -12,12 +12,71 @@ from audit_log_service import log_event
 from bot_config import TOKEN, ADMIN_ID
 from db import conn
 from message_templates import unauthorized_access_detected_text
+from publicity_invite_link_service import is_active_publicity_invite_link
 from telegram_group_actions import kick_chat_member
 
 
 # =========================
 # DETECTAR USUARIO ENTRANDO AL GRUPO
 # =========================
+
+async def send_publicity_invite_welcome(update, context, member, group_id, telegram_group_id):
+
+    group_title = getattr(update.message.chat, "title", None) or "esta comunidad"
+    bot_username = getattr(context.bot, "username", None) or "TheStarVipBOT"
+    bot_url = f"https://t.me/{bot_username}?start=publicity_{telegram_group_id}"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏠 Abrir menú principal", url=bot_url)]
+    ])
+    text = (
+        f"👋 Bienvenido a \"{group_title}\".\n\n"
+        "Este grupo forma parte de nuestra red de comunidades.\n"
+        "Desde el menú puedes descubrir comunidades, gestionar accesos o ver opciones disponibles.\n\n"
+        "Pulsa abajo para abrir el menú principal."
+    )
+
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=member.id,
+            text=text,
+            reply_markup=keyboard
+        )
+
+        return
+
+    except Exception as e:
+
+        log_event(
+            "publicity_invite_welcome_dm_failed",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            actor_user_id=member.id,
+            target_user_id=member.id,
+            message="No se pudo enviar bienvenida privada por link público de publicidad.",
+            metadata={
+                "error": str(e)[:300]
+            }
+        )
+
+
+    try:
+
+        display_name = member.first_name or "bienvenido"
+
+        await update.message.reply_text(
+            f"👋 Bienvenido, {display_name}. Pulsa aquí para abrir el bot y ver el menú.",
+            reply_markup=keyboard
+        )
+
+    except Exception as e:
+
+        print("publicity_invite_group_fallback_failed:", str(e)[:200])
+
 
 async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -141,6 +200,38 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
 
                     invite_link_used = None
+
+
+                if (
+                    invite_link_used
+                    and is_active_publicity_invite_link(invite_link_used, telegram_group_id)
+                ):
+
+                    log_event(
+                        "publicity_invite_link_used",
+                        category="access",
+                        severity="info",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Usuario entró usando link público de publicidad activo.",
+                        metadata={
+                            "username": username,
+                            "first_name": first_name
+                        }
+                    )
+
+                    await send_publicity_invite_welcome(
+                        update,
+                        context,
+                        member,
+                        group_id,
+                        telegram_group_id
+                    )
+
+                    continue
 
 
                 cur.execute("""
