@@ -15009,6 +15009,9 @@ def build_owner_section_keyboard(user_id, group_id, section):
         if user_can_view_community_users(user_id, group_id):
             keyboard.append([InlineKeyboardButton("📋 Ver usuarios de esta comunidad", callback_data=f"owner_group_users_{group_id}")])
 
+            if fetch_free_community_for_known_user_sync(group_id):
+                keyboard.append([InlineKeyboardButton("🔄 Sincronizar usuarios conocidos", callback_data=f"community_users_sync_known_{group_id}")])
+
         if user_has_group_permission_any(user_id, group_id, ["can_kick_users", "can_manage_users"]):
             keyboard.append([InlineKeyboardButton("🚫 Expulsar usuario", callback_data="admin_kick_user")])
 
@@ -15260,6 +15263,7 @@ OWNER_PANEL_ALLOWED_REPEATED_PREFIXES = (
     "owner_panel_help_",
     "owner_group_logs_",
     "owner_group_users_",
+    "community_users_sync_known_",
     "owner_location_",
     "owner_backup_"
 )
@@ -15645,6 +15649,54 @@ def user_can_manage_community_user_access(user_id, group_id):
     return user_has_group_permission_any(user_id, group_id, ["can_manage_users"])
 
 
+def fetch_free_community_for_known_user_sync(group_id):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       name,
+                       telegram_group_id,
+                       COALESCE(is_free_group, FALSE)
+                FROM groups
+                WHERE id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+                LIMIT 1
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+    except Exception as e:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        print("free_community_sync_group_lookup_error:", str(e)[:300])
+        return None
+
+
+    if not row or row[3] is not True:
+
+        return None
+
+
+    return {
+        "group_id": row[0],
+        "name": row[1],
+        "telegram_group_id": row[2],
+        "is_free_group": row[3] is True
+    }
+
+
 def parse_community_user_callback(data, prefix, include_days=False):
 
     if not data.startswith(prefix):
@@ -15714,6 +15766,418 @@ def log_community_users_source_error(source, error):
 
 
     print(f"community_users_panel_source_error[{source}]:", str(error)[:500])
+
+
+def extract_known_user_from_metadata(metadata):
+
+    if not isinstance(metadata, dict):
+
+        return {}
+
+
+    nested_metadata = metadata.get("metadata")
+
+    if isinstance(nested_metadata, dict):
+
+        metadata = {
+            **nested_metadata,
+            **metadata
+        }
+
+
+    return {
+        "username": metadata.get("username"),
+        "first_name": metadata.get("first_name")
+    }
+
+
+def merge_known_free_user(known_users, user_id, username=None, first_name=None):
+
+    if not user_id:
+
+        return
+
+
+    try:
+
+        user_id = int(user_id)
+
+    except Exception:
+
+        return
+
+
+    if user_id <= 0:
+
+        return
+
+
+    current = known_users.setdefault(user_id, {
+        "user_id": user_id,
+        "username": None,
+        "first_name": None
+    })
+
+    if username and not current.get("username"):
+
+        current["username"] = username
+
+    if first_name and not current.get("first_name"):
+
+        current["first_name"] = first_name
+
+
+def log_free_community_sync_source_error(source, error, group_id, telegram_group_id=None):
+
+    try:
+
+        conn.rollback()
+
+    except Exception:
+
+        pass
+
+
+    print(f"free_community_known_users_sync_source_error[{source}]:", str(error)[:500])
+    log_event(
+        "free_community_known_users_sync_source_error",
+        category="access",
+        severity="warning",
+        scope="group",
+        group_id=group_id,
+        telegram_group_id=telegram_group_id,
+        message="No se pudo leer una fuente de usuarios conocidos para comunidad gratis.",
+        metadata={
+            "source": source,
+            "error": str(error)[:500]
+        }
+    )
+
+
+def collect_known_free_community_users(group_id, telegram_group_id):
+
+    known_users = {}
+    relevant_audit_events = (
+        "user_join_detected",
+        "access_unauthorized",
+        "publicity_invite_join_detected",
+        "publicity_invite_link_missing_on_join",
+        "publicity_invite_link_not_matched"
+    )
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT actor_user_id,
+                       target_user_id,
+                       metadata
+                FROM audit_logs
+                WHERE group_id=%s
+                AND (
+                    telegram_group_id=%s
+                    OR telegram_group_id IS NULL
+                )
+                AND event_type = ANY(%s)
+                AND (
+                    actor_user_id IS NOT NULL
+                    OR target_user_id IS NOT NULL
+                )
+
+            """, (
+                group_id,
+                telegram_group_id,
+                list(relevant_audit_events)
+            ))
+
+            for actor_user_id, target_user_id, metadata in cur.fetchall():
+
+                profile = extract_known_user_from_metadata(metadata)
+                merge_known_free_user(
+                    known_users,
+                    target_user_id or actor_user_id,
+                    profile.get("username"),
+                    profile.get("first_name")
+                )
+
+    except Exception as e:
+
+        log_free_community_sync_source_error(
+            "audit_logs",
+            e,
+            group_id,
+            telegram_group_id
+        )
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT user_id,
+                       username,
+                       first_name
+                FROM bot_user_events
+                WHERE group_id=%s
+                AND user_id IS NOT NULL
+                AND (
+                    event_type = ANY(%s)
+                    OR event_key = ANY(%s)
+                )
+
+            """, (
+                group_id,
+                list(relevant_audit_events),
+                list(relevant_audit_events)
+            ))
+
+            for user_id, username, first_name in cur.fetchall():
+
+                merge_known_free_user(
+                    known_users,
+                    user_id,
+                    username,
+                    first_name
+                )
+
+    except Exception as e:
+
+        log_free_community_sync_source_error(
+            "bot_user_events",
+            e,
+            group_id,
+            telegram_group_id
+        )
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT user_id,
+                       metadata
+                FROM beta_monitor_events
+                WHERE group_id=%s
+                AND (
+                    telegram_group_id=%s
+                    OR telegram_group_id IS NULL
+                )
+                AND event_type='unauthorized_access'
+                AND user_id IS NOT NULL
+
+            """, (
+                group_id,
+                telegram_group_id
+            ))
+
+            for user_id, metadata in cur.fetchall():
+
+                profile = extract_known_user_from_metadata(metadata)
+                merge_known_free_user(
+                    known_users,
+                    user_id,
+                    profile.get("username"),
+                    profile.get("first_name")
+                )
+
+    except Exception as e:
+
+        log_free_community_sync_source_error(
+            "beta_monitor_events",
+            e,
+            group_id,
+            telegram_group_id
+        )
+
+
+    return known_users
+
+
+def sync_known_free_community_users(group_id, telegram_group_id, actor_user_id, bot_user_id=None):
+
+    group = fetch_free_community_for_known_user_sync(group_id)
+
+
+    if not group or group.get("telegram_group_id") != telegram_group_id:
+
+        return {
+            "ok": False,
+            "reason": "not_free_group",
+            "found_count": 0,
+            "inserted_count": 0,
+            "updated_count": 0,
+            "skipped_count": 0,
+            "error_count": 0
+        }
+
+
+    log_event(
+        "free_community_known_users_sync_started",
+        category="access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        telegram_group_id=telegram_group_id,
+        actor_user_id=actor_user_id,
+        message="Sincronización de usuarios conocidos de comunidad gratis iniciada."
+    )
+
+    known_users = collect_known_free_community_users(
+        group_id,
+        telegram_group_id
+    )
+    inserted_count = 0
+    updated_count = 0
+    skipped_count = 0
+    error_count = 0
+
+
+    for known_user in known_users.values():
+
+        target_user_id = known_user.get("user_id")
+
+
+        if not target_user_id:
+
+            skipped_count += 1
+            continue
+
+
+        if bot_user_id and target_user_id == bot_user_id:
+
+            skipped_count += 1
+            continue
+
+
+        if target_user_id == ADMIN_ID:
+
+            skipped_count += 1
+            continue
+
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE users
+                    SET username=COALESCE(%s, username),
+                        first_name=COALESCE(%s, first_name),
+                        expiration=NULL,
+                        subscription_active=TRUE
+                    WHERE user_id=%s
+                    AND group_id=%s
+
+                """, (
+                    known_user.get("username"),
+                    known_user.get("first_name"),
+                    target_user_id,
+                    group_id
+                ))
+
+                if cur.rowcount > 0:
+
+                    updated_count += cur.rowcount
+
+                else:
+
+                    cur.execute("""
+
+                        INSERT INTO users
+                        (
+                            user_id,
+                            group_id,
+                            username,
+                            first_name,
+                            expiration,
+                            subscription_active
+                        )
+                        VALUES (%s, %s, %s, %s, NULL, TRUE)
+
+                    """, (
+                        target_user_id,
+                        group_id,
+                        known_user.get("username"),
+                        known_user.get("first_name")
+                    ))
+
+                    inserted_count += 1
+
+                conn.commit()
+
+            log_event(
+                "free_community_known_user_registered",
+                category="access",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                telegram_group_id=telegram_group_id,
+                actor_user_id=actor_user_id,
+                target_user_id=target_user_id,
+                message="Usuario conocido sincronizado como acceso gratuito/permanente.",
+                metadata={
+                    "username": known_user.get("username"),
+                    "first_name": known_user.get("first_name")
+                }
+            )
+
+        except Exception as e:
+
+            try:
+
+                conn.rollback()
+
+            except Exception:
+
+                pass
+
+            error_count += 1
+            log_event(
+                "free_community_known_user_register_failed",
+                category="access",
+                severity="error",
+                scope="group",
+                group_id=group_id,
+                telegram_group_id=telegram_group_id,
+                actor_user_id=actor_user_id,
+                target_user_id=target_user_id,
+                message="No se pudo sincronizar usuario conocido de comunidad gratis.",
+                metadata={
+                    "error": str(e)[:500]
+                }
+            )
+
+
+    result = {
+        "ok": True,
+        "found_count": len(known_users),
+        "inserted_count": inserted_count,
+        "updated_count": updated_count,
+        "skipped_count": skipped_count,
+        "error_count": error_count
+    }
+
+    log_event(
+        "free_community_known_users_sync_completed",
+        category="access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        telegram_group_id=telegram_group_id,
+        actor_user_id=actor_user_id,
+        message="Sincronización de usuarios conocidos de comunidad gratis terminada.",
+        metadata=result
+    )
+
+    return result
 
 
 def fetch_community_user_rows(group_id):
@@ -36250,6 +36714,132 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             actor_user_id=user_id,
             message="Panel de usuarios de comunidad abierto.",
             metadata={"segment": "active", "page": 0}
+        )
+
+        return
+
+
+    if data.startswith("community_users_sync_known_yes_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "community_users_sync_known_yes_"
+        )
+
+
+        if not user_can_view_community_users(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para sincronizar usuarios de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group = fetch_free_community_for_known_user_sync(group_id)
+
+
+        if not group:
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para comunidades gratuitas.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        result = sync_known_free_community_users(
+            group_id,
+            group.get("telegram_group_id"),
+            user_id,
+            getattr(context.bot, "id", None)
+        )
+
+
+        if not result.get("ok"):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para comunidades gratuitas.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        text = (
+            "✅ Sincronización terminada\n\n"
+            f"Usuarios encontrados: {result.get('found_count')}\n"
+            f"Insertados nuevos: {result.get('inserted_count')}\n"
+            f"Actualizados: {result.get('updated_count')}\n"
+            f"Omitidos: {result.get('skipped_count')}\n"
+            f"Errores: {result.get('error_count')}\n\n"
+            "Ahora puedes volver a “Ver usuarios de esta comunidad”."
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("👥 Ver usuarios de esta comunidad", callback_data=f"owner_group_users_{group_id}")],
+            [InlineKeyboardButton("⬅️ Volver", callback_data="owner_panel_users")]
+        ])
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            text,
+            reply_markup=keyboard
+        )
+
+        return
+
+
+    if data.startswith("community_users_sync_known_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "community_users_sync_known_"
+        )
+
+
+        if not user_can_view_community_users(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para sincronizar usuarios de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group = fetch_free_community_for_known_user_sync(group_id)
+
+
+        if not group:
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para comunidades gratuitas.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        text = (
+            "⚠️ Esta acción buscará usuarios conocidos por el bot en logs/eventos de esta comunidad gratis "
+            "y los registrará como acceso gratuito/permanente.\n\n"
+            "No usa pagos, no crea suscripciones premium y no modifica comunidades de pago.\n\n"
+            "¿Continuar?"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Sí, sincronizar", callback_data=f"community_users_sync_known_yes_{group_id}")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data="owner_panel_users")]
+        ])
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            text,
+            reply_markup=keyboard
         )
 
         return
