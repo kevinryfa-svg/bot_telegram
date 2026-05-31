@@ -87,34 +87,102 @@ def ensure_free_community_user_access(user_id, group_id, username, first_name, i
 
             cur.execute("""
 
-                INSERT INTO users
-                (
+                UPDATE users
+                SET username=%s,
+                    first_name=%s,
+                    expiration=NULL,
+                    subscription_active=TRUE,
+                    last_invite_link=COALESCE(%s, last_invite_link)
+                WHERE user_id=%s
+                AND group_id=%s
+
+            """, (
+                username,
+                first_name,
+                invite_link_used,
+                user_id,
+                group_id
+            ))
+
+            if cur.rowcount == 0:
+
+                cur.execute("""
+
+                    INSERT INTO users
+                    (
+                        user_id,
+                        group_id,
+                        username,
+                        first_name,
+                        expiration,
+                        subscription_active,
+                        last_invite_link
+                    )
+                    VALUES (%s, %s, %s, %s, NULL, TRUE, %s)
+
+                """, (
                     user_id,
                     group_id,
                     username,
                     first_name,
-                    expiration,
-                    subscription_active,
-                    last_invite_link
-                )
-                VALUES (%s, %s, %s, %s, NULL, TRUE, %s)
-                ON CONFLICT (user_id, group_id)
-                DO UPDATE SET
-                    username=EXCLUDED.username,
-                    first_name=EXCLUDED.first_name,
-                    expiration=NULL,
-                    subscription_active=TRUE,
-                    last_invite_link=COALESCE(EXCLUDED.last_invite_link, users.last_invite_link)
+                    invite_link_used
+                ))
+
+            cur.execute("""
+
+                SELECT user_id,
+                       group_id,
+                       COALESCE(subscription_active, FALSE),
+                       expiration
+                FROM users
+                WHERE user_id=%s
+                AND group_id=%s
+                LIMIT 1
 
             """, (
                 user_id,
-                group_id,
-                username,
-                first_name,
-                invite_link_used
+                group_id
             ))
 
+            verify_row = cur.fetchone()
+
             conn.commit()
+
+        if verify_row:
+
+            log_event(
+                "free_community_user_access_verified",
+                category="access",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Registro de acceso gratuito/permanente verificado en users.",
+                metadata={
+                    "user_id": verify_row[0],
+                    "group_id": verify_row[1],
+                    "subscription_active": verify_row[2],
+                    "expiration": str(verify_row[3]) if verify_row[3] else None
+                }
+            )
+
+        else:
+
+            log_event(
+                "free_community_user_access_verify_missing",
+                category="access",
+                severity="error",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="No se encontró en users el registro gratuito tras guardarlo.",
+                metadata={
+                    "user_id": user_id,
+                    "group_id": group_id
+                }
+            )
 
         log_event(
             "free_community_user_access_upserted",
@@ -124,7 +192,14 @@ def ensure_free_community_user_access(user_id, group_id, username, first_name, i
             group_id=group_id,
             actor_user_id=user_id,
             target_user_id=user_id,
-            message="Usuario registrado con acceso gratuito/permanente."
+            message="Usuario registrado con acceso gratuito/permanente.",
+            metadata={
+                "user_id": user_id,
+                "group_id": group_id,
+                "username": username,
+                "first_name": first_name,
+                "invite_link_present": invite_link_used is not None
+            }
         )
 
         return True
@@ -149,7 +224,12 @@ def ensure_free_community_user_access(user_id, group_id, username, first_name, i
             target_user_id=user_id,
             message="No se pudo registrar acceso gratuito/permanente.",
             metadata={
-                "error": str(e)[:300]
+                "user_id": user_id,
+                "group_id": group_id,
+                "username": username,
+                "first_name": first_name,
+                "invite_link_present": invite_link_used is not None,
+                "error": str(e)[:500]
             }
         )
 
