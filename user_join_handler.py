@@ -24,6 +24,138 @@ from telegram_group_actions import kick_chat_member
 # DETECTAR USUARIO ENTRANDO AL GRUPO
 # =========================
 
+def is_free_community_group(group_id, telegram_group_id):
+
+    if not group_id or not telegram_group_id:
+
+        return False
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(is_free_group, FALSE)
+                FROM groups
+                WHERE id=%s
+                AND telegram_group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+                LIMIT 1
+
+            """, (
+                group_id,
+                telegram_group_id
+            ))
+
+            row = cur.fetchone()
+
+            return bool(row and row[0] is True)
+
+    except Exception as e:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        log_event(
+            "free_community_user_access_upsert_failed",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            message="No se pudo comprobar si la comunidad es gratuita.",
+            metadata={
+                "error": str(e)[:300]
+            }
+        )
+
+        return False
+
+
+def ensure_free_community_user_access(user_id, group_id, username, first_name, invite_link_used=None):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO users
+                (
+                    user_id,
+                    group_id,
+                    username,
+                    first_name,
+                    expiration,
+                    subscription_active,
+                    last_invite_link
+                )
+                VALUES (%s, %s, %s, %s, NULL, TRUE, %s)
+                ON CONFLICT (user_id, group_id)
+                DO UPDATE SET
+                    username=EXCLUDED.username,
+                    first_name=EXCLUDED.first_name,
+                    expiration=NULL,
+                    subscription_active=TRUE,
+                    last_invite_link=COALESCE(EXCLUDED.last_invite_link, users.last_invite_link)
+
+            """, (
+                user_id,
+                group_id,
+                username,
+                first_name,
+                invite_link_used
+            ))
+
+            conn.commit()
+
+        log_event(
+            "free_community_user_access_upserted",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Usuario registrado con acceso gratuito/permanente."
+        )
+
+        return True
+
+    except Exception as e:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        log_event(
+            "free_community_user_access_upsert_failed",
+            category="access",
+            severity="error",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="No se pudo registrar acceso gratuito/permanente.",
+            metadata={
+                "error": str(e)[:300]
+            }
+        )
+
+        return False
+
+
 async def send_publicity_invite_welcome(update, context, member, group_id, telegram_group_id):
 
     group_title = getattr(update.message.chat, "title", None) or "esta comunidad"
@@ -420,6 +552,45 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         metadata={
                             "username": username,
                             "first_name": first_name
+                        }
+                    )
+
+                    await send_publicity_invite_welcome(
+                        update,
+                        context,
+                        member,
+                        group_id,
+                        telegram_group_id
+                    )
+
+                    continue
+
+
+                if is_free_community_group(group_id, telegram_group_id):
+
+                    free_access_saved = ensure_free_community_user_access(
+                        user_id,
+                        group_id,
+                        username,
+                        first_name,
+                        invite_link_used
+                    )
+
+                    log_event(
+                        "free_community_join_allowed",
+                        category="access",
+                        severity="info" if free_access_saved else "warning",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Entrada permitida en comunidad gratuita.",
+                        metadata={
+                            "username": username,
+                            "first_name": first_name,
+                            "invite_link_present": invite_link_used is not None,
+                            "access_saved": free_access_saved
                         }
                     )
 
