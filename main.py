@@ -1060,6 +1060,10 @@ async def handle_text(update, context):
         await receive_admin_inputs(update, context)
         return
 
+    if context.user_data.get("publicity_authorize_existing_group_id"):
+        await receive_admin_inputs(update, context)
+        return
+
     if (
         context.user_data.get("configuring_owner_payment_provider")
         or context.user_data.get("configuring_platform_payment_provider")

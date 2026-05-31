@@ -791,6 +791,10 @@ def create_tables():
 
             created_by BIGINT,
 
+            source TEXT DEFAULT 'bot',
+
+            label TEXT,
+
             is_active BOOLEAN DEFAULT TRUE,
 
             revoked_at TIMESTAMP NULL,
@@ -800,6 +804,20 @@ def create_tables():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
         );
+
+        """)
+
+        cur.execute("""
+
+            ALTER TABLE publicity_group_invite_links
+            ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'bot'
+
+        """)
+
+        cur.execute("""
+
+            ALTER TABLE publicity_group_invite_links
+            ADD COLUMN IF NOT EXISTS label TEXT
 
         """)
 
