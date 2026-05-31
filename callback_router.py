@@ -3459,6 +3459,133 @@ def sanitize_ad_promo_text(text):
     return cleaned.strip()[:900]
 
 
+def is_generic_ad_promo_extra_field(field, text):
+
+    normalized = (text or "").strip().lower()
+
+    if not normalized:
+
+        return True
+
+
+    generic_offer_texts = {
+        "promo activa esta semana",
+        "promo activa esta semana.",
+        "oferta activa esta semana",
+        "oferta activa esta semana."
+    }
+    generic_cta_fragments = (
+        "entra al bot y revisa los planes disponibles",
+        "revisa los planes disponibles",
+        "consulta los planes disponibles"
+    )
+
+
+    if field == "offer_text" and normalized in generic_offer_texts:
+
+        return True
+
+
+    if field == "cta_text" and any(fragment in normalized for fragment in generic_cta_fragments):
+
+        return True
+
+
+    return False
+
+
+def normalize_ad_promo_compare_text(text):
+
+    text = unicodedata.normalize("NFKD", text or "")
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+
+    return " ".join(text.split())
+
+
+def ad_promo_text_contains_cta(text):
+
+    normalized = normalize_ad_promo_compare_text(text)
+    cta_fragments = (
+        "abre el bot",
+        "abrir el bot",
+        "entra al bot",
+        "entrar al bot",
+        "revisa desde el bot",
+        "revisar desde el bot",
+        "explora desde el bot",
+        "explorar desde el bot",
+        "mira que comunidades",
+        "mira que hay disponible",
+        "descubre desde el bot",
+        "gestiona tus accesos",
+        "todo desde el bot"
+    )
+
+    return any(fragment in normalized for fragment in cta_fragments)
+
+
+def ad_promo_text_mentions_offer_theme(text):
+
+    normalized = normalize_ad_promo_compare_text(text)
+    theme_words = (
+        "gratis",
+        "gratuito",
+        "gratuitos",
+        "premium",
+        "explora",
+        "explorar",
+        "descubre",
+        "descubrir",
+        "comunidades",
+        "grupos",
+        "bot",
+        "accesos",
+        "planes"
+    )
+
+    return any(word in normalized.split() for word in theme_words)
+
+
+def should_append_ad_promo_extra_field(field, text, base_copy):
+
+    if is_generic_ad_promo_extra_field(field, text):
+
+        return False
+
+
+    normalized_text = normalize_ad_promo_compare_text(text)
+    normalized_base = normalize_ad_promo_compare_text(base_copy)
+
+    if not normalized_text:
+
+        return False
+
+
+    if normalized_text in normalized_base:
+
+        return False
+
+
+    if field == "price_text":
+
+        return True
+
+
+    if field == "offer_text" and ad_promo_text_mentions_offer_theme(base_copy):
+
+        return False
+
+
+    if field == "cta_text" and ad_promo_text_contains_cta(base_copy):
+
+        return False
+
+
+    return True
+
+
 def build_ad_promo_bot_link(campaign, bot_username=None):
 
     if campaign.get("bot_link"):
@@ -3480,20 +3607,36 @@ def build_local_ad_promo_copy(campaign):
 
     if datetime.now().weekday() >= 5:
 
-        return "🎬 Muestra de fin de semana.\nUna forma rápida de descubrir si esta comunidad es para ti."
+        return (
+            "🤖 Descubre comunidades desde nuestro bot\n\n"
+            "Puedes empezar por grupos gratuitos y revisar también opciones premium si quieres una experiencia más completa.\n\n"
+            "Explora lo disponible, compara con calma y elige desde el bot."
+        )
 
 
     if hour < 12:
 
-        return "🔥 Nueva muestra disponible.\nSi este contenido te interesa, el acceso completo está dentro del bot."
+        return (
+            "👀 ¿Buscas nuevos grupos para explorar?\n\n"
+            "Desde el bot puedes encontrar comunidades gratuitas para empezar sin compromiso y opciones premium para ir más allá.\n\n"
+            "Abre el menú y mira qué comunidades están activas."
+        )
 
 
     if hour < 19:
 
-        return "🎬 Mira este adelanto.\nEl contenido completo está disponible para miembros desde el bot."
+        return (
+            "🎁 Empieza gratis y decide después\n\n"
+            "Nuestra red reúne comunidades gratuitas y planes premium en un solo bot, para que puedas descubrir opciones antes de elegir.\n\n"
+            "Revisa lo disponible desde el menú principal."
+        )
 
 
-    return "🌙 Adelanto para hoy.\nEntra al bot, revisa el acceso y decide si encaja contigo."
+    return (
+        "⭐ Un bot, varias comunidades\n\n"
+        "Explora grupos gratuitos, descubre opciones premium y gestiona tus accesos desde un mismo lugar.\n\n"
+        "Abre el bot y mira qué encaja contigo."
+    )
 
 
 def fetch_ad_promo_copy_variant(campaign_id):
@@ -3615,30 +3758,81 @@ def save_ad_promo_copy_variant(campaign_id, text, source="ai"):
 
 
 AD_PROMO_CAPTION_ANGLES = [
-    ("curiosidad", "Despierta curiosidad sin revelar demasiado."),
-    ("prueba social", "Sugiere valor y confianza sin inventar cifras."),
-    ("exclusividad", "Enfatiza acceso para miembros."),
-    ("oferta", "Presenta oferta de forma clara y moderada."),
-    ("beneficio", "Explica el valor práctico para el usuario."),
-    ("urgencia suave", "Crea urgencia sin presión agresiva."),
-    ("fin de semana", "Usa un ángulo de oportunidad de fin de semana."),
-    ("contenido premium", "Enmarca el contenido como muestra premium."),
-    ("ahorro/valor", "Enfatiza relación valor/precio sin promesas falsas."),
-    ("llamada directa", "CTA directo a revisar planes en el bot.")
+    ("descubrimiento", "Explora comunidades gratuitas y premium desde un solo bot."),
+    ("gratis primero", "Invita a empezar por grupos gratuitos y decidir después."),
+    ("premium/exclusividad", "Presenta premium como opción para una experiencia más completa, sin promesas falsas."),
+    ("comodidad", "Explica que el bot centraliza comunidades, accesos y planes."),
+    ("conversión suave", "Anima a mirar lo disponible antes de decidir."),
+    ("urgencia moderada", "Sugiere revisar comunidades activas sin presión agresiva."),
+    ("comunidad", "Enmarca la oferta como una red organizada de grupos."),
+    ("comparación", "Contrasta gratis para empezar y premium para ir más allá."),
+    ("curiosidad", "Crea curiosidad por descubrir qué comunidades hay disponibles."),
+    ("bot ecosystem", "Haz protagonista al bot como puerta de entrada a varias comunidades.")
 ]
 
 AD_PROMO_TEMPLATE_CAPTIONS = [
-    "🔥 Nueva muestra disponible.\nSi este contenido te interesa, el acceso completo está dentro del bot.",
-    "🎬 Mira este adelanto.\nEl contenido completo está disponible para miembros.",
-    "✨ Una pequeña muestra de lo que hay dentro.\nEntra al bot y revisa si esta comunidad encaja contigo.",
-    "📌 Acceso disponible desde el bot.\nConsulta planes, condiciones y elige con calma.",
-    "🚀 Contenido para quienes quieren ir un paso más allá.\nLa experiencia completa está en la comunidad privada.",
-    "⏳ Si estabas esperando una señal, aquí tienes una muestra.\nRevisa el acceso completo en el bot.",
-    "🎁 Muestra de fin de semana.\nDescubre la comunidad y mira los planes disponibles.",
-    "💎 Adelanto premium.\nEl acceso completo está reservado para miembros.",
-    "✅ Valora el contenido antes de entrar.\nEl bot te muestra opciones y precios disponibles.",
-    "👉 ¿Quieres ver más?\nEntra al bot y revisa el acceso a esta comunidad."
+    "🚀 Descubre nuevas comunidades desde un solo bot\n\nPuedes encontrar grupos gratuitos para empezar y opciones premium para quienes buscan una experiencia más completa.\n\n🎁 Gratis para empezar\n⭐ Premium si quieres más\n📲 Todo desde el bot",
+    "👀 ¿Buscas comunidades privadas, gratuitas o premium?\n\nNuestro bot reúne diferentes grupos para que puedas descubrirlos desde un solo lugar. Explora primero, revisa las opciones y decide con calma.\n\nAbre el bot y mira qué hay disponible.",
+    "🎁 Entra gratis, descubre más y decide después\n\nHay comunidades gratuitas para empezar sin pagar y opciones premium para quienes quieren ir un paso más allá.\n\nDesde el bot puedes ver grupos, planes y accesos disponibles.",
+    "⭐ No todo tiene que empezar pagando\n\nEmpieza por comunidades gratuitas, descubre el ambiente y revisa desde el bot qué opciones premium están disponibles.\n\nGratis para empezar. Premium si quieres más.",
+    "🤖 Un bot, varias comunidades\n\nEn lugar de buscar grupo por grupo, puedes explorar desde nuestro bot una selección de comunidades gratuitas y premium.\n\nExplora, entra gratis y mejora a premium si te interesa.",
+    "📍 Explora una red de comunidades organizada\n\nDesde el bot puedes descubrir grupos gratuitos, revisar opciones premium y gestionar tus accesos sin perderte entre enlaces.\n\nAbre el menú y mira qué comunidades están activas.",
+    "🔎 Mira primero, decide después\n\nPuedes empezar por grupos gratuitos y revisar las comunidades premium disponibles si buscas una experiencia más completa.\n\nTodo se gestiona desde el bot.",
+    "🎁 Gratis para empezar, premium para ir más allá\n\nEl bot te permite descubrir comunidades disponibles, comparar opciones y entrar donde encaje contigo.\n\nAbre el bot y explora la red.",
+    "📲 Tu punto de entrada a varias comunidades\n\nEncuentra grupos gratuitos para probar, opciones premium para una experiencia más cuidada y un menú centralizado para gestionar accesos.\n\nEmpieza explorando desde el bot.",
+    "✨ Descubre qué comunidades están disponibles\n\nAbre el bot, revisa los grupos gratuitos y mira las opciones premium si quieres acceso más exclusivo.\n\nExplora primero. Decide después."
 ]
+
+
+def build_ad_promo_ai_system_prompt():
+
+    return (
+        "Eres una experta en marketing directo, copywriting para Telegram y conversión a cliente. "
+        "Escribes en español natural, persuasivo y claro, sin sonar robótica ni a anuncio barato. "
+        "Tu objetivo es que la persona abra el bot para explorar comunidades, no vender solo por precio. "
+        "No prometas resultados, descuentos, cifras, contenido concreto ni beneficios no confirmados. "
+        "No uses lenguaje agresivo ni demasiados emojis."
+    )
+
+
+def build_ad_promo_ai_prompt(campaign, group_name, angle=None, instruction=None):
+
+    return (
+        "Escribe un caption comercial para Telegram en español.\n\n"
+        "Contexto:\n"
+        "- El bot reúne comunidades gratuitas y premium.\n"
+        "- Hay grupos gratuitos para empezar sin pagar cuando estén disponibles.\n"
+        "- Hay opciones premium para quien busca una experiencia más completa o más exclusiva.\n"
+        "- El bot sirve para descubrir comunidades, comparar opciones y gestionar accesos.\n"
+        "- El objetivo es que el usuario abra el bot y explore antes de decidir.\n\n"
+        "Instrucciones de copywriting:\n"
+        "- Hook inicial fuerte.\n"
+        "- 2 a 4 líneas de valor.\n"
+        "- Puedes usar bullets cortos, pero no siempre.\n"
+        "- CTA claro hacia abrir el bot.\n"
+        "- Ideal entre 350 y 650 caracteres. Máximo 900.\n"
+        "- Usa el precio solo como refuerzo si aporta valor, no como argumento principal.\n"
+        "- No repitas siempre la misma estructura.\n"
+        "- Alterna entre descubrimiento, gratis primero, premium/exclusividad, comodidad, comunidad y conversión suave.\n"
+        "- No uses siempre los mismos emojis ni frases como “promo activa esta semana”.\n"
+        "- No incluyas enlaces; el enlace se añadirá después.\n"
+        "- No menciones infraestructura, APIs, Codex, GitHub, Railway ni procesos internos.\n\n"
+        "Ejemplos de estilo:\n"
+        "🚀 Descubre nuevas comunidades desde un solo bot\n\n"
+        "Puedes encontrar grupos gratuitos para empezar y comunidades premium para quienes buscan una experiencia más cuidada.\n\n"
+        "🎁 Grupos gratuitos\n⭐ Opciones premium\n🤖 Todo gestionado desde el bot\n\n"
+        "Abre el bot y revisa las comunidades activas.\n\n"
+        "👀 ¿Buscas comunidades privadas, gratuitas o premium?\n\n"
+        "Nuestro bot reúne diferentes grupos para que puedas descubrirlos desde un solo lugar. Algunos son gratuitos para empezar sin compromiso; otros son premium para quienes quieren una experiencia más completa.\n\n"
+        "Abre el bot y mira qué comunidades están disponibles.\n\n"
+        "Datos de esta campaña:\n"
+        f"- Comunidad: {group_name}.\n"
+        f"- Ángulo elegido: {angle or 'variado'}.\n"
+        f"- Guía del ángulo: {instruction or 'Cambia el enfoque para no repetir patrones'}.\n"
+        f"- Oferta configurada: {campaign.get('offer_text') or '-'}.\n"
+        f"- Precio configurado: {campaign.get('price_text') or '-'}.\n"
+        f"- Tono: {campaign.get('tone') or 'conversion'}."
+    )
 
 
 def generate_ad_promo_caption_variants(campaign, count=10):
@@ -3652,21 +3846,15 @@ def generate_ad_promo_caption_variants(campaign, count=10):
 
         for angle, instruction in AD_PROMO_CAPTION_ANGLES[:count]:
 
-            prompt = (
-                "Escribe un caption comercial breve para Telegram en español. "
-                "No incluyas enlaces. No menciones infraestructura, Codex, GitHub, Railway ni APIs. "
-                "No inventes promesas falsas ni cifras. "
-                f"Ángulo: {angle}. {instruction} "
-                f"Comunidad: {group_name}. "
-                f"Oferta: {campaign.get('offer_text') or '-'}. "
-                f"Precio: {campaign.get('price_text') or '-'}."
+            prompt = build_ad_promo_ai_prompt(
+                campaign,
+                group_name,
+                angle=angle,
+                instruction=instruction
             )
             ok, answer = generate_ai_response(
                 prompt,
-                system_prompt=(
-                    "Eres especialista en copywriting ético de conversión para Telegram. "
-                    "Generas captions cortos, variados y orientados a que el usuario abra el bot."
-                )
+                system_prompt=build_ad_promo_ai_system_prompt()
             )
 
             if ok and answer:
@@ -3771,22 +3959,17 @@ def maybe_generate_ad_promo_ai_copy(campaign):
 
     group = fetch_group_basic_info(campaign.get("paid_group_id"))
     group_name = group[1] if group else f"Comunidad {campaign.get('paid_group_id')}"
-    prompt = (
-        "Escribe un caption comercial breve para Telegram en español. "
-        "Objetivo: convertir usuarios hacia el bot/marketplace para una comunidad de pago. "
-        "No prometas resultados falsos, no menciones procesos internos, no menciones APIs ni infraestructura. "
-        "No incluyas enlaces; el enlace se añadirá después. "
-        f"Comunidad: {group_name}. "
-        f"Oferta: {campaign.get('offer_text') or '-'}. "
-        f"Precio: {campaign.get('price_text') or '-'}. "
-        f"Tono: {campaign.get('tone') or 'conversion'}."
+    angle_index = int(time.time()) % len(AD_PROMO_CAPTION_ANGLES)
+    angle, instruction = AD_PROMO_CAPTION_ANGLES[angle_index]
+    prompt = build_ad_promo_ai_prompt(
+        campaign,
+        group_name,
+        angle=angle,
+        instruction=instruction
     )
     ok, answer = generate_ai_response(
         prompt,
-        system_prompt=(
-            "Eres experto en copywriting ético para Telegram. "
-            "Escribes textos persuasivos, claros y breves para promocionar comunidades de pago."
-        )
+        system_prompt=build_ad_promo_ai_system_prompt()
     )
 
 
@@ -3853,7 +4036,11 @@ async def build_ad_promo_caption(context, campaign):
 
         if campaign.get(field):
 
-            parts.append(sanitize_ad_promo_text(campaign.get(field)))
+            extra_text = sanitize_ad_promo_text(campaign.get(field))
+
+            if should_append_ad_promo_extra_field(field, extra_text, copy_text):
+
+                parts.append(extra_text)
 
 
     parts.append(f"👉 {build_ad_promo_bot_link(campaign, bot_username)}")
@@ -5475,9 +5662,9 @@ AD_PROMO_CREATE_STEPS = [
     ("batch_size", "¿Cuántos vídeos por tanda? Ejemplo: 5"),
     ("interval_minutes", "¿Cada cuántos minutos publicar? Ejemplo: 60"),
     ("max_posts", "Cupo máximo de posts visibles antes de borrar antiguos. Ejemplo: 50"),
-    ("price_text", "Texto de precio. Ejemplo: Acceso desde 9,99 EUR/mes."),
-    ("offer_text", "Texto de oferta. Ejemplo: Promo activa esta semana."),
-    ("cta_text", "CTA. Ejemplo: Entra al bot y revisa los planes disponibles."),
+    ("price_text", "Texto de precio si quieres mostrarlo. Ejemplo: Opciones premium desde 9,99 EUR/mes."),
+    ("offer_text", "Texto de oferta opcional. Ejemplo: Explora gratis primero y revisa opciones premium desde el bot."),
+    ("cta_text", "CTA. Ejemplo: Abre el bot y descubre las comunidades disponibles."),
     ("bot_link", "Link manual al bot/marketplace o escribe auto para generarlo automáticamente.")
 ]
 
