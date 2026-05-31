@@ -15634,57 +15634,85 @@ def format_community_user_access_type(access_state):
     return labels.get(access_state.get("access_source"), access_state.get("access_source") or "manual")
 
 
+def log_community_users_source_error(source, error):
+
+    try:
+
+        conn.rollback()
+
+    except Exception:
+
+        pass
+
+
+    print(f"community_users_panel_source_error[{source}]:", str(error)[:500])
+
+
 def fetch_community_user_rows(group_id):
 
     user_ids = set()
     profiles = {}
 
 
-    with conn.cursor() as cur:
+    try:
 
-        cur.execute("""
+        with conn.cursor() as cur:
 
-            SELECT user_id,
-                   username,
-                   first_name,
-                   expiration,
-                   COALESCE(subscription_active, FALSE),
-                   created_at
-            FROM users
-            WHERE group_id=%s
+            cur.execute("""
 
-        """, (group_id,))
-
-
-        for row in cur.fetchall():
-
-            if not row[0]:
-
-                continue
-
-
-            user_ids.add(row[0])
-            profiles[row[0]] = {
-                "user_id": row[0],
-                "username": row[1],
-                "first_name": row[2],
-                "expiration": row[3],
-                "subscription_active": row[4],
-                "created_at": row[5]
-            }
-
-
-        for table_name in ("subscriptions", "payment_transactions", "invite_links"):
-
-            cur.execute(f"""
-
-                SELECT DISTINCT user_id
-                FROM {table_name}
+                SELECT user_id,
+                       username,
+                       first_name,
+                       expiration,
+                       COALESCE(subscription_active, FALSE),
+                       created_at
+                FROM users
                 WHERE group_id=%s
-                AND user_id IS NOT NULL
 
             """, (group_id,))
-            user_ids.update(row[0] for row in cur.fetchall() if row and row[0])
+
+
+            for row in cur.fetchall():
+
+                if not row[0]:
+
+                    continue
+
+
+                user_ids.add(row[0])
+                profiles[row[0]] = {
+                    "user_id": row[0],
+                    "username": row[1],
+                    "first_name": row[2],
+                    "expiration": row[3],
+                    "subscription_active": row[4],
+                    "created_at": row[5]
+                }
+
+    except Exception as e:
+
+        log_community_users_source_error("users", e)
+
+
+    for table_name in ("subscriptions", "payment_transactions", "invite_links"):
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute(f"""
+
+                    SELECT DISTINCT user_id
+                    FROM {table_name}
+                    WHERE group_id=%s
+                    AND user_id IS NOT NULL
+
+                """, (group_id,))
+                user_ids.update(row[0] for row in cur.fetchall() if row and row[0])
+
+        except Exception as e:
+
+            log_community_users_source_error(table_name, e)
 
 
     rows = []
@@ -15701,6 +15729,15 @@ def fetch_community_user_rows(group_id):
             "created_at": None
         }
         access_state = get_user_group_access_state(target_user_id, group_id)
+
+        try:
+
+            conn.rollback()
+
+        except Exception as e:
+
+            print("community_users_access_state_cleanup_error:", str(e)[:200])
+
         row["access_state"] = access_state
         row["is_active"] = bool(access_state.get("has_active_access"))
         row["expires_at"] = access_state.get("expires_at") or row.get("expiration")
@@ -15737,7 +15774,13 @@ def build_community_users_page(group_id, segment="active", page=0):
 
     if not page_rows:
 
-        text += "No hay usuarios en esta sección."
+        if not rows:
+
+            text += "No hay usuarios registrados en esta comunidad todavía."
+
+        else:
+
+            text += "No hay usuarios en esta sección."
 
     else:
 
@@ -35972,7 +36015,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception as e:
 
-            print("Error cargando usuarios de comunidad:", e)
+            print("community_users_panel_load_error:", str(e)[:500])
 
             await query.message.reply_text(
                 "❌ No he podido cargar usuarios de esta comunidad ahora mismo.",
@@ -36026,7 +36069,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        text, keyboard = build_community_users_page(group_id, segment, page)
+        try:
+
+            text, keyboard = build_community_users_page(group_id, segment, page)
+
+        except Exception as e:
+
+            print("community_users_panel_load_error:", str(e)[:500])
+            await query.message.reply_text("❌ No he podido cargar usuarios de esta comunidad ahora mismo.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
         await send_clean_message(context, query.message.chat_id, text, reply_markup=keyboard)
         return
 
