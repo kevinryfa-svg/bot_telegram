@@ -176,19 +176,36 @@ def is_active_publicity_invite_link(invite_link, telegram_group_id):
         return False
 
 
+    normalized_link = normalize_telegram_invite_url(invite_link)
+
+
+    if not normalized_link:
+
+        return False
+
+
+    original_link = (invite_link or "").strip()
+    candidate_links = [normalized_link]
+
+
+    if original_link and original_link != normalized_link:
+
+        candidate_links.append(original_link)
+
+
     with conn.cursor() as cur:
 
         cur.execute("""
 
             SELECT 1
             FROM publicity_group_invite_links
-            WHERE invite_link=%s
+            WHERE invite_link = ANY(%s)
             AND telegram_group_id=%s
             AND COALESCE(is_active, TRUE)=TRUE
             LIMIT 1
 
         """, (
-            invite_link,
+            candidate_links,
             telegram_group_id
         ))
 

@@ -15514,7 +15514,11 @@ def build_owner_publicity_group_text(group_id):
         f"Link generado por bot:\n{link_text}\n\n"
         f"Links manuales autorizados: {len(manual_links)}\n\n"
         "Este link está pensado para publicar el grupo en webs/listados de Telegram. "
-        "Los usuarios que entren por este link no serán expulsados por el anti-intrusos."
+        "Los usuarios que entren por este link no serán expulsados por el anti-intrusos.\n\n"
+        "Para que el bot no expulse usuarios, deben entrar por un link autorizado de publicidad. "
+        "Si usas un link antiguo publicado en una web, autorízalo aquí con 🔗 Autorizar link existente. "
+        "Si Telegram no informa el link al bot, no se podrá validar automáticamente. "
+        "En ese caso, usa el link generado por el bot y reemplázalo en la web."
     )
 
 
