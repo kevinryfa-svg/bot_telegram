@@ -773,6 +773,65 @@ def create_tables():
         """)
 
 
+        # =========================
+        # TABLA LINKS PÚBLICOS DE PUBLICIDAD
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS publicity_group_invite_links (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id BIGINT NOT NULL,
+
+            telegram_group_id BIGINT,
+
+            invite_link TEXT NOT NULL UNIQUE,
+
+            created_by BIGINT,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            revoked_at TIMESTAMP NULL,
+
+            revoked_by BIGINT NULL,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+        cur.execute("""
+
+            CREATE INDEX IF NOT EXISTS idx_publicity_invite_links_group_id
+            ON publicity_group_invite_links(group_id)
+
+        """)
+
+        cur.execute("""
+
+            CREATE INDEX IF NOT EXISTS idx_publicity_invite_links_telegram_group_id
+            ON publicity_group_invite_links(telegram_group_id)
+
+        """)
+
+        cur.execute("""
+
+            CREATE INDEX IF NOT EXISTS idx_publicity_invite_links_invite_link
+            ON publicity_group_invite_links(invite_link)
+
+        """)
+
+        cur.execute("""
+
+            CREATE INDEX IF NOT EXISTS idx_publicity_invite_links_is_active
+            ON publicity_group_invite_links(is_active)
+
+        """)
+
+
         invite_link_columns = [
 
             ("telegram_group_id", "BIGINT"),
