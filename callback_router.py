@@ -3494,6 +3494,67 @@ def is_generic_ad_promo_extra_field(field, text):
     return False
 
 
+def is_low_quality_legacy_ad_promo_copy(text):
+
+    normalized = normalize_ad_promo_compare_text(text)
+    legacy_patterns = (
+        "promo activa esta semana",
+        "entra al bot y revisa los planes disponibles",
+        "atencion comunidad",
+        "atencion starsvip",
+        "no querras perderte",
+        "la curiosidad esta en el aire",
+        "accede a nuestros planes",
+        "por solo 6 99",
+        "solo 6 99 eur",
+        "revisa los detalles en nuestro bot",
+        "unete a la experiencia"
+    )
+
+    return any(pattern in normalized for pattern in legacy_patterns)
+
+
+def format_ad_promo_price_text(price_text):
+
+    text = sanitize_ad_promo_text(price_text)
+
+    if not text:
+
+        return None
+
+
+    if "opciones premium" in normalize_ad_promo_compare_text(text):
+
+        return text
+
+
+    permanent = "permanente" in normalize_ad_promo_compare_text(text)
+    text = re.sub(r"\bpermanente\b", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"\s+", " ", text)
+
+
+    if text.lower().startswith("acceso desde"):
+
+        text = re.sub(
+            r"^acceso\s+desde",
+            "⭐ Opciones premium desde",
+            text,
+            flags=re.IGNORECASE
+        ).strip()
+
+    elif not text.startswith("⭐"):
+
+        text = f"⭐ {text}"
+
+
+    if permanent and "acceso permanente" not in normalize_ad_promo_compare_text(text):
+
+        text = f"{text} · Acceso permanente"
+
+
+    return text
+
+
 def normalize_ad_promo_compare_text(text):
 
     text = unicodedata.normalize("NFKD", text or "")
@@ -3641,58 +3702,39 @@ def build_local_ad_promo_copy(campaign):
 
 def fetch_ad_promo_copy_variant(campaign_id):
 
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            SELECT COUNT(*)
-            FROM ad_promo_copy_variants
-            WHERE campaign_id=%s
-            AND is_active=TRUE
-
-        """, (campaign_id,))
-
-        active_count = cur.fetchone()[0]
-
-
-    freshness_filter = ""
-
-    if active_count > 3:
-
-        freshness_filter = "AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '6 hours')"
-
-
-    with conn.cursor() as cur:
-
-        cur.execute(f"""
-
-            SELECT id,
-                   text
-            FROM ad_promo_copy_variants
-            WHERE campaign_id=%s
-            AND is_active=TRUE
-            {freshness_filter}
-            ORDER BY last_used_at NULLS FIRST,
-                     usage_count ASC,
-                     RANDOM()
-            LIMIT 1
-
-        """, (campaign_id,))
-
-        row = cur.fetchone()
-
-
-    if not row and freshness_filter:
+    for _attempt in range(5):
 
         with conn.cursor() as cur:
 
             cur.execute("""
+
+                SELECT COUNT(*)
+                FROM ad_promo_copy_variants
+                WHERE campaign_id=%s
+                AND is_active=TRUE
+
+            """, (campaign_id,))
+
+            active_count = cur.fetchone()[0]
+
+
+        freshness_filter = ""
+
+        if active_count > 3:
+
+            freshness_filter = "AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '6 hours')"
+
+
+        with conn.cursor() as cur:
+
+            cur.execute(f"""
 
                 SELECT id,
                        text
                 FROM ad_promo_copy_variants
                 WHERE campaign_id=%s
                 AND is_active=TRUE
+                {freshness_filter}
                 ORDER BY last_used_at NULLS FIRST,
                          usage_count ASC,
                          RANDOM()
@@ -3703,24 +3745,74 @@ def fetch_ad_promo_copy_variant(campaign_id):
             row = cur.fetchone()
 
 
-    if not row:
+        if not row and freshness_filter:
 
-        return None
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT id,
+                           text
+                    FROM ad_promo_copy_variants
+                    WHERE campaign_id=%s
+                    AND is_active=TRUE
+                    ORDER BY last_used_at NULLS FIRST,
+                             usage_count ASC,
+                             RANDOM()
+                    LIMIT 1
+
+                """, (campaign_id,))
+
+                row = cur.fetchone()
 
 
-    with conn.cursor() as cur:
+        if not row:
 
-        cur.execute("""
-
-            UPDATE ad_promo_copy_variants
-            SET usage_count=usage_count + 1,
-                last_used_at=NOW()
-            WHERE id=%s
-
-        """, (row[0],))
+            return None
 
 
-    return row[1]
+        if is_low_quality_legacy_ad_promo_copy(row[1]):
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE ad_promo_copy_variants
+                    SET is_active=FALSE
+                    WHERE id=%s
+
+                """, (row[0],))
+
+            log_event(
+                "ad_promo_legacy_copy_variant_disabled",
+                category="marketing",
+                severity="info",
+                scope="group",
+                message="Variante legacy de promoción automática desactivada.",
+                metadata={
+                    "campaign_id": campaign_id,
+                    "variant_id": row[0]
+                }
+            )
+            continue
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE ad_promo_copy_variants
+                SET usage_count=usage_count + 1,
+                    last_used_at=NOW()
+                WHERE id=%s
+
+            """, (row[0],))
+
+
+        return row[1]
+
+
+    return None
 
 
 def save_ad_promo_copy_variant(campaign_id, text, source="ai"):
@@ -3905,6 +3997,56 @@ def generate_ad_promo_caption_variants(campaign, count=10):
     return saved, source_summary
 
 
+def regenerate_ad_promo_copy_variants(campaign_id):
+
+    campaign = fetch_ad_promo_campaign(campaign_id)
+
+    if not campaign:
+
+        return {
+            "ok": False,
+            "reason": "not_found",
+            "disabled_count": 0,
+            "generated_count": 0,
+            "source": "none"
+        }
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE ad_promo_copy_variants
+            SET is_active=FALSE
+            WHERE campaign_id=%s
+            AND is_active=TRUE
+
+        """, (campaign_id,))
+
+        disabled_count = cur.rowcount
+
+
+    saved, source = generate_ad_promo_caption_variants(campaign, count=10)
+
+    if not saved:
+
+        return {
+            "ok": False,
+            "reason": "no_generated",
+            "disabled_count": disabled_count,
+            "generated_count": 0,
+            "source": source
+        }
+
+
+    return {
+        "ok": True,
+        "disabled_count": disabled_count,
+        "generated_count": len(saved),
+        "source": source
+    }
+
+
 def fetch_ad_promo_copy_variants(campaign_id, limit=10):
 
     with conn.cursor() as cur:
@@ -4036,7 +4178,7 @@ async def build_ad_promo_caption(context, campaign):
 
         if campaign.get(field):
 
-            extra_text = sanitize_ad_promo_text(campaign.get(field))
+            extra_text = format_ad_promo_price_text(campaign.get(field)) if field == "price_text" else sanitize_ad_promo_text(campaign.get(field))
 
             if should_append_ad_promo_extra_field(field, extra_text, copy_text):
 
@@ -5035,6 +5177,7 @@ def build_ad_promo_campaign_detail_keyboard(campaign):
         [InlineKeyboardButton("📊 Diagnóstico", callback_data=f"admin_ad_promo_diagnostics_{campaign_id}")],
         [InlineKeyboardButton("📚 Biblioteca de vídeos", callback_data=f"admin_ad_promo_library_{campaign_id}")],
         [InlineKeyboardButton("📝 Generar captions", callback_data=f"admin_ad_promo_generate_captions_{campaign_id}")],
+        [InlineKeyboardButton("🧠 Regenerar textos IA", callback_data=f"ad_promo_regenerate_copy_{campaign_id}")],
         [InlineKeyboardButton("📋 Ver captions", callback_data=f"admin_ad_promo_copy_variants_{campaign_id}")],
         [InlineKeyboardButton("🧪 Enviar prueba", callback_data=f"admin_ad_promo_test_{campaign_id}")],
         [InlineKeyboardButton("🎲 Optimizar rotación", callback_data=f"admin_ad_promo_optimize_rotation_{campaign_id}")],
@@ -5578,6 +5721,7 @@ def build_ad_promo_copy_variants_keyboard(campaign, rows):
 
     keyboard.extend([
         [InlineKeyboardButton("📝 Generar captions", callback_data=f"admin_ad_promo_generate_captions_{campaign.get('id')}")],
+        [InlineKeyboardButton("🧠 Regenerar textos IA", callback_data=f"ad_promo_regenerate_copy_{campaign.get('id')}")],
         [InlineKeyboardButton("🔙 Volver campaña", callback_data=f"admin_ad_promo_campaign_{campaign.get('id')}")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
@@ -14997,6 +15141,8 @@ def resolve_ad_promo_group_id_for_callback(data, context):
         "admin_ad_promo_diagnostics_",
         "admin_ad_promo_generate_captions_",
         "admin_ad_promo_copy_variants_",
+        "ad_promo_regenerate_copy_yes_",
+        "ad_promo_regenerate_copy_",
         "admin_ad_promo_optimize_rotation_",
         "admin_ad_promo_delete_campaign_yes_",
         "admin_ad_promo_delete_campaign_",
@@ -15073,13 +15219,14 @@ def should_log_ad_promo_owner_addon_gate(data):
         "admin_ad_promo_watermark_",
         "admin_ad_promo_delete_campaign_",
         "admin_ad_promo_generate_captions_",
+        "ad_promo_regenerate_copy_",
         "admin_ad_promo_optimize_rotation_"
     ))
 
 
 def is_ad_promo_ui_callback(data):
 
-    return data == "admin_ad_promo" or data.startswith("admin_ad_promo_")
+    return data == "admin_ad_promo" or data.startswith("admin_ad_promo_") or data.startswith("ad_promo_regenerate_copy_")
 
 
 async def enforce_ad_promo_owner_addon_gate(query, context, data, user_id):
@@ -27598,6 +27745,108 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("📋 Ver captions", callback_data=f"admin_ad_promo_copy_variants_{campaign_id}")],
                 [InlineKeyboardButton("🧪 Enviar prueba", callback_data=f"admin_ad_promo_test_{campaign_id}")],
                 [InlineKeyboardButton("🔙 Volver campaña", callback_data=f"admin_ad_promo_campaign_{campaign_id}")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("ad_promo_regenerate_copy_yes_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "ad_promo_regenerate_copy_yes_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text(
+                "❌ Campaña no encontrada.",
+                reply_markup=build_ad_promo_panel_keyboard()
+            )
+
+            return
+
+
+        result = regenerate_ad_promo_copy_variants(campaign_id)
+
+        if not result.get("ok"):
+
+            await query.message.reply_text(
+                "❌ No he podido regenerar textos para esta campaña.",
+                reply_markup=build_ad_promo_campaign_detail_keyboard(campaign)
+            )
+
+            return
+
+
+        log_event(
+            "ad_promo_copy_variants_regenerated",
+            category="marketing",
+            severity="info",
+            scope="group",
+            group_id=campaign.get("paid_group_id"),
+            actor_user_id=user_id,
+            message="Variantes de copy promocional regeneradas.",
+            metadata={
+                "campaign_id": campaign_id,
+                "disabled_count": result.get("disabled_count"),
+                "generated_count": result.get("generated_count"),
+                "source": result.get("source")
+            }
+        )
+        source_label = {
+            "ai": "IA",
+            "template": "template",
+            "mixed": "mixed"
+        }.get(result.get("source"), result.get("source") or "-")
+        text = (
+            "✅ Textos regenerados\n\n"
+            f"Variantes antiguas desactivadas: {result.get('disabled_count')}\n"
+            f"Nuevas variantes generadas: {result.get('generated_count')}\n"
+            f"Fuente: {source_label}\n\n"
+            "A partir de ahora la campaña usará textos nuevos orientados a conversión."
+        )
+
+        await query.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👁 Ver variantes", callback_data=f"admin_ad_promo_copy_variants_{campaign_id}")],
+                [InlineKeyboardButton("⬅️ Volver a campaña", callback_data=f"admin_ad_promo_campaign_{campaign_id}")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("ad_promo_regenerate_copy_"):
+
+        campaign_id = extract_commercial_request_id(
+            data,
+            "ad_promo_regenerate_copy_"
+        )
+        campaign = fetch_ad_promo_campaign(campaign_id)
+
+        if not campaign:
+
+            await query.message.reply_text(
+                "❌ Campaña no encontrada.",
+                reply_markup=build_ad_promo_panel_keyboard()
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            (
+                "⚠️ Esto desactivará las variantes de texto actuales de esta campaña y generará nuevas variantes con el prompt mejorado.\n\n"
+                "No se borrarán vídeos, campañas ni configuración de pagos.\n\n"
+                "¿Continuar?"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Sí, regenerar textos", callback_data=f"ad_promo_regenerate_copy_yes_{campaign_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"admin_ad_promo_campaign_{campaign_id}")]
             ])
         )
 
