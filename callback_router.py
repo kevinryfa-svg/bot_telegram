@@ -16113,6 +16113,11 @@ def format_community_user_access_type(access_state):
         return "owner"
 
 
+    if access_state.get("subscription_status") == "paid_without_access_record":
+
+        return "pagado (revisar acceso)"
+
+
     if access_state.get("has_active_access") and not access_state.get("expires_at"):
 
         return "permanente/free"
@@ -16645,7 +16650,7 @@ def fetch_community_user_rows(group_id):
         log_community_users_source_error("users", e)
 
 
-    for table_name in ("subscriptions", "payment_transactions", "invite_links"):
+    for table_name in ("subscriptions", "payment_transactions", "payments", "invite_links"):
 
         try:
 
@@ -16744,6 +16749,22 @@ def fetch_community_user_rows(group_id):
                 "subscription_status": "active",
                 "expires_at": local_expiration,
                 "reason": "local_free_access"
+            }
+
+
+        if (
+            access_state.get("subscription_status") == "paid_without_access_record"
+            and not row["is_active"]
+        ):
+
+            row["is_active"] = True
+            row["access_type"] = "pagado (revisar acceso)"
+            row["access_state"] = {
+                **(access_state or {}),
+                "has_active_access": True,
+                "access_source": "paid",
+                "subscription_status": "paid_without_access_record",
+                "reason": "paid_without_access_record"
             }
 
         rows.append(row)
