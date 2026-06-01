@@ -16574,8 +16574,7 @@ def fetch_community_user_rows(group_id):
                        username,
                        first_name,
                        expiration,
-                       COALESCE(subscription_active, FALSE),
-                       created_at
+                       COALESCE(subscription_active, FALSE)
                 FROM users
                 WHERE group_id=%s
 
@@ -16597,7 +16596,7 @@ def fetch_community_user_rows(group_id):
                     "first_name": row[2],
                     "expiration": row[3],
                     "subscription_active": row[4],
-                    "created_at": row[5]
+                    "created_at": None
                 }
 
     except Exception as e:
