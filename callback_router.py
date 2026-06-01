@@ -17166,11 +17166,52 @@ def save_community_access_invite_link(group_id, telegram_group_id, target_user_i
     conn.commit()
 
 
+def log_community_link_recover_generation_failed(group_id, telegram_group_id, target_user_id, reason, access_state=None, error=None, telegram_response=None):
+
+    metadata = {
+        "group_id": group_id,
+        "telegram_group_id": telegram_group_id,
+        "target_user_id": target_user_id,
+        "has_active_access": bool((access_state or {}).get("has_active_access")),
+        "reason": reason,
+        "error": str(error)[:500] if error else None
+    }
+
+
+    if telegram_response:
+
+        # Solo campos seguros: nunca guardar la respuesta completa ni invite_link.
+        metadata["telegram_response_ok"] = telegram_response.get("response_ok")
+        metadata["telegram_response_description"] = str(telegram_response.get("description") or "")[:500]
+        metadata["telegram_error_code"] = telegram_response.get("error_code")
+        metadata["retry_after"] = telegram_response.get("retry_after")
+
+
+    log_event(
+        "community_link_recover_generation_failed",
+        category="access",
+        severity="warning",
+        scope="group",
+        group_id=group_id,
+        telegram_group_id=telegram_group_id,
+        target_user_id=target_user_id,
+        message="No se pudo generar link de recuperación de acceso.",
+        metadata=metadata
+    )
+
+
 def recover_or_create_community_access_link(group_id, target_user_id):
 
     group = fetch_group_basic_info(group_id)
 
     if not group:
+
+        log_community_link_recover_generation_failed(
+            group_id,
+            None,
+            target_user_id,
+            "group_not_found"
+        )
 
         return {"ok": False, "reason": "group_not_found"}
 
@@ -17179,12 +17220,27 @@ def recover_or_create_community_access_link(group_id, target_user_id):
 
     if not telegram_group_id:
 
+        log_community_link_recover_generation_failed(
+            group_id,
+            telegram_group_id,
+            target_user_id,
+            "missing_telegram_group_id"
+        )
+
         return {"ok": False, "reason": "missing_telegram_group_id"}
 
 
     access_state = get_user_group_access_state(target_user_id, group_id)
 
     if not access_state.get("has_active_access"):
+
+        log_community_link_recover_generation_failed(
+            group_id,
+            telegram_group_id,
+            target_user_id,
+            "no_active_access",
+            access_state=access_state
+        )
 
         return {"ok": False, "reason": "no_active_access", "access_state": access_state}
 
@@ -17212,24 +17268,67 @@ def recover_or_create_community_access_link(group_id, target_user_id):
 
         if remaining <= 0:
 
+            log_community_link_recover_generation_failed(
+                group_id,
+                telegram_group_id,
+                target_user_id,
+                "expired_access",
+                access_state=access_state
+            )
+
             return {"ok": False, "reason": "expired_access", "access_state": access_state}
 
 
         expire_seconds = max(60, min(180, remaining))
 
 
-    invite_link = create_telegram_invite_link(
+    telegram_result = create_telegram_invite_link(
         TOKEN,
         telegram_group_id,
         expire_seconds=expire_seconds,
         member_limit=1,
-        community_type=community_type
+        community_type=community_type,
+        return_details=True
     )
+    invite_link = telegram_result.get("invite_link") if telegram_result else None
 
 
     if not invite_link:
 
-        return {"ok": False, "reason": "link_create_failed", "access_state": access_state}
+        reason = "telegram_api_failed"
+        description = (telegram_result or {}).get("description") or ""
+        error_code = (telegram_result or {}).get("error_code")
+        retry_after = (telegram_result or {}).get("retry_after")
+
+
+        if error_code == 429 or retry_after or "too many requests" in description.lower():
+
+            reason = "telegram_rate_limited"
+
+        elif "not enough rights" in description.lower() or "administrator" in description.lower() or "rights" in description.lower():
+
+            reason = "bot_permission_failed"
+
+
+        log_community_link_recover_generation_failed(
+            group_id,
+            telegram_group_id,
+            target_user_id,
+            reason,
+            access_state=access_state,
+            error=description,
+            telegram_response=telegram_result
+        )
+
+        return {
+            "ok": False,
+            "reason": reason,
+            "error": description[:300],
+            "telegram_response_ok": (telegram_result or {}).get("response_ok"),
+            "telegram_response_description": description[:300],
+            "retry_after": retry_after,
+            "access_state": access_state
+        }
 
 
     try:
@@ -17252,9 +17351,18 @@ def recover_or_create_community_access_link(group_id, target_user_id):
 
             pass
 
+        log_community_link_recover_generation_failed(
+            group_id,
+            telegram_group_id,
+            target_user_id,
+            "db_save_failed",
+            access_state=access_state,
+            error=e
+        )
+
         return {
             "ok": False,
-            "reason": "link_save_failed",
+            "reason": "db_save_failed",
             "error": str(e)[:300],
             "access_state": access_state
         }
@@ -37900,9 +38008,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         limit = 50
         rows_to_send = active_rows[:limit]
         sent_count = 0
+        link_reused_count = 0
+        link_created_count = 0
         failed_dm_count = 0
         no_access_count = 0
-        link_error_count = 0
+        link_generation_failed_count = 0
+        failed_no_telegram_group_id = 0
+        failed_bot_permission = 0
+        failed_telegram_api = 0
+        failed_db_save = 0
+        failed_other = 0
+        failed_rate_limited = 0
+        stopped_by_rate_limit = False
+        retry_after = None
 
         log_event(
             "community_link_recover_all_started",
@@ -37936,6 +38054,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 
+            if result.get("source") == "existing":
+
+                link_reused_count += 1
+
+            elif result.get("source") == "new":
+
+                link_created_count += 1
+
+
             if result.get("ok"):
 
                 sent_count += 1
@@ -37950,7 +38077,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             else:
 
-                link_error_count += 1
+                link_generation_failed_count += 1
+
+                if result.get("reason") == "telegram_rate_limited":
+
+                    failed_rate_limited += 1
+                    retry_after = result.get("retry_after")
+                    stopped_by_rate_limit = True
+                    break
+
+                elif result.get("reason") == "missing_telegram_group_id":
+
+                    failed_no_telegram_group_id += 1
+
+                elif result.get("reason") == "bot_permission_failed":
+
+                    failed_bot_permission += 1
+
+                elif result.get("reason") == "db_save_failed":
+
+                    failed_db_save += 1
+
+                elif result.get("reason") == "telegram_api_failed":
+
+                    failed_telegram_api += 1
+
+                else:
+
+                    failed_other += 1
 
 
             await asyncio.sleep(0.15)
@@ -37968,13 +38122,42 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message="Reenvío masivo de links de acceso terminado.",
             metadata={
                 "total": len(active_rows),
+                "link_reused_count": link_reused_count,
+                "link_created_count": link_created_count,
                 "sent_count": sent_count,
-                "failed_dm_count": failed_dm_count,
+                "dm_failed_count": failed_dm_count,
                 "no_access_count": no_access_count,
-                "link_error_count": link_error_count,
+                "link_generation_failed_count": link_generation_failed_count,
+                "failed_no_telegram_group_id": failed_no_telegram_group_id,
+                "failed_bot_permission": failed_bot_permission,
+                "failed_telegram_api": failed_telegram_api,
+                "failed_db_save": failed_db_save,
+                "failed_other": failed_other,
+                "failed_rate_limited": failed_rate_limited,
+                "stopped_by_rate_limit": stopped_by_rate_limit,
+                "retry_after": retry_after,
                 "skipped_by_limit": skipped_by_limit
             }
         )
+
+        error_hint = ""
+
+        if link_generation_failed_count:
+
+            error_hint = "\n\nRevisa logs: community_link_recover_generation_failed"
+
+
+        rate_limit_hint = ""
+
+        if stopped_by_rate_limit:
+
+            retry_text = f"{retry_after} segundos" if retry_after else "unos minutos"
+            rate_limit_hint = (
+                "\n\nTelegram ha limitado temporalmente la creación de enlaces.\n"
+                f"Espera aproximadamente {retry_text} y vuelve a intentarlo.\n"
+                "No se han seguido generando enlaces para evitar más errores."
+            )
+
 
         await send_clean_message(
             context,
@@ -37982,11 +38165,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (
                 "✅ Reenvío terminado\n\n"
                 f"Usuarios activos encontrados: {len(active_rows)}\n"
-                f"Links enviados: {sent_count}\n"
+                f"Límite aplicado: {limit}\n"
+                f"Links reutilizados: {link_reused_count}\n"
+                f"Links nuevos creados: {link_created_count}\n"
+                f"Links enviados por privado: {sent_count}\n"
                 f"Privado bloqueado/fallido: {failed_dm_count}\n"
-                f"Errores generando link: {link_error_count}\n"
+                f"Errores generando link: {link_generation_failed_count}\n"
+                f"- Sin telegram_group_id: {failed_no_telegram_group_id}\n"
+                f"- Permisos del bot: {failed_bot_permission}\n"
+                f"- Telegram API: {failed_telegram_api}\n"
+                f"- Guardado DB: {failed_db_save}\n"
+                f"- Otros errores: {failed_other}\n"
+                f"- Rate limit Telegram: {failed_rate_limited}\n"
                 f"Omitidos sin acceso activo: {no_access_count}\n"
                 f"Omitidos por límite de seguridad: {skipped_by_limit}"
+                f"{error_hint}"
+                f"{rate_limit_hint}"
             ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("👥 Ver usuarios de esta comunidad", callback_data=f"owner_group_users_{group_id}")],
