@@ -25402,7 +25402,76 @@ async def receive_location_gate(update: Update, context: ContextTypes.DEFAULT_TY
     group_id = context.user_data.get("location_gate_group_id")
     action = context.user_data.get("location_gate_action")
     price_id = context.user_data.get("location_gate_price_id")
+
+    allowed_actions = {
+        "free_access",
+        "checkout",
+        "paypal_checkout",
+        "revolut_checkout",
+        "changenow_checkout",
+        "guardarian_checkout",
+        "location_only"
+    }
+
+    if not group_id or action not in allowed_actions:
+
+        clear_location_flow_state(context)
+
+        log_event(
+            "location_gate_stale_state_cleared",
+            category="access",
+            severity="warning",
+            scope="global",
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Estado obsoleto de verificación de ubicación limpiado.",
+            metadata={
+                "group_id": group_id,
+                "action": action,
+                "reason": "missing_or_invalid_state"
+            }
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📍 La verificación de ubicación anterior ha caducado. Vuelve a iniciar el acceso desde la comunidad correcta.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+        return
+
+
     _enabled, allowed_region, region_type = get_group_location_gate(group_id)
+
+    if not _enabled:
+
+        clear_location_flow_state(context)
+
+        log_event(
+            "location_gate_stale_state_cleared",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Estado de ubicación limpiado porque el grupo ya no requiere ubicación.",
+            metadata={
+                "group_id": group_id,
+                "action": action,
+                "reason": "gate_disabled"
+            }
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📍 La verificación de ubicación anterior ya no está activa. Vuelve a iniciar el acceso desde la comunidad correcta.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+        return
+
+
     region_label = format_allowed_region(region_type, allowed_region)
 
 
@@ -45012,6 +45081,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "group_user_promo_redeem_start":
 
+        await clear_location_flow_navigation(context, query.message.chat_id)
+
         await query.message.reply_text(
             "🎟 Código de comunidad\n\n"
             "El canje de códigos se hace desde la ficha de una comunidad concreta.",
@@ -45025,6 +45096,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data.startswith("group_user_promo_redeem_start_"):
+
+        await clear_location_flow_navigation(context, query.message.chat_id)
 
         redeem_group_id = extract_commercial_request_id(
             data,
