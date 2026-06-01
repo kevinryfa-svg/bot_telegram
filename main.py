@@ -1044,6 +1044,14 @@ async def handle_text(update, context):
         await receive_location_manual_review_form(update, context)
         return
 
+    if (
+        context.user_data.get("group_user_promo_waiting")
+        and update.message
+        and update.message.text
+    ):
+        await receive_group_user_promo_code(update, context)
+        return
+
     if context.user_data.get("location_gate_pending"):
         await receive_location_gate(update, context)
         return
