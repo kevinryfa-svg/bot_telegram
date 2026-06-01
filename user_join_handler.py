@@ -402,7 +402,7 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         }
                     )
 
-                    return
+                    continue
 
 
                 group_id = group_row[0]
