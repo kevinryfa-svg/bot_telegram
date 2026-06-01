@@ -3,7 +3,8 @@ from datetime import datetime
 from telegram import (
     Update,
     InlineKeyboardButton,
-    InlineKeyboardMarkup
+    InlineKeyboardMarkup,
+    ReplyKeyboardRemove
 )
 from telegram.ext import ContextTypes
 
@@ -23,6 +24,7 @@ from formatters import (
 from rbac_helpers import is_super_admin
 from ui_menu_helpers import send_clean_message
 from user_activity_logger import log_user_event
+from wizard_state_helpers import clear_location_flow_state
 
 
 
@@ -1088,6 +1090,23 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    cleared_location_keys = clear_location_flow_state(context)
+
+    if cleared_location_keys and update.effective_chat:
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="📍 Verificación de ubicación cancelada.",
+                reply_markup=ReplyKeyboardRemove()
+            )
+
+        except Exception as e:
+
+            print("Error quitando teclado de ubicación en /start:", e)
+
 
     log_user_event(
         update,
