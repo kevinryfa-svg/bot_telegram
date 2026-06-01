@@ -234,6 +234,7 @@ from user_activity_logger import (
     log_user_event_by_ids
 )
 from wizard_state_helpers import (
+    clear_location_flow_state,
     clear_owner_payment_provider_wizard_state,
     clear_plan_wizard_state
 )
@@ -7109,6 +7110,31 @@ def clear_location_gate_state(context):
     context.user_data.pop("location_gate_group_id", None)
     context.user_data.pop("location_gate_action", None)
     context.user_data.pop("location_gate_price_id", None)
+
+
+async def clear_location_flow_navigation(context, chat_id):
+
+    cleared_keys = clear_location_flow_state(context)
+
+    if not cleared_keys:
+
+        return cleared_keys
+
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📍 Verificación de ubicación cancelada.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+    except Exception as e:
+
+        print("Error quitando teclado de ubicación:", e)
+
+
+    return cleared_keys
 
 
 async def request_location_verification(
@@ -26337,8 +26363,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ):
 
         clear_support_user_state(context)
-        clear_location_gate_state(context)
-        clear_location_manual_review_state(context)
+        await clear_location_flow_navigation(context, query.message.chat_id)
 
         await delete_query_message_safely(query)
 
@@ -26371,6 +26396,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data == "start_explore_groups":
+
+        await clear_location_flow_navigation(context, query.message.chat_id)
 
         await expire_expired_commercial_trials(context)
 
@@ -26588,6 +26615,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("marketplace_group_"):
 
+        await clear_location_flow_navigation(context, query.message.chat_id)
+
         await expire_expired_commercial_trials(context)
 
         group_id = extract_commercial_request_id(
@@ -26783,6 +26812,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("public_support_group_"):
 
+        await clear_location_flow_navigation(context, query.message.chat_id)
+
         group_id = extract_commercial_request_id(
             data,
             "public_support_group_"
@@ -26826,6 +26857,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data == "public_support":
+
+        await clear_location_flow_navigation(context, query.message.chat_id)
 
         context.user_data["support_mode"] = True
         context.user_data["support_lookup_mode"] = False
@@ -26882,6 +26915,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data == "public_ai_help":
+
+        await clear_location_flow_navigation(context, query.message.chat_id)
 
         await activate_ai_help_context(
             update,
@@ -33691,6 +33726,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # =========================
 
     if data == "mis_subs":
+
+        await clear_location_flow_navigation(context, query.message.chat_id)
 
         try:
 

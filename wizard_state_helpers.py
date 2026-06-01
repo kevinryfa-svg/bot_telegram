@@ -32,6 +32,24 @@ OWNER_PAYMENT_PROVIDER_WIZARD_KEYS = (
 )
 
 
+LOCATION_FLOW_KEYS = (
+    "location_gate_pending",
+    "location_gate_group_id",
+    "location_gate_action",
+    "location_gate_price_id",
+    "location_review_group_id",
+    "location_review_step",
+    "location_review_answers",
+    "location_review_failed_latitude",
+    "location_review_failed_longitude",
+    "location_review_allowed_region",
+    "location_review_allowed_region_type",
+    "location_review_detected_label",
+    "location_review_action",
+    "location_review_price_id"
+)
+
+
 def get_active_wizard_keys(context, keys):
 
     return [
@@ -94,3 +112,16 @@ def clear_owner_payment_provider_wizard_state(context, user_id=None, action=None
     for key in OWNER_PAYMENT_PROVIDER_WIZARD_KEYS:
 
         context.user_data.pop(key, None)
+
+
+def clear_location_flow_state(context):
+
+    cleared_keys = []
+
+    for key in LOCATION_FLOW_KEYS:
+
+        if context.user_data.pop(key, None) is not None:
+
+            cleared_keys.append(key)
+
+    return cleared_keys
