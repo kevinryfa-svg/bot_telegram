@@ -147,6 +147,7 @@ from group_service import (
 )
 from invite_link_service import (
     create_telegram_invite_link,
+    mask_invite_link,
     revoke_telegram_invite_link
 )
 from publicity_invite_link_service import (
@@ -15358,8 +15359,8 @@ def build_owner_section_keyboard(user_id, group_id, section):
         if user_has_group_permission_any(user_id, group_id, ["can_warn_users", "can_reset_warnings", "can_manage_users"]):
             keyboard.append([InlineKeyboardButton("⚠️ Warnings", callback_data="admin_reset_warnings")])
 
-        if user_has_group_permission_any(user_id, group_id, ["can_resend_links", "can_recover_access"]):
-            keyboard.append([InlineKeyboardButton("📩 Reenviar / recuperar link", callback_data="admin_resend_access")])
+        if user_can_recover_community_access_links(user_id, group_id):
+            keyboard.append([InlineKeyboardButton("📩 Reenviar / recuperar link", callback_data=f"community_links_recover_menu_{group_id}")])
 
     elif section == "codes":
 
@@ -15981,6 +15982,20 @@ def user_can_manage_community_user_access(user_id, group_id):
 
 
     return user_has_group_permission_any(user_id, group_id, ["can_manage_users"])
+
+
+def user_can_recover_community_access_links(user_id, group_id):
+
+    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
+
+        return True
+
+
+    return user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_resend_links", "can_recover_access", "can_manage_users"]
+    )
 
 
 def fetch_free_community_for_known_user_sync(group_id):
@@ -17026,6 +17041,422 @@ async def notify_community_user_access_change(context, target_user_id, text, gro
             message="No se pudo notificar al usuario sobre un cambio de acceso.",
             metadata={"error": str(e)[:300]}
         )
+
+
+def fetch_recent_community_access_invite_link(group_id, target_user_id):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT invite_link
+                FROM invite_links
+                WHERE user_id=%s
+                AND group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+                AND (
+                    created_at IS NULL
+                    OR created_at > NOW() - INTERVAL '150 seconds'
+                )
+                ORDER BY created_at DESC NULLS LAST
+                LIMIT 1
+
+            """, (target_user_id, group_id))
+
+            row = cur.fetchone()
+
+    except Exception as e:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        print("community_link_recover_existing_lookup_error:", str(e)[:300])
+        return None
+
+
+    return row[0] if row else None
+
+
+def save_community_access_invite_link(group_id, telegram_group_id, target_user_id, invite_link, access_state):
+
+    expires_at = access_state.get("expires_at") if access_state else None
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE invite_links
+            SET telegram_group_id=%s,
+                invite_link=%s,
+                is_active=TRUE,
+                revoked_at=NULL
+            WHERE user_id=%s
+            AND group_id=%s
+
+        """, (
+            telegram_group_id,
+            invite_link,
+            target_user_id,
+            group_id
+        ))
+
+
+        if cur.rowcount == 0:
+
+            cur.execute("""
+
+                INSERT INTO invite_links
+                (user_id, group_id, telegram_group_id, invite_link, is_active)
+                VALUES (%s, %s, %s, %s, TRUE)
+
+            """, (
+                target_user_id,
+                group_id,
+                telegram_group_id,
+                invite_link
+            ))
+
+
+        cur.execute("""
+
+            UPDATE users
+            SET expiration=%s,
+                subscription_active=TRUE,
+                last_invite_link=%s
+            WHERE user_id=%s
+            AND group_id=%s
+
+        """, (
+            expires_at,
+            invite_link,
+            target_user_id,
+            group_id
+        ))
+
+
+        if cur.rowcount == 0:
+
+            cur.execute("""
+
+                INSERT INTO users
+                (
+                    user_id,
+                    group_id,
+                    expiration,
+                    subscription_active,
+                    last_invite_link
+                )
+                VALUES (%s, %s, %s, TRUE, %s)
+
+            """, (
+                target_user_id,
+                group_id,
+                expires_at,
+                invite_link
+            ))
+
+
+    conn.commit()
+
+
+def recover_or_create_community_access_link(group_id, target_user_id):
+
+    group = fetch_group_basic_info(group_id)
+
+    if not group:
+
+        return {"ok": False, "reason": "group_not_found"}
+
+
+    _group_id, group_name, telegram_group_id, community_type = group
+
+    if not telegram_group_id:
+
+        return {"ok": False, "reason": "missing_telegram_group_id"}
+
+
+    access_state = get_user_group_access_state(target_user_id, group_id)
+
+    if not access_state.get("has_active_access"):
+
+        return {"ok": False, "reason": "no_active_access", "access_state": access_state}
+
+
+    existing_link = fetch_recent_community_access_invite_link(group_id, target_user_id)
+
+    if existing_link:
+
+        return {
+            "ok": True,
+            "invite_link": existing_link,
+            "source": "existing",
+            "group_name": group_name,
+            "access_state": access_state
+        }
+
+
+    expires_at = access_state.get("expires_at")
+    expire_seconds = 180
+
+
+    if expires_at:
+
+        remaining = int((expires_at - datetime.now()).total_seconds())
+
+        if remaining <= 0:
+
+            return {"ok": False, "reason": "expired_access", "access_state": access_state}
+
+
+        expire_seconds = max(60, min(180, remaining))
+
+
+    invite_link = create_telegram_invite_link(
+        TOKEN,
+        telegram_group_id,
+        expire_seconds=expire_seconds,
+        member_limit=1,
+        community_type=community_type
+    )
+
+
+    if not invite_link:
+
+        return {"ok": False, "reason": "link_create_failed", "access_state": access_state}
+
+
+    try:
+
+        save_community_access_invite_link(
+            group_id,
+            telegram_group_id,
+            target_user_id,
+            invite_link,
+            access_state
+        )
+
+    except Exception as e:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        return {
+            "ok": False,
+            "reason": "link_save_failed",
+            "error": str(e)[:300],
+            "access_state": access_state
+        }
+
+
+    return {
+        "ok": True,
+        "invite_link": invite_link,
+        "source": "new",
+        "group_name": group_name,
+        "access_state": access_state
+    }
+
+
+async def send_recovered_community_access_link(context, group_id, target_user_id, actor_user_id):
+
+    result = recover_or_create_community_access_link(group_id, target_user_id)
+
+    if not result.get("ok"):
+
+        log_event(
+            "community_link_recover_user_link_failed",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=actor_user_id,
+            target_user_id=target_user_id,
+            message="No se pudo recuperar o crear link de acceso para usuario activo.",
+            metadata={
+                "reason": result.get("reason"),
+                "error": result.get("error")
+            }
+        )
+
+        return result
+
+
+    group_name = result.get("group_name") or f"Grupo {group_id}"
+    invite_link = result.get("invite_link")
+    access_state = result.get("access_state") or {}
+    is_free = bool(access_state.get("is_free_group"))
+
+
+    if is_free:
+
+        text = (
+            "🔓 Tu enlace de acceso gratuito\n\n"
+            f"Hola, te enviamos el enlace para entrar a la comunidad gratuita “{group_name}”.\n\n"
+            f"{invite_link}\n\n"
+            "Si el enlace caduca o tienes problemas, vuelve a contactar con el administrador desde el bot."
+        )
+
+    else:
+
+        text = (
+            "🔗 Tu enlace de acceso\n\n"
+            f"Hola, te reenviamos el enlace para entrar a la comunidad “{group_name}”.\n\n"
+            f"Usa este enlace para acceder:\n{invite_link}\n\n"
+            "Si el enlace caduca o tienes problemas, vuelve a contactar con el administrador desde el bot."
+        )
+
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=text
+        )
+
+    except Exception as e:
+
+        log_event(
+            "community_link_recover_user_dm_failed",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=actor_user_id,
+            target_user_id=target_user_id,
+            message="Link de acceso generado pero no se pudo enviar por privado.",
+            metadata={
+                "error": str(e)[:300],
+                "invite_link": mask_invite_link(invite_link)
+            }
+        )
+
+        return {
+            **result,
+            "ok": False,
+            "reason": "dm_failed"
+        }
+
+
+    log_event(
+        "community_link_recover_user_sent",
+        category="access",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=actor_user_id,
+        target_user_id=target_user_id,
+        message="Link de acceso reenviado a usuario activo.",
+        metadata={
+            "source": result.get("source"),
+            "invite_link": mask_invite_link(invite_link)
+        }
+    )
+
+    return result
+
+
+def build_community_links_recover_menu_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+
+    return (
+        "🔗 Reenviar/recuperar link\n\n"
+        f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
+        "Elige una opción:"
+    )
+
+
+def build_community_links_recover_menu_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👤 A un usuario específico", callback_data=f"community_links_recover_one_{group_id}_0")],
+        [InlineKeyboardButton("👥 A todos los usuarios activos", callback_data=f"community_links_recover_all_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="owner_panel_users")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_community_links_recover_user_page(group_id, page=0):
+
+    rows = [
+        row
+        for row in fetch_community_user_rows(group_id)
+        if row.get("is_active")
+    ]
+    per_page = 8
+    total = len(rows)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+    start = page * per_page
+    page_rows = rows[start:start + per_page]
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+
+    text = (
+        "👤 Reenviar link a usuario específico\n\n"
+        f"Comunidad: {group_name or f'Grupo {group_id}'}\n"
+        f"Usuarios activos: {total}\n"
+        f"Página {page + 1}/{total_pages}\n\n"
+    )
+
+
+    if not page_rows:
+
+        text += "No hay usuarios activos a los que reenviar link."
+
+    else:
+
+        text += "Selecciona un usuario activo:"
+
+
+    keyboard = []
+
+
+    for row in page_rows:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"🔗 Reenviar link · {format_community_user_display_name(row)}",
+                callback_data=f"community_link_recover_user_{group_id}_{row.get('user_id')}"
+            )
+        ])
+
+
+    nav_row = []
+
+
+    if page > 0:
+
+        nav_row.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"community_links_recover_one_{group_id}_{page - 1}"))
+
+
+    if page + 1 < total_pages:
+
+        nav_row.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"community_links_recover_one_{group_id}_{page + 1}"))
+
+
+    if nav_row:
+
+        keyboard.append(nav_row)
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=f"community_links_recover_menu_{group_id}")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return text, InlineKeyboardMarkup(keyboard)
 
 
 def build_owner_backup_panel_text(group_id):
@@ -37270,6 +37701,349 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("community_links_recover_menu_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "community_links_recover_menu_"
+        )
+
+
+        if not user_can_recover_community_access_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para reenviar o recuperar links de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        log_event(
+            "community_link_recover_menu_opened",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Menú de reenvío/recuperación de links abierto.",
+            metadata={}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_community_links_recover_menu_text(group_id),
+            reply_markup=build_community_links_recover_menu_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("community_links_recover_one_"):
+
+        payload = data.replace("community_links_recover_one_", "", 1)
+        parts = payload.split("_")
+
+
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar la comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id = int(parts[0])
+        page = int(parts[1])
+
+
+        if not user_can_recover_community_access_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para reenviar o recuperar links de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        text, keyboard = build_community_links_recover_user_page(group_id, page)
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            text,
+            reply_markup=keyboard
+        )
+
+        return
+
+
+    if data.startswith("community_link_recover_user_"):
+
+        parsed = parse_community_user_callback(data, "community_link_recover_user_")
+
+
+        if not parsed:
+
+            await query.message.reply_text(
+                "⚠️ No he podido identificar al usuario.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_recover_community_access_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para reenviar o recuperar links de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        result = await send_recovered_community_access_link(
+            context,
+            group_id,
+            target_user_id,
+            user_id
+        )
+
+        profile = fetch_community_user_profile(group_id, target_user_id)
+        display_name = format_community_user_display_name(profile)
+
+
+        if result.get("ok"):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                f"✅ Link reenviado correctamente a {display_name}.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👤 Volver a usuarios activos", callback_data=f"community_links_recover_one_{group_id}_0")],
+                    [InlineKeyboardButton("⬅️ Menú de links", callback_data=f"community_links_recover_menu_{group_id}")]
+                ])
+            )
+
+            return
+
+
+        if result.get("reason") == "dm_failed":
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                (
+                    f"⚠️ Link generado para {display_name}, pero no se pudo enviar por privado.\n\n"
+                    "El usuario debe abrir chat con el bot para recibir mensajes directos."
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👤 Volver a usuarios activos", callback_data=f"community_links_recover_one_{group_id}_0")],
+                    [InlineKeyboardButton("⬅️ Menú de links", callback_data=f"community_links_recover_menu_{group_id}")]
+                ])
+            )
+
+            return
+
+
+        if result.get("reason") == "no_active_access":
+
+            await query.message.reply_text(
+                "⛔ Este usuario no tiene acceso activo a esta comunidad. No se ha generado ningún link.",
+                reply_markup=build_community_user_manage_keyboard(group_id, target_user_id)
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "❌ No he podido generar o recuperar el link para este usuario.",
+            reply_markup=build_community_user_manage_keyboard(group_id, target_user_id)
+        )
+
+        return
+
+
+    if data.startswith("community_links_recover_all_yes_"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "community_links_recover_all_yes_"
+        )
+
+
+        if not user_can_recover_community_access_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para reenviar links de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        active_rows = [
+            row
+            for row in fetch_community_user_rows(group_id)
+            if row.get("is_active")
+        ]
+        limit = 50
+        rows_to_send = active_rows[:limit]
+        sent_count = 0
+        failed_dm_count = 0
+        no_access_count = 0
+        link_error_count = 0
+
+        log_event(
+            "community_link_recover_all_started",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Reenvío masivo de links de acceso iniciado.",
+            metadata={
+                "total": len(active_rows),
+                "limit": limit
+            }
+        )
+
+
+        for row in rows_to_send:
+
+            target_user_id = row.get("user_id")
+
+            if not target_user_id:
+
+                continue
+
+
+            result = await send_recovered_community_access_link(
+                context,
+                group_id,
+                target_user_id,
+                user_id
+            )
+
+
+            if result.get("ok"):
+
+                sent_count += 1
+
+            elif result.get("reason") == "dm_failed":
+
+                failed_dm_count += 1
+
+            elif result.get("reason") in ("no_active_access", "expired_access"):
+
+                no_access_count += 1
+
+            else:
+
+                link_error_count += 1
+
+
+            await asyncio.sleep(0.15)
+
+
+        skipped_by_limit = max(0, len(active_rows) - len(rows_to_send))
+
+        log_event(
+            "community_link_recover_all_completed",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Reenvío masivo de links de acceso terminado.",
+            metadata={
+                "total": len(active_rows),
+                "sent_count": sent_count,
+                "failed_dm_count": failed_dm_count,
+                "no_access_count": no_access_count,
+                "link_error_count": link_error_count,
+                "skipped_by_limit": skipped_by_limit
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "✅ Reenvío terminado\n\n"
+                f"Usuarios activos encontrados: {len(active_rows)}\n"
+                f"Links enviados: {sent_count}\n"
+                f"Privado bloqueado/fallido: {failed_dm_count}\n"
+                f"Errores generando link: {link_error_count}\n"
+                f"Omitidos sin acceso activo: {no_access_count}\n"
+                f"Omitidos por límite de seguridad: {skipped_by_limit}"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👥 Ver usuarios de esta comunidad", callback_data=f"owner_group_users_{group_id}")],
+                [InlineKeyboardButton("⬅️ Menú de links", callback_data=f"community_links_recover_menu_{group_id}")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("community_links_recover_all_") or data.startswith("community_links_recover_all"):
+
+        group_id = extract_commercial_request_id(
+            data,
+            "community_links_recover_all_"
+        ) or extract_commercial_request_id(
+            data,
+            "community_links_recover_all"
+        )
+
+
+        if not user_can_recover_community_access_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para reenviar links de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        active_count = sum(
+            1
+            for row in fetch_community_user_rows(group_id)
+            if row.get("is_active")
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "⚠️ Vas a reenviar o regenerar links de acceso a los usuarios activos de esta comunidad.\n\n"
+                "Esto puede enviar muchos mensajes privados. No toca pagos ni suscripciones.\n\n"
+                f"Usuarios activos detectados: {active_count}\n"
+                "Por seguridad, se procesarán como máximo 50 usuarios por ejecución.\n\n"
+                "¿Continuar?"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Sí, enviar a todos los activos", callback_data=f"community_links_recover_all_yes_{group_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"community_links_recover_menu_{group_id}")]
+            ])
+        )
+
+        return
+
+
     if data.startswith("community_users_sync_known_yes_"):
 
         group_id = extract_commercial_request_id(
@@ -42752,9 +43526,37 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data == "admin_resend_access":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_resend_links", "can_recover_access", "can_manage_users"]
+        )
+
+
+        if not group_id or not user_can_recover_community_access_links(user_id, group_id):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para reenviar o recuperar links de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_community_links_recover_menu_text(group_id),
+            reply_markup=build_community_links_recover_menu_keyboard(group_id)
+        )
+
+        return
+
+
     if data in (
         "admin_reset_warnings",
-        "admin_resend_access",
         "admin_cancel_subscription",
         "admin_move_user"
     ):
