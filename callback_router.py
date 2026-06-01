@@ -45073,6 +45073,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        c.is_active,
                        c.expires_at,
                        g.name,
+                       COALESCE(g.community_type, 'group'),
                        COALESCE(g.is_active, TRUE)
                 FROM group_user_promo_codes c
                 JOIN groups g
@@ -45113,6 +45114,36 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if len(promo_row) != 14:
+
+            log_event(
+                "group_user_promo_confirm_error",
+                category="access",
+                severity="error",
+                scope="group",
+                group_id=promo_row[1] if promo_row and len(promo_row) > 1 else None,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Formato inesperado de código de acceso de grupo.",
+                metadata={
+                    "callback_data": data,
+                    "promo_id": code_id,
+                    "row_length": len(promo_row) if promo_row else 0,
+                    "error": "unexpected_promo_row_length"
+                }
+            )
+
+            await query.message.reply_text(
+                "❌ No he podido confirmar este código ahora mismo. Inténtalo de nuevo o contacta con el administrador.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
         try:
 
             await grant_group_user_promo_access(
@@ -45129,6 +45160,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
 
             print("Error canjeando código de grupo:", e)
+            log_event(
+                "group_user_promo_confirm_error",
+                category="access",
+                severity="error",
+                scope="group",
+                group_id=promo_row[1] if promo_row and len(promo_row) > 1 else None,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Error confirmando código de acceso de grupo.",
+                metadata={
+                    "callback_data": data,
+                    "promo_id": code_id,
+                    "error": str(e)[:500]
+                }
+            )
 
             await query.message.reply_text(
                 "❌ Error canjeando el código.",
