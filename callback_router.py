@@ -146,16 +146,19 @@ from group_service import (
     normalize_community_type
 )
 from guardian_service import (
+    GUARDIAN_LOG_EVENT_CATEGORIES,
     add_guardian_warning,
     count_guardian_warnings,
     ensure_guardian_settings,
     fetch_guardian_settings,
+    get_guardian_log_event_settings,
     list_guardian_warning_summary,
     list_guardian_warnings,
     record_guardian_log_event,
     reset_guardian_warnings,
     send_guardian_event_log,
     send_guardian_test_log,
+    set_guardian_log_event_enabled,
     update_guardian_log_channel
 )
 from invite_link_service import (
@@ -15241,6 +15244,7 @@ def build_owner_guardian_panel_keyboard(group_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📡 Conectar canal de logs", callback_data=f"owner_guardian_log_channel_{group_id}")],
         [InlineKeyboardButton("🧪 Enviar log de prueba", callback_data=f"owner_guardian_test_log_{group_id}")],
+        [InlineKeyboardButton("⚙️ Eventos del canal", callback_data=f"owner_guardian_log_events_{group_id}")],
         [InlineKeyboardButton("🔗 Anti-links: solo diseño", callback_data=f"owner_guardian_anti_links_{group_id}")],
         [InlineKeyboardButton("🚫 Palabras bloqueadas: solo diseño", callback_data=f"owner_guardian_forbidden_words_{group_id}")],
         [InlineKeyboardButton("🌙 Modo noche: solo diseño", callback_data=f"owner_guardian_night_mode_{group_id}")],
@@ -15269,6 +15273,62 @@ def build_owner_guardian_cancel_keyboard(group_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_guardian_log_channel_cancel_{group_id}")]
     ])
+
+
+def build_owner_guardian_log_events_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    settings = fetch_guardian_settings(group_id)
+    event_settings = get_guardian_log_event_settings(group_id)
+    log_channel = (
+        settings.get("log_channel_title") or settings.get("log_channel_id")
+        if settings and settings.get("log_channel_id")
+        else "No conectado"
+    )
+
+    lines = [
+        "📡 Guardian · Eventos del canal",
+        "",
+        f"Comunidad: {group_name}",
+        f"Canal de logs: {log_channel}",
+        "",
+        "Elige qué eventos se envían al canal Guardian.",
+        "La auditoría interna se sigue guardando aunque desactives una categoría.",
+        ""
+    ]
+
+    for category in GUARDIAN_LOG_EVENT_CATEGORIES:
+
+        current = event_settings.get(category["key"], category)
+        marker = "✅" if current.get("is_enabled") else "⬜"
+        lines.append(f"{marker} {category['label']}")
+
+
+    return "\n".join(lines)
+
+
+def build_owner_guardian_log_events_keyboard(group_id):
+
+    event_settings = get_guardian_log_event_settings(group_id)
+    keyboard = []
+
+    for category in GUARDIAN_LOG_EVENT_CATEGORIES:
+
+        current = event_settings.get(category["key"], category)
+        marker = "✅" if current.get("is_enabled") else "⬜"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{marker} {category['label']}",
+                callback_data=f"owner_guardian_toggle_log_{group_id}_{category['key']}"
+            )
+        ])
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver Guardian", callback_data="owner_panel_guardian")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 def build_owner_guardian_design_placeholder_text(feature_name):
@@ -37894,6 +37954,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         guardian_prefixes = (
             "owner_guardian_log_channel_cancel_",
             "owner_guardian_log_channel_",
+            "owner_guardian_log_events_",
+            "owner_guardian_toggle_log_",
             "owner_guardian_test_log_",
             "owner_guardian_anti_links_",
             "owner_guardian_forbidden_words_",
@@ -37918,7 +37980,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
 
-            group_id = int(data.replace(matched_prefix, "", 1))
+            if matched_prefix == "owner_guardian_toggle_log_":
+
+                toggle_payload = data.replace(matched_prefix, "", 1)
+                toggle_group_id_text, toggle_category = toggle_payload.split("_", 1)
+                group_id = int(toggle_group_id_text)
+
+            else:
+
+                toggle_category = None
+                group_id = int(data.replace(matched_prefix, "", 1))
 
         except Exception:
 
@@ -37933,6 +38004,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith(("owner_guardian_warns_", "owner_guardian_warning_rank_")):
 
             has_guardian_permission = user_can_view_guardian_warnings(user_id, group_id)
+
+        elif data.startswith(("owner_guardian_log_events_", "owner_guardian_toggle_log_")):
+
+            group_owner_user_id = get_group_owner_user_id(group_id)
+            has_guardian_permission = (
+                is_super_admin(user_id)
+                or (
+                    group_owner_user_id
+                    and int(group_owner_user_id) == int(user_id)
+                )
+                or user_has_group_permission_any(user_id, group_id, ["can_manage_groups"])
+            )
 
         else:
 
@@ -38004,6 +38087,63 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 build_owner_guardian_log_channel_request_text(group_id),
                 reply_markup=build_owner_guardian_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_log_events_"):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_log_events_text(group_id),
+                reply_markup=build_owner_guardian_log_events_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_toggle_log_"):
+
+            event_settings = get_guardian_log_event_settings(group_id)
+            current = event_settings.get(toggle_category)
+
+            if not current:
+
+                await query.message.reply_text(
+                    "⚠️ Categoría Guardian no válida.",
+                    reply_markup=build_owner_guardian_panel_keyboard(group_id)
+                )
+
+                return
+
+
+            new_enabled = not bool(current.get("is_enabled"))
+            set_guardian_log_event_enabled(group_id, toggle_category, new_enabled)
+
+            if get_guardian_log_event_settings(group_id).get("guardian_config", {}).get("is_enabled", True):
+
+                await send_guardian_event_log(
+                    context,
+                    group_id,
+                    "guardian_log_event_settings_updated",
+                    "Configuración de eventos del canal Guardian actualizada.",
+                    telegram_group_id=group[2] if group else None,
+                    severity="info",
+                    actor_user_id=user_id,
+                    metadata={
+                        "category": toggle_category,
+                        "is_enabled": new_enabled
+                    }
+                )
+
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_log_events_text(group_id),
+                reply_markup=build_owner_guardian_log_events_keyboard(group_id)
             )
 
             return
