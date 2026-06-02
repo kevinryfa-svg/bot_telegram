@@ -146,9 +146,14 @@ from group_service import (
     normalize_community_type
 )
 from guardian_service import (
+    add_guardian_warning,
+    count_guardian_warnings,
     ensure_guardian_settings,
     fetch_guardian_settings,
+    list_guardian_warning_summary,
+    list_guardian_warnings,
     record_guardian_log_event,
+    reset_guardian_warnings,
     send_guardian_event_log,
     send_guardian_test_log,
     update_guardian_log_channel
@@ -15239,7 +15244,7 @@ def build_owner_guardian_panel_keyboard(group_id):
         [InlineKeyboardButton("🔗 Anti-links: solo diseño", callback_data=f"owner_guardian_anti_links_{group_id}")],
         [InlineKeyboardButton("🚫 Palabras bloqueadas: solo diseño", callback_data=f"owner_guardian_forbidden_words_{group_id}")],
         [InlineKeyboardButton("🌙 Modo noche: solo diseño", callback_data=f"owner_guardian_night_mode_{group_id}")],
-        [InlineKeyboardButton("⚠️ Warnings: solo diseño", callback_data=f"owner_guardian_warns_{group_id}")],
+        [InlineKeyboardButton("⚠️ Warnings manuales", callback_data=f"owner_guardian_warns_{group_id}")],
         [InlineKeyboardButton("⬅️ Seguridad", callback_data="owner_panel_security")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
     ])
@@ -15274,6 +15279,137 @@ def build_owner_guardian_design_placeholder_text(feature_name):
         "Modo actual: solo diseño y registro.\n"
         "No se expulsan usuarios, no se banean cuentas y no se borran mensajes."
     )
+
+
+def build_owner_guardian_warnings_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    all_summary = list_guardian_warning_summary(group_id, limit=1000)
+    summary = all_summary[:5]
+    total_active = sum(row.get("active_warnings") or 0 for row in all_summary)
+
+    lines = [
+        "⚠️ Guardian · Warnings",
+        "",
+        f"Comunidad: {group_name}",
+        f"Warnings activos: {total_active}",
+        f"Usuarios con warnings: {len(all_summary)}",
+        "",
+        "Ranking rápido:"
+    ]
+
+
+    if not summary:
+
+        lines.append("- Todavía no hay warnings activos.")
+
+    else:
+
+        for index, row in enumerate(summary, start=1):
+
+            lines.append(
+                f"{index}. Usuario {row.get('user_id')} · {row.get('active_warnings')} warnings"
+            )
+
+
+    lines.extend([
+        "",
+        "Guardian todavía no ejecuta acciones automáticas por warnings.",
+        "No hay bans, expulsiones, restricciones ni borrado de mensajes."
+    ])
+
+    return "\n".join(lines)
+
+
+def build_owner_guardian_warnings_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Ver ranking warnings", callback_data=f"owner_guardian_warning_rank_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver Guardian", callback_data="owner_panel_guardian")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_guardian_warning_ranking_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    summary = list_guardian_warning_summary(group_id, limit=20)
+
+    lines = [
+        "📊 Guardian · Ranking warnings",
+        "",
+        f"Comunidad: {group_name}",
+        ""
+    ]
+
+
+    if not summary:
+
+        lines.append("Todavía no hay usuarios con warnings activos.")
+
+    else:
+
+        for index, row in enumerate(summary, start=1):
+
+            lines.append(
+                f"{index}. Usuario {row.get('user_id')} · {row.get('active_warnings')} warnings"
+            )
+
+
+    return "\n".join(lines)
+
+
+def build_guardian_user_warnings_text(group_id, target_user_id):
+
+    warnings = list_guardian_warnings(group_id, target_user_id=target_user_id, limit=10)
+    active_count = count_guardian_warnings(group_id, target_user_id)
+
+    lines = [
+        "⚠️ Guardian warnings de usuario",
+        "",
+        f"Usuario: {target_user_id}",
+        f"Warnings activos: {active_count}",
+        "",
+        "Últimos warnings:"
+    ]
+
+
+    if not warnings:
+
+        lines.append("- Todavía no hay warnings registrados.")
+
+    else:
+
+        for warning in warnings:
+
+            status = "activo" if warning.get("is_active") else "reseteado"
+            created_at = format_commercial_datetime(warning.get("created_at"))
+            lines.append(
+                f"- #{warning.get('id')} · {status} · {created_at} · {warning.get('reason') or '-'}"
+            )
+
+
+    return "\n".join(lines)
+
+
+def build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id):
+
+    keyboard = []
+
+    if user_can_add_guardian_warning(user_id, group_id):
+
+        keyboard.append([InlineKeyboardButton("➕ Añadir warning manual", callback_data=f"guardian_user_warn_add_{group_id}_{target_user_id}")])
+
+    if user_can_reset_guardian_warnings(user_id, group_id):
+
+        keyboard.append([InlineKeyboardButton("🧹 Resetear warnings", callback_data=f"guardian_user_warn_reset_{group_id}_{target_user_id}")])
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver al usuario", callback_data=f"community_user_manage_{group_id}_{target_user_id}")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 async def receive_guardian_log_channel_forward(update, context):
@@ -16334,6 +16470,48 @@ def user_can_recover_community_access_links(user_id, group_id):
     )
 
 
+def user_can_view_guardian_warnings(user_id, group_id):
+
+    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
+
+        return True
+
+
+    return user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_warn_users", "can_reset_warnings", "can_manage_users"]
+    )
+
+
+def user_can_add_guardian_warning(user_id, group_id):
+
+    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
+
+        return True
+
+
+    return user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_warn_users", "can_manage_users"]
+    )
+
+
+def user_can_reset_guardian_warnings(user_id, group_id):
+
+    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
+
+        return True
+
+
+    return user_has_group_permission_any(
+        user_id,
+        group_id,
+        ["can_reset_warnings", "can_manage_users"]
+    )
+
+
 def fetch_free_community_for_known_user_sync(group_id):
 
     try:
@@ -17217,9 +17395,9 @@ def fetch_community_user_profile(group_id, target_user_id):
     }
 
 
-def build_community_user_manage_keyboard(group_id, target_user_id):
+def build_community_user_manage_keyboard(group_id, target_user_id, actor_user_id=None):
 
-    return InlineKeyboardMarkup([
+    keyboard = [
         [
             InlineKeyboardButton("+1 día", callback_data=f"community_user_add_days_{group_id}_{target_user_id}_1"),
             InlineKeyboardButton("+15 días", callback_data=f"community_user_add_days_{group_id}_{target_user_id}_15"),
@@ -17231,10 +17409,21 @@ def build_community_user_manage_keyboard(group_id, target_user_id):
             InlineKeyboardButton("-30 días", callback_data=f"community_user_subtract_days_{group_id}_{target_user_id}_30")
         ],
         [InlineKeyboardButton("🚫 Revocar acceso", callback_data=f"community_user_revoke_access_{group_id}_{target_user_id}")],
-        [InlineKeyboardButton("🗑 Eliminar usuario de BD", callback_data=f"community_user_delete_{group_id}_{target_user_id}")],
-        [InlineKeyboardButton("⬅️ Volver a lista", callback_data=f"community_users_{group_id}_active_0")],
-        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-    ])
+        [InlineKeyboardButton("🗑 Eliminar usuario de BD", callback_data=f"community_user_delete_{group_id}_{target_user_id}")]
+    ]
+
+    if actor_user_id and user_can_view_guardian_warnings(actor_user_id, group_id):
+
+        guardian_allowed, _ = owner_can_use_guardian(actor_user_id, group_id)
+
+        if guardian_allowed:
+
+            keyboard.append([InlineKeyboardButton("⚠️ Guardian warnings", callback_data=f"guardian_user_warnings_{group_id}_{target_user_id}")])
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver a lista", callback_data=f"community_users_{group_id}_active_0")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 async def build_community_user_detail_text(context, group_id, target_user_id):
@@ -37709,7 +37898,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "owner_guardian_anti_links_",
             "owner_guardian_forbidden_words_",
             "owner_guardian_night_mode_",
-            "owner_guardian_warns_"
+            "owner_guardian_warns_",
+            "owner_guardian_warning_rank_"
         )
         matched_prefix = next(
             (prefix for prefix in guardian_prefixes if data.startswith(prefix)),
@@ -37740,7 +37930,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        if not user_has_group_permission_any(user_id, group_id, ["can_manage_groups", "can_view_logs"]):
+        if data.startswith(("owner_guardian_warns_", "owner_guardian_warning_rank_")):
+
+            has_guardian_permission = user_can_view_guardian_warnings(user_id, group_id)
+
+        else:
+
+            has_guardian_permission = user_has_group_permission_any(user_id, group_id, ["can_manage_groups", "can_view_logs"])
+
+
+        if not has_guardian_permission:
 
             await query.message.reply_text(
                 "⛔ No tienes permiso para gestionar Guardian en esta comunidad.",
@@ -37835,11 +38034,48 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if data.startswith("owner_guardian_warns_"):
+
+            record_guardian_log_event(
+                group_id,
+                "guardian_warnings_panel_opened",
+                telegram_group_id=group[2] if group else None,
+                actor_user_id=user_id,
+                message="Panel Guardian de warnings abierto.",
+                metadata={
+                    "callback": data
+                }
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_warnings_text(group_id),
+                reply_markup=build_owner_guardian_warnings_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_warning_rank_"):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_warning_ranking_text(group_id),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Volver a warnings", callback_data=f"owner_guardian_warns_{group_id}")],
+                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+                ])
+            )
+
+            return
+
+
         feature_names = {
             "owner_guardian_anti_links_": "Anti-links",
             "owner_guardian_forbidden_words_": "Palabras bloqueadas",
-            "owner_guardian_night_mode_": "Modo noche",
-            "owner_guardian_warns_": "Warnings"
+            "owner_guardian_night_mode_": "Modo noche"
         }
         feature_name = feature_names.get(matched_prefix, "Configuración")
 
@@ -38670,7 +38906,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "⛔ Este usuario no tiene acceso activo a esta comunidad. No se ha generado ningún link.",
-                reply_markup=build_community_user_manage_keyboard(group_id, target_user_id)
+                reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id)
             )
 
             return
@@ -38678,7 +38914,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "❌ No he podido generar o recuperar el link para este usuario.",
-            reply_markup=build_community_user_manage_keyboard(group_id, target_user_id)
+            reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id)
         )
 
         return
@@ -39133,6 +39369,226 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    if data.startswith("guardian_user_warnings_"):
+
+        parsed = parse_community_user_callback(data, "guardian_user_warnings_")
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_view_guardian_warnings(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para ver warnings Guardian de este usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        allowed, _ = owner_can_use_guardian(user_id, group_id)
+
+        if not allowed:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_addon_required_text(group_id),
+                reply_markup=build_owner_guardian_addon_required_keyboard()
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_guardian_user_warnings_text(group_id, target_user_id),
+            reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
+        )
+
+        return
+
+
+    if data.startswith("guardian_user_warn_add_"):
+
+        parsed = parse_community_user_callback(data, "guardian_user_warn_add_")
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_add_guardian_warning(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para añadir warnings Guardian.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        allowed, _ = owner_can_use_guardian(user_id, group_id)
+
+        if not allowed:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_addon_required_text(group_id),
+                reply_markup=build_owner_guardian_addon_required_keyboard()
+            )
+
+            return
+
+
+        try:
+
+            add_guardian_warning(
+                group_id,
+                target_user_id,
+                user_id,
+                reason="Warning manual desde panel",
+                source="manual"
+            )
+
+        except Exception as e:
+
+            try:
+
+                conn.rollback()
+
+            except Exception:
+
+                pass
+
+            await query.message.reply_text(
+                f"❌ No he podido añadir el warning: {str(e)[:300]}",
+                reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"{build_guardian_user_warnings_text(group_id, target_user_id)}\n\n✅ Warning manual añadido.",
+            reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
+        )
+
+        return
+
+
+    if data.startswith("guardian_user_warn_reset_") and not data.startswith("guardian_user_warn_reset_yes_"):
+
+        parsed = parse_community_user_callback(data, "guardian_user_warn_reset_")
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_reset_guardian_warnings(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para resetear warnings Guardian.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "⚠️ ¿Seguro que quieres resetear los warnings activos de este usuario?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Sí, resetear warnings", callback_data=f"guardian_user_warn_reset_yes_{group_id}_{target_user_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"guardian_user_warnings_{group_id}_{target_user_id}")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("guardian_user_warn_reset_yes_"):
+
+        parsed = parse_community_user_callback(data, "guardian_user_warn_reset_yes_")
+
+
+        if not parsed:
+
+            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        group_id, target_user_id = parsed
+
+
+        if not user_can_reset_guardian_warnings(user_id, group_id):
+
+            await query.message.reply_text("⛔ No tienes permiso para resetear warnings Guardian.", reply_markup=build_owner_panel_nav_keyboard())
+            return
+
+
+        allowed, _ = owner_can_use_guardian(user_id, group_id)
+
+        if not allowed:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_addon_required_text(group_id),
+                reply_markup=build_owner_guardian_addon_required_keyboard()
+            )
+
+            return
+
+
+        try:
+
+            reset_count = reset_guardian_warnings(
+                group_id,
+                target_user_id,
+                user_id,
+                reason="Reset manual desde panel"
+            )
+
+        except Exception as e:
+
+            try:
+
+                conn.rollback()
+
+            except Exception:
+
+                pass
+
+            await query.message.reply_text(
+                f"❌ No he podido resetear los warnings: {str(e)[:300]}",
+                reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
+            )
+
+            return
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"{build_guardian_user_warnings_text(group_id, target_user_id)}\n\n✅ Warnings reseteados: {reset_count}.",
+            reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
+        )
+
+        return
+
+
     if data.startswith("community_user_manage_"):
 
         parsed = parse_community_user_callback(data, "community_user_manage_")
@@ -39154,7 +39610,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         text = await build_community_user_detail_text(context, group_id, target_user_id)
-        await send_clean_message(context, query.message.chat_id, text, reply_markup=build_community_user_manage_keyboard(group_id, target_user_id))
+        await send_clean_message(context, query.message.chat_id, text, reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id))
         return
 
 
@@ -39186,7 +39642,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not result.get("ok"):
 
             message = "Este usuario tiene acceso permanente. No se pueden añadir días sin convertir el acceso." if is_add else "Este usuario tiene acceso permanente. No se pueden restar días."
-            await query.message.reply_text(message, reply_markup=build_community_user_manage_keyboard(group_id, target_user_id))
+            await query.message.reply_text(message, reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id))
             return
 
 
@@ -39212,7 +39668,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id
         )
         text = await build_community_user_detail_text(context, group_id, target_user_id)
-        await send_clean_message(context, query.message.chat_id, f"{text}\n\n✅ Cambio aplicado. Nueva expiración: {expiration_text}", reply_markup=build_community_user_manage_keyboard(group_id, target_user_id))
+        await send_clean_message(context, query.message.chat_id, f"{text}\n\n✅ Cambio aplicado. Nueva expiración: {expiration_text}", reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id))
         return
 
 
@@ -39274,7 +39730,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_event("community_user_access_revoked", category="access", severity="warning", scope="group", group_id=group_id, actor_user_id=user_id, target_user_id=target_user_id, message="Acceso de usuario revocado desde panel owner.", metadata={"updated_counts": counts})
         await notify_community_user_access_change(context, target_user_id, f"🚫 Tu acceso a la comunidad \"{group_name}\" ha sido revocado.", group_id, user_id)
         text = await build_community_user_detail_text(context, group_id, target_user_id)
-        await send_clean_message(context, query.message.chat_id, f"{text}\n\n✅ Acceso revocado.", reply_markup=build_community_user_manage_keyboard(group_id, target_user_id))
+        await send_clean_message(context, query.message.chat_id, f"{text}\n\n✅ Acceso revocado.", reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id))
         return
 
 
