@@ -990,6 +990,85 @@ def grant_group_access_after_payment(
     payment_reference = f"{provider}:{external_payment_id or external_checkout_id or transaction_id}"
 
 
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO users
+                (
+                    user_id,
+                    group_id,
+                    expiration,
+                    subscription_active
+                )
+                VALUES (%s, %s, %s, TRUE)
+                ON CONFLICT (user_id, group_id)
+                DO UPDATE SET
+                    expiration=EXCLUDED.expiration,
+                    subscription_active=TRUE
+
+            """, (
+                user_id,
+                group_id,
+                expiration
+            ))
+
+            cur.execute("""
+
+                INSERT INTO payments
+                (
+                    user_id,
+                    group_id,
+                    stripe_payment_id,
+                    amount,
+                    currency,
+                    status,
+                    plan
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+
+            """, (
+                user_id,
+                group_id,
+                payment_reference,
+                amount,
+                currency,
+                "paid",
+                plan_name
+            ))
+
+            conn.commit()
+
+    except Exception as e:
+
+        conn.rollback()
+
+        log_event(
+            "payment_storage_error",
+            category="payment",
+            severity="error",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Pago confirmado pero falló el guardado del acceso local.",
+            metadata={
+                "provider": provider,
+                "transaction_id": transaction_id,
+                "plan_id": plan_id,
+                "error": str(e)
+            }
+        )
+
+        return {
+            "ok": False,
+            "reason": "storage_failed"
+        }
+
+
     max_expire = int(time.time()) + 180
 
     if expiration is None:
@@ -1041,11 +1120,41 @@ def grant_group_access_after_payment(
             }
         )
 
+        log_event(
+            "payment_access_recorded_invite_link_pending",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Pago confirmado con acceso local activo, pero sin invite link de Telegram.",
+            metadata={
+                "provider": provider,
+                "transaction_id": transaction_id,
+                "plan_id": plan_id,
+                "external_payment_id": external_payment_id,
+                "external_checkout_id": external_checkout_id,
+                "access_recorded": True,
+                "invite_link_ok": False
+            }
+        )
+
         return {
-            "ok": False,
-            "reason": "invite_link_failed"
+            "ok": True,
+            "reason": "invite_link_failed",
+            "invite_link_ok": False,
+            "access_recorded": True,
+            "link": None,
+            "expiration": expiration,
+            "telegram_group_id": telegram_group_id,
+            "plan_name": plan_name,
+            "group_name": group_name
         }
 
+
+    link_saved = True
 
     try:
 
@@ -1053,50 +1162,16 @@ def grant_group_access_after_payment(
 
             cur.execute("""
 
-                INSERT INTO users
-                (
-                    user_id,
-                    group_id,
-                    expiration,
-                    subscription_active,
-                    last_invite_link
-                )
-                VALUES (%s, %s, %s, TRUE, %s)
-                ON CONFLICT (user_id, group_id)
-                DO UPDATE SET
-                    expiration=EXCLUDED.expiration,
-                    subscription_active=TRUE,
-                    last_invite_link=EXCLUDED.last_invite_link
+                UPDATE users
+                SET last_invite_link=%s,
+                    subscription_active=TRUE
+                WHERE user_id=%s
+                AND group_id=%s
 
             """, (
+                link,
                 user_id,
-                group_id,
-                expiration,
-                link
-            ))
-
-            cur.execute("""
-
-                INSERT INTO payments
-                (
-                    user_id,
-                    group_id,
-                    stripe_payment_id,
-                    amount,
-                    currency,
-                    status,
-                    plan
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-
-            """, (
-                user_id,
-                group_id,
-                payment_reference,
-                amount,
-                currency,
-                "paid",
-                plan_name
+                group_id
             ))
 
             cur.execute("""
@@ -1140,17 +1215,18 @@ def grant_group_access_after_payment(
     except Exception as e:
 
         conn.rollback()
+        link_saved = False
 
         log_event(
-            "payment_storage_error",
-            category="payment",
-            severity="error",
+            "payment_invite_link_storage_error",
+            category="access",
+            severity="warning",
             scope="group",
             group_id=group_id,
             telegram_group_id=telegram_group_id,
             actor_user_id=user_id,
             target_user_id=user_id,
-            message="Pago confirmado pero falló el guardado del acceso/link.",
+            message="Pago confirmado y acceso local guardado, pero falló el guardado del invite link.",
             metadata={
                 "provider": provider,
                 "transaction_id": transaction_id,
@@ -1158,11 +1234,6 @@ def grant_group_access_after_payment(
                 "error": str(e)
             }
         )
-
-        return {
-            "ok": False,
-            "reason": "storage_failed"
-        }
 
 
     amount_text = format_payment_amount(amount, currency)
@@ -1224,7 +1295,9 @@ def grant_group_access_after_payment(
             "plan_id": plan_id,
             "amount": amount,
             "currency": currency,
-            "expiration": expiration
+            "expiration": expiration,
+            "invite_link_ok": bool(link),
+            "invite_link_saved": link_saved
         }
     )
 
@@ -1241,7 +1314,8 @@ def grant_group_access_after_payment(
         metadata={
             "provider": provider,
             "transaction_id": transaction_id,
-            "external_checkout_id": external_checkout_id
+            "external_checkout_id": external_checkout_id,
+            "invite_link_saved": link_saved
         }
     )
 
@@ -1277,5 +1351,8 @@ def grant_group_access_after_payment(
         "expiration": expiration,
         "telegram_group_id": telegram_group_id,
         "plan_name": plan_name,
-        "group_name": group_name
+        "group_name": group_name,
+        "invite_link_ok": True,
+        "invite_link_saved": link_saved,
+        "access_recorded": True
     }
