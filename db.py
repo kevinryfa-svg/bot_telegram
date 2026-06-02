@@ -1696,6 +1696,13 @@ def create_tables():
                 "Incluye publicidad automática y backups automáticos para tu comunidad.",
                 2499,
                 "eur"
+            ),
+            (
+                "guardian",
+                "Guardian",
+                "Protección premium de comunidad: logs de seguridad, anti-links, palabras bloqueadas, avisos y modo noche.",
+                1499,
+                "eur"
             )
         ]:
 
@@ -1719,6 +1726,237 @@ def create_tables():
                 monthly_price_cents,
                 currency
             ))
+
+
+        # =========================
+        # GUARDIAN PREMIUM PARA OWNERS
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS guardian_group_settings (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER NOT NULL,
+
+            owner_user_id BIGINT,
+
+            telegram_group_id BIGINT,
+
+            is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+
+            log_channel_id BIGINT,
+
+            log_channel_title TEXT,
+
+            anti_links_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+
+            forbidden_words_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+
+            night_mode_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+
+            warning_limit INTEGER NOT NULL DEFAULT 3,
+
+            action_mode TEXT NOT NULL DEFAULT 'log_only',
+
+            created_at TIMESTAMP DEFAULT NOW(),
+
+            updated_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS guardian_forbidden_words (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER NOT NULL,
+
+            word TEXT NOT NULL,
+
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+            created_by BIGINT,
+
+            created_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS guardian_link_whitelist (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER NOT NULL,
+
+            domain TEXT NOT NULL,
+
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+            created_by BIGINT,
+
+            created_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS guardian_warnings (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER NOT NULL,
+
+            user_id BIGINT NOT NULL,
+
+            reason TEXT,
+
+            source TEXT,
+
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+            created_by BIGINT,
+
+            created_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS guardian_log_events (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER NOT NULL,
+
+            telegram_group_id BIGINT,
+
+            event_type TEXT NOT NULL,
+
+            severity TEXT NOT NULL DEFAULT 'info',
+
+            actor_user_id BIGINT,
+
+            target_user_id BIGINT,
+
+            message TEXT,
+
+            metadata_json JSONB DEFAULT '{}'::jsonb,
+
+            created_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
+
+        try:
+
+            cur.execute("""
+
+                ALTER TABLE guardian_log_events
+                ALTER COLUMN metadata_json TYPE JSONB
+                USING COALESCE(metadata_json, '{}')::jsonb
+
+            """)
+
+            cur.execute("""
+
+                ALTER TABLE guardian_log_events
+                ALTER COLUMN metadata_json SET DEFAULT '{}'::jsonb
+
+            """)
+
+        except Exception as e:
+
+            migration_print(
+                f"Error normalizando guardian_log_events.metadata_json: {e}",
+                "errors"
+            )
+
+
+        for column_name, column_sql in [
+            ("group_id", "INTEGER"),
+            ("owner_user_id", "BIGINT"),
+            ("telegram_group_id", "BIGINT"),
+            ("is_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("log_channel_id", "BIGINT"),
+            ("log_channel_title", "TEXT"),
+            ("anti_links_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("forbidden_words_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("night_mode_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("warning_limit", "INTEGER NOT NULL DEFAULT 3"),
+            ("action_mode", "TEXT NOT NULL DEFAULT 'log_only'"),
+            ("created_at", "TIMESTAMP DEFAULT NOW()"),
+            ("updated_at", "TIMESTAMP DEFAULT NOW()")
+        ]:
+
+            try:
+
+                cur.execute(
+                    f"ALTER TABLE guardian_group_settings ADD COLUMN IF NOT EXISTS {column_name} {column_sql}"
+                )
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error añadiendo columna guardian_group_settings.{column_name}: {e}",
+                    "errors"
+                )
+
+
+        for index_name, index_sql in [
+            (
+                "idx_guardian_group_settings_group_id",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_group_settings_group_id ON guardian_group_settings(group_id)"
+            ),
+            (
+                "idx_guardian_forbidden_words_group_id",
+                "CREATE INDEX IF NOT EXISTS idx_guardian_forbidden_words_group_id ON guardian_forbidden_words(group_id)"
+            ),
+            (
+                "idx_guardian_link_whitelist_group_id",
+                "CREATE INDEX IF NOT EXISTS idx_guardian_link_whitelist_group_id ON guardian_link_whitelist(group_id)"
+            ),
+            (
+                "idx_guardian_warnings_group_user",
+                "CREATE INDEX IF NOT EXISTS idx_guardian_warnings_group_user ON guardian_warnings(group_id, user_id)"
+            ),
+            (
+                "idx_guardian_log_events_group_id",
+                "CREATE INDEX IF NOT EXISTS idx_guardian_log_events_group_id ON guardian_log_events(group_id)"
+            ),
+            (
+                "idx_guardian_log_events_created_at",
+                "CREATE INDEX IF NOT EXISTS idx_guardian_log_events_created_at ON guardian_log_events(created_at)"
+            )
+        ]:
+
+            try:
+
+                cur.execute(index_sql)
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error creando índice {index_name}: {e}",
+                    "errors"
+                )
 
 
         # =========================
