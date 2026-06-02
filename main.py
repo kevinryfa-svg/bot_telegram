@@ -114,6 +114,7 @@ from callback_router import (
     receive_commercial_request_chat_message,
     receive_customer_satisfaction_text,
     receive_user_tracking_search_text,
+    receive_guardian_log_channel_forward,
     receive_group_user_promo_code,
     receive_owner_payment_provider_text,
     receive_support_message,
@@ -1020,6 +1021,10 @@ async def handle_media(update, context):
         await handle_group_backup_media(update, context)
         return
 
+    if context.user_data.get("guardian_log_channel_group_id"):
+        await receive_guardian_log_channel_forward(update, context)
+        return
+
     if context.user_data.get("ad_promo_wizard"):
         await receive_ad_promo_admin_text(update, context)
         return
@@ -1056,6 +1061,10 @@ async def track_command_event(update, context):
 
 
 async def handle_text(update, context):
+
+    if context.user_data.get("guardian_log_channel_group_id"):
+        await receive_guardian_log_channel_forward(update, context)
+        return
 
     if (
         context.user_data.get("ad_promo_wizard")

@@ -145,6 +145,13 @@ from group_service import (
     get_community_type,
     normalize_community_type
 )
+from guardian_service import (
+    ensure_guardian_settings,
+    fetch_guardian_settings,
+    record_guardian_log_event,
+    send_guardian_test_log,
+    update_guardian_log_channel
+)
 from invite_link_service import (
     create_telegram_invite_link,
     mask_invite_link,
@@ -14177,6 +14184,10 @@ def build_group_settings_keyboard(user_id, group_id):
             InlineKeyboardButton("💾 Backups automáticos", callback_data="owner_panel_backup")
         ])
 
+        keyboard.append([
+            InlineKeyboardButton("🛡 Guardian", callback_data="owner_panel_guardian")
+        ])
+
 
     if user_has_group_permission_any(
         user_id,
@@ -15073,6 +15084,273 @@ def log_owner_backup_addon_gate(event_name, user_id, owner_user_id, group_id, ac
     )
 
 
+def owner_can_use_guardian(user_id, group_id):
+
+    if not group_id:
+
+        return False, None
+
+
+    owner_user_id = get_group_owner_user_id(group_id)
+
+    if not owner_user_id:
+
+        return False, None
+
+
+    if (
+        not is_super_admin(user_id)
+        and int(owner_user_id) != int(user_id)
+        and not user_has_group_permission_any(user_id, group_id, ["can_manage_groups"])
+    ):
+
+        return False, owner_user_id
+
+
+    return (
+        owner_has_feature(
+            owner_user_id,
+            "guardian",
+            group_id=group_id
+        ),
+        owner_user_id
+    )
+
+
+def build_owner_guardian_addon_required_text(group_id=None):
+
+    lines = [
+        "🛡 Guardian",
+        "",
+        "Este servicio es un extra mensual para dueños de comunidades.",
+        "Permite preparar protección avanzada: canal de logs, anti-links, palabras bloqueadas, warnings y modo noche.",
+        "",
+        "En esta fase solo se configura la base técnica y los logs. No se ejecutan expulsiones, bans ni acciones automáticas.",
+        "",
+        "Para usarlo necesitas activar Guardian."
+    ]
+
+    product = fetch_owner_addon_product("guardian")
+
+
+    if product and product.get("is_active"):
+
+        lines.append("")
+        lines.append("Servicio disponible:")
+        lines.append(f"- {product.get('name')}: {format_owner_addon_price(product)}")
+
+
+    return "\n".join(lines)
+
+
+def build_owner_guardian_addon_required_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧩 Ver servicios extra", callback_data="owner_addons_menu")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data="owner_panel_security")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def log_owner_guardian_addon_gate(event_name, user_id, owner_user_id, group_id, action):
+
+    log_event(
+        event_name,
+        category="guardian",
+        severity="info" if event_name.endswith("_allowed") else "warning",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=owner_user_id,
+        message="Puerta de addon Guardian evaluada.",
+        metadata={
+            "user_id": user_id,
+            "owner_user_id": owner_user_id,
+            "group_id": group_id,
+            "callback": action,
+            "required_feature": "guardian"
+        }
+    )
+
+
+def build_owner_guardian_panel_text(group_id, settings=None):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    telegram_group_id = group[2] if group else None
+    settings = settings or fetch_guardian_settings(group_id)
+
+    if not settings:
+
+        settings = ensure_guardian_settings(
+            group_id,
+            owner_user_id=get_group_owner_user_id(group_id),
+            telegram_group_id=telegram_group_id
+        )
+
+
+    log_channel = (
+        f"{settings.get('log_channel_title') or settings.get('log_channel_id')}"
+        if settings and settings.get("log_channel_id")
+        else "No conectado"
+    )
+    enabled_text = "Configurado" if settings and settings.get("is_enabled") else "Pendiente"
+    action_mode = settings.get("action_mode") if settings else "log_only"
+
+    return (
+        "🛡 Guardian\n\n"
+        f"Comunidad: {group_name}\n"
+        f"Telegram group id: {telegram_group_id or '-'}\n"
+        f"Estado: {enabled_text}\n"
+        f"Canal de logs: {log_channel}\n"
+        f"Modo: {action_mode or 'log_only'}\n\n"
+        "Base técnica activa:\n"
+        "- Canal de logs Guardian.\n"
+        "- Ajustes iniciales anti-links, palabras bloqueadas, warnings y modo noche.\n"
+        "- Registro interno de eventos.\n\n"
+        "Seguridad: en esta fase Guardian está en modo solo registro. No expulsa, no banea, no borra mensajes y no modifica accesos."
+    )
+
+
+def build_owner_guardian_panel_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📡 Conectar canal de logs", callback_data=f"owner_guardian_log_channel_{group_id}")],
+        [InlineKeyboardButton("🧪 Enviar log de prueba", callback_data=f"owner_guardian_test_log_{group_id}")],
+        [InlineKeyboardButton("🔗 Anti-links: solo diseño", callback_data=f"owner_guardian_anti_links_{group_id}")],
+        [InlineKeyboardButton("🚫 Palabras bloqueadas: solo diseño", callback_data=f"owner_guardian_forbidden_words_{group_id}")],
+        [InlineKeyboardButton("🌙 Modo noche: solo diseño", callback_data=f"owner_guardian_night_mode_{group_id}")],
+        [InlineKeyboardButton("⚠️ Warnings: solo diseño", callback_data=f"owner_guardian_warns_{group_id}")],
+        [InlineKeyboardButton("⬅️ Seguridad", callback_data="owner_panel_security")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_guardian_log_channel_request_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+
+    return (
+        "📡 Conectar canal de logs Guardian\n\n"
+        f"Comunidad: {group_name}\n\n"
+        "1. Añade el bot como administrador del canal donde quieres recibir logs.\n"
+        "2. Reenvía aquí un mensaje de ese canal.\n\n"
+        "Guardaré solo el chat_id y el título del canal. No se guardan tokens ni enlaces privados."
+    )
+
+
+def build_owner_guardian_cancel_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_guardian_log_channel_cancel_{group_id}")]
+    ])
+
+
+def build_owner_guardian_design_placeholder_text(feature_name):
+
+    return (
+        f"🛡 Guardian · {feature_name}\n\n"
+        "Esta parte queda preparada en base de datos, pero todavía no ejecuta acciones reales.\n\n"
+        "Modo actual: solo diseño y registro.\n"
+        "No se expulsan usuarios, no se banean cuentas y no se borran mensajes."
+    )
+
+
+async def receive_guardian_log_channel_forward(update, context):
+
+    group_id = context.user_data.get("guardian_log_channel_group_id")
+    user_id = update.effective_user.id if update.effective_user else None
+
+    try:
+
+        group_id = int(group_id)
+
+    except Exception:
+
+        context.user_data.pop("guardian_log_channel_group_id", None)
+
+        await update.message.reply_text(
+            "⚠️ No he podido resolver la comunidad para conectar Guardian."
+        )
+
+        return
+
+
+    allowed, owner_user_id = owner_can_use_guardian(user_id, group_id)
+
+    if not allowed:
+
+        context.user_data.pop("guardian_log_channel_group_id", None)
+
+        await update.message.reply_text(
+            build_owner_guardian_addon_required_text(group_id),
+            reply_markup=build_owner_guardian_addon_required_keyboard()
+        )
+
+        return
+
+
+    forwarded_chat = extract_forwarded_chat_from_message(update.message)
+
+    if not forwarded_chat or not forwarded_chat.get("chat_id"):
+
+        await update.message.reply_text(
+            "⚠️ Reenvía un mensaje del canal de logs para que pueda detectar el chat_id.",
+            reply_markup=build_owner_guardian_cancel_keyboard(group_id)
+        )
+
+        return
+
+
+    group = fetch_group_basic_info(group_id)
+    telegram_group_id = group[2] if group else None
+
+    ensure_guardian_settings(
+        group_id,
+        owner_user_id=owner_user_id,
+        telegram_group_id=telegram_group_id
+    )
+
+    settings = update_guardian_log_channel(
+        group_id,
+        forwarded_chat.get("chat_id"),
+        channel_title=forwarded_chat.get("title"),
+        actor_user_id=user_id
+    )
+
+    context.user_data.pop("guardian_log_channel_group_id", None)
+
+    log_event(
+        "guardian_log_channel_connected",
+        category="guardian",
+        severity="info",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=owner_user_id,
+        message="Canal de logs Guardian conectado desde forward.",
+        metadata={
+            "group_id": group_id,
+            "log_channel_id": forwarded_chat.get("chat_id"),
+            "log_channel_title": forwarded_chat.get("title")
+        }
+    )
+
+    await update.message.reply_text(
+        "✅ Canal de logs Guardian conectado.\n\n"
+        "Puedes enviar un log de prueba desde el panel.",
+        reply_markup=build_owner_guardian_panel_keyboard(group_id)
+    )
+
+    await send_guardian_test_log(
+        context,
+        settings,
+        group[1] if group else f"Grupo {group_id}",
+        actor_user_id=user_id
+    )
+
+
 def parse_ad_promo_callback_leading_int(data, prefix):
 
     if not data.startswith(prefix):
@@ -15502,6 +15780,16 @@ def build_owner_section_keyboard(user_id, group_id, section):
             [InlineKeyboardButton("⚠️ Últimos errores", callback_data="owner_backup_errors")]
         ])
 
+    elif section == "security":
+
+        keyboard.extend([
+            [InlineKeyboardButton("🛡 Guardian", callback_data="owner_panel_guardian")],
+            [InlineKeyboardButton("📍 Gestionar ubicación", callback_data="owner_panel_location_info")],
+            [InlineKeyboardButton("📢 Grupos de publicidad", callback_data=f"owner_publicity_group_{group_id}")],
+            [InlineKeyboardButton("📜 Logs de accesos", callback_data=f"owner_group_logs_access_{group_id}")],
+            [InlineKeyboardButton("👥 Usuarios y accesos", callback_data="owner_panel_users")]
+        ])
+
     elif section == "general":
 
         keyboard.extend([
@@ -15608,6 +15896,7 @@ OWNER_PANEL_ALLOWED_REPEATED_CALLBACKS = {
     "owner_panel_support",
     "owner_panel_satisfaction",
     "owner_panel_backup",
+    "owner_panel_guardian",
     "owner_panel_general",
     "owner_addons_menu",
     "owner_addons_active",
@@ -15626,7 +15915,8 @@ OWNER_PANEL_ALLOWED_REPEATED_PREFIXES = (
     "owner_group_users_",
     "community_users_sync_known_",
     "owner_location_",
-    "owner_backup_"
+    "owner_backup_",
+    "owner_guardian_"
 )
 
 
@@ -15831,6 +16121,7 @@ def build_owner_security_text(group_id):
 def build_owner_security_keyboard(group_id):
 
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛡 Guardian", callback_data="owner_panel_guardian")],
         [InlineKeyboardButton("📍 Gestionar ubicación", callback_data="owner_panel_location_info")],
         [InlineKeyboardButton("📢 Grupos de publicidad", callback_data=f"owner_publicity_group_{group_id}")],
         [InlineKeyboardButton("📜 Logs de accesos", callback_data=f"owner_group_logs_access_{group_id}")],
@@ -37301,6 +37592,240 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             build_owner_panel_help_text(section),
             reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return
+
+
+    if data == "owner_panel_guardian":
+
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_groups", "can_view_logs"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para abrir Guardian en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        allowed, owner_user_id = owner_can_use_guardian(user_id, group_id)
+
+        if not allowed:
+
+            log_owner_guardian_addon_gate(
+                "owner_guardian_addon_required",
+                user_id,
+                owner_user_id,
+                group_id,
+                data
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_addon_required_text(group_id),
+                reply_markup=build_owner_guardian_addon_required_keyboard()
+            )
+
+            return
+
+
+        group = fetch_group_basic_info(group_id)
+        settings = ensure_guardian_settings(
+            group_id,
+            owner_user_id=owner_user_id,
+            telegram_group_id=group[2] if group else None
+        )
+
+        log_owner_guardian_addon_gate(
+            "owner_guardian_addon_allowed",
+            user_id,
+            owner_user_id,
+            group_id,
+            data
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_guardian_panel_text(group_id, settings=settings),
+            reply_markup=build_owner_guardian_panel_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_guardian_"):
+
+        guardian_prefixes = (
+            "owner_guardian_log_channel_cancel_",
+            "owner_guardian_log_channel_",
+            "owner_guardian_test_log_",
+            "owner_guardian_anti_links_",
+            "owner_guardian_forbidden_words_",
+            "owner_guardian_night_mode_",
+            "owner_guardian_warns_"
+        )
+        matched_prefix = next(
+            (prefix for prefix in guardian_prefixes if data.startswith(prefix)),
+            None
+        )
+
+        if not matched_prefix:
+
+            await query.message.reply_text(
+                "⚠️ Callback Guardian no reconocido.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        try:
+
+            group_id = int(data.replace(matched_prefix, "", 1))
+
+        except Exception:
+
+            await query.message.reply_text(
+                "⚠️ Comunidad Guardian no válida.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if not user_has_group_permission_any(user_id, group_id, ["can_manage_groups", "can_view_logs"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para gestionar Guardian en esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        allowed, owner_user_id = owner_can_use_guardian(user_id, group_id)
+
+        if not allowed:
+
+            log_owner_guardian_addon_gate(
+                "owner_guardian_addon_required",
+                user_id,
+                owner_user_id,
+                group_id,
+                data
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_addon_required_text(group_id),
+                reply_markup=build_owner_guardian_addon_required_keyboard()
+            )
+
+            return
+
+
+        group = fetch_group_basic_info(group_id)
+        settings = ensure_guardian_settings(
+            group_id,
+            owner_user_id=owner_user_id,
+            telegram_group_id=group[2] if group else None
+        )
+
+        if data.startswith("owner_guardian_log_channel_cancel_"):
+
+            context.user_data.pop("guardian_log_channel_group_id", None)
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Configuración de canal Guardian cancelada.",
+                reply_markup=build_owner_guardian_panel_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_log_channel_"):
+
+            context.user_data["guardian_log_channel_group_id"] = group_id
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_log_channel_request_text(group_id),
+                reply_markup=build_owner_guardian_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_test_log_"):
+
+            ok, error = await send_guardian_test_log(
+                context,
+                settings,
+                group[1] if group else f"Grupo {group_id}",
+                actor_user_id=user_id
+            )
+
+            text = (
+                "✅ Log de prueba enviado al canal Guardian."
+                if ok
+                else f"⚠️ No he podido enviar el log de prueba: {error or 'canal no configurado'}"
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                text,
+                reply_markup=build_owner_guardian_panel_keyboard(group_id)
+            )
+
+            return
+
+
+        feature_names = {
+            "owner_guardian_anti_links_": "Anti-links",
+            "owner_guardian_forbidden_words_": "Palabras bloqueadas",
+            "owner_guardian_night_mode_": "Modo noche",
+            "owner_guardian_warns_": "Warnings"
+        }
+        feature_name = feature_names.get(matched_prefix, "Configuración")
+
+        record_guardian_log_event(
+            group_id,
+            "guardian_design_placeholder_opened",
+            telegram_group_id=group[2] if group else None,
+            actor_user_id=user_id,
+            message="Pantalla de diseño Guardian abierta.",
+            metadata={
+                "feature": feature_name,
+                "callback": data
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_guardian_design_placeholder_text(feature_name),
+            reply_markup=build_owner_guardian_panel_keyboard(group_id)
         )
 
         return

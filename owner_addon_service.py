@@ -14,7 +14,8 @@ OWNER_ADDON_MANAGEMENT_STATUSES = (
 
 OWNER_ADDON_FEATURE_MAP = {
     "ad_promo": ("ad_promo", "bundle_ads_backups"),
-    "backups": ("backups", "bundle_ads_backups")
+    "backups": ("backups", "bundle_ads_backups"),
+    "guardian": ("guardian",)
 }
 
 OWNER_ADDON_PRODUCT_FIELDS = [
