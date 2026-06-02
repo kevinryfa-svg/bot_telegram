@@ -7,10 +7,68 @@ from bot_config import TOKEN, ADMIN_ID
 from db import conn
 from invite_link_service import revoke_telegram_invite_link
 from notification_service import send_telegram_message
+from payment_access_service import get_user_group_access_state
+from rbac_helpers import is_super_admin
 from telegram_group_actions import kick_chat_member
 
 
 revoke_link = partial(revoke_telegram_invite_link, TOKEN)
+
+
+def is_protected_group_admin(user_id, group_id):
+
+    if is_super_admin(user_id):
+
+        return True
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT 1
+                FROM admins
+                WHERE user_id=%s
+                AND group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+                LIMIT 1
+
+            """, (
+                user_id,
+                group_id
+            ))
+
+            return cur.fetchone() is not None
+
+    except Exception as e:
+
+        print("Error comprobando admin protegido en expiración:", e)
+        return True
+
+
+def has_active_subscription_record(cur, user_id, group_id):
+
+    cur.execute("""
+
+        SELECT 1
+        FROM subscriptions
+        WHERE user_id=%s
+        AND group_id=%s
+        AND LOWER(COALESCE(status, '')) IN ('active', 'paid', 'completed', 'trialing')
+        AND (
+            end_date IS NULL
+            OR end_date > NOW()
+        )
+        LIMIT 1
+
+    """, (
+        user_id,
+        group_id
+    ))
+
+    return cur.fetchone() is not None
 
 
 def check_expirations():
@@ -50,7 +108,8 @@ def check_expirations():
 
                         cur.execute("""
 
-                        SELECT telegram_group_id
+                        SELECT telegram_group_id,
+                               COALESCE(is_free_group, FALSE)
                         FROM groups
                         WHERE id=%s
 
@@ -62,6 +121,56 @@ def check_expirations():
                             continue
 
                         telegram_group_id = group_row[0]
+                        is_free_group = group_row[1] is True
+
+
+                        if is_free_group:
+
+                            print("Expiración omitida por grupo gratis:", user_id, group_id)
+                            continue
+
+
+                        if is_protected_group_admin(user_id, group_id):
+
+                            print("Expiración omitida por admin/owner protegido:", user_id, group_id)
+                            continue
+
+
+                        try:
+
+                            access_state = get_user_group_access_state(user_id, group_id)
+
+                        except Exception as e:
+
+                            print("Error resolviendo estado antes de expulsar:", e)
+                            conn.rollback()
+                            continue
+
+
+                        if (
+                            access_state.get("has_active_access")
+                            or access_state.get("subscription_status") == "paid_without_access_record"
+                        ):
+
+                            print("Expiración omitida por acceso activo:", user_id, group_id, access_state.get("reason"))
+                            continue
+
+
+                        try:
+
+                            active_subscription = has_active_subscription_record(cur, user_id, group_id)
+
+                        except Exception as e:
+
+                            print("Error comprobando suscripción activa antes de expulsar:", e)
+                            conn.rollback()
+                            continue
+
+
+                        if active_subscription:
+
+                            print("Expiración omitida por suscripción activa:", user_id, group_id)
+                            continue
 
 
                         # =========================
@@ -188,12 +297,13 @@ def check_expirations():
 
 
                         # =========================
-                        # BORRAR SOLO SUSCRIPCIÓN EXPIRADA
+                        # MARCAR SUSCRIPCIÓN EXPIRADA SIN BORRAR HISTORIAL
                         # =========================
 
                         cur.execute("""
 
-                        DELETE FROM users
+                        UPDATE users
+                        SET subscription_active=FALSE
                         WHERE user_id=%s
                         AND group_id=%s
 
