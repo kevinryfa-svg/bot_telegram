@@ -653,6 +653,14 @@ async def ad_promo_daily_review_job(context: ContextTypes.DEFAULT_TYPE):
 
         print("Ad promo daily review: error:", e)
 
+        log_event(
+            "ad_promo_daily_review_scheduler_error",
+            category="marketing",
+            severity="warning",
+            message="Error en revisión diaria de promoción automática.",
+            metadata={"error": sanitize_error_text(e)}
+        )
+
 
 def schedule_ad_promo_jobs(application):
 
@@ -766,6 +774,14 @@ async def beta_monitor_summary_job(context: ContextTypes.DEFAULT_TYPE):
 
         print("Beta monitor: error enviando resumen:", e)
 
+        log_event(
+            "beta_monitor_summary_error",
+            category="beta",
+            severity="warning",
+            message="Error enviando resumen automático del monitor beta.",
+            metadata={"error": sanitize_error_text(e)}
+        )
+
 
 def schedule_beta_monitor_job(application):
 
@@ -852,6 +868,14 @@ async def beta_cycle_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
 
         print("Beta cycle: error revisando ciclos:", e)
+
+        log_event(
+            "beta_cycle_scheduler_error",
+            category="beta",
+            severity="warning",
+            message="Error revisando ciclos beta.",
+            metadata={"error": sanitize_error_text(e)}
+        )
 
 
 def schedule_beta_cycle_job(application):

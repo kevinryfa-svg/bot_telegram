@@ -21,7 +21,14 @@ BETA_MONITOR_EVENT_ALIASES = {
     "group_user_promo_redeemed": "group_code_redeemed",
     "group_registration_unauthorized": "bot_added_to_group",
     "bot_added_to_group_detected": "bot_added_to_group",
-    "group_registration_leave_chat_success": "bot_removed_from_group"
+    "group_registration_leave_chat_success": "bot_removed_from_group",
+    "ad_promo_daily_review_scheduler_error": "scheduler_error",
+    "ad_promo_scheduler_error": "scheduler_error",
+    "beta_cycle_scheduler_error": "scheduler_error",
+    "beta_monitor_summary_error": "scheduler_error",
+    "commercial_expiry_scheduler_error": "scheduler_error",
+    "location_manual_review_expiry_scheduler_error": "scheduler_error",
+    "owner_backup_scheduler_error": "scheduler_error"
 }
 
 
@@ -47,7 +54,8 @@ BETA_MONITOR_EVENT_TYPES = {
     "bot_added_to_group",
     "bot_removed_from_group",
     "survey_sent",
-    "survey_completed"
+    "survey_completed",
+    "scheduler_error"
 }
 
 
