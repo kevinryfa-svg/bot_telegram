@@ -1864,6 +1864,26 @@ def create_tables():
 
         """)
 
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS guardian_log_event_settings (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER NOT NULL,
+
+            event_category TEXT NOT NULL,
+
+            is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+
+            created_at TIMESTAMP DEFAULT NOW(),
+
+            updated_at TIMESTAMP DEFAULT NOW()
+
+        );
+
+        """)
+
 
         try:
 
@@ -1944,6 +1964,14 @@ def create_tables():
             (
                 "idx_guardian_log_events_created_at",
                 "CREATE INDEX IF NOT EXISTS idx_guardian_log_events_created_at ON guardian_log_events(created_at)"
+            ),
+            (
+                "idx_guardian_log_event_settings_group_category",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_log_event_settings_group_category ON guardian_log_event_settings(group_id, event_category)"
+            ),
+            (
+                "idx_guardian_log_event_settings_group_id",
+                "CREATE INDEX IF NOT EXISTS idx_guardian_log_event_settings_group_id ON guardian_log_event_settings(group_id)"
             )
         ]:
 

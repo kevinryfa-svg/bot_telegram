@@ -8,6 +8,149 @@ from notification_service import send_telegram_message
 
 GUARDIAN_DEFAULT_ACTION_MODE = "log_only"
 
+GUARDIAN_LOG_EVENT_CATEGORIES = [
+    {
+        "key": "entries",
+        "label": "Entradas",
+        "default_enabled": True
+    },
+    {
+        "key": "exits",
+        "label": "Salidas",
+        "default_enabled": False
+    },
+    {
+        "key": "payments",
+        "label": "Pagos",
+        "default_enabled": True
+    },
+    {
+        "key": "renewals",
+        "label": "Renovaciones",
+        "default_enabled": True
+    },
+    {
+        "key": "codes",
+        "label": "Códigos canjeados",
+        "default_enabled": True
+    },
+    {
+        "key": "links",
+        "label": "Links generados/recuperados",
+        "default_enabled": True
+    },
+    {
+        "key": "warnings",
+        "label": "Warnings",
+        "default_enabled": True
+    },
+    {
+        "key": "kicks",
+        "label": "Expiraciones/kicks",
+        "default_enabled": True
+    },
+    {
+        "key": "bans",
+        "label": "Bans",
+        "default_enabled": True
+    },
+    {
+        "key": "errors",
+        "label": "Errores importantes",
+        "default_enabled": True
+    },
+    {
+        "key": "guardian_config",
+        "label": "Configuración Guardian",
+        "default_enabled": True
+    }
+]
+
+GUARDIAN_LOG_EVENT_CATEGORY_DEFAULTS = {
+    category["key"]: category["default_enabled"]
+    for category in GUARDIAN_LOG_EVENT_CATEGORIES
+}
+
+
+def guardian_log_event_category_keys():
+
+    return [category["key"] for category in GUARDIAN_LOG_EVENT_CATEGORIES]
+
+
+def map_guardian_event_type_to_category(event_type):
+
+    event_type = (event_type or "").strip()
+
+    if event_type in (
+        "guardian_user_join_allowed",
+        "guardian_user_join_blocked"
+    ):
+
+        return "entries"
+
+
+    if event_type in (
+        "guardian_payment_confirmed",
+        "guardian_payment_invite_link_failed"
+    ):
+
+        return "payments"
+
+
+    if "renewal" in event_type or "renovacion" in event_type:
+
+        return "renewals"
+
+
+    if event_type in ("guardian_group_code_redeemed",):
+
+        return "codes"
+
+
+    if event_type in (
+        "guardian_access_link_recovered",
+        "guardian_access_links_bulk_completed"
+    ):
+
+        return "links"
+
+
+    if event_type in (
+        "guardian_warning_added",
+        "guardian_warnings_reset"
+    ):
+
+        return "warnings"
+
+
+    if event_type in ("guardian_access_expired",):
+
+        return "kicks"
+
+
+    if "ban" in event_type:
+
+        return "bans"
+
+
+    if "error" in event_type or "failed" in event_type:
+
+        return "errors"
+
+
+    if event_type in (
+        "guardian_test_log_sent",
+        "guardian_log_channel_connected",
+        "guardian_design_placeholder_opened",
+        "guardian_warnings_panel_opened",
+        "guardian_log_event_settings_updated"
+    ):
+
+        return "guardian_config"
+
+
+    return "guardian_config"
+
 
 def row_to_guardian_settings(row):
 
@@ -104,6 +247,97 @@ def is_guardian_log_available(group_id):
         and settings.get("is_enabled")
         and settings.get("log_channel_id")
     )
+
+
+def get_guardian_log_event_settings(group_id):
+
+    defaults = {
+        category["key"]: {
+            **category,
+            "is_enabled": category["default_enabled"]
+        }
+        for category in GUARDIAN_LOG_EVENT_CATEGORIES
+    }
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT event_category,
+                       COALESCE(is_enabled, TRUE)
+                FROM guardian_log_event_settings
+                WHERE group_id=%s
+
+            """, (group_id,))
+
+            for event_category, is_enabled in cur.fetchall():
+
+                if event_category in defaults:
+
+                    defaults[event_category]["is_enabled"] = bool(is_enabled)
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+
+    return defaults
+
+
+def is_guardian_event_enabled(group_id, event_type):
+
+    category = map_guardian_event_type_to_category(event_type)
+    settings = get_guardian_log_event_settings(group_id)
+
+    return bool(
+        settings.get(category, {}).get(
+            "is_enabled",
+            GUARDIAN_LOG_EVENT_CATEGORY_DEFAULTS.get(category, True)
+        )
+    )
+
+
+def set_guardian_log_event_enabled(group_id, category, enabled):
+
+    if category not in guardian_log_event_category_keys():
+
+        return False
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            INSERT INTO guardian_log_event_settings
+            (
+                group_id,
+                event_category,
+                is_enabled,
+                updated_at
+            )
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (group_id, event_category) DO UPDATE
+            SET is_enabled=EXCLUDED.is_enabled,
+                updated_at=NOW()
+
+        """, (
+            group_id,
+            category,
+            bool(enabled)
+        ))
+
+        conn.commit()
+
+
+    return True
 
 
 def truncate_guardian_value(value, limit=500):
@@ -236,24 +470,34 @@ async def send_guardian_event_log(
     try:
 
         settings = fetch_guardian_settings(group_id)
-
-        if not settings or not settings.get("is_enabled") or not settings.get("log_channel_id"):
-
-            return False
-
-
         safe_metadata = sanitize_guardian_metadata(metadata)
+        event_category = map_guardian_event_type_to_category(event_type)
+        channel_event_enabled = is_guardian_event_enabled(group_id, event_type)
 
         record_guardian_log_event(
             group_id,
             event_type,
-            telegram_group_id=telegram_group_id or settings.get("telegram_group_id"),
+            telegram_group_id=telegram_group_id or (settings or {}).get("telegram_group_id"),
             severity=severity,
             actor_user_id=actor_user_id,
             target_user_id=target_user_id,
             message=message,
-            metadata=safe_metadata
+            metadata={
+                **safe_metadata,
+                "guardian_event_category": event_category,
+                "guardian_channel_skipped_by_settings": not channel_event_enabled
+            }
         )
+
+        if (
+            not settings
+            or not settings.get("is_enabled")
+            or not settings.get("log_channel_id")
+            or not channel_event_enabled
+        ):
+
+            return False
+
 
         bot = getattr(context_or_bot, "bot", context_or_bot)
 
@@ -290,24 +534,34 @@ def send_guardian_event_log_sync(
     try:
 
         settings = fetch_guardian_settings(group_id)
-
-        if not settings or not settings.get("is_enabled") or not settings.get("log_channel_id"):
-
-            return False
-
-
         safe_metadata = sanitize_guardian_metadata(metadata)
+        event_category = map_guardian_event_type_to_category(event_type)
+        channel_event_enabled = is_guardian_event_enabled(group_id, event_type)
 
         record_guardian_log_event(
             group_id,
             event_type,
-            telegram_group_id=telegram_group_id or settings.get("telegram_group_id"),
+            telegram_group_id=telegram_group_id or (settings or {}).get("telegram_group_id"),
             severity=severity,
             actor_user_id=actor_user_id,
             target_user_id=target_user_id,
             message=message,
-            metadata=safe_metadata
+            metadata={
+                **safe_metadata,
+                "guardian_event_category": event_category,
+                "guardian_channel_skipped_by_settings": not channel_event_enabled
+            }
         )
+
+        if (
+            not settings
+            or not settings.get("is_enabled")
+            or not settings.get("log_channel_id")
+            or not channel_event_enabled
+        ):
+
+            return False
+
 
         response = send_telegram_message(
             TOKEN,
