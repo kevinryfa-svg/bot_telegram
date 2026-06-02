@@ -148,10 +148,13 @@ from group_service import (
 from guardian_service import (
     GUARDIAN_LOG_EVENT_CATEGORIES,
     add_guardian_warning,
+    count_guardian_link_whitelist_domains,
     count_guardian_warnings,
     ensure_guardian_settings,
     fetch_guardian_settings,
+    get_guardian_anti_links_settings,
     get_guardian_log_event_settings,
+    list_guardian_link_whitelist_domains,
     list_guardian_warning_summary,
     list_guardian_warnings,
     record_guardian_log_event,
@@ -159,6 +162,7 @@ from guardian_service import (
     send_guardian_event_log,
     send_guardian_test_log,
     set_guardian_log_event_enabled,
+    update_guardian_anti_links_settings,
     update_guardian_log_channel
 )
 from invite_link_service import (
@@ -15329,6 +15333,76 @@ def build_owner_guardian_log_events_keyboard(group_id):
     keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
 
     return InlineKeyboardMarkup(keyboard)
+
+
+def build_owner_guardian_anti_links_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    settings = get_guardian_anti_links_settings(group_id)
+    whitelist_count = count_guardian_link_whitelist_domains(group_id)
+    status_text = "activo" if settings.get("enabled") else "inactivo"
+
+    return (
+        "🔗 Guardian · Anti-links\n\n"
+        f"Comunidad: {group_name}\n"
+        f"Estado: {status_text}\n"
+        f"Acción actual: {settings.get('action') or 'log_only'}\n"
+        f"Whitelist: {whitelist_count} dominios\n\n"
+        "Modo seguro actual: solo registra y, si eliges warn, añade warning automático.\n"
+        "No borra mensajes, no expulsa, no banea y no restringe usuarios."
+    )
+
+
+def build_owner_guardian_anti_links_keyboard(group_id):
+
+    settings = get_guardian_anti_links_settings(group_id)
+    enabled = bool(settings.get("enabled"))
+    action = settings.get("action") or "log_only"
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🟢 Desactivar anti-links" if enabled else "🔴 Activar anti-links", callback_data=f"owner_guardian_toggle_anti_links_{group_id}")],
+        [
+            InlineKeyboardButton(("✅ " if action == "log_only" else "") + "Acción: log_only", callback_data=f"owner_guardian_anti_links_action_{group_id}_log_only"),
+            InlineKeyboardButton(("✅ " if action == "warn" else "") + "Acción: warn", callback_data=f"owner_guardian_anti_links_action_{group_id}_warn")
+        ],
+        [InlineKeyboardButton("📋 Ver whitelist", callback_data=f"owner_guardian_link_whitelist_{group_id}")],
+        [InlineKeyboardButton("➕ Añadir dominio whitelist: pendiente", callback_data=f"owner_guardian_link_whitelist_add_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver Guardian", callback_data="owner_panel_guardian")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_guardian_link_whitelist_text(group_id):
+
+    domains = list_guardian_link_whitelist_domains(group_id)
+
+    lines = [
+        "📋 Guardian · Whitelist anti-links",
+        "",
+        "Dominios permitidos:"
+    ]
+
+    if not domains:
+
+        lines.append("- No hay dominios en whitelist.")
+
+    else:
+
+        for domain in domains:
+
+            lines.append(f"- {domain}")
+
+
+    return "\n".join(lines)
+
+
+def build_owner_guardian_link_whitelist_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Volver a anti-links", callback_data=f"owner_guardian_anti_links_{group_id}")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
 
 
 def build_owner_guardian_design_placeholder_text(feature_name):
@@ -37957,6 +38031,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "owner_guardian_log_events_",
             "owner_guardian_toggle_log_",
             "owner_guardian_test_log_",
+            "owner_guardian_anti_links_action_",
+            "owner_guardian_toggle_anti_links_",
+            "owner_guardian_link_whitelist_add_",
+            "owner_guardian_link_whitelist_",
             "owner_guardian_anti_links_",
             "owner_guardian_forbidden_words_",
             "owner_guardian_night_mode_",
@@ -37980,15 +38058,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
 
+            anti_links_action = None
+
             if matched_prefix == "owner_guardian_toggle_log_":
 
                 toggle_payload = data.replace(matched_prefix, "", 1)
                 toggle_group_id_text, toggle_category = toggle_payload.split("_", 1)
                 group_id = int(toggle_group_id_text)
 
+            elif matched_prefix == "owner_guardian_anti_links_action_":
+
+                action_payload = data.replace(matched_prefix, "", 1)
+                action_group_id_text, anti_links_action = action_payload.rsplit("_", 1)
+                group_id = int(action_group_id_text)
+                toggle_category = None
+
             else:
 
                 toggle_category = None
+                anti_links_action = None
                 group_id = int(data.replace(matched_prefix, "", 1))
 
         except Exception:
@@ -38005,7 +38093,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             has_guardian_permission = user_can_view_guardian_warnings(user_id, group_id)
 
-        elif data.startswith(("owner_guardian_log_events_", "owner_guardian_toggle_log_")):
+        elif data.startswith((
+            "owner_guardian_log_events_",
+            "owner_guardian_toggle_log_",
+            "owner_guardian_anti_links_",
+            "owner_guardian_toggle_anti_links_",
+            "owner_guardian_anti_links_action_",
+            "owner_guardian_link_whitelist_",
+            "owner_guardian_link_whitelist_add_"
+        )):
 
             group_owner_user_id = get_group_owner_user_id(group_id)
             has_guardian_permission = (
@@ -38169,6 +38265,122 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.message.chat_id,
                 text,
                 reply_markup=build_owner_guardian_panel_keyboard(group_id)
+            )
+
+            return
+
+
+        if (
+            data.startswith("owner_guardian_anti_links_")
+            and not data.startswith("owner_guardian_anti_links_action_")
+        ):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_anti_links_text(group_id),
+                reply_markup=build_owner_guardian_anti_links_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_toggle_anti_links_"):
+
+            current = get_guardian_anti_links_settings(group_id)
+            new_enabled = not bool(current.get("enabled"))
+            update_guardian_anti_links_settings(
+                group_id,
+                enabled=new_enabled,
+                action=current.get("action") if current.get("action") != "disabled" else "log_only"
+            )
+
+            await send_guardian_event_log(
+                context,
+                group_id,
+                "guardian_anti_links_settings_updated",
+                "Configuración anti-links actualizada.",
+                telegram_group_id=group[2] if group else None,
+                severity="info",
+                actor_user_id=user_id,
+                metadata={
+                    "anti_links_enabled": new_enabled,
+                    "action": current.get("action") if current.get("action") != "disabled" else "log_only"
+                }
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_anti_links_text(group_id),
+                reply_markup=build_owner_guardian_anti_links_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_anti_links_action_"):
+
+            if anti_links_action not in ("log_only", "warn"):
+
+                await query.message.reply_text(
+                    "⚠️ Acción anti-links no válida.",
+                    reply_markup=build_owner_guardian_anti_links_keyboard(group_id)
+                )
+
+                return
+
+
+            update_guardian_anti_links_settings(
+                group_id,
+                enabled=True,
+                action=anti_links_action
+            )
+
+            await send_guardian_event_log(
+                context,
+                group_id,
+                "guardian_anti_links_settings_updated",
+                "Acción anti-links actualizada.",
+                telegram_group_id=group[2] if group else None,
+                severity="info",
+                actor_user_id=user_id,
+                metadata={
+                    "anti_links_enabled": True,
+                    "action": anti_links_action
+                }
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_anti_links_text(group_id),
+                reply_markup=build_owner_guardian_anti_links_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_link_whitelist_add_"):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "➕ Añadir dominios a la whitelist todavía no tiene flujo seguro en esta fase.\n\n"
+                "El anti-links ya respeta los dominios activos que existan en la tabla Guardian.",
+                reply_markup=build_owner_guardian_link_whitelist_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_link_whitelist_"):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_link_whitelist_text(group_id),
+                reply_markup=build_owner_guardian_link_whitelist_keyboard(group_id)
             )
 
             return

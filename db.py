@@ -1752,6 +1752,8 @@ def create_tables():
 
             anti_links_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 
+            anti_links_action TEXT NOT NULL DEFAULT 'log_only',
+
             forbidden_words_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 
             night_mode_enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1918,6 +1920,7 @@ def create_tables():
             ("log_channel_id", "BIGINT"),
             ("log_channel_title", "TEXT"),
             ("anti_links_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("anti_links_action", "TEXT NOT NULL DEFAULT 'log_only'"),
             ("forbidden_words_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("night_mode_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("warning_limit", "INTEGER NOT NULL DEFAULT 3"),
