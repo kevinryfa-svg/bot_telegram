@@ -16,6 +16,7 @@ from rbac_helpers import (
 
 GUARDIAN_DEFAULT_ACTION_MODE = "log_only"
 GUARDIAN_ANTI_LINK_ACTIONS = ("disabled", "log_only", "warn")
+GUARDIAN_FORBIDDEN_WORD_ACTIONS = ("disabled", "log_only", "warn")
 GUARDIAN_URL_RE = re.compile(
     r"(?i)\b((?:https?://|www\.|t\.me/|telegram\.me/)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+\S*)"
 )
@@ -130,7 +131,8 @@ def map_guardian_event_type_to_category(event_type):
 
     if event_type in (
         "guardian_warning_added",
-        "guardian_warnings_reset"
+        "guardian_warnings_reset",
+        "guardian_forbidden_word_detected"
     ):
 
         return "warnings"
@@ -834,6 +836,474 @@ async def process_guardian_anti_links_message(update, context):
             pass
 
         return False
+
+
+def normalize_guardian_word(text):
+
+    return " ".join((text or "").strip().lower().split())
+
+
+def list_guardian_forbidden_words(group_id, active_only=True, limit=100):
+
+    filters = ["group_id=%s"]
+    params = [group_id]
+
+    if active_only:
+
+        filters.append("COALESCE(is_active, TRUE)=TRUE")
+
+
+    params.append(limit)
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(f"""
+
+                SELECT id,
+                       group_id,
+                       word,
+                       COALESCE(action, 'log_only'),
+                       COALESCE(is_active, TRUE),
+                       created_by,
+                       created_at
+                FROM guardian_forbidden_words
+                WHERE {" AND ".join(filters)}
+                ORDER BY created_at DESC, id DESC
+                LIMIT %s
+
+            """, params)
+
+            return [
+                {
+                    "id": row[0],
+                    "group_id": row[1],
+                    "word": row[2],
+                    "action": row[3],
+                    "is_active": row[4],
+                    "created_by": row[5],
+                    "created_at": row[6]
+                }
+                for row in cur.fetchall()
+            ]
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        return []
+
+
+def count_guardian_forbidden_words(group_id):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM guardian_forbidden_words
+                WHERE group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+
+            """, (group_id,))
+
+            return cur.fetchone()[0]
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        return 0
+
+
+def add_guardian_forbidden_word(group_id, word, action="log_only", created_by=None):
+
+    normalized_word = normalize_guardian_word(word)
+
+    if not normalized_word or action not in GUARDIAN_FORBIDDEN_WORD_ACTIONS:
+
+        return None
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE guardian_forbidden_words
+            SET is_active=TRUE,
+                action=%s
+            WHERE group_id=%s
+            AND LOWER(word)=%s
+            RETURNING id,
+                      group_id,
+                      word,
+                      COALESCE(action, 'log_only'),
+                      COALESCE(is_active, TRUE),
+                      created_by,
+                      created_at
+
+        """, (
+            action,
+            group_id,
+            normalized_word
+        ))
+
+        row = cur.fetchone()
+
+        if not row:
+
+            cur.execute("""
+
+                INSERT INTO guardian_forbidden_words
+                (
+                    group_id,
+                    word,
+                    action,
+                    is_active,
+                    created_by
+                )
+                VALUES (%s, %s, %s, TRUE, %s)
+                RETURNING id,
+                          group_id,
+                          word,
+                          COALESCE(action, 'log_only'),
+                          COALESCE(is_active, TRUE),
+                          created_by,
+                          created_at
+
+            """, (
+                group_id,
+                normalized_word,
+                action,
+                created_by
+            ))
+
+            row = cur.fetchone()
+
+        conn.commit()
+
+
+    return {
+        "id": row[0],
+        "group_id": row[1],
+        "word": row[2],
+        "action": row[3],
+        "is_active": row[4],
+        "created_by": row[5],
+        "created_at": row[6]
+    } if row else None
+
+
+def deactivate_guardian_forbidden_word(group_id, word_id):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE guardian_forbidden_words
+                SET is_active=FALSE
+                WHERE group_id=%s
+                AND id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+
+            """, (
+                group_id,
+                word_id
+            ))
+
+            updated = cur.rowcount
+            conn.commit()
+
+            return updated
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        return 0
+
+
+def get_guardian_forbidden_words_settings(group_id):
+
+    settings = fetch_guardian_settings(group_id)
+
+    if not settings:
+
+        return {
+            "enabled": False,
+            "action": "disabled"
+        }
+
+
+    action = "log_only"
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(forbidden_words_enabled, FALSE),
+                       COALESCE(forbidden_words_action, 'log_only')
+                FROM guardian_group_settings
+                WHERE group_id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+            if row:
+
+                action = row[1] if row[1] in GUARDIAN_FORBIDDEN_WORD_ACTIONS else "log_only"
+
+                return {
+                    "enabled": bool(row[0]) and action != "disabled",
+                    "action": action
+                }
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+
+    return {
+        "enabled": bool(settings.get("forbidden_words_enabled")),
+        "action": action
+    }
+
+
+def update_guardian_forbidden_words_settings(group_id, enabled=None, action=None):
+
+    if action and action not in GUARDIAN_FORBIDDEN_WORD_ACTIONS:
+
+        return False
+
+
+    updates = []
+    params = []
+
+    if enabled is not None:
+
+        updates.append("forbidden_words_enabled=%s")
+        params.append(bool(enabled))
+
+    if action is not None:
+
+        updates.append("forbidden_words_action=%s")
+        params.append(action)
+
+    if not updates:
+
+        return False
+
+
+    params.append(group_id)
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE guardian_group_settings
+            SET {", ".join(updates)},
+                updated_at=NOW()
+            WHERE group_id=%s
+
+        """, params)
+
+        conn.commit()
+
+
+    return True
+
+
+def detect_guardian_forbidden_words(text, forbidden_words):
+
+    normalized_text = normalize_guardian_word(text)
+    matched_words = []
+
+    if not normalized_text:
+
+        return matched_words
+
+
+    for item in forbidden_words or []:
+
+        word = normalize_guardian_word(item.get("word") if isinstance(item, dict) else item)
+
+        if not word:
+
+            continue
+
+
+        if " " in word:
+
+            if word in normalized_text:
+
+                matched_words.append(word)
+
+        elif re.search(rf"(?<!\w){re.escape(word)}(?!\w)", normalized_text, flags=re.IGNORECASE):
+
+            matched_words.append(word)
+
+
+    return sorted(set(matched_words))
+
+
+async def process_guardian_forbidden_words_message(update, context):
+
+    try:
+
+        message = update.message or update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+
+        if not message or not chat or not user or chat.type not in ("group", "supergroup"):
+
+            return False
+
+
+        text = message.text or message.caption
+
+        if not text:
+
+            return False
+
+
+        telegram_group_id = chat.id
+        group_id = resolve_guardian_group_id_from_telegram_group(telegram_group_id)
+
+        if not group_id:
+
+            return False
+
+
+        settings = fetch_guardian_settings(group_id)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+        if (
+            not settings
+            or not settings.get("is_enabled")
+            or not owner_user_id
+            or not owner_has_feature(owner_user_id, "guardian", group_id=group_id)
+        ):
+
+            return False
+
+
+        forbidden_words_settings = get_guardian_forbidden_words_settings(group_id)
+
+        if not forbidden_words_settings.get("enabled"):
+
+            return False
+
+
+        if should_guardian_ignore_user(group_id, user.id):
+
+            return False
+
+
+        words = list_guardian_forbidden_words(group_id)
+        matched_words = detect_guardian_forbidden_words(text, words)
+
+        if not matched_words:
+
+            return False
+
+
+        action = forbidden_words_settings.get("action") or "log_only"
+        warning_added = False
+
+        if action == "warn":
+
+            add_guardian_warning(
+                group_id,
+                user.id,
+                getattr(context.bot, "id", None),
+                reason="Palabra prohibida",
+                source="forbidden_words"
+            )
+            warning_added = True
+
+
+        await send_guardian_event_log(
+            context,
+            group_id,
+            "guardian_forbidden_word_detected",
+            "Guardian detectó una palabra prohibida.",
+            telegram_group_id=telegram_group_id,
+            severity="warning",
+            actor_user_id=user.id,
+            target_user_id=user.id,
+            metadata={
+                "group_id": group_id,
+                "telegram_group_id": telegram_group_id,
+                "user_id": user.id,
+                "username": user.username,
+                "matched_words": matched_words,
+                "action": action,
+                "warning_added": warning_added
+            }
+        )
+
+        return True
+
+    except Exception as e:
+
+        try:
+
+            await send_guardian_event_log(
+                context,
+                group_id if "group_id" in locals() else None,
+                "guardian_forbidden_word_error",
+                "Error procesando palabras prohibidas Guardian.",
+                severity="warning",
+                metadata={
+                    "error": str(e)[:500]
+                }
+            )
+
+        except Exception:
+
+            pass
+
+        return False
+
+
+async def process_guardian_group_message(update, context):
+
+    await process_guardian_anti_links_message(update, context)
+    await process_guardian_forbidden_words_message(update, context)
+    return False
 
 
 def truncate_guardian_value(value, limit=500):

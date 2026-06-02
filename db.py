@@ -1756,6 +1756,8 @@ def create_tables():
 
             forbidden_words_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 
+            forbidden_words_action TEXT NOT NULL DEFAULT 'log_only',
+
             night_mode_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 
             warning_limit INTEGER NOT NULL DEFAULT 3,
@@ -1780,6 +1782,8 @@ def create_tables():
             group_id INTEGER NOT NULL,
 
             word TEXT NOT NULL,
+
+            action TEXT NOT NULL DEFAULT 'log_only',
 
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
 
@@ -1922,6 +1926,7 @@ def create_tables():
             ("anti_links_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("anti_links_action", "TEXT NOT NULL DEFAULT 'log_only'"),
             ("forbidden_words_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("forbidden_words_action", "TEXT NOT NULL DEFAULT 'log_only'"),
             ("night_mode_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("warning_limit", "INTEGER NOT NULL DEFAULT 3"),
             ("action_mode", "TEXT NOT NULL DEFAULT 'log_only'"),
@@ -1939,6 +1944,24 @@ def create_tables():
 
                 migration_print(
                     f"Error añadiendo columna guardian_group_settings.{column_name}: {e}",
+                    "errors"
+                )
+
+
+        for column_name, column_sql in [
+            ("action", "TEXT NOT NULL DEFAULT 'log_only'")
+        ]:
+
+            try:
+
+                cur.execute(
+                    f"ALTER TABLE guardian_forbidden_words ADD COLUMN IF NOT EXISTS {column_name} {column_sql}"
+                )
+
+            except Exception as e:
+
+                migration_print(
+                    f"Error añadiendo columna guardian_forbidden_words.{column_name}: {e}",
                     "errors"
                 )
 
