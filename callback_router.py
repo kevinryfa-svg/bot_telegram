@@ -149,6 +149,7 @@ from guardian_service import (
     ensure_guardian_settings,
     fetch_guardian_settings,
     record_guardian_log_event,
+    send_guardian_event_log,
     send_guardian_test_log,
     update_guardian_log_channel
 )
@@ -11912,6 +11913,24 @@ async def grant_group_user_promo_access(context, chat_id, telegram_user, promo_r
         }
     )
 
+    await send_guardian_event_log(
+        context,
+        group_id,
+        "guardian_group_code_redeemed",
+        "Código promocional de grupo canjeado.",
+        telegram_group_id=telegram_group_id,
+        severity="info",
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        metadata={
+            "user_id": user_id,
+            "code_id": code_id,
+            "is_permanent": is_permanent,
+            "duration_days": duration_days,
+            "expiration": expiration
+        }
+    )
+
     log_user_event_by_ids(
         user_id,
         "code_redeemed",
@@ -17823,6 +17842,21 @@ async def send_recovered_community_access_link(context, group_id, target_user_id
         metadata={
             "source": result.get("source"),
             "invite_link": mask_invite_link(invite_link)
+        }
+    )
+
+    await send_guardian_event_log(
+        context,
+        group_id,
+        "guardian_access_link_recovered",
+        "Link de acceso reenviado a usuario activo.",
+        severity="info",
+        actor_user_id=actor_user_id,
+        target_user_id=target_user_id,
+        metadata={
+            "target_user_id": target_user_id,
+            "source": result.get("source"),
+            "is_free": is_free
         }
     )
 
@@ -38810,6 +38844,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "failed_rate_limited": failed_rate_limited,
                 "stopped_by_rate_limit": stopped_by_rate_limit,
                 "retry_after": retry_after,
+                "skipped_by_limit": skipped_by_limit
+            }
+        )
+
+        await send_guardian_event_log(
+            context,
+            group_id,
+            "guardian_access_links_bulk_completed",
+            "Reenvío masivo de links de acceso terminado.",
+            severity="info" if not link_generation_failed_count else "warning",
+            actor_user_id=user_id,
+            metadata={
+                "total": len(active_rows),
+                "limit": limit,
+                "link_reused_count": link_reused_count,
+                "link_created_count": link_created_count,
+                "sent_count": sent_count,
+                "dm_failed_count": failed_dm_count,
+                "link_generation_failed_count": link_generation_failed_count,
+                "failed_rate_limited": failed_rate_limited,
+                "stopped_by_rate_limit": stopped_by_rate_limit,
                 "skipped_by_limit": skipped_by_limit
             }
         )

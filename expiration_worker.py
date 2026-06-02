@@ -5,6 +5,7 @@ from functools import partial
 
 from bot_config import TOKEN, ADMIN_ID
 from db import conn
+from guardian_service import send_guardian_event_log_sync
 from invite_link_service import revoke_telegram_invite_link
 from notification_service import send_telegram_message
 from payment_access_service import get_user_group_access_state
@@ -328,6 +329,21 @@ def check_expirations():
                             f"⛔ Usuario expirado eliminado\n\n"
                             f"User ID: {user_id}\n"
                             f"Grupo ID: {group_id}"
+                        )
+
+                        send_guardian_event_log_sync(
+                            group_id,
+                            "guardian_access_expired",
+                            "Usuario expirado procesado por el worker.",
+                            telegram_group_id=telegram_group_id,
+                            severity="warning",
+                            actor_user_id=user_id,
+                            target_user_id=user_id,
+                            metadata={
+                                "user_id": user_id,
+                                "expiration": expiration,
+                                "subscription_active": False
+                            }
                         )
 
 
