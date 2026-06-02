@@ -11,6 +11,7 @@ from telegram.ext import ContextTypes
 from audit_log_service import log_event
 from bot_config import TOKEN, ADMIN_ID
 from db import conn
+from guardian_service import send_guardian_event_log
 from invite_link_service import mask_invite_link
 from message_templates import unauthorized_access_detected_text
 from payment_access_service import get_user_group_access_state
@@ -599,6 +600,23 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         }
                     )
 
+                    await send_guardian_event_log(
+                        context,
+                        group_id,
+                        "guardian_user_join_allowed",
+                        "Entrada permitida por link autorizado de publicidad.",
+                        telegram_group_id=telegram_group_id,
+                        severity="info",
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "access_type": "publicity_invite"
+                        }
+                    )
+
                     await send_publicity_invite_welcome(
                         update,
                         context,
@@ -634,6 +652,24 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "username": username,
                             "first_name": first_name,
                             "invite_link_present": invite_link_used is not None,
+                            "access_saved": free_access_saved
+                        }
+                    )
+
+                    await send_guardian_event_log(
+                        context,
+                        group_id,
+                        "guardian_user_join_allowed",
+                        "Entrada permitida en comunidad gratuita.",
+                        telegram_group_id=telegram_group_id,
+                        severity="info" if free_access_saved else "warning",
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "access_type": "free_community",
                             "access_saved": free_access_saved
                         }
                     )
@@ -776,6 +812,25 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             }
                         )
 
+                        await send_guardian_event_log(
+                            context,
+                            group_id,
+                            "guardian_user_join_allowed",
+                            "Entrada permitida por estado agregado de acceso.",
+                            telegram_group_id=telegram_group_id,
+                            severity="info",
+                            actor_user_id=user_id,
+                            target_user_id=user_id,
+                            metadata={
+                                "user_id": user_id,
+                                "username": username,
+                                "first_name": first_name,
+                                "access_type": access_state.get("access_source"),
+                                "subscription_status": access_state.get("subscription_status"),
+                                "reason": access_state.get("reason")
+                            }
+                        )
+
                         continue
 
 
@@ -814,6 +869,27 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "subscription_active": subscription_active,
                             "link_is_valid": link_is_valid,
                             "invite_link_present": invite_link_used is not None
+                        }
+                    )
+
+                    await send_guardian_event_log(
+                        context,
+                        group_id,
+                        "guardian_user_join_blocked",
+                        "Acceso no autorizado detectado. Se mantuvo el comportamiento actual del access guard.",
+                        telegram_group_id=telegram_group_id,
+                        severity="warning",
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "has_user_row": user_row is not None,
+                            "subscription_active": subscription_active,
+                            "link_is_valid": link_is_valid,
+                            "invite_link_present": invite_link_used is not None,
+                            "invite_link_masked": mask_invite_link(invite_link_used)
                         }
                     )
 
@@ -930,6 +1006,24 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         }
                     )
 
+                    await send_guardian_event_log(
+                        context,
+                        group_id,
+                        "guardian_user_join_allowed",
+                        "Entrada permitida por pago/acceso activo aunque faltaba link registrado.",
+                        telegram_group_id=telegram_group_id,
+                        severity="warning",
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "access_type": "active_payment_fallback",
+                            "invite_link_present": invite_link_used is not None
+                        }
+                    )
+
 
                 if invite_row:
 
@@ -956,6 +1050,23 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         actor_user_id=user_id,
                         target_user_id=user_id,
                         message="Usuario entró con link registrado válido."
+                    )
+
+                    await send_guardian_event_log(
+                        context,
+                        group_id,
+                        "guardian_user_join_allowed",
+                        "Usuario entró con link registrado válido.",
+                        telegram_group_id=telegram_group_id,
+                        severity="info",
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "access_type": "registered_invite_link"
+                        }
                     )
 
 
@@ -992,6 +1103,24 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         actor_user_id=user_id,
                         target_user_id=user_id,
                         message="Usuario expulsado por acceso expirado."
+                    )
+
+                    await send_guardian_event_log(
+                        context,
+                        group_id,
+                        "guardian_user_join_blocked",
+                        "Usuario expulsado por acceso expirado.",
+                        telegram_group_id=telegram_group_id,
+                        severity="warning",
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        metadata={
+                            "user_id": user_id,
+                            "username": username,
+                            "first_name": first_name,
+                            "access_type": "expired",
+                            "expiration": expiration
+                        }
                     )
 
 

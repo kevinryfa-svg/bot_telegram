@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from audit_log_service import log_event
 from bot_config import ADMIN_ID, TOKEN
 from db import conn
+from guardian_service import send_guardian_event_log_sync
 from group_service import format_community_kind, normalize_community_type
 from invite_link_service import create_telegram_invite_link
 from notification_service import notify_super_admins, send_telegram_message
@@ -1141,6 +1142,26 @@ def grant_group_access_after_payment(
             }
         )
 
+        send_guardian_event_log_sync(
+            group_id,
+            "guardian_payment_invite_link_failed",
+            "Pago confirmado con acceso local activo, pero falló la creación del invite link.",
+            telegram_group_id=telegram_group_id,
+            severity="warning",
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            metadata={
+                "provider": provider,
+                "user_id": user_id,
+                "plan_id": plan_id,
+                "plan_name": plan_name,
+                "expiration": expiration,
+                "transaction_id": str(transaction_id or "")[:16],
+                "access_recorded": True,
+                "invite_link_ok": False
+            }
+        )
+
         return {
             "ok": True,
             "reason": "invite_link_failed",
@@ -1296,6 +1317,28 @@ def grant_group_access_after_payment(
             "amount": amount,
             "currency": currency,
             "expiration": expiration,
+            "invite_link_ok": bool(link),
+            "invite_link_saved": link_saved
+        }
+    )
+
+    send_guardian_event_log_sync(
+        group_id,
+        "guardian_payment_confirmed",
+        "Pago confirmado y acceso local activado.",
+        telegram_group_id=telegram_group_id,
+        severity="info",
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        metadata={
+            "provider": provider,
+            "user_id": user_id,
+            "plan_id": plan_id,
+            "plan_name": plan_name,
+            "amount": amount,
+            "currency": currency,
+            "expiration": expiration,
+            "transaction_id": str(transaction_id or "")[:16],
             "invite_link_ok": bool(link),
             "invite_link_saved": link_saved
         }

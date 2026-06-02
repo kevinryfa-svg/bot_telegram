@@ -1,7 +1,9 @@
 import json
 from datetime import datetime
 
+from bot_config import TOKEN
 from db import conn
+from notification_service import send_telegram_message
 
 
 GUARDIAN_DEFAULT_ACTION_MODE = "log_only"
@@ -93,6 +95,252 @@ def fetch_guardian_settings(group_id):
         return row_to_guardian_settings(cur.fetchone())
 
 
+def is_guardian_log_available(group_id):
+
+    settings = fetch_guardian_settings(group_id)
+
+    return bool(
+        settings
+        and settings.get("is_enabled")
+        and settings.get("log_channel_id")
+    )
+
+
+def truncate_guardian_value(value, limit=500):
+
+    if value is None:
+
+        return None
+
+
+    text = str(value)
+
+    if len(text) <= limit:
+
+        return text
+
+
+    return text[:limit] + "..."
+
+
+def sanitize_guardian_metadata(metadata):
+
+    safe = {}
+
+    for key, value in (metadata or {}).items():
+
+        key_text = str(key)
+        lowered = key_text.lower()
+
+        sensitive_fragments = (
+            "token",
+            "secret",
+            "password",
+            "invite",
+            "link",
+            "url",
+            "checkout",
+            "payment",
+            "authorization",
+            "approval"
+        )
+
+        if any(fragment in lowered for fragment in sensitive_fragments):
+
+            safe[key_text] = "[hidden]"
+            continue
+
+
+        if isinstance(value, dict):
+
+            safe[key_text] = sanitize_guardian_metadata(value)
+
+        elif isinstance(value, (list, tuple)):
+
+            safe[key_text] = [
+                sanitize_guardian_metadata(item)
+                if isinstance(item, dict)
+                else truncate_guardian_value(item, limit=200)
+                for item in value[:20]
+            ]
+
+        elif isinstance(value, (datetime,)):
+
+            safe[key_text] = value.isoformat()
+
+        else:
+
+            safe[key_text] = truncate_guardian_value(value)
+
+
+    return safe
+
+
+def build_guardian_event_log_text(event_type, message, metadata=None):
+
+    lines = [
+        "🛡 Guardian",
+        "",
+        f"Evento: {event_type}",
+        f"Detalle: {message or '-'}"
+    ]
+
+    safe_metadata = sanitize_guardian_metadata(metadata)
+
+    if safe_metadata:
+
+        lines.append("")
+        lines.append("Datos:")
+
+        for key, value in safe_metadata.items():
+
+            lines.append(f"- {key}: {value}")
+
+
+    return "\n".join(lines)[:3500]
+
+
+def record_guardian_delivery_failure(group_id, event_type, error, metadata=None):
+
+    try:
+
+        record_guardian_log_event(
+            group_id,
+            "guardian_channel_delivery_failed",
+            severity="warning",
+            message="No se pudo enviar un evento Guardian al canal configurado.",
+            metadata={
+                "source_event_type": event_type,
+                "error": str(error)[:500],
+                **sanitize_guardian_metadata(metadata or {})
+            }
+        )
+
+    except Exception:
+
+        pass
+
+
+async def send_guardian_event_log(
+    context_or_bot,
+    group_id,
+    event_type,
+    message,
+    metadata=None,
+    telegram_group_id=None,
+    severity="info",
+    actor_user_id=None,
+    target_user_id=None
+):
+
+    try:
+
+        settings = fetch_guardian_settings(group_id)
+
+        if not settings or not settings.get("is_enabled") or not settings.get("log_channel_id"):
+
+            return False
+
+
+        safe_metadata = sanitize_guardian_metadata(metadata)
+
+        record_guardian_log_event(
+            group_id,
+            event_type,
+            telegram_group_id=telegram_group_id or settings.get("telegram_group_id"),
+            severity=severity,
+            actor_user_id=actor_user_id,
+            target_user_id=target_user_id,
+            message=message,
+            metadata=safe_metadata
+        )
+
+        bot = getattr(context_or_bot, "bot", context_or_bot)
+
+        await bot.send_message(
+            chat_id=settings.get("log_channel_id"),
+            text=build_guardian_event_log_text(event_type, message, safe_metadata)
+        )
+
+        return True
+
+    except Exception as e:
+
+        record_guardian_delivery_failure(
+            group_id,
+            event_type,
+            e,
+            metadata=metadata
+        )
+
+        return False
+
+
+def send_guardian_event_log_sync(
+    group_id,
+    event_type,
+    message,
+    metadata=None,
+    telegram_group_id=None,
+    severity="info",
+    actor_user_id=None,
+    target_user_id=None
+):
+
+    try:
+
+        settings = fetch_guardian_settings(group_id)
+
+        if not settings or not settings.get("is_enabled") or not settings.get("log_channel_id"):
+
+            return False
+
+
+        safe_metadata = sanitize_guardian_metadata(metadata)
+
+        record_guardian_log_event(
+            group_id,
+            event_type,
+            telegram_group_id=telegram_group_id or settings.get("telegram_group_id"),
+            severity=severity,
+            actor_user_id=actor_user_id,
+            target_user_id=target_user_id,
+            message=message,
+            metadata=safe_metadata
+        )
+
+        response = send_telegram_message(
+            TOKEN,
+            settings.get("log_channel_id"),
+            build_guardian_event_log_text(event_type, message, safe_metadata)
+        )
+
+        if not response or not response.get("ok"):
+
+            record_guardian_delivery_failure(
+                group_id,
+                event_type,
+                (response or {}).get("description") or response,
+                metadata=metadata
+            )
+
+            return False
+
+
+        return True
+
+    except Exception as e:
+
+        record_guardian_delivery_failure(
+            group_id,
+            event_type,
+            e,
+            metadata=metadata
+        )
+
+        return False
+
+
 def update_guardian_log_channel(group_id, channel_id, channel_title=None, actor_user_id=None):
 
     with conn.cursor() as cur:
@@ -168,7 +416,7 @@ def record_guardian_log_event(
     metadata=None
 ):
 
-    metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
+    metadata_json = json.dumps(metadata or {}, ensure_ascii=False, default=str)
 
     with conn.cursor() as cur:
 
@@ -185,7 +433,7 @@ def record_guardian_log_event(
                 message,
                 metadata_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             RETURNING id
 
         """, (
