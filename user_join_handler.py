@@ -16,6 +16,7 @@ from invite_link_service import mask_invite_link
 from message_templates import unauthorized_access_detected_text
 from payment_access_service import get_user_group_access_state
 from publicity_invite_link_service import (
+    has_active_publicity_invite_links_for_group,
     is_active_publicity_invite_link,
     normalize_telegram_invite_url
 )
@@ -451,6 +452,41 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 normalized_publicity_invite_link = normalize_telegram_invite_url(invite_link_used)
                 publicity_link_matched = False
                 publicity_check_reason = "no_invite_link_reported" if not invite_link_used else "invite_link_not_authorized"
+                publicity_group_enabled = False
+
+
+                try:
+
+                    publicity_group_enabled = has_active_publicity_invite_links_for_group(
+                        group_id,
+                        telegram_group_id
+                    )
+
+                except Exception as e:
+
+                    try:
+
+                        conn.rollback()
+
+                    except Exception:
+
+                        pass
+
+                    publicity_group_enabled = False
+                    log_event(
+                        "publicity_invite_group_check_error",
+                        category="access",
+                        severity="warning",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="No se pudo comprobar si el grupo tiene publicidad activa.",
+                        metadata={
+                            "error": str(e)[:300]
+                        }
+                    )
 
 
                 if invite_link_used:
@@ -513,6 +549,7 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "invite_link": mask_invite_link(invite_link_used),
                         "normalized_invite_link": mask_invite_link(normalized_publicity_invite_link),
                         "publicity_link_matched": publicity_link_matched,
+                        "publicity_group_enabled": publicity_group_enabled,
                         "reason": publicity_check_reason
                     }
                 )
@@ -614,6 +651,36 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "username": username,
                             "first_name": first_name,
                             "access_type": "publicity_invite"
+                        }
+                    )
+
+                    await send_publicity_invite_welcome(
+                        update,
+                        context,
+                        member,
+                        group_id,
+                        telegram_group_id
+                    )
+
+                    continue
+
+
+                if publicity_group_enabled and not invite_link_used:
+
+                    log_event(
+                        "publicity_group_join_allowed_without_invite_link",
+                        category="access",
+                        severity="warning",
+                        scope="group",
+                        group_id=group_id,
+                        telegram_group_id=telegram_group_id,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        message="Entrada permitida en grupo de publicidad activo aunque Telegram no informó invite_link.",
+                        metadata={
+                            "username": username,
+                            "first_name": first_name,
+                            "reason": "publicity_group_no_invite_link_reported"
                         }
                     )
 

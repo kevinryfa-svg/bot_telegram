@@ -212,6 +212,32 @@ def is_active_publicity_invite_link(invite_link, telegram_group_id):
         return cur.fetchone() is not None
 
 
+def has_active_publicity_invite_links_for_group(group_id, telegram_group_id):
+
+    if not group_id or not telegram_group_id:
+
+        return False
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT 1
+            FROM publicity_group_invite_links
+            WHERE group_id=%s
+            AND telegram_group_id=%s
+            AND COALESCE(is_active, TRUE)=TRUE
+            LIMIT 1
+
+        """, (
+            group_id,
+            telegram_group_id
+        ))
+
+        return cur.fetchone() is not None
+
+
 def save_publicity_invite_link(group_id, telegram_group_id, invite_link, created_by):
 
     with conn.cursor() as cur:
