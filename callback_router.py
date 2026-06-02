@@ -15997,7 +15997,7 @@ def user_can_view_community_users(user_id, group_id):
         return True
 
 
-    return user_has_group_permission_any(user_id, group_id, ["can_manage_users", "can_manage_groups"])
+    return user_has_group_permission_any(user_id, group_id, ["can_view_users", "can_manage_users", "can_manage_groups"])
 
 
 def user_can_manage_community_user_access(user_id, group_id):

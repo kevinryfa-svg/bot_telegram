@@ -209,7 +209,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_groups = get_scoped_admin_groups(
             context,
             update.effective_user.id,
-            ["can_manage_users"]
+            ["can_kick_users", "can_manage_users"]
         )
 
 
@@ -401,7 +401,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_groups = get_scoped_admin_groups(
             context,
             update.effective_user.id,
-            ["can_manage_users"]
+            ["can_ban_users", "can_manage_users"]
         )
 
 
@@ -624,7 +624,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_groups = get_scoped_admin_groups(
             context,
             update.effective_user.id,
-            ["can_manage_users"]
+            ["can_unban_users", "can_manage_users"]
         )
 
 
