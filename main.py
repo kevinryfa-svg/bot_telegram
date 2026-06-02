@@ -89,6 +89,7 @@ from group_registration_handler import (
     handle_group_backup_media,
     handle_group_backup_text
 )
+from guardian_service import process_guardian_anti_links_message
 from user_join_handler import detect_user_join
 from user_activity_logger import log_user_event
 from ai_handler import (
@@ -2292,6 +2293,14 @@ def main():
             filters.LOCATION,
             receive_location_gate
         )
+    )
+
+    telegram_app.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & (filters.TEXT | filters.CaptionRegex(r".+")),
+            process_guardian_anti_links_message
+        ),
+        group=-1
     )
 
     telegram_app.add_handler(

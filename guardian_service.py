@@ -1,12 +1,24 @@
 import json
+import re
 from datetime import datetime
+from urllib.parse import urlparse
 
 from bot_config import TOKEN
 from db import conn
 from notification_service import send_telegram_message
+from owner_addon_service import owner_has_feature
+from rbac_helpers import (
+    get_group_owner_user_id,
+    has_permission,
+    is_super_admin
+)
 
 
 GUARDIAN_DEFAULT_ACTION_MODE = "log_only"
+GUARDIAN_ANTI_LINK_ACTIONS = ("disabled", "log_only", "warn")
+GUARDIAN_URL_RE = re.compile(
+    r"(?i)\b((?:https?://|www\.|t\.me/|telegram\.me/)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+\S*)"
+)
 
 GUARDIAN_LOG_EVENT_CATEGORIES = [
     {
@@ -109,7 +121,8 @@ def map_guardian_event_type_to_category(event_type):
 
     if event_type in (
         "guardian_access_link_recovered",
-        "guardian_access_links_bulk_completed"
+        "guardian_access_links_bulk_completed",
+        "guardian_anti_link_detected"
     ):
 
         return "links"
@@ -338,6 +351,489 @@ def set_guardian_log_event_enabled(group_id, category, enabled):
 
 
     return True
+
+
+def extract_urls_from_text(text):
+
+    if not text:
+
+        return []
+
+
+    urls = []
+
+    for match in GUARDIAN_URL_RE.findall(text):
+
+        candidate = (match or "").strip(".,;:!?)>]}")
+
+        if candidate and "." in candidate:
+
+            urls.append(candidate)
+
+
+    return urls
+
+
+def normalize_domain_from_url(url):
+
+    if not url:
+
+        return None
+
+
+    value = str(url).strip().lower()
+
+    if value.startswith("www."):
+
+        value = "https://" + value
+
+    elif value.startswith(("t.me/", "telegram.me/")):
+
+        value = "https://" + value
+
+    elif "://" not in value:
+
+        value = "https://" + value
+
+
+    try:
+
+        parsed = urlparse(value)
+        domain = (parsed.netloc or parsed.path.split("/", 1)[0]).lower()
+
+    except Exception:
+
+        return None
+
+
+    if domain.startswith("www."):
+
+        domain = domain[4:]
+
+
+    return domain or None
+
+
+def resolve_guardian_group_id_from_telegram_group(telegram_group_id):
+
+    if not telegram_group_id:
+
+        return None
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id
+                FROM groups
+                WHERE telegram_group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+                LIMIT 1
+
+            """, (telegram_group_id,))
+
+            row = cur.fetchone()
+
+            return row[0] if row else None
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        return None
+
+
+def is_guardian_link_allowed(group_id, url):
+
+    domain = normalize_domain_from_url(url)
+
+    if not domain:
+
+        return True
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT domain
+                FROM guardian_link_whitelist
+                WHERE group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+
+            """, (group_id,))
+
+            allowed_domains = [
+                (row[0] or "").strip().lower()
+                for row in cur.fetchall()
+                if row and row[0]
+            ]
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        return False
+
+
+    for allowed_domain in allowed_domains:
+
+        if allowed_domain.startswith("www."):
+
+            allowed_domain = allowed_domain[4:]
+
+
+        if domain == allowed_domain or domain.endswith("." + allowed_domain):
+
+            return True
+
+
+    return False
+
+
+def count_guardian_link_whitelist_domains(group_id):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM guardian_link_whitelist
+                WHERE group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+
+            """, (group_id,))
+
+            return cur.fetchone()[0]
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        return 0
+
+
+def list_guardian_link_whitelist_domains(group_id, limit=50):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT domain
+                FROM guardian_link_whitelist
+                WHERE group_id=%s
+                AND COALESCE(is_active, TRUE)=TRUE
+                ORDER BY domain ASC
+                LIMIT %s
+
+            """, (
+                group_id,
+                limit
+            ))
+
+            return [row[0] for row in cur.fetchall() if row and row[0]]
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        return []
+
+
+def get_guardian_anti_links_settings(group_id):
+
+    settings = fetch_guardian_settings(group_id)
+
+    if not settings:
+
+        return {
+            "enabled": False,
+            "action": "disabled"
+        }
+
+
+    action = "log_only"
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(anti_links_enabled, FALSE),
+                       COALESCE(anti_links_action, 'log_only')
+                FROM guardian_group_settings
+                WHERE group_id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+            if row:
+
+                action = row[1] if row[1] in GUARDIAN_ANTI_LINK_ACTIONS else "log_only"
+
+                return {
+                    "enabled": bool(row[0]) and action != "disabled",
+                    "action": action
+                }
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+
+    return {
+        "enabled": bool(settings.get("anti_links_enabled")),
+        "action": action
+    }
+
+
+def update_guardian_anti_links_settings(group_id, enabled=None, action=None):
+
+    if action and action not in GUARDIAN_ANTI_LINK_ACTIONS:
+
+        return False
+
+
+    updates = []
+    params = []
+
+    if enabled is not None:
+
+        updates.append("anti_links_enabled=%s")
+        params.append(bool(enabled))
+
+    if action is not None:
+
+        updates.append("anti_links_action=%s")
+        params.append(action)
+
+    if not updates:
+
+        return False
+
+
+    params.append(group_id)
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE guardian_group_settings
+            SET {", ".join(updates)},
+                updated_at=NOW()
+            WHERE group_id=%s
+
+        """, params)
+
+        conn.commit()
+
+
+    return True
+
+
+def should_guardian_ignore_user(group_id, user_id):
+
+    if not group_id or not user_id:
+
+        return True
+
+
+    try:
+
+        if is_super_admin(user_id):
+
+            return True
+
+
+        owner_user_id = get_group_owner_user_id(group_id)
+
+        if owner_user_id and int(owner_user_id) == int(user_id):
+
+            return True
+
+
+        return (
+            has_permission(user_id, group_id, "can_manage_groups")
+            or has_permission(user_id, group_id, "can_manage_users")
+        )
+
+    except Exception:
+
+        return False
+
+
+async def process_guardian_anti_links_message(update, context):
+
+    try:
+
+        message = update.message or update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+
+        if not message or not chat or not user or chat.type not in ("group", "supergroup"):
+
+            return False
+
+
+        text = message.text or message.caption
+        urls = extract_urls_from_text(text)
+
+        if not urls:
+
+            return False
+
+
+        telegram_group_id = chat.id
+        group_id = resolve_guardian_group_id_from_telegram_group(telegram_group_id)
+
+        if not group_id:
+
+            return False
+
+
+        settings = fetch_guardian_settings(group_id)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+        if (
+            not settings
+            or not settings.get("is_enabled")
+            or not owner_user_id
+            or not owner_has_feature(owner_user_id, "guardian", group_id=group_id)
+        ):
+
+            return False
+
+
+        anti_links_settings = get_guardian_anti_links_settings(group_id)
+
+        if not anti_links_settings.get("enabled"):
+
+            return False
+
+
+        if should_guardian_ignore_user(group_id, user.id):
+
+            return False
+
+
+        forbidden_urls = [
+            url
+            for url in urls
+            if not is_guardian_link_allowed(group_id, url)
+        ]
+
+        if not forbidden_urls:
+
+            return False
+
+
+        detected_domains = sorted({
+            domain
+            for domain in (
+                normalize_domain_from_url(url)
+                for url in forbidden_urls
+            )
+            if domain
+        })
+        action = anti_links_settings.get("action") or "log_only"
+        warning_added = False
+
+        if action == "warn":
+
+            add_guardian_warning(
+                group_id,
+                user.id,
+                getattr(context.bot, "id", None),
+                reason="Link no permitido",
+                source="anti_links"
+            )
+            warning_added = True
+
+
+        await send_guardian_event_log(
+            context,
+            group_id,
+            "guardian_anti_link_detected",
+            "Guardian detectó un link no permitido.",
+            telegram_group_id=telegram_group_id,
+            severity="warning",
+            actor_user_id=user.id,
+            target_user_id=user.id,
+            metadata={
+                "group_id": group_id,
+                "telegram_group_id": telegram_group_id,
+                "user_id": user.id,
+                "username": user.username,
+                "detected_domains": detected_domains,
+                "action": action,
+                "warning_added": warning_added
+            }
+        )
+
+        return True
+
+    except Exception as e:
+
+        try:
+
+            await send_guardian_event_log(
+                context,
+                group_id if "group_id" in locals() else None,
+                "guardian_anti_link_error",
+                "Error procesando anti-links Guardian.",
+                severity="warning",
+                metadata={
+                    "error": str(e)[:500]
+                }
+            )
+
+        except Exception:
+
+            pass
+
+        return False
 
 
 def truncate_guardian_value(value, limit=500):
