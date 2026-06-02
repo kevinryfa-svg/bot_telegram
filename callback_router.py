@@ -17279,6 +17279,22 @@ def recover_or_create_community_access_link(group_id, target_user_id):
 
     access_state = get_user_group_access_state(target_user_id, group_id)
 
+    if (
+        not access_state.get("has_active_access")
+        and access_state.get("subscription_status") == "paid_without_access_record"
+    ):
+
+        log_community_link_recover_generation_failed(
+            group_id,
+            telegram_group_id,
+            target_user_id,
+            "paid_without_access_record",
+            access_state=access_state
+        )
+
+        return {"ok": False, "reason": "paid_without_access_record", "access_state": access_state}
+
+
     if not access_state.get("has_active_access"):
 
         log_community_link_recover_generation_failed(
@@ -38145,6 +38161,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         failed_telegram_api = 0
         failed_db_save = 0
         failed_other = 0
+        failed_paid_without_access_record = 0
         failed_rate_limited = 0
         stopped_by_rate_limit = False
         retry_after = None
@@ -38201,6 +38218,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif result.get("reason") in ("no_active_access", "expired_access"):
 
                 no_access_count += 1
+
+            elif result.get("reason") == "paid_without_access_record":
+
+                failed_paid_without_access_record += 1
 
             else:
 
@@ -38260,6 +38281,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "failed_telegram_api": failed_telegram_api,
                 "failed_db_save": failed_db_save,
                 "failed_other": failed_other,
+                "failed_paid_without_access_record": failed_paid_without_access_record,
                 "failed_rate_limited": failed_rate_limited,
                 "stopped_by_rate_limit": stopped_by_rate_limit,
                 "retry_after": retry_after,
@@ -38303,6 +38325,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"- Telegram API: {failed_telegram_api}\n"
                 f"- Guardado DB: {failed_db_save}\n"
                 f"- Otros errores: {failed_other}\n"
+                f"- Pagos confirmados sin registro local: {failed_paid_without_access_record}\n"
                 f"- Rate limit Telegram: {failed_rate_limited}\n"
                 f"Omitidos sin acceso activo: {no_access_count}\n"
                 f"Omitidos por límite de seguridad: {skipped_by_limit}"
