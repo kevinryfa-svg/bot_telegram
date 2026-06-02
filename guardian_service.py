@@ -341,6 +341,207 @@ def send_guardian_event_log_sync(
         return False
 
 
+def row_to_guardian_warning(row):
+
+    if not row:
+
+        return None
+
+
+    return {
+        "id": row[0],
+        "group_id": row[1],
+        "user_id": row[2],
+        "reason": row[3],
+        "source": row[4],
+        "is_active": row[5],
+        "created_by": row[6],
+        "created_at": row[7]
+    }
+
+
+def guardian_warning_fields():
+
+    return "id, group_id, user_id, reason, source, is_active, created_by, created_at"
+
+
+def add_guardian_warning(group_id, target_user_id, warned_by_user_id, reason=None, source="manual"):
+
+    reason_text = reason or "Warning manual desde panel"
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            INSERT INTO guardian_warnings
+            (
+                group_id,
+                user_id,
+                reason,
+                source,
+                is_active,
+                created_by
+            )
+            VALUES (%s, %s, %s, %s, TRUE, %s)
+            RETURNING {guardian_warning_fields()}
+
+        """, (
+            group_id,
+            target_user_id,
+            reason_text,
+            source,
+            warned_by_user_id
+        ))
+
+        row = cur.fetchone()
+        conn.commit()
+
+
+    active_count = count_guardian_warnings(group_id, target_user_id)
+
+    send_guardian_event_log_sync(
+        group_id,
+        "guardian_warning_added",
+        "Warning manual añadido.",
+        severity="warning",
+        actor_user_id=warned_by_user_id,
+        target_user_id=target_user_id,
+        metadata={
+            "group_id": group_id,
+            "target_user_id": target_user_id,
+            "warned_by_user_id": warned_by_user_id,
+            "reason": reason_text,
+            "active_warning_count": active_count
+        }
+    )
+
+    return row_to_guardian_warning(row)
+
+
+def list_guardian_warnings(group_id, target_user_id=None, limit=20):
+
+    filters = ["group_id=%s"]
+    params = [group_id]
+
+    if target_user_id is not None:
+
+        filters.append("user_id=%s")
+        params.append(target_user_id)
+
+
+    params.append(limit)
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT {guardian_warning_fields()}
+            FROM guardian_warnings
+            WHERE {" AND ".join(filters)}
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+
+        """, params)
+
+        return [
+            row_to_guardian_warning(row)
+            for row in cur.fetchall()
+        ]
+
+
+def count_guardian_warnings(group_id, target_user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT COUNT(*)
+            FROM guardian_warnings
+            WHERE group_id=%s
+            AND user_id=%s
+            AND COALESCE(is_active, TRUE)=TRUE
+
+        """, (
+            group_id,
+            target_user_id
+        ))
+
+        return cur.fetchone()[0]
+
+
+def reset_guardian_warnings(group_id, target_user_id, reset_by_user_id, reason=None):
+
+    reason_text = reason or "Reset manual desde panel"
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE guardian_warnings
+            SET is_active=FALSE
+            WHERE group_id=%s
+            AND user_id=%s
+            AND COALESCE(is_active, TRUE)=TRUE
+
+        """, (
+            group_id,
+            target_user_id
+        ))
+
+        reset_count = cur.rowcount
+        conn.commit()
+
+
+    send_guardian_event_log_sync(
+        group_id,
+        "guardian_warnings_reset",
+        "Warnings manuales reseteados.",
+        severity="warning",
+        actor_user_id=reset_by_user_id,
+        target_user_id=target_user_id,
+        metadata={
+            "group_id": group_id,
+            "target_user_id": target_user_id,
+            "reset_by_user_id": reset_by_user_id,
+            "reset_count": reset_count,
+            "reason": reason_text
+        }
+    )
+
+    return reset_count
+
+
+def list_guardian_warning_summary(group_id, limit=20):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT user_id,
+                   COUNT(*) AS active_warnings,
+                   MAX(created_at) AS last_warning_at
+            FROM guardian_warnings
+            WHERE group_id=%s
+            AND COALESCE(is_active, TRUE)=TRUE
+            GROUP BY user_id
+            ORDER BY active_warnings DESC, last_warning_at DESC
+            LIMIT %s
+
+        """, (
+            group_id,
+            limit
+        ))
+
+        return [
+            {
+                "user_id": row[0],
+                "active_warnings": row[1],
+                "last_warning_at": row[2]
+            }
+            for row in cur.fetchall()
+        ]
+
+
 def update_guardian_log_channel(group_id, channel_id, channel_title=None, actor_user_id=None):
 
     with conn.cursor() as cur:
