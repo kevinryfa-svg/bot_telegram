@@ -41777,9 +41777,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        await query.message.reply_text(
-            "⚠️ Esta acción todavía no tiene un flujo seguro disponible.",
-            reply_markup=build_owner_panel_nav_keyboard()
+        log_event(
+            "owner_panel_placeholder_callback",
+            category="ui",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Callback placeholder del panel owner pulsado.",
+            metadata={"callback_data": data}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "⚠️ Esta acción todavía no tiene un flujo seguro disponible.\n\n"
+                "No se ha modificado ningún dato. Usa las opciones disponibles del panel de comunidad."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return
@@ -43905,8 +43924,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "admin_move_user"
     ):
 
-        await query.message.reply_text(
-            "⚠️ Esta acción todavía no tiene un flujo seguro disponible."
+        log_event(
+            "admin_placeholder_callback",
+            category="ui",
+            severity="info",
+            scope="global",
+            actor_user_id=user_id,
+            message="Callback placeholder admin pulsado.",
+            metadata={"callback_data": data}
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                "⚠️ Esta acción todavía no tiene un flujo seguro disponible.\n\n"
+                "No se ha modificado ningún dato. Vuelve al panel y usa una acción disponible."
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return
