@@ -13,6 +13,7 @@ from bot_config import TOKEN, ADMIN_ID
 from db import conn
 from invite_link_service import mask_invite_link
 from message_templates import unauthorized_access_detected_text
+from payment_access_service import get_user_group_access_state
 from publicity_invite_link_service import (
     is_active_publicity_invite_link,
     normalize_telegram_invite_url
@@ -725,6 +726,57 @@ async def detect_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         or datetime.now() <= expiration
                     )
                 )
+
+                access_state = None
+
+                if not access_is_active:
+
+                    try:
+
+                        access_state = get_user_group_access_state(user_id, group_id)
+
+                    except Exception as e:
+
+                        try:
+
+                            conn.rollback()
+
+                        except Exception:
+
+                            pass
+
+                        print("access_guard_state_check_error:", str(e)[:300])
+                        access_state = None
+
+
+                    if (
+                        access_state
+                        and (
+                            access_state.get("has_active_access")
+                            or access_state.get("subscription_status") == "paid_without_access_record"
+                        )
+                    ):
+
+                        log_event(
+                            "access_guard_allowed_by_access_state",
+                            category="access",
+                            severity="info",
+                            scope="group",
+                            group_id=group_id,
+                            telegram_group_id=telegram_group_id,
+                            actor_user_id=user_id,
+                            target_user_id=user_id,
+                            message="Entrada permitida por estado agregado de acceso.",
+                            metadata={
+                                "username": username,
+                                "first_name": first_name,
+                                "access_source": access_state.get("access_source"),
+                                "subscription_status": access_state.get("subscription_status"),
+                                "reason": access_state.get("reason")
+                            }
+                        )
+
+                        continue
 
 
                 if not access_is_active:
