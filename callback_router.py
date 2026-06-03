@@ -14381,6 +14381,180 @@ def build_admin_guardian_trial_result_keyboard(group_id=None):
     return InlineKeyboardMarkup(keyboard)
 
 
+def fetch_admin_guardian_trial_groups(page=0, page_size=8, query=None):
+
+    page = max(int(page or 0), 0)
+    page_size = max(int(page_size or 8), 1)
+    params = []
+    filters = [
+        "COALESCE(is_active, TRUE)=TRUE",
+        "owner_user_id IS NOT NULL"
+    ]
+
+    query_text = (query or "").strip()
+
+    if query_text:
+
+        search_filters = ["name ILIKE %s"]
+        params.append(f"%{query_text}%")
+
+        if query_text.lstrip("-").isdigit():
+
+            search_filters.append("id=%s")
+            params.append(int(query_text))
+            search_filters.append("telegram_group_id=%s")
+            params.append(int(query_text))
+
+
+        filters.append(f"({' OR '.join(search_filters)})")
+
+
+    params.extend([
+        page_size + 1,
+        page * page_size
+    ])
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            SELECT id,
+                   name,
+                   telegram_group_id,
+                   owner_user_id,
+                   COALESCE(is_active, TRUE)
+            FROM groups
+            WHERE {" AND ".join(filters)}
+            ORDER BY id DESC
+            LIMIT %s OFFSET %s
+
+        """, params)
+
+        rows = cur.fetchall()
+
+
+    return rows[:page_size], len(rows) > page_size
+
+
+def fetch_admin_guardian_trial_group(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   name,
+                   telegram_group_id,
+                   owner_user_id,
+                   COALESCE(is_active, TRUE)
+            FROM groups
+            WHERE id=%s
+            LIMIT 1
+
+        """, (group_id,))
+
+        return cur.fetchone()
+
+
+def build_admin_guardian_trial_groups_text(page=0, query=None):
+
+    query_text = (query or "").strip()
+    lines = [
+        "🎁 Activar Guardian 30 días",
+        "",
+        "Elige el grupo al que quieres activar Guardian."
+    ]
+
+    if query_text:
+
+        lines.extend([
+            "",
+            f"Búsqueda: {query_text}"
+        ])
+
+
+    lines.extend([
+        "",
+        "Solo aparecen grupos activos con owner asignado."
+    ])
+
+    return "\n".join(lines)
+
+
+def build_admin_guardian_trial_groups_keyboard(page=0, query=None):
+
+    rows, has_next = fetch_admin_guardian_trial_groups(page=page, query=query)
+    keyboard = []
+
+    for group_id, name, telegram_group_id, owner_user_id, _is_active in rows:
+
+        label = name or f"Grupo {group_id}"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{label} · #{group_id}",
+                callback_data=f"admin_guardian_trial_group_{group_id}"
+            )
+        ])
+
+
+    nav_row = []
+
+    if page > 0:
+
+        nav_row.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"admin_guardian_trial_groups_{page - 1}"))
+
+    if has_next:
+
+        nav_row.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"admin_guardian_trial_groups_{page + 1}"))
+
+    if nav_row:
+
+        keyboard.append(nav_row)
+
+
+    keyboard.append([InlineKeyboardButton("🔎 Buscar grupo", callback_data="admin_guardian_trial_search")])
+    keyboard.append([InlineKeyboardButton("✍️ Introducir IDs manualmente", callback_data="admin_guardian_trial_manual_input")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_admin_guardian_trial_search_results_text(query):
+
+    return (
+        "🔎 Resultados de búsqueda Guardian\n\n"
+        f"Búsqueda: {(query or '').strip() or '-'}\n\n"
+        "Elige un grupo para activar Guardian 30 días."
+    )
+
+
+def build_admin_guardian_trial_search_results_keyboard(query):
+
+    rows, _has_next = fetch_admin_guardian_trial_groups(page=0, page_size=8, query=query)
+    keyboard = []
+
+    for group_id, name, telegram_group_id, owner_user_id, _is_active in rows:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{name or f'Grupo {group_id}'} · #{group_id}",
+                callback_data=f"admin_guardian_trial_group_{group_id}"
+            )
+        ])
+
+
+    if not keyboard:
+
+        keyboard.append([InlineKeyboardButton("Sin resultados", callback_data="admin_guardian_trial_search")])
+
+
+    keyboard.append([InlineKeyboardButton("🔎 Buscar otra vez", callback_data="admin_guardian_trial_search")])
+    keyboard.append([InlineKeyboardButton("🎁 Ver listado", callback_data="admin_guardian_trial_groups_0")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 def build_owner_addon_product_text(product, group_id):
 
     group = fetch_group_basic_info(group_id)
@@ -14413,10 +14587,12 @@ async def receive_admin_guardian_trial_text(update, context):
 
     user_id = update.effective_user.id if update.effective_user else None
     text = (update.message.text or "").strip() if update.message else ""
+    search_waiting = bool(context.user_data.get("admin_guardian_trial_search_waiting"))
 
     if not is_super_admin(user_id):
 
         context.user_data.pop("admin_guardian_trial_waiting", None)
+        context.user_data.pop("admin_guardian_trial_search_waiting", None)
 
         log_event(
             "admin_guardian_trial_permission_denied",
@@ -14440,10 +14616,23 @@ async def receive_admin_guardian_trial_text(update, context):
     if text.lower() in ("cancelar", "cancel", "salir"):
 
         context.user_data.pop("admin_guardian_trial_waiting", None)
+        context.user_data.pop("admin_guardian_trial_search_waiting", None)
 
         await update.message.reply_text(
             "✅ Activación manual de Guardian cancelada.",
             reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return
+
+
+    if search_waiting:
+
+        context.user_data.pop("admin_guardian_trial_search_waiting", None)
+
+        await update.message.reply_text(
+            build_admin_guardian_trial_search_results_text(text),
+            reply_markup=build_admin_guardian_trial_search_results_keyboard(text)
         )
 
         return
@@ -38174,17 +38363,196 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        context.user_data.pop("admin_guardian_trial_waiting", None)
+        context.user_data.pop("admin_guardian_trial_search_waiting", None)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_admin_guardian_trial_groups_text(page=0),
+            reply_markup=build_admin_guardian_trial_groups_keyboard(page=0)
+        )
+
+        return
+
+
+    if data.startswith("admin_guardian_trial_groups_"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Solo superadmin puede activar Guardian manualmente.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        try:
+
+            page = int(data.replace("admin_guardian_trial_groups_", "", 1))
+
+        except Exception:
+
+            page = 0
+
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_admin_guardian_trial_groups_text(page=page),
+            reply_markup=build_admin_guardian_trial_groups_keyboard(page=page)
+        )
+
+        return
+
+
+    if data == "admin_guardian_trial_search":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Solo superadmin puede activar Guardian manualmente.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data.pop("admin_guardian_trial_waiting", None)
+        context.user_data["admin_guardian_trial_search_waiting"] = True
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🔎 Buscar grupo para Guardian\n\n"
+            "Envía el nombre del grupo, group_id o telegram_group_id.",
+            reply_markup=build_admin_guardian_trial_cancel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_guardian_trial_manual_input":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Solo superadmin puede activar Guardian manualmente.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data.pop("admin_guardian_trial_search_waiting", None)
         context.user_data["admin_guardian_trial_waiting"] = True
 
         await send_clean_message(
             context,
             query.message.chat_id,
-            "🎁 Activar Guardian 30 días\n\n"
+            "✍️ Introducir IDs manualmente\n\n"
             "Envía owner_user_id y group_id separados por espacio.\n\n"
             "Ejemplo:\n"
-            "123456789 1159\n\n"
-            "Solo se activará si el owner indicado es el dueño real del grupo.",
+            "123456789 1159",
             reply_markup=build_admin_guardian_trial_cancel_keyboard()
+        )
+
+        return
+
+
+    if data.startswith("admin_guardian_trial_group_"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Solo superadmin puede activar Guardian manualmente.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        try:
+
+            group_id = int(data.replace("admin_guardian_trial_group_", "", 1))
+
+        except Exception:
+
+            await query.message.reply_text(
+                "⚠️ Grupo no válido.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        group_row = fetch_admin_guardian_trial_group(group_id)
+
+        if not group_row:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⚠️ No he encontrado ese grupo.",
+                reply_markup=build_admin_guardian_trial_groups_keyboard(page=0)
+            )
+
+            return
+
+
+        _group_id, group_name, _telegram_group_id, owner_user_id, is_active = group_row
+
+        if not is_active or not owner_user_id:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⚠️ Este grupo no está activo o no tiene owner asignado.",
+                reply_markup=build_admin_guardian_trial_groups_keyboard(page=0)
+            )
+
+            return
+
+
+        result = activate_owner_addon_manual_trial(
+            owner_user_id,
+            group_id,
+            "guardian",
+            days=30,
+            activated_by_user_id=user_id
+        )
+
+        if not result.get("ok"):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "⚠️ No he podido activar Guardian manualmente.\n\n"
+                f"Motivo: {result.get('reason') or 'unknown'}",
+                reply_markup=build_admin_guardian_trial_groups_keyboard(page=0)
+            )
+
+            return
+
+
+        context.user_data["selected_group_admin"] = group_id
+        context.user_data["selected_owner_group"] = group_id
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Guardian activado 30 días\n\n"
+            f"Grupo: {group_name or f'Grupo {group_id}'}\n"
+            f"Group ID: {group_id}\n"
+            f"Owner ID: {owner_user_id}\n"
+            f"Hasta: {format_commercial_datetime(result.get('current_period_end'))}\n"
+            f"Subscription ID: {result.get('subscription_id')}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛡 Abrir Guardian del grupo", callback_data="owner_panel_guardian")],
+                [InlineKeyboardButton("🎁 Activar otro grupo", callback_data="admin_guardian_trial_groups_0")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
         )
 
         return
@@ -38193,6 +38561,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "admin_guardian_trial_cancel":
 
         context.user_data.pop("admin_guardian_trial_waiting", None)
+        context.user_data.pop("admin_guardian_trial_search_waiting", None)
 
         await send_clean_message(
             context,
