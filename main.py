@@ -89,7 +89,7 @@ from group_registration_handler import (
     handle_group_backup_media,
     handle_group_backup_text
 )
-from guardian_service import process_guardian_anti_links_message
+from guardian_service import process_guardian_group_message
 from user_join_handler import detect_user_join
 from user_activity_logger import log_user_event
 from ai_handler import (
@@ -114,6 +114,7 @@ from callback_router import (
     receive_ad_promo_admin_text,
     receive_commercial_request_chat_message,
     receive_customer_satisfaction_text,
+    receive_guardian_forbidden_word_text,
     receive_user_tracking_search_text,
     receive_guardian_log_channel_forward,
     receive_group_user_promo_code,
@@ -1065,6 +1066,10 @@ async def handle_text(update, context):
 
     if context.user_data.get("guardian_log_channel_group_id"):
         await receive_guardian_log_channel_forward(update, context)
+        return
+
+    if context.user_data.get("guardian_forbidden_word_add_group_id"):
+        await receive_guardian_forbidden_word_text(update, context)
         return
 
     if (
@@ -2298,7 +2303,7 @@ def main():
     telegram_app.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS & (filters.TEXT | filters.CaptionRegex(r".+")),
-            process_guardian_anti_links_message
+            process_guardian_group_message
         ),
         group=-1
     )

@@ -147,14 +147,19 @@ from group_service import (
 )
 from guardian_service import (
     GUARDIAN_LOG_EVENT_CATEGORIES,
+    add_guardian_forbidden_word,
     add_guardian_warning,
     count_guardian_link_whitelist_domains,
+    count_guardian_forbidden_words,
     count_guardian_warnings,
+    deactivate_guardian_forbidden_word,
     ensure_guardian_settings,
     fetch_guardian_settings,
     get_guardian_anti_links_settings,
+    get_guardian_forbidden_words_settings,
     get_guardian_log_event_settings,
     list_guardian_link_whitelist_domains,
+    list_guardian_forbidden_words,
     list_guardian_warning_summary,
     list_guardian_warnings,
     record_guardian_log_event,
@@ -163,6 +168,7 @@ from guardian_service import (
     send_guardian_test_log,
     set_guardian_log_event_enabled,
     update_guardian_anti_links_settings,
+    update_guardian_forbidden_words_settings,
     update_guardian_log_channel
 )
 from invite_link_service import (
@@ -15250,7 +15256,7 @@ def build_owner_guardian_panel_keyboard(group_id):
         [InlineKeyboardButton("🧪 Enviar log de prueba", callback_data=f"owner_guardian_test_log_{group_id}")],
         [InlineKeyboardButton("⚙️ Eventos del canal", callback_data=f"owner_guardian_log_events_{group_id}")],
         [InlineKeyboardButton("🔗 Anti-links: solo diseño", callback_data=f"owner_guardian_anti_links_{group_id}")],
-        [InlineKeyboardButton("🚫 Palabras bloqueadas: solo diseño", callback_data=f"owner_guardian_forbidden_words_{group_id}")],
+        [InlineKeyboardButton("🚫 Palabras prohibidas", callback_data=f"owner_guardian_forbidden_words_{group_id}")],
         [InlineKeyboardButton("🌙 Modo noche: solo diseño", callback_data=f"owner_guardian_night_mode_{group_id}")],
         [InlineKeyboardButton("⚠️ Warnings manuales", callback_data=f"owner_guardian_warns_{group_id}")],
         [InlineKeyboardButton("⬅️ Seguridad", callback_data="owner_panel_security")],
@@ -15402,6 +15408,99 @@ def build_owner_guardian_link_whitelist_keyboard(group_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⬅️ Volver a anti-links", callback_data=f"owner_guardian_anti_links_{group_id}")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_guardian_forbidden_words_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    settings = get_guardian_forbidden_words_settings(group_id)
+    words_count = count_guardian_forbidden_words(group_id)
+    status_text = "activo" if settings.get("enabled") else "inactivo"
+
+    return (
+        "🚫 Guardian · Palabras prohibidas\n\n"
+        f"Comunidad: {group_name}\n"
+        f"Estado: {status_text}\n"
+        f"Acción actual: {settings.get('action') or 'log_only'}\n"
+        f"Palabras activas: {words_count}\n\n"
+        "Modo seguro actual: solo registra y, si eliges warn, añade warning automático.\n"
+        "No borra mensajes, no expulsa, no banea y no restringe usuarios."
+    )
+
+
+def build_owner_guardian_forbidden_words_keyboard(group_id):
+
+    settings = get_guardian_forbidden_words_settings(group_id)
+    enabled = bool(settings.get("enabled"))
+    action = settings.get("action") or "log_only"
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🟢 Desactivar palabras" if enabled else "🔴 Activar palabras", callback_data=f"owner_guardian_toggle_forbidden_words_{group_id}")],
+        [
+            InlineKeyboardButton(("✅ " if action == "log_only" else "") + "Acción: log_only", callback_data=f"owner_guardian_forbidden_words_action_{group_id}_log_only"),
+            InlineKeyboardButton(("✅ " if action == "warn" else "") + "Acción: warn", callback_data=f"owner_guardian_forbidden_words_action_{group_id}_warn")
+        ],
+        [InlineKeyboardButton("📋 Ver palabras", callback_data=f"owner_guardian_forbidden_words_list_{group_id}")],
+        [InlineKeyboardButton("➕ Añadir palabra/frase", callback_data=f"owner_guardian_forbidden_words_add_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver Guardian", callback_data="owner_panel_guardian")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_guardian_forbidden_words_list_text(group_id):
+
+    words = list_guardian_forbidden_words(group_id)
+
+    lines = [
+        "📋 Guardian · Palabras prohibidas",
+        "",
+        "Palabras/frases activas:"
+    ]
+
+    if not words:
+
+        lines.append("- No hay palabras prohibidas activas.")
+
+    else:
+
+        for item in words:
+
+            lines.append(
+                f"- #{item.get('id')} · {item.get('word')} · acción {item.get('action') or 'log_only'}"
+            )
+
+
+    return "\n".join(lines)
+
+
+def build_owner_guardian_forbidden_words_list_keyboard(group_id):
+
+    words = list_guardian_forbidden_words(group_id, limit=20)
+    keyboard = []
+
+    for item in words:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"🚫 Desactivar #{item.get('id')}",
+                callback_data=f"owner_guardian_forbidden_words_remove_{group_id}_{item.get('id')}"
+            )
+        ])
+
+
+    keyboard.append([InlineKeyboardButton("➕ Añadir palabra/frase", callback_data=f"owner_guardian_forbidden_words_add_{group_id}")])
+    keyboard.append([InlineKeyboardButton("⬅️ Volver a palabras", callback_data=f"owner_guardian_forbidden_words_{group_id}")])
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_owner_guardian_forbidden_words_cancel_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_guardian_forbidden_words_cancel_add_{group_id}")]
     ])
 
 
@@ -15637,6 +15736,92 @@ async def receive_guardian_log_channel_forward(update, context):
         settings,
         group[1] if group else f"Grupo {group_id}",
         actor_user_id=user_id
+    )
+
+
+async def receive_guardian_forbidden_word_text(update, context):
+
+    group_id = context.user_data.get("guardian_forbidden_word_add_group_id")
+    user_id = update.effective_user.id if update.effective_user else None
+    text = (update.message.text or "").strip() if update.message else ""
+
+    try:
+
+        group_id = int(group_id)
+
+    except Exception:
+
+        context.user_data.pop("guardian_forbidden_word_add_group_id", None)
+
+        await update.message.reply_text(
+            "⚠️ No he podido resolver la comunidad para añadir la palabra."
+        )
+
+        return
+
+
+    if text.lower() in ("cancelar", "cancel", "salir"):
+
+        context.user_data.pop("guardian_forbidden_word_add_group_id", None)
+
+        await update.message.reply_text(
+            "✅ Añadir palabra prohibida cancelado.",
+            reply_markup=build_owner_guardian_forbidden_words_keyboard(group_id)
+        )
+
+        return
+
+
+    allowed, owner_user_id = owner_can_use_guardian(user_id, group_id)
+
+    if not allowed:
+
+        context.user_data.pop("guardian_forbidden_word_add_group_id", None)
+
+        await update.message.reply_text(
+            build_owner_guardian_addon_required_text(group_id),
+            reply_markup=build_owner_guardian_addon_required_keyboard()
+        )
+
+        return
+
+
+    if not text or len(text) > 120:
+
+        await update.message.reply_text(
+            "⚠️ Envía una palabra o frase válida de hasta 120 caracteres.",
+            reply_markup=build_owner_guardian_forbidden_words_cancel_keyboard(group_id)
+        )
+
+        return
+
+
+    result = add_guardian_forbidden_word(
+        group_id,
+        text,
+        action="log_only",
+        created_by=user_id
+    )
+    context.user_data.pop("guardian_forbidden_word_add_group_id", None)
+
+    await send_guardian_event_log(
+        context,
+        group_id,
+        "guardian_forbidden_word_added",
+        "Palabra prohibida añadida a Guardian.",
+        severity="info",
+        actor_user_id=user_id,
+        target_user_id=owner_user_id,
+        metadata={
+            "word_id": result.get("id"),
+            "action": result.get("action"),
+            "created": result.get("created")
+        }
+    )
+
+    await update.message.reply_text(
+        f"✅ Palabra/frase añadida: {result.get('word')}",
+        reply_markup=build_owner_guardian_forbidden_words_keyboard(group_id)
     )
 
 
@@ -38036,6 +38221,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "owner_guardian_link_whitelist_add_",
             "owner_guardian_link_whitelist_",
             "owner_guardian_anti_links_",
+            "owner_guardian_forbidden_words_action_",
+            "owner_guardian_toggle_forbidden_words_",
+            "owner_guardian_forbidden_words_cancel_add_",
+            "owner_guardian_forbidden_words_add_",
+            "owner_guardian_forbidden_words_remove_",
+            "owner_guardian_forbidden_words_list_",
             "owner_guardian_forbidden_words_",
             "owner_guardian_night_mode_",
             "owner_guardian_warns_",
@@ -38059,6 +38250,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
 
             anti_links_action = None
+            forbidden_words_action = None
+            forbidden_word_id = None
 
             if matched_prefix == "owner_guardian_toggle_log_":
 
@@ -38069,8 +38262,49 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif matched_prefix == "owner_guardian_anti_links_action_":
 
                 action_payload = data.replace(matched_prefix, "", 1)
-                action_group_id_text, anti_links_action = action_payload.rsplit("_", 1)
+                if action_payload.endswith("_log_only"):
+
+                    anti_links_action = "log_only"
+                    action_group_id_text = action_payload[:-len("_log_only")]
+
+                elif action_payload.endswith("_warn"):
+
+                    anti_links_action = "warn"
+                    action_group_id_text = action_payload[:-len("_warn")]
+
+                else:
+
+                    raise ValueError("invalid anti-links action")
+
                 group_id = int(action_group_id_text)
+                toggle_category = None
+
+            elif matched_prefix == "owner_guardian_forbidden_words_action_":
+
+                action_payload = data.replace(matched_prefix, "", 1)
+                if action_payload.endswith("_log_only"):
+
+                    forbidden_words_action = "log_only"
+                    action_group_id_text = action_payload[:-len("_log_only")]
+
+                elif action_payload.endswith("_warn"):
+
+                    forbidden_words_action = "warn"
+                    action_group_id_text = action_payload[:-len("_warn")]
+
+                else:
+
+                    raise ValueError("invalid forbidden words action")
+
+                group_id = int(action_group_id_text)
+                toggle_category = None
+
+            elif matched_prefix == "owner_guardian_forbidden_words_remove_":
+
+                remove_payload = data.replace(matched_prefix, "", 1)
+                remove_group_id_text, forbidden_word_id_text = remove_payload.rsplit("_", 1)
+                group_id = int(remove_group_id_text)
+                forbidden_word_id = int(forbidden_word_id_text)
                 toggle_category = None
 
             else:
@@ -38100,7 +38334,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "owner_guardian_toggle_anti_links_",
             "owner_guardian_anti_links_action_",
             "owner_guardian_link_whitelist_",
-            "owner_guardian_link_whitelist_add_"
+            "owner_guardian_link_whitelist_add_",
+            "owner_guardian_forbidden_words_",
+            "owner_guardian_toggle_forbidden_words_",
+            "owner_guardian_forbidden_words_action_",
+            "owner_guardian_forbidden_words_list_",
+            "owner_guardian_forbidden_words_add_",
+            "owner_guardian_forbidden_words_cancel_add_",
+            "owner_guardian_forbidden_words_remove_"
         )):
 
             group_owner_user_id = get_group_owner_user_id(group_id)
@@ -38386,6 +38627,175 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if (
+            data.startswith("owner_guardian_forbidden_words_")
+            and not data.startswith((
+                "owner_guardian_forbidden_words_action_",
+                "owner_guardian_forbidden_words_list_",
+                "owner_guardian_forbidden_words_add_",
+                "owner_guardian_forbidden_words_cancel_add_",
+                "owner_guardian_forbidden_words_remove_"
+            ))
+        ):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_forbidden_words_text(group_id),
+                reply_markup=build_owner_guardian_forbidden_words_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_toggle_forbidden_words_"):
+
+            current = get_guardian_forbidden_words_settings(group_id)
+            new_enabled = not bool(current.get("enabled"))
+            action = current.get("action") if current.get("action") != "disabled" else "log_only"
+            update_guardian_forbidden_words_settings(
+                group_id,
+                enabled=new_enabled,
+                action=action
+            )
+
+            await send_guardian_event_log(
+                context,
+                group_id,
+                "guardian_forbidden_words_settings_updated",
+                "Configuración de palabras prohibidas actualizada.",
+                telegram_group_id=group[2] if group else None,
+                severity="info",
+                actor_user_id=user_id,
+                metadata={
+                    "forbidden_words_enabled": new_enabled,
+                    "action": action
+                }
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_forbidden_words_text(group_id),
+                reply_markup=build_owner_guardian_forbidden_words_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_forbidden_words_action_"):
+
+            if forbidden_words_action not in ("log_only", "warn"):
+
+                await query.message.reply_text(
+                    "⚠️ Acción de palabras prohibidas no válida.",
+                    reply_markup=build_owner_guardian_forbidden_words_keyboard(group_id)
+                )
+
+                return
+
+
+            update_guardian_forbidden_words_settings(
+                group_id,
+                enabled=True,
+                action=forbidden_words_action
+            )
+
+            await send_guardian_event_log(
+                context,
+                group_id,
+                "guardian_forbidden_words_settings_updated",
+                "Acción de palabras prohibidas actualizada.",
+                telegram_group_id=group[2] if group else None,
+                severity="info",
+                actor_user_id=user_id,
+                metadata={
+                    "forbidden_words_enabled": True,
+                    "action": forbidden_words_action
+                }
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_forbidden_words_text(group_id),
+                reply_markup=build_owner_guardian_forbidden_words_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_forbidden_words_list_"):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_forbidden_words_list_text(group_id),
+                reply_markup=build_owner_guardian_forbidden_words_list_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_forbidden_words_add_"):
+
+            context.user_data["guardian_forbidden_word_add_group_id"] = group_id
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "➕ Añadir palabra/frase prohibida\n\n"
+                "Envía por aquí la palabra o frase que quieres registrar.\n\n"
+                "Guardian solo registrará el evento y, si eliges warn, añadirá un warning. "
+                "No borra mensajes, no expulsa, no banea y no restringe usuarios.",
+                reply_markup=build_owner_guardian_forbidden_words_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_forbidden_words_cancel_add_"):
+
+            context.user_data.pop("guardian_forbidden_word_add_group_id", None)
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Añadir palabra prohibida cancelado.",
+                reply_markup=build_owner_guardian_forbidden_words_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_forbidden_words_remove_"):
+
+            updated_count = deactivate_guardian_forbidden_word(group_id, forbidden_word_id)
+
+            await send_guardian_event_log(
+                context,
+                group_id,
+                "guardian_forbidden_word_deactivated",
+                "Palabra prohibida desactivada.",
+                telegram_group_id=group[2] if group else None,
+                severity="info",
+                actor_user_id=user_id,
+                metadata={
+                    "word_id": forbidden_word_id,
+                    "updated_count": updated_count
+                }
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_forbidden_words_list_text(group_id),
+                reply_markup=build_owner_guardian_forbidden_words_list_keyboard(group_id)
+            )
+
+            return
+
+
         if data.startswith("owner_guardian_warns_"):
 
             record_guardian_log_event(
@@ -38426,7 +38836,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         feature_names = {
             "owner_guardian_anti_links_": "Anti-links",
-            "owner_guardian_forbidden_words_": "Palabras bloqueadas",
             "owner_guardian_night_mode_": "Modo noche"
         }
         feature_name = feature_names.get(matched_prefix, "Configuración")
