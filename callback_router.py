@@ -14387,22 +14387,24 @@ def fetch_admin_guardian_trial_groups(page=0, page_size=8, query=None):
     page_size = max(int(page_size or 8), 1)
     params = []
     filters = [
-        "COALESCE(is_active, TRUE)=TRUE",
-        "owner_user_id IS NOT NULL"
+        "COALESCE(g.is_active, TRUE)=TRUE",
+        "a.user_id IS NOT NULL"
     ]
 
     query_text = (query or "").strip()
 
     if query_text:
 
-        search_filters = ["name ILIKE %s"]
+        search_filters = ["g.name ILIKE %s"]
         params.append(f"%{query_text}%")
 
         if query_text.lstrip("-").isdigit():
 
-            search_filters.append("id=%s")
+            search_filters.append("g.id=%s")
             params.append(int(query_text))
-            search_filters.append("telegram_group_id=%s")
+            search_filters.append("g.telegram_group_id=%s")
+            params.append(int(query_text))
+            search_filters.append("a.user_id=%s")
             params.append(int(query_text))
 
 
@@ -14418,14 +14420,18 @@ def fetch_admin_guardian_trial_groups(page=0, page_size=8, query=None):
 
         cur.execute(f"""
 
-            SELECT id,
-                   name,
-                   telegram_group_id,
-                   owner_user_id,
-                   COALESCE(is_active, TRUE)
-            FROM groups
+            SELECT g.id,
+                   g.name,
+                   g.telegram_group_id,
+                   a.user_id AS owner_user_id,
+                   COALESCE(g.is_active, TRUE)
+            FROM groups g
+            JOIN admins a
+              ON a.group_id = g.id
+             AND a.role = 'GROUP_OWNER'
+             AND COALESCE(a.is_active, TRUE)=TRUE
             WHERE {" AND ".join(filters)}
-            ORDER BY id DESC
+            ORDER BY g.id DESC
             LIMIT %s OFFSET %s
 
         """, params)
@@ -14442,13 +14448,17 @@ def fetch_admin_guardian_trial_group(group_id):
 
         cur.execute("""
 
-            SELECT id,
-                   name,
-                   telegram_group_id,
-                   owner_user_id,
-                   COALESCE(is_active, TRUE)
-            FROM groups
-            WHERE id=%s
+            SELECT g.id,
+                   g.name,
+                   g.telegram_group_id,
+                   a.user_id AS owner_user_id,
+                   COALESCE(g.is_active, TRUE)
+            FROM groups g
+            LEFT JOIN admins a
+              ON a.group_id = g.id
+             AND a.role = 'GROUP_OWNER'
+             AND COALESCE(a.is_active, TRUE)=TRUE
+            WHERE g.id=%s
             LIMIT 1
 
         """, (group_id,))
