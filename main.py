@@ -118,6 +118,7 @@ from callback_router import (
     receive_commercial_request_chat_message,
     receive_customer_satisfaction_text,
     receive_guardian_forbidden_word_text,
+    receive_guardian_night_mode_time_text,
     receive_user_tracking_search_text,
     receive_guardian_log_channel_forward,
     receive_group_user_promo_code,
@@ -1073,6 +1074,10 @@ async def handle_text(update, context):
 
     if context.user_data.get("guardian_forbidden_word_add_group_id"):
         await receive_guardian_forbidden_word_text(update, context)
+        return
+
+    if context.user_data.get("guardian_night_mode_time_group_id"):
+        await receive_guardian_night_mode_time_text(update, context)
         return
 
     if (
