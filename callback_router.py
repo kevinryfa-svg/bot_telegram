@@ -111,6 +111,7 @@ from commercial_form_handler import (
 from db import conn
 from formatters import format_tiempo_restante
 from owner_addon_service import (
+    activate_owner_addon_manual_trial,
     owner_addon_is_purchase_allowed,
     fetch_owner_addon_product,
     fetch_owner_addon_products,
@@ -14333,7 +14334,7 @@ def build_owner_addons_menu_text(owner_user_id, group_id):
     return "\n".join(lines)
 
 
-def build_owner_addons_menu_keyboard():
+def build_owner_addons_menu_keyboard(user_id=None):
 
     keyboard = []
     products = fetch_owner_addon_products(active_only=True)
@@ -14347,8 +14348,35 @@ def build_owner_addons_menu_keyboard():
         )])
 
 
+    if user_id and is_super_admin(user_id):
+
+        keyboard.append([InlineKeyboardButton("🎁 Activar Guardian 30 días", callback_data="admin_guardian_trial_start")])
+
+
     keyboard.append([InlineKeyboardButton("📦 Mis servicios activos", callback_data="owner_addons_active")])
     keyboard.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_admin_guardian_trial_cancel_keyboard():
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar", callback_data="admin_guardian_trial_cancel")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_admin_guardian_trial_result_keyboard(group_id=None):
+
+    keyboard = []
+
+    if group_id:
+
+        keyboard.append([InlineKeyboardButton("🛡 Abrir Guardian del grupo", callback_data="owner_panel_guardian")])
+
+
+    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
 
     return InlineKeyboardMarkup(keyboard)
 
@@ -14379,6 +14407,116 @@ def build_owner_addon_product_text(product, group_id):
 
 
     return text
+
+
+async def receive_admin_guardian_trial_text(update, context):
+
+    user_id = update.effective_user.id if update.effective_user else None
+    text = (update.message.text or "").strip() if update.message else ""
+
+    if not is_super_admin(user_id):
+
+        context.user_data.pop("admin_guardian_trial_waiting", None)
+
+        log_event(
+            "admin_guardian_trial_permission_denied",
+            category="guardian",
+            severity="warning",
+            scope="global",
+            actor_user_id=user_id,
+            message="Usuario no superadmin intentó activar trial manual Guardian.",
+            metadata={
+                "user_id": user_id
+            }
+        )
+
+        await update.message.reply_text(
+            "⛔ Solo superadmin puede activar Guardian manualmente."
+        )
+
+        return
+
+
+    if text.lower() in ("cancelar", "cancel", "salir"):
+
+        context.user_data.pop("admin_guardian_trial_waiting", None)
+
+        await update.message.reply_text(
+            "✅ Activación manual de Guardian cancelada.",
+            reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return
+
+
+    parts = text.split()
+
+    if len(parts) != 2:
+
+        await update.message.reply_text(
+            "⚠️ Envía owner_user_id y group_id separados por espacio.\n\n"
+            "Ejemplo:\n"
+            "123456789 1159",
+            reply_markup=build_admin_guardian_trial_cancel_keyboard()
+        )
+
+        return
+
+
+    try:
+
+        owner_user_id = int(parts[0])
+        group_id = int(parts[1])
+
+    except Exception:
+
+        await update.message.reply_text(
+            "⚠️ Owner ID y Group ID deben ser números enteros.",
+            reply_markup=build_admin_guardian_trial_cancel_keyboard()
+        )
+
+        return
+
+
+    result = activate_owner_addon_manual_trial(
+        owner_user_id,
+        group_id,
+        "guardian",
+        days=30,
+        activated_by_user_id=user_id
+    )
+    context.user_data.pop("admin_guardian_trial_waiting", None)
+
+    if not result.get("ok"):
+
+        reason = result.get("reason") or "unknown"
+        extra = ""
+
+        if reason == "owner_group_mismatch":
+
+            extra = f"\nOwner real del grupo: {result.get('group_owner_user_id') or '-'}"
+
+
+        await update.message.reply_text(
+            "⚠️ No he podido activar Guardian manualmente.\n\n"
+            f"Motivo: {reason}{extra}",
+            reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return
+
+
+    context.user_data["selected_group_admin"] = group_id
+    context.user_data["selected_owner_group"] = group_id
+
+    await update.message.reply_text(
+        "✅ Guardian activado manualmente 30 días\n\n"
+        f"Owner ID: {owner_user_id}\n"
+        f"Group ID: {group_id}\n"
+        f"Hasta: {format_commercial_datetime(result.get('current_period_end'))}\n"
+        f"Subscription ID: {result.get('subscription_id')}",
+        reply_markup=build_admin_guardian_trial_result_keyboard(group_id)
+    )
 
 
 def build_owner_addon_product_keyboard(product):
@@ -38012,6 +38150,60 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+    if data == "admin_guardian_trial_start":
+
+        if not is_super_admin(user_id):
+
+            log_event(
+                "admin_guardian_trial_permission_denied",
+                category="guardian",
+                severity="warning",
+                scope="global",
+                actor_user_id=user_id,
+                message="Usuario no superadmin intentó abrir activación manual Guardian.",
+                metadata={
+                    "callback": data
+                }
+            )
+
+            await query.message.reply_text(
+                "⛔ Solo superadmin puede activar Guardian manualmente.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["admin_guardian_trial_waiting"] = True
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🎁 Activar Guardian 30 días\n\n"
+            "Envía owner_user_id y group_id separados por espacio.\n\n"
+            "Ejemplo:\n"
+            "123456789 1159\n\n"
+            "Solo se activará si el owner indicado es el dueño real del grupo.",
+            reply_markup=build_admin_guardian_trial_cancel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_guardian_trial_cancel":
+
+        context.user_data.pop("admin_guardian_trial_waiting", None)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Activación manual de Guardian cancelada.",
+            reply_markup=build_owner_panel_nav_keyboard()
+        )
+
+        return
+
+
     if (
         data in ("owner_addons_menu", "owner_addons_active")
         or data.startswith("owner_addon_product_")
@@ -38045,7 +38237,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context,
                 query.message.chat_id,
                 build_owner_addons_menu_text(user_id, group_id),
-                reply_markup=build_owner_addons_menu_keyboard()
+                reply_markup=build_owner_addons_menu_keyboard(user_id)
             )
 
             return

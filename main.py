@@ -114,6 +114,7 @@ from callback_router import (
     process_ad_promo_daily_reviews,
     process_due_owner_backups,
     process_due_ad_promo_campaigns,
+    receive_admin_guardian_trial_text,
     receive_ad_promo_admin_text,
     receive_commercial_request_chat_message,
     receive_customer_satisfaction_text,
@@ -1078,6 +1079,10 @@ async def handle_text(update, context):
 
     if context.user_data.get("guardian_night_mode_time_group_id"):
         await receive_guardian_night_mode_time_text(update, context)
+        return
+
+    if context.user_data.get("admin_guardian_trial_waiting"):
+        await receive_admin_guardian_trial_text(update, context)
         return
 
     if (
