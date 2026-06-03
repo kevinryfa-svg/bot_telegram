@@ -202,10 +202,14 @@ def activate_owner_addon_manual_trial(
 
             cur.execute("""
 
-                SELECT id,
-                       owner_user_id
-                FROM groups
-                WHERE id=%s
+                SELECT g.id,
+                       a.user_id AS owner_user_id
+                FROM groups g
+                LEFT JOIN admins a
+                  ON a.group_id = g.id
+                 AND a.role = 'GROUP_OWNER'
+                 AND COALESCE(a.is_active, TRUE)=TRUE
+                WHERE g.id=%s
                 LIMIT 1
 
             """, (group_id,))
