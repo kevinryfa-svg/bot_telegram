@@ -158,10 +158,12 @@ from guardian_service import (
     get_guardian_anti_links_settings,
     get_guardian_forbidden_words_settings,
     get_guardian_log_event_settings,
+    get_guardian_night_mode_settings,
     list_guardian_link_whitelist_domains,
     list_guardian_forbidden_words,
     list_guardian_warning_summary,
     list_guardian_warnings,
+    parse_guardian_hhmm,
     record_guardian_log_event,
     reset_guardian_warnings,
     send_guardian_event_log,
@@ -169,6 +171,7 @@ from guardian_service import (
     set_guardian_log_event_enabled,
     update_guardian_anti_links_settings,
     update_guardian_forbidden_words_settings,
+    update_guardian_night_mode_settings,
     update_guardian_log_channel
 )
 from invite_link_service import (
@@ -15257,7 +15260,7 @@ def build_owner_guardian_panel_keyboard(group_id):
         [InlineKeyboardButton("⚙️ Eventos del canal", callback_data=f"owner_guardian_log_events_{group_id}")],
         [InlineKeyboardButton("🔗 Anti-links: solo diseño", callback_data=f"owner_guardian_anti_links_{group_id}")],
         [InlineKeyboardButton("🚫 Palabras prohibidas", callback_data=f"owner_guardian_forbidden_words_{group_id}")],
-        [InlineKeyboardButton("🌙 Modo noche: solo diseño", callback_data=f"owner_guardian_night_mode_{group_id}")],
+        [InlineKeyboardButton("🌙 Modo noche", callback_data=f"owner_guardian_night_mode_{group_id}")],
         [InlineKeyboardButton("⚠️ Warnings manuales", callback_data=f"owner_guardian_warns_{group_id}")],
         [InlineKeyboardButton("⬅️ Seguridad", callback_data="owner_panel_security")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
@@ -15501,6 +15504,54 @@ def build_owner_guardian_forbidden_words_cancel_keyboard(group_id):
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_guardian_forbidden_words_cancel_add_{group_id}")]
+    ])
+
+
+def build_owner_guardian_night_mode_text(group_id):
+
+    group = fetch_group_basic_info(group_id)
+    group_name = group[1] if group else f"Grupo {group_id}"
+    settings = get_guardian_night_mode_settings(group_id)
+    status_text = "activo" if settings.get("enabled") else "inactivo"
+
+    return (
+        "🌙 Guardian · Modo noche\n\n"
+        f"Comunidad: {group_name}\n"
+        f"Estado: {status_text}\n"
+        f"Horario: {settings.get('start_time') or '23:00'} → {settings.get('end_time') or '07:00'}\n"
+        f"Zona horaria: {settings.get('timezone') or 'Europe/Madrid'}\n"
+        f"Acción actual: {settings.get('action') or 'log_only'}\n\n"
+        "Modo seguro actual: solo registra mensajes durante la franja y, si eliges warn, añade warning automático.\n"
+        "No borra mensajes, no expulsa, no banea, no restringe y no silencia usuarios."
+    )
+
+
+def build_owner_guardian_night_mode_keyboard(group_id):
+
+    settings = get_guardian_night_mode_settings(group_id)
+    enabled = bool(settings.get("enabled"))
+    action = settings.get("action") or "log_only"
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🟢 Desactivar modo noche" if enabled else "🔴 Activar modo noche", callback_data=f"owner_guardian_toggle_night_mode_{group_id}")],
+        [
+            InlineKeyboardButton(("✅ " if action == "log_only" else "") + "Acción: log_only", callback_data=f"owner_guardian_night_mode_action_{group_id}_log_only"),
+            InlineKeyboardButton(("✅ " if action == "warn" else "") + "Acción: warn", callback_data=f"owner_guardian_night_mode_action_{group_id}_warn")
+        ],
+        [
+            InlineKeyboardButton("🕚 Hora inicio", callback_data=f"owner_guardian_night_mode_start_{group_id}"),
+            InlineKeyboardButton("🕖 Hora fin", callback_data=f"owner_guardian_night_mode_end_{group_id}")
+        ],
+        [InlineKeyboardButton("🌍 Zona horaria: Europe/Madrid", callback_data=f"owner_guardian_night_mode_timezone_{group_id}")],
+        [InlineKeyboardButton("⬅️ Volver Guardian", callback_data="owner_panel_guardian")],
+        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+    ])
+
+
+def build_owner_guardian_night_mode_cancel_keyboard(group_id):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancelar", callback_data=f"owner_guardian_night_mode_cancel_time_{group_id}")]
     ])
 
 
@@ -15822,6 +15873,101 @@ async def receive_guardian_forbidden_word_text(update, context):
     await update.message.reply_text(
         f"✅ Palabra/frase añadida: {result.get('word')}",
         reply_markup=build_owner_guardian_forbidden_words_keyboard(group_id)
+    )
+
+
+async def receive_guardian_night_mode_time_text(update, context):
+
+    group_id = context.user_data.get("guardian_night_mode_time_group_id")
+    field = context.user_data.get("guardian_night_mode_time_field")
+    user_id = update.effective_user.id if update.effective_user else None
+    text = (update.message.text or "").strip() if update.message else ""
+
+    try:
+
+        group_id = int(group_id)
+
+    except Exception:
+
+        context.user_data.pop("guardian_night_mode_time_group_id", None)
+        context.user_data.pop("guardian_night_mode_time_field", None)
+
+        await update.message.reply_text(
+            "⚠️ No he podido resolver la comunidad para configurar modo noche."
+        )
+
+        return
+
+
+    if text.lower() in ("cancelar", "cancel", "salir"):
+
+        context.user_data.pop("guardian_night_mode_time_group_id", None)
+        context.user_data.pop("guardian_night_mode_time_field", None)
+
+        await update.message.reply_text(
+            "✅ Configuración de horario de modo noche cancelada.",
+            reply_markup=build_owner_guardian_night_mode_keyboard(group_id)
+        )
+
+        return
+
+
+    allowed, owner_user_id = owner_can_use_guardian(user_id, group_id)
+
+    if not allowed:
+
+        context.user_data.pop("guardian_night_mode_time_group_id", None)
+        context.user_data.pop("guardian_night_mode_time_field", None)
+
+        await update.message.reply_text(
+            build_owner_guardian_addon_required_text(group_id),
+            reply_markup=build_owner_guardian_addon_required_keyboard()
+        )
+
+        return
+
+
+    if field not in ("start", "end") or not parse_guardian_hhmm(text):
+
+        await update.message.reply_text(
+            "⚠️ Envía una hora válida en formato HH:MM, por ejemplo 23:00.",
+            reply_markup=build_owner_guardian_night_mode_cancel_keyboard(group_id)
+        )
+
+        return
+
+
+    if field == "start":
+
+        update_guardian_night_mode_settings(group_id, start_time=text)
+        field_label = "inicio"
+
+    else:
+
+        update_guardian_night_mode_settings(group_id, end_time=text)
+        field_label = "fin"
+
+
+    context.user_data.pop("guardian_night_mode_time_group_id", None)
+    context.user_data.pop("guardian_night_mode_time_field", None)
+
+    await send_guardian_event_log(
+        context,
+        group_id,
+        "guardian_night_mode_settings_updated",
+        "Horario de modo noche actualizado.",
+        severity="info",
+        actor_user_id=user_id,
+        target_user_id=owner_user_id,
+        metadata={
+            "field": field,
+            "value": text
+        }
+    )
+
+    await update.message.reply_text(
+        f"✅ Hora de {field_label} actualizada: {text}",
+        reply_markup=build_owner_guardian_night_mode_keyboard(group_id)
     )
 
 
@@ -38228,6 +38374,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "owner_guardian_forbidden_words_remove_",
             "owner_guardian_forbidden_words_list_",
             "owner_guardian_forbidden_words_",
+            "owner_guardian_night_mode_action_",
+            "owner_guardian_toggle_night_mode_",
+            "owner_guardian_night_mode_cancel_time_",
+            "owner_guardian_night_mode_start_",
+            "owner_guardian_night_mode_end_",
+            "owner_guardian_night_mode_timezone_",
             "owner_guardian_night_mode_",
             "owner_guardian_warns_",
             "owner_guardian_warning_rank_"
@@ -38251,6 +38403,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             anti_links_action = None
             forbidden_words_action = None
+            night_mode_action = None
             forbidden_word_id = None
 
             if matched_prefix == "owner_guardian_toggle_log_":
@@ -38307,6 +38460,26 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 forbidden_word_id = int(forbidden_word_id_text)
                 toggle_category = None
 
+            elif matched_prefix == "owner_guardian_night_mode_action_":
+
+                action_payload = data.replace(matched_prefix, "", 1)
+                if action_payload.endswith("_log_only"):
+
+                    night_mode_action = "log_only"
+                    action_group_id_text = action_payload[:-len("_log_only")]
+
+                elif action_payload.endswith("_warn"):
+
+                    night_mode_action = "warn"
+                    action_group_id_text = action_payload[:-len("_warn")]
+
+                else:
+
+                    raise ValueError("invalid night mode action")
+
+                group_id = int(action_group_id_text)
+                toggle_category = None
+
             else:
 
                 toggle_category = None
@@ -38341,7 +38514,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "owner_guardian_forbidden_words_list_",
             "owner_guardian_forbidden_words_add_",
             "owner_guardian_forbidden_words_cancel_add_",
-            "owner_guardian_forbidden_words_remove_"
+            "owner_guardian_forbidden_words_remove_",
+            "owner_guardian_night_mode_",
+            "owner_guardian_toggle_night_mode_",
+            "owner_guardian_night_mode_action_",
+            "owner_guardian_night_mode_start_",
+            "owner_guardian_night_mode_end_",
+            "owner_guardian_night_mode_timezone_",
+            "owner_guardian_night_mode_cancel_time_"
         )):
 
             group_owner_user_id = get_group_owner_user_id(group_id)
@@ -38796,6 +38976,149 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        if (
+            data.startswith("owner_guardian_night_mode_")
+            and not data.startswith((
+                "owner_guardian_night_mode_action_",
+                "owner_guardian_night_mode_start_",
+                "owner_guardian_night_mode_end_",
+                "owner_guardian_night_mode_timezone_",
+                "owner_guardian_night_mode_cancel_time_"
+            ))
+        ):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_night_mode_text(group_id),
+                reply_markup=build_owner_guardian_night_mode_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_toggle_night_mode_"):
+
+            current = get_guardian_night_mode_settings(group_id)
+            new_enabled = not bool(current.get("enabled"))
+            action = current.get("action") if current.get("action") != "disabled" else "log_only"
+            update_guardian_night_mode_settings(
+                group_id,
+                enabled=new_enabled,
+                action=action
+            )
+
+            await send_guardian_event_log(
+                context,
+                group_id,
+                "guardian_night_mode_settings_updated",
+                "Configuración de modo noche actualizada.",
+                telegram_group_id=group[2] if group else None,
+                severity="info",
+                actor_user_id=user_id,
+                metadata={
+                    "night_mode_enabled": new_enabled,
+                    "action": action
+                }
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_night_mode_text(group_id),
+                reply_markup=build_owner_guardian_night_mode_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_night_mode_action_"):
+
+            if night_mode_action not in ("log_only", "warn"):
+
+                await query.message.reply_text(
+                    "⚠️ Acción de modo noche no válida.",
+                    reply_markup=build_owner_guardian_night_mode_keyboard(group_id)
+                )
+
+                return
+
+
+            update_guardian_night_mode_settings(
+                group_id,
+                enabled=True,
+                action=night_mode_action
+            )
+
+            await send_guardian_event_log(
+                context,
+                group_id,
+                "guardian_night_mode_settings_updated",
+                "Acción de modo noche actualizada.",
+                telegram_group_id=group[2] if group else None,
+                severity="info",
+                actor_user_id=user_id,
+                metadata={
+                    "night_mode_enabled": True,
+                    "action": night_mode_action
+                }
+            )
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                build_owner_guardian_night_mode_text(group_id),
+                reply_markup=build_owner_guardian_night_mode_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith(("owner_guardian_night_mode_start_", "owner_guardian_night_mode_end_")):
+
+            field = "start" if data.startswith("owner_guardian_night_mode_start_") else "end"
+            context.user_data["guardian_night_mode_time_group_id"] = group_id
+            context.user_data["guardian_night_mode_time_field"] = field
+            field_label = "inicio" if field == "start" else "fin"
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                f"🕒 Envía la hora de {field_label} del modo noche en formato HH:MM.\n\n"
+                "Ejemplo: 23:00",
+                reply_markup=build_owner_guardian_night_mode_cancel_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_night_mode_cancel_time_"):
+
+            context.user_data.pop("guardian_night_mode_time_group_id", None)
+            context.user_data.pop("guardian_night_mode_time_field", None)
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "✅ Configuración de horario de modo noche cancelada.",
+                reply_markup=build_owner_guardian_night_mode_keyboard(group_id)
+            )
+
+            return
+
+
+        if data.startswith("owner_guardian_night_mode_timezone_"):
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "🌍 La zona horaria de modo noche queda fija en Europe/Madrid en esta fase segura.",
+                reply_markup=build_owner_guardian_night_mode_keyboard(group_id)
+            )
+
+            return
+
+
         if data.startswith("owner_guardian_warns_"):
 
             record_guardian_log_event(
@@ -38835,8 +39158,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         feature_names = {
-            "owner_guardian_anti_links_": "Anti-links",
-            "owner_guardian_night_mode_": "Modo noche"
+            "owner_guardian_anti_links_": "Anti-links"
         }
         feature_name = feature_names.get(matched_prefix, "Configuración")
 

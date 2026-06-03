@@ -1760,6 +1760,14 @@ def create_tables():
 
             night_mode_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 
+            night_mode_action TEXT NOT NULL DEFAULT 'log_only',
+
+            night_mode_start TEXT DEFAULT '23:00',
+
+            night_mode_end TEXT DEFAULT '07:00',
+
+            night_mode_timezone TEXT DEFAULT 'Europe/Madrid',
+
             warning_limit INTEGER NOT NULL DEFAULT 3,
 
             action_mode TEXT NOT NULL DEFAULT 'log_only',
@@ -1928,6 +1936,10 @@ def create_tables():
             ("forbidden_words_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("forbidden_words_action", "TEXT NOT NULL DEFAULT 'log_only'"),
             ("night_mode_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("night_mode_action", "TEXT NOT NULL DEFAULT 'log_only'"),
+            ("night_mode_start", "TEXT DEFAULT '23:00'"),
+            ("night_mode_end", "TEXT DEFAULT '07:00'"),
+            ("night_mode_timezone", "TEXT DEFAULT 'Europe/Madrid'"),
             ("warning_limit", "INTEGER NOT NULL DEFAULT 3"),
             ("action_mode", "TEXT NOT NULL DEFAULT 'log_only'"),
             ("created_at", "TIMESTAMP DEFAULT NOW()"),

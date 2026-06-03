@@ -2,6 +2,7 @@ import json
 import re
 from datetime import datetime
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from bot_config import TOKEN
 from db import conn
@@ -17,6 +18,7 @@ from rbac_helpers import (
 GUARDIAN_DEFAULT_ACTION_MODE = "log_only"
 GUARDIAN_ANTI_LINK_ACTIONS = ("disabled", "log_only", "warn")
 GUARDIAN_FORBIDDEN_WORD_ACTIONS = ("disabled", "log_only", "warn")
+GUARDIAN_NIGHT_MODE_ACTIONS = ("disabled", "log_only", "warn")
 GUARDIAN_URL_RE = re.compile(
     r"(?i)\b((?:https?://|www\.|t\.me/|telegram\.me/)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+\S*)"
 )
@@ -147,7 +149,8 @@ def map_guardian_event_type_to_category(event_type):
     if event_type in (
         "guardian_warning_added",
         "guardian_warnings_reset",
-        "guardian_forbidden_word_detected"
+        "guardian_forbidden_word_detected",
+        "guardian_night_mode_message_detected"
     ):
 
         return "warnings"
@@ -1161,6 +1164,192 @@ def update_guardian_forbidden_words_settings(group_id, enabled=None, action=None
     return True
 
 
+def parse_guardian_hhmm(value):
+
+    text = (value or "").strip()
+
+    if not re.match(r"^\d{2}:\d{2}$", text):
+
+        return None
+
+
+    try:
+
+        parsed = datetime.strptime(text, "%H:%M")
+        return parsed.time()
+
+    except Exception:
+
+        return None
+
+
+def get_guardian_night_mode_settings(group_id):
+
+    settings = fetch_guardian_settings(group_id)
+    action = "log_only"
+
+    if not settings:
+
+        return {
+            "enabled": False,
+            "action": action,
+            "start_time": "23:00",
+            "end_time": "07:00",
+            "timezone": "Europe/Madrid"
+        }
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(night_mode_enabled, FALSE),
+                       COALESCE(night_mode_action, 'log_only'),
+                       COALESCE(night_mode_start, '23:00'),
+                       COALESCE(night_mode_end, '07:00'),
+                       COALESCE(night_mode_timezone, 'Europe/Madrid')
+                FROM guardian_group_settings
+                WHERE group_id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            row = cur.fetchone()
+
+            if row:
+
+                action = row[1] if row[1] in GUARDIAN_NIGHT_MODE_ACTIONS else "log_only"
+
+                return {
+                    "enabled": bool(row[0]) and action != "disabled",
+                    "action": action,
+                    "start_time": row[2] or "23:00",
+                    "end_time": row[3] or "07:00",
+                    "timezone": row[4] or "Europe/Madrid"
+                }
+
+    except Exception:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+
+    return {
+        "enabled": bool(settings.get("night_mode_enabled")),
+        "action": action,
+        "start_time": "23:00",
+        "end_time": "07:00",
+        "timezone": "Europe/Madrid"
+    }
+
+
+def update_guardian_night_mode_settings(group_id, enabled=None, action=None, start_time=None, end_time=None, timezone=None):
+
+    if action and action not in GUARDIAN_NIGHT_MODE_ACTIONS:
+
+        return False
+
+
+    updates = []
+    params = []
+
+    if enabled is not None:
+
+        updates.append("night_mode_enabled=%s")
+        params.append(bool(enabled))
+
+    if action is not None:
+
+        updates.append("night_mode_action=%s")
+        params.append(action)
+
+    if start_time is not None:
+
+        if not parse_guardian_hhmm(start_time):
+
+            return False
+
+        updates.append("night_mode_start=%s")
+        params.append(start_time)
+
+    if end_time is not None:
+
+        if not parse_guardian_hhmm(end_time):
+
+            return False
+
+        updates.append("night_mode_end=%s")
+        params.append(end_time)
+
+    if timezone is not None:
+
+        updates.append("night_mode_timezone=%s")
+        params.append(timezone or "Europe/Madrid")
+
+    if not updates:
+
+        return False
+
+
+    params.append(group_id)
+
+    with conn.cursor() as cur:
+
+        cur.execute(f"""
+
+            UPDATE guardian_group_settings
+            SET {", ".join(updates)},
+                updated_at=NOW()
+            WHERE group_id=%s
+
+        """, params)
+
+        conn.commit()
+
+
+    return True
+
+
+def is_guardian_night_mode_active_now(settings, now=None):
+
+    start_time = parse_guardian_hhmm(settings.get("start_time"))
+    end_time = parse_guardian_hhmm(settings.get("end_time"))
+
+    if not start_time or not end_time or start_time == end_time:
+
+        return False
+
+
+    if now is None:
+
+        timezone_name = settings.get("timezone") or "Europe/Madrid"
+
+        try:
+
+            now = datetime.now(ZoneInfo(timezone_name))
+
+        except Exception:
+
+            now = datetime.now(ZoneInfo("Europe/Madrid"))
+
+
+    current_time = now.time()
+
+    if start_time < end_time:
+
+        return start_time <= current_time < end_time
+
+
+    return current_time >= start_time or current_time < end_time
+
+
 def detect_guardian_forbidden_words(text, forbidden_words):
 
     normalized_text = normalize_guardian_word(text)
@@ -1314,10 +1503,130 @@ async def process_guardian_forbidden_words_message(update, context):
         return False
 
 
+async def process_guardian_night_mode_message(update, context):
+
+    try:
+
+        message = update.message or update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+
+        if not message or not chat or not user or chat.type not in ("group", "supergroup"):
+
+            return False
+
+
+        text = message.text or message.caption
+
+        if not text:
+
+            return False
+
+
+        telegram_group_id = chat.id
+        group_id = resolve_guardian_group_id_from_telegram_group(telegram_group_id)
+
+        if not group_id:
+
+            return False
+
+
+        settings = fetch_guardian_settings(group_id)
+        owner_user_id = get_group_owner_user_id(group_id)
+
+        if (
+            not settings
+            or not settings.get("is_enabled")
+            or not owner_user_id
+            or not owner_has_feature(owner_user_id, "guardian", group_id=group_id)
+        ):
+
+            return False
+
+
+        night_mode_settings = get_guardian_night_mode_settings(group_id)
+
+        if not night_mode_settings.get("enabled"):
+
+            return False
+
+
+        if should_guardian_ignore_user(group_id, user.id):
+
+            return False
+
+
+        if not is_guardian_night_mode_active_now(night_mode_settings):
+
+            return False
+
+
+        action = night_mode_settings.get("action") or "log_only"
+        warning_added = False
+
+        if action == "warn":
+
+            add_guardian_warning(
+                group_id,
+                user.id,
+                getattr(context.bot, "id", None),
+                reason="Mensaje durante modo noche",
+                source="night_mode"
+            )
+            warning_added = True
+
+
+        await send_guardian_event_log(
+            context,
+            group_id,
+            "guardian_night_mode_message_detected",
+            "Guardian detectó un mensaje durante modo noche.",
+            telegram_group_id=telegram_group_id,
+            severity="warning",
+            actor_user_id=user.id,
+            target_user_id=user.id,
+            metadata={
+                "group_id": group_id,
+                "telegram_group_id": telegram_group_id,
+                "user_id": user.id,
+                "username": user.username,
+                "action": action,
+                "warning_added": warning_added,
+                "night_mode_start": night_mode_settings.get("start_time"),
+                "night_mode_end": night_mode_settings.get("end_time"),
+                "timezone": night_mode_settings.get("timezone")
+            }
+        )
+
+        return True
+
+    except Exception as e:
+
+        try:
+
+            await send_guardian_event_log(
+                context,
+                group_id if "group_id" in locals() else None,
+                "guardian_night_mode_error",
+                "Error procesando modo noche Guardian.",
+                severity="warning",
+                metadata={
+                    "error": str(e)[:500]
+                }
+            )
+
+        except Exception:
+
+            pass
+
+        return False
+
+
 async def process_guardian_group_message(update, context):
 
     await process_guardian_anti_links_message(update, context)
     await process_guardian_forbidden_words_message(update, context)
+    await process_guardian_night_mode_message(update, context)
     return False
 
 
