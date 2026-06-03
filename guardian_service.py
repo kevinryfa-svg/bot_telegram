@@ -102,6 +102,21 @@ def map_guardian_event_type_to_category(event_type):
         return "entries"
 
 
+    if event_type in ("guardian_user_left",):
+
+        return "exits"
+
+
+    if event_type in ("guardian_user_kicked",):
+
+        return "kicks"
+
+
+    if event_type in ("guardian_user_banned",):
+
+        return "bans"
+
+
     if event_type in (
         "guardian_payment_confirmed",
         "guardian_payment_invite_link_failed"
@@ -1303,6 +1318,133 @@ async def process_guardian_group_message(update, context):
 
     await process_guardian_anti_links_message(update, context)
     await process_guardian_forbidden_words_message(update, context)
+    return False
+
+
+def classify_guardian_member_status_change(old_status, new_status):
+
+    old_status = (old_status or "").strip().lower()
+    new_status = (new_status or "").strip().lower()
+
+    if new_status in ("member", "administrator", "creator", "restricted") and old_status in ("left", "kicked", "banned"):
+
+        return "joined"
+
+
+    if new_status == "left":
+
+        return "left"
+
+
+    if new_status == "kicked":
+
+        return "kicked"
+
+
+    if new_status == "banned":
+
+        return "banned"
+
+
+    return "unknown"
+
+
+async def send_guardian_member_event(context, group_id, event_type, target_user_id, metadata=None):
+
+    metadata = metadata or {}
+
+    return await send_guardian_event_log(
+        context,
+        group_id,
+        event_type,
+        metadata.get("message") or "Evento de miembro registrado por Guardian.",
+        telegram_group_id=metadata.get("telegram_group_id"),
+        severity=metadata.get("severity") or "info",
+        actor_user_id=metadata.get("actor_user_id"),
+        target_user_id=target_user_id,
+        metadata=metadata
+    )
+
+
+async def process_guardian_left_chat_member(update, context):
+
+    try:
+
+        if not update.message or not update.message.left_chat_member or not update.effective_chat:
+
+            return False
+
+
+        chat = update.effective_chat
+
+        if chat.type not in ("group", "supergroup"):
+
+            return False
+
+
+        left_member = update.message.left_chat_member
+
+        if context.bot and left_member.id == context.bot.id:
+
+            return False
+
+
+        telegram_group_id = chat.id
+        group_id = resolve_guardian_group_id_from_telegram_group(telegram_group_id)
+
+        if not group_id:
+
+            return False
+
+
+        actor = update.effective_user
+        actor_user_id = actor.id if actor else None
+        event_type = "guardian_user_left"
+        event_reason = "left_chat_member"
+
+        if actor_user_id and int(actor_user_id) != int(left_member.id):
+
+            event_type = "guardian_user_kicked"
+            event_reason = "removed_by_actor"
+
+
+        message = (
+            "Usuario expulsado detectado por Guardian."
+            if event_type == "guardian_user_kicked"
+            else "Usuario salió del grupo detectado por Guardian."
+        )
+
+        await send_guardian_member_event(
+            context,
+            group_id,
+            event_type,
+            left_member.id,
+            metadata={
+                "message": message,
+                "severity": "warning" if event_type == "guardian_user_kicked" else "info",
+                "group_id": group_id,
+                "telegram_group_id": telegram_group_id,
+                "user_id": left_member.id,
+                "username": left_member.username,
+                "first_name": left_member.first_name,
+                "last_name": left_member.last_name,
+                "actor_user_id": actor_user_id,
+                "actor_username": actor.username if actor else None,
+                "left_event_source": "left_chat_member",
+                "reason": event_reason
+            }
+        )
+
+    except Exception as e:
+
+        try:
+
+            print("guardian_left_chat_member_error:", str(e)[:300])
+
+        except Exception:
+
+            pass
+
     return False
 
 
