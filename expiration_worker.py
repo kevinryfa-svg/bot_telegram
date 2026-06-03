@@ -83,6 +83,8 @@ def check_expirations():
             SELECT user_id, group_id, expiration
             FROM users
             WHERE expiration IS NOT NULL
+            AND expiration < NOW()
+            AND COALESCE(subscription_active, TRUE)=TRUE
 
             """)
 
