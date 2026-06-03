@@ -1,3 +1,4 @@
+from audit_log_service import log_event
 from db import conn
 
 
@@ -164,6 +165,217 @@ def fetch_owner_addon_product(code):
     return row_to_owner_addon_product(row)
 
 
+def activate_owner_addon_manual_trial(
+    owner_user_id,
+    group_id,
+    feature_code,
+    days=30,
+    activated_by_user_id=None
+):
+
+    try:
+
+        owner_user_id = int(owner_user_id)
+        group_id = int(group_id)
+        days = int(days)
+        feature_code = (feature_code or "").strip()
+
+    except Exception:
+
+        return {
+            "ok": False,
+            "reason": "invalid_input"
+        }
+
+
+    if feature_code != "guardian" or days <= 0:
+
+        return {
+            "ok": False,
+            "reason": "invalid_feature_or_days"
+        }
+
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id,
+                       owner_user_id
+                FROM groups
+                WHERE id=%s
+                LIMIT 1
+
+            """, (group_id,))
+
+            group_row = cur.fetchone()
+
+            if not group_row:
+
+                conn.rollback()
+                return {
+                    "ok": False,
+                    "reason": "group_not_found"
+                }
+
+
+            group_owner_user_id = group_row[1]
+
+            if not group_owner_user_id or int(group_owner_user_id) != int(owner_user_id):
+
+                conn.rollback()
+                return {
+                    "ok": False,
+                    "reason": "owner_group_mismatch",
+                    "group_owner_user_id": group_owner_user_id
+                }
+
+
+            cur.execute("""
+
+                SELECT id,
+                       code
+                FROM owner_addon_products
+                WHERE COALESCE(is_active, TRUE)=TRUE
+                AND code=%s
+                ORDER BY id ASC
+                LIMIT 1
+
+            """, (feature_code,))
+
+            product_row = cur.fetchone()
+
+            if not product_row:
+
+                conn.rollback()
+                return {
+                    "ok": False,
+                    "reason": "product_not_found"
+                }
+
+
+            product_id, addon_code = product_row
+
+            cur.execute("""
+
+                SELECT id
+                FROM owner_addon_subscriptions
+                WHERE owner_user_id=%s
+                AND group_id=%s
+                AND addon_code=%s
+                ORDER BY updated_at DESC,
+                         id DESC
+                LIMIT 1
+
+            """, (
+                owner_user_id,
+                group_id,
+                addon_code
+            ))
+
+            existing_row = cur.fetchone()
+
+            if existing_row:
+
+                cur.execute(f"""
+
+                    UPDATE owner_addon_subscriptions
+                    SET status='active',
+                        current_period_start=NOW(),
+                        current_period_end=NOW() + (%s * INTERVAL '1 day'),
+                        cancel_at_period_end=FALSE,
+                        updated_at=NOW()
+                    WHERE id=%s
+                    RETURNING {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
+
+                """, (
+                    days,
+                    existing_row[0]
+                ))
+
+            else:
+
+                cur.execute(f"""
+
+                    INSERT INTO owner_addon_subscriptions
+                    (
+                        owner_user_id,
+                        group_id,
+                        addon_code,
+                        status,
+                        current_period_start,
+                        current_period_end,
+                        cancel_at_period_end,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (%s, %s, %s, 'active', NOW(), NOW() + (%s * INTERVAL '1 day'), FALSE, NOW(), NOW())
+                    RETURNING {", ".join(OWNER_ADDON_SUBSCRIPTION_FIELDS)}
+
+                """, (
+                    owner_user_id,
+                    group_id,
+                    addon_code,
+                    days
+                ))
+
+
+            subscription_row = cur.fetchone()
+            conn.commit()
+
+        subscription = row_to_owner_addon_subscription(subscription_row)
+
+        log_event(
+            "owner_addon_manual_trial_activated",
+            category="billing",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=activated_by_user_id,
+            target_user_id=owner_user_id,
+            message="Addon owner activado manualmente por superadmin.",
+            metadata={
+                "owner_user_id": owner_user_id,
+                "group_id": group_id,
+                "feature_code": feature_code,
+                "addon_code": addon_code,
+                "days": days,
+                "subscription_id": subscription.get("id"),
+                "product_id": product_id,
+                "current_period_end": subscription.get("current_period_end"),
+                "activated_by_user_id": activated_by_user_id,
+                "manual_trial": True,
+                "payments_created": False
+            }
+        )
+
+        return {
+            "ok": True,
+            "subscription_id": subscription.get("id"),
+            "product_id": product_id,
+            "addon_code": addon_code,
+            "current_period_end": subscription.get("current_period_end")
+        }
+
+    except Exception as e:
+
+        try:
+
+            conn.rollback()
+
+        except Exception:
+
+            pass
+
+        return {
+            "ok": False,
+            "reason": "error",
+            "error": str(e)[:500]
+        }
+
+
 def fetch_owner_addon_subscriptions(owner_user_id, group_id=None, active_only=False):
 
     filters = ["owner_user_id=%s"]
@@ -207,7 +419,8 @@ def fetch_active_owner_addon_subscription(owner_user_id, addon_code, group_id=No
     filters = [
         "owner_user_id=%s",
         "addon_code=%s",
-        "status = ANY(%s)"
+        "status = ANY(%s)",
+        "(current_period_end IS NULL OR current_period_end > NOW())"
     ]
     params = [
         owner_user_id,
