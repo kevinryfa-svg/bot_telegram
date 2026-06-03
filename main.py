@@ -1081,7 +1081,10 @@ async def handle_text(update, context):
         await receive_guardian_night_mode_time_text(update, context)
         return
 
-    if context.user_data.get("admin_guardian_trial_waiting"):
+    if (
+        context.user_data.get("admin_guardian_trial_waiting")
+        or context.user_data.get("admin_guardian_trial_search_waiting")
+    ):
         await receive_admin_guardian_trial_text(update, context)
         return
 
