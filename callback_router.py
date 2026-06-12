@@ -17615,7 +17615,10 @@ def fetch_free_community_for_known_user_sync(group_id):
                 SELECT id,
                        name,
                        telegram_group_id,
-                       COALESCE(is_free_group, FALSE)
+                       (
+                           COALESCE(is_free_group, FALSE)
+                           OR COALESCE(is_free, FALSE)
+                       )
                 FROM groups
                 WHERE id=%s
                 AND COALESCE(is_active, TRUE)=TRUE
@@ -19603,7 +19606,10 @@ def build_owner_general_text(group_id):
 
             cur.execute("""
 
-                SELECT is_free_group,
+                SELECT (
+                           COALESCE(is_free_group, FALSE)
+                           OR COALESCE(is_free, FALSE)
+                       ),
                        public_visibility
                 FROM groups
                 WHERE id=%s
@@ -19667,7 +19673,10 @@ def build_owner_commercial_config_text(group_id):
 
             cur.execute("""
 
-                SELECT is_free_group
+                SELECT (
+                    COALESCE(is_free_group, FALSE)
+                    OR COALESCE(is_free, FALSE)
+                )
                 FROM groups
                 WHERE id=%s
                 LIMIT 1
@@ -21538,12 +21547,12 @@ def fetch_marketplace_groups(filter_kind="trending", limit=8):
 
     if filter_kind == "free":
 
-        filters.append("COALESCE(g.is_free_group, FALSE)=TRUE")
+        filters.append("(\n            COALESCE(g.is_free_group, FALSE)=TRUE\n            OR COALESCE(g.is_free, FALSE)=TRUE\n        )")
 
 
     if filter_kind == "premium":
 
-        filters.append("COALESCE(g.is_free_group, FALSE)=FALSE")
+        filters.append("(\n            COALESCE(g.is_free_group, FALSE)=FALSE\n            AND COALESCE(g.is_free, FALSE)=FALSE\n        )")
 
 
     if filter_kind.startswith("category:"):
@@ -23243,11 +23252,14 @@ def assign_owner_for_commercial_request(request_row):
 
                     UPDATE groups
                     SET public_visibility=%s,
-                        is_free_group=%s
+                        is_free_group=%s,
+                        is_free=%s
                     WHERE id=%s
 
                 """, (
                     public_visibility,
+                    request_row.get("is_free_group") is True
+                    or request_row.get("payment_mode") == "free",
                     request_row.get("is_free_group") is True
                     or request_row.get("payment_mode") == "free",
                     group_id
@@ -23261,10 +23273,13 @@ def assign_owner_for_commercial_request(request_row):
                 cur.execute("""
 
                     UPDATE groups
-                    SET is_free_group=%s
+                    SET is_free_group=%s,
+                        is_free=%s
                     WHERE id=%s
 
                 """, (
+                    request_row.get("is_free_group") is True
+                    or request_row.get("payment_mode") == "free",
                     request_row.get("is_free_group") is True
                     or request_row.get("payment_mode") == "free",
                     group_id
@@ -24696,7 +24711,8 @@ def update_commercial_request_free_group(request_id):
             cur.execute("""
 
                 UPDATE groups
-                SET is_free_group=TRUE
+                SET is_free_group=TRUE,
+                    is_free=TRUE
                 WHERE id=%s
 
             """, (request_row.get("approved_group_id"),))
@@ -24732,7 +24748,8 @@ def update_commercial_request_paid_group(request_id):
             cur.execute("""
 
                 UPDATE groups
-                SET is_free_group=FALSE
+                SET is_free_group=FALSE,
+                    is_free=FALSE
                 WHERE id=%s
 
             """, (request_row.get("approved_group_id"),))
@@ -24773,10 +24790,12 @@ def update_commercial_request_access_type(request_id, payment_mode):
             cur.execute("""
 
                 UPDATE groups
-                SET is_free_group=%s
+                SET is_free_group=%s,
+                    is_free=%s
                 WHERE id=%s
 
             """, (
+                is_free,
                 is_free,
                 request_row.get("approved_group_id")
             ))
