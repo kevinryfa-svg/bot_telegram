@@ -156,7 +156,7 @@ def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, me
         return None
 
 
-def create_telegram_public_invite_link(token, telegram_group_id, name=None, community_type=None):
+def create_telegram_public_invite_link(token, telegram_group_id, name=None, community_type=None, return_details=False):
 
     payload = {
         "chat_id": telegram_group_id
@@ -191,10 +191,33 @@ def create_telegram_public_invite_link(token, telegram_group_id, name=None, comm
                 )
             )
 
+            if return_details:
+
+                return {
+                    "ok": False,
+                    "description": response.get("description"),
+                    "error_code": response.get("error_code"),
+                    "response_ok": response.get("ok"),
+                    "retry_after": (response.get("parameters") or {}).get("retry_after")
+                }
+
+
             return None
 
 
-        return response["result"]["invite_link"]
+        invite_link = response["result"]["invite_link"]
+
+
+        if return_details:
+
+            return {
+                "ok": True,
+                "invite_link": invite_link,
+                "response_ok": response.get("ok")
+            }
+
+
+        return invite_link
 
     except Exception as e:
 
@@ -207,6 +230,16 @@ def create_telegram_public_invite_link(token, telegram_group_id, name=None, comm
                 token=token
             )
         )
+
+        if return_details:
+
+            return {
+                "ok": False,
+                "description": str(e)[:500],
+                "error": str(e)[:500],
+                "response_ok": None
+            }
+
 
         return None
 

@@ -177,6 +177,7 @@ from guardian_service import (
 )
 from invite_link_service import (
     create_telegram_invite_link,
+    create_telegram_public_invite_link,
     mask_invite_link,
     revoke_telegram_invite_link
 )
@@ -13822,6 +13823,9 @@ def fetch_owner_group_quick_status(group_id):
         "name": "Comunidad",
         "community_type": "group",
         "is_free_group": False,
+        "is_marketplace_visible": False,
+        "is_main_menu_visible": False,
+        "free_invite_link": None,
         "public_visibility": "start_home",
         "active_users": 0,
         "active_plans": 0,
@@ -13839,9 +13843,21 @@ def fetch_owner_group_quick_status(group_id):
             cur.execute("""
 
                 SELECT name,
-                       COALESCE(is_free_group, FALSE),
+                       (
+                           COALESCE(is_free_group, FALSE)
+                           OR COALESCE(is_free, FALSE)
+                       ),
                        COALESCE(public_visibility, 'start_home'),
-                       COALESCE(community_type, 'group')
+                       COALESCE(community_type, 'group'),
+                       (
+                           COALESCE(is_marketplace_visible, FALSE)
+                           OR COALESCE(public_visibility, 'start_home') IN ('explore_only', 'both')
+                       ),
+                       (
+                           COALESCE(is_main_menu_visible, FALSE)
+                           OR COALESCE(public_visibility, 'start_home') IN ('start_home', 'both')
+                       ),
+                       free_invite_link
                 FROM groups
                 WHERE id=%s
                 LIMIT 1
@@ -13856,6 +13872,9 @@ def fetch_owner_group_quick_status(group_id):
                 status["is_free_group"] = bool(group_row[1])
                 status["public_visibility"] = group_row[2] or "start_home"
                 status["community_type"] = normalize_community_type(group_row[3])
+                status["is_marketplace_visible"] = bool(group_row[4])
+                status["is_main_menu_visible"] = bool(group_row[5])
+                status["free_invite_link"] = group_row[6]
 
 
             cur.execute("""
@@ -13948,6 +13967,9 @@ def build_owner_quick_status_text(user_id, group_id):
 
     status = fetch_owner_group_quick_status(group_id)
     access_type = "Gratis" if status["is_free_group"] else "Pago"
+    marketplace_text = "ON" if status["is_marketplace_visible"] else "OFF"
+    main_menu_text = "ON" if status["is_main_menu_visible"] else "OFF"
+    free_link_text = "Configurado" if status["free_invite_link"] else "Pendiente"
     community_kind_cap = format_community_kind_capitalized(status.get("community_type"))
     backup_text = "Activo" if status["backup_active"] else "No activo"
     errors_text = "Sin errores críticos recientes"
@@ -13966,7 +13988,9 @@ def build_owner_quick_status_text(user_id, group_id):
         f"Comunidad: {status['name']}\n"
         f"Tipo: {community_kind_cap}\n"
         f"Tipo de acceso: {access_type}\n"
-        f"Visibilidad marketplace: {status['public_visibility']}\n"
+        f"Marketplace: {marketplace_text}\n"
+        f"Menú principal: {main_menu_text}\n"
+        f"Link gratuito: {free_link_text}\n"
         f"Usuarios activos: {status['active_users']}\n"
         f"Planes activos: {status['active_plans']}\n"
         f"Códigos activos: {status['active_codes']}\n"
@@ -14075,6 +14099,271 @@ def build_owner_setup_assistant_keyboard(user_id, group_id):
     keyboard.extend(build_owner_panel_nav_keyboard().inline_keyboard)
 
     return InlineKeyboardMarkup(keyboard)
+
+
+def resolve_group_public_visibility(is_marketplace_visible, is_main_menu_visible):
+
+    if is_marketplace_visible and is_main_menu_visible:
+
+        return "both"
+
+
+    if is_marketplace_visible:
+
+        return "explore_only"
+
+
+    if is_main_menu_visible:
+
+        return "start_home"
+
+
+    return "hidden"
+
+
+def format_owner_group_publication_state(group_id):
+
+    status = fetch_owner_group_quick_status(group_id)
+
+    return (
+        "🌐 Publicación de comunidad\n\n"
+        f"Comunidad: {status['name']}\n"
+        f"Marketplace: {'ON' if status['is_marketplace_visible'] else 'OFF'}\n"
+        f"Menú principal: {'ON' if status['is_main_menu_visible'] else 'OFF'}\n"
+        f"Grupo gratuito: {'ON' if status['is_free_group'] else 'OFF'}\n"
+        f"Link gratuito: {'configurado' if status['free_invite_link'] else 'pendiente'}"
+    )
+
+
+def build_group_publication_controls_keyboard(user_id, group_id):
+
+    status = fetch_owner_group_quick_status(group_id)
+    keyboard = []
+
+
+    if user_has_group_permission_any(user_id, group_id, ["can_manage_groups", "can_edit_marketplace_preview"]):
+
+        keyboard.append([InlineKeyboardButton(
+            f"🛒 Marketplace {'OFF' if status['is_marketplace_visible'] else 'ON'}",
+            callback_data=f"owner_group_toggle_marketplace_{group_id}"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            f"🏠 Menú principal {'OFF' if status['is_main_menu_visible'] else 'ON'}",
+            callback_data=f"owner_group_toggle_main_menu_{group_id}"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            "🙈 Ocultar grupo",
+            callback_data=f"owner_group_hide_{group_id}"
+        )])
+
+
+    if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
+
+        keyboard.append([InlineKeyboardButton(
+            f"🎁 Grupo gratuito {'OFF' if status['is_free_group'] else 'ON'}",
+            callback_data=f"owner_group_toggle_free_{group_id}"
+        )])
+
+        if status["free_invite_link"]:
+
+            keyboard.append([InlineKeyboardButton(
+                "🔄 Regenerar link gratuito",
+                callback_data=f"owner_group_regenerate_free_link_{group_id}"
+            )])
+
+        else:
+
+            keyboard.append([InlineKeyboardButton(
+                "🔗 Generar link gratuito",
+                callback_data=f"owner_group_generate_free_link_{group_id}"
+            )])
+
+
+        keyboard.append([InlineKeyboardButton(
+            "🧪 Probar entrada",
+            callback_data=f"owner_group_test_entry_{group_id}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="owner_panel_marketplace")])
+    keyboard.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def fetch_free_invite_group(group_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id,
+                   name,
+                   telegram_group_id,
+                   (
+                       COALESCE(is_free_group, FALSE)
+                       OR COALESCE(is_free, FALSE)
+                   ) AS is_free,
+                   free_invite_link,
+                   COALESCE(community_type, 'group')
+            FROM groups
+            WHERE id=%s
+            AND is_active=TRUE
+            LIMIT 1
+
+        """, (group_id,))
+
+        return cur.fetchone()
+
+
+def format_free_invite_link_error(result, community_kind="grupo"):
+
+    description = (result or {}).get("description") or (result or {}).get("error") or ""
+    lowered = str(description).lower()
+
+
+    if "not enough rights" in lowered or "administrator" in lowered or "rights" in lowered:
+
+        return (
+            "No puedo generar el link porque no soy administrador del grupo.\n\n"
+            "Necesito permiso para invitar usuarios mediante enlace."
+        )
+
+
+    if "invite" in lowered or "permission" in lowered or "permis" in lowered:
+
+        return "Necesito permiso para invitar usuarios mediante enlace."
+
+
+    return (
+        f"No he podido crear el link de entrada del {community_kind}.\n\n"
+        "Revisa que el bot sea administrador y tenga permiso para invitar usuarios mediante enlace."
+    )
+
+
+def get_or_create_free_group_invite_link(group_id, regenerate=False):
+
+    group_row = fetch_free_invite_group(group_id)
+
+
+    if not group_row:
+
+        return {
+            "ok": False,
+            "reason": "group_not_found"
+        }
+
+
+    _group_id, group_name, telegram_group_id, is_free, free_invite_link, community_type = group_row
+    community_type = normalize_community_type(community_type)
+
+
+    if not is_free:
+
+        return {
+            "ok": False,
+            "reason": "not_free_group",
+            "group_name": group_name
+        }
+
+
+    if not telegram_group_id:
+
+        return {
+            "ok": False,
+            "reason": "missing_telegram_group_id",
+            "group_name": group_name
+        }
+
+
+    if free_invite_link and not regenerate:
+
+        return {
+            "ok": True,
+            "invite_link": free_invite_link,
+            "created": False,
+            "group_name": group_name,
+            "telegram_group_id": telegram_group_id,
+            "community_type": community_type
+        }
+
+
+    if free_invite_link and regenerate:
+
+        try:
+
+            revoke_telegram_invite_link(
+                TOKEN,
+                telegram_group_id,
+                free_invite_link
+            )
+
+        except Exception as e:
+
+            print("Error revocando link gratuito anterior:", e)
+
+
+    result = create_telegram_public_invite_link(
+        TOKEN,
+        telegram_group_id,
+        name="Acceso gratuito",
+        community_type=community_type,
+        return_details=True
+    )
+    invite_link = result.get("invite_link") if result else None
+
+
+    if not invite_link:
+
+        log_event(
+            "free_group_invite_link_failed",
+            category="access",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            message="No se pudo generar link gratuito persistente.",
+            metadata={
+                "error_code": (result or {}).get("error_code"),
+                "description": ((result or {}).get("description") or (result or {}).get("error") or "")[:500]
+            }
+        )
+
+        return {
+            "ok": False,
+            "reason": "telegram_error",
+            "telegram_result": result,
+            "group_name": group_name,
+            "telegram_group_id": telegram_group_id,
+            "community_type": community_type
+        }
+
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            UPDATE groups
+            SET free_invite_link=%s,
+                free_invite_link_created_at=NOW()
+            WHERE id=%s
+
+        """, (
+            invite_link,
+            group_id
+        ))
+
+        conn.commit()
+
+
+    return {
+        "ok": True,
+        "invite_link": invite_link,
+        "created": True,
+        "group_name": group_name,
+        "telegram_group_id": telegram_group_id,
+        "community_type": community_type
+    }
 
 
 def build_group_settings_keyboard(user_id, group_id):
@@ -16687,6 +16976,7 @@ def build_owner_section_keyboard(user_id, group_id, section):
     elif section == "marketplace":
 
         keyboard.extend([
+            [InlineKeyboardButton("🌐 Publicación", callback_data=f"owner_group_publication_{group_id}")],
             [InlineKeyboardButton("✏️ Editar ficha", callback_data="edit_group_name")],
             [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
             [InlineKeyboardButton("👁 Preview manual/dinámico/mixto", callback_data="edit_group_preview")],
@@ -20039,6 +20329,7 @@ def format_public_visibility(public_visibility):
     labels = {
         "start_home": "inicio",
         "explore_only": "explorar",
+        "both": "inicio y explorar",
         "hidden": "oculta/borrador"
     }
 
@@ -20893,7 +21184,10 @@ def fetch_marketplace_filter_tags(limit=8):
             FROM groups g
             WHERE g.is_active=TRUE
             AND g.telegram_group_id != 0
-            AND COALESCE(g.public_visibility, 'start_home')='explore_only'
+            AND (
+                COALESCE(g.is_marketplace_visible, FALSE)=TRUE
+                OR COALESCE(g.public_visibility, 'start_home') IN ('explore_only', 'both')
+            )
             AND g.tags IS NOT NULL
             AND g.tags != ''
             AND {marketplace_trial_visibility_filter()}
@@ -21135,7 +21429,10 @@ def get_marketplace_group_select():
     return """
         SELECT g.id,
                g.name,
-               COALESCE(g.is_free_group, FALSE),
+               (
+                   COALESCE(g.is_free_group, FALSE)
+                   OR COALESCE(g.is_free, FALSE)
+               ),
                g.preview_text,
                g.preview_file_id,
                g.preview_image_file_id,
@@ -21233,7 +21530,7 @@ def fetch_marketplace_groups(filter_kind="trending", limit=8):
     filters = [
         "g.is_active=TRUE",
         "g.telegram_group_id != 0",
-        "COALESCE(g.public_visibility, 'start_home')='explore_only'",
+        "(\n            COALESCE(g.is_marketplace_visible, FALSE)=TRUE\n            OR COALESCE(g.public_visibility, 'start_home') IN ('explore_only', 'both')\n        )",
         marketplace_trial_visibility_filter()
     ]
     params = []
@@ -26095,151 +26392,56 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
         return
 
 
+    link_result = get_or_create_free_group_invite_link(group_id)
+
+
+    if not link_result.get("ok"):
+
+        reason = link_result.get("reason")
+        community_type = normalize_community_type(link_result.get("community_type"))
+        community_kind = format_community_kind(community_type)
+
+        if reason == "not_free_group":
+
+            message = "Este grupo aún no está configurado como gratuito ni tiene planes activos."
+
+        elif reason == "telegram_error":
+
+            message = format_free_invite_link_error(
+                link_result.get("telegram_result"),
+                community_kind=community_kind
+            )
+
+        elif reason == "missing_telegram_group_id":
+
+            message = "No he podido identificar el grupo de Telegram asociado a esta comunidad."
+
+        else:
+
+            message = "❌ Comunidad gratuita no encontrada o no disponible."
+
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=message,
+            reply_markup=build_group_recovery_keyboard(group_id)
+        )
+
+        return
+
+
+    link = link_result.get("invite_link")
+    group_name = link_result.get("group_name") or "Comunidad"
+
+
     try:
 
         with conn.cursor() as cur:
 
-            cur.execute("""
-
-                SELECT name,
-                       telegram_group_id,
-                       COALESCE(community_type, 'group')
-                FROM groups
-                WHERE id=%s
-                AND is_active=TRUE
-                AND COALESCE(is_free_group, FALSE)=TRUE
-                LIMIT 1
-
-            """, (group_id,))
-
-            group_row = cur.fetchone()
-
-
-            if not group_row:
-
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text="❌ Comunidad gratuita no encontrada o no disponible.",
-                    reply_markup=build_group_recovery_keyboard(group_id)
-                )
-
-                return
-
-
-            group_name, telegram_group_id, community_type = group_row
-            community_type = normalize_community_type(community_type)
-            community_kind = format_community_kind(community_type)
-
             increment_community_stat(group_id, "access_clicks")
 
-            cur.execute("""
-
-                SELECT invite_link
-                FROM invite_links
-                WHERE user_id=%s
-                AND (
-                    group_id=%s
-                    OR telegram_group_id=%s
-                    OR group_id=%s
-                )
-                AND is_active=TRUE
-
-            """, (
-                user_id,
-                group_id,
-                telegram_group_id,
-                telegram_group_id
-            ))
-
-            old_links = cur.fetchall()
-
-
-        for (old_link,) in old_links:
-
-            try:
-
-                revoke_telegram_invite_link(
-                    TOKEN,
-                    telegram_group_id,
-                    old_link
-                )
-
-            except Exception as e:
-
-                print("Error revocando link gratuito anterior:", e)
-
-
-        link = create_telegram_invite_link(
-            TOKEN,
-            telegram_group_id,
-            expire_seconds=180,
-            member_limit=1,
-            community_type=community_type
-        )
-
-
-        if not link:
-
-            log_event(
-                "free_access_invite_link_error",
-                category="access",
-                severity="warning",
-                scope="group",
-                group_id=group_id,
-                telegram_group_id=telegram_group_id,
-                actor_user_id=user_id,
-                target_user_id=user_id,
-                message=f"No se pudo crear enlace de acceso gratuito para {community_kind}."
-            )
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    "❌ Error creando acceso.\n\n"
-                    f"No he podido crear enlace de invitación. Asegúrate de que el bot es administrador del {community_kind} "
-                    "y tiene permisos para invitar usuarios."
-                ),
-                reply_markup=build_group_recovery_keyboard(group_id)
-            )
-
-            return
-
-
-        username = telegram_user.username
-        first_name = telegram_user.first_name
-
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                DELETE FROM invite_links
-                WHERE user_id=%s
-                AND (
-                    group_id=%s
-                    OR telegram_group_id=%s
-                    OR group_id=%s
-                )
-
-            """, (
-                user_id,
-                group_id,
-                telegram_group_id,
-                telegram_group_id
-            ))
-
-            cur.execute("""
-
-                INSERT INTO invite_links
-                (user_id, group_id, telegram_group_id, invite_link, is_active)
-                VALUES (%s, %s, %s, %s, TRUE)
-
-            """, (
-                user_id,
-                group_id,
-                telegram_group_id,
-                link
-            ))
+            username = telegram_user.username
+            first_name = telegram_user.first_name
 
             cur.execute("""
 
@@ -26300,9 +26502,8 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            "✅ Acceso gratuito concedido.\n\n"
-            "Este enlace es personal y de un solo uso.\n"
-            "No lo compartas.\n\n"
+            f"✅ Acceso gratuito a {group_name}\n\n"
+            "Pulsa el enlace para entrar:\n\n"
             f"{link}"
         ),
         reply_markup=ReplyKeyboardRemove()
@@ -35750,7 +35951,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 FROM groups
                 WHERE id=%s
                 AND is_active=TRUE
-                AND COALESCE(is_free_group, FALSE)=TRUE
+                AND (
+                    COALESCE(is_free_group, FALSE)=TRUE
+                    OR COALESCE(is_free, FALSE)=TRUE
+                )
                 LIMIT 1
 
             """, (group_id,))
@@ -35851,7 +36055,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 cur.execute("""
 
-                    SELECT COALESCE(is_free_group, FALSE)
+                    SELECT (
+                        COALESCE(is_free_group, FALSE)
+                        OR COALESCE(is_free, FALSE)
+                    )
                     FROM groups
                     WHERE id=%s
                     AND is_active=TRUE
@@ -35960,7 +36167,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
             context,
             query.message.chat_id,
-                "⚠️ Este grupo no tiene planes disponibles."
+                "Este grupo aún no está configurado como gratuito ni tiene planes activos."
             )
 
             return
@@ -44250,6 +44457,278 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             "✅ Región permitida actualizada.\n\n" + build_owner_location_management_text(group_id),
             reply_markup=build_owner_location_management_keyboard(group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_group_publication_"):
+
+        group_id = extract_commercial_request_id(data, "owner_group_publication_")
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups", "can_edit_marketplace_preview"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para gestionar la publicación de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        context.user_data["selected_owner_group"] = group_id
+        context.user_data["selected_group_admin"] = group_id
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            format_owner_group_publication_state(group_id),
+            reply_markup=build_group_publication_controls_keyboard(user_id, group_id)
+        )
+
+        return
+
+
+    if (
+        data.startswith("owner_group_toggle_marketplace_")
+        or data.startswith("owner_group_toggle_main_menu_")
+        or data.startswith("owner_group_hide_")
+    ):
+
+        if data.startswith("owner_group_toggle_marketplace_"):
+
+            group_id = extract_commercial_request_id(data, "owner_group_toggle_marketplace_")
+            action = "marketplace"
+
+        elif data.startswith("owner_group_toggle_main_menu_"):
+
+            group_id = extract_commercial_request_id(data, "owner_group_toggle_main_menu_")
+            action = "main_menu"
+
+        else:
+
+            group_id = extract_commercial_request_id(data, "owner_group_hide_")
+            action = "hide"
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups", "can_edit_marketplace_preview"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para cambiar la visibilidad de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        status = fetch_owner_group_quick_status(group_id)
+        marketplace_visible = bool(status["is_marketplace_visible"])
+        main_menu_visible = bool(status["is_main_menu_visible"])
+
+
+        if action == "marketplace":
+
+            marketplace_visible = not marketplace_visible
+
+        elif action == "main_menu":
+
+            main_menu_visible = not main_menu_visible
+
+        else:
+
+            marketplace_visible = False
+            main_menu_visible = False
+
+
+        public_visibility = resolve_group_public_visibility(
+            marketplace_visible,
+            main_menu_visible
+        )
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET is_marketplace_visible=%s,
+                    is_main_menu_visible=%s,
+                    public_visibility=%s
+                WHERE id=%s
+
+            """, (
+                marketplace_visible,
+                main_menu_visible,
+                public_visibility,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        log_event(
+            "owner_group_publication_updated",
+            category="marketplace",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Owner actualizó visibilidad pública de comunidad.",
+            metadata={
+                "is_marketplace_visible": marketplace_visible,
+                "is_main_menu_visible": main_menu_visible,
+                "public_visibility": public_visibility
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Visibilidad actualizada.\n\n" + format_owner_group_publication_state(group_id),
+            reply_markup=build_group_publication_controls_keyboard(user_id, group_id)
+        )
+
+        return
+
+
+    if data.startswith("owner_group_toggle_free_"):
+
+        group_id = extract_commercial_request_id(data, "owner_group_toggle_free_")
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para cambiar el tipo de acceso de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        status = fetch_owner_group_quick_status(group_id)
+        new_value = not bool(status["is_free_group"])
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET is_free_group=%s,
+                    is_free=%s
+                WHERE id=%s
+
+            """, (
+                new_value,
+                new_value,
+                group_id
+            ))
+
+            conn.commit()
+
+
+        log_event(
+            "owner_group_free_access_updated",
+            category="marketplace",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            message="Owner actualizó acceso gratuito de comunidad.",
+            metadata={
+                "is_free": new_value
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "✅ Tipo de acceso actualizado.\n\n" + format_owner_group_publication_state(group_id),
+            reply_markup=build_group_publication_controls_keyboard(user_id, group_id)
+        )
+
+        return
+
+
+    if (
+        data.startswith("owner_group_generate_free_link_")
+        or data.startswith("owner_group_regenerate_free_link_")
+        or data.startswith("owner_group_test_entry_")
+    ):
+
+        if data.startswith("owner_group_generate_free_link_"):
+
+            group_id = extract_commercial_request_id(data, "owner_group_generate_free_link_")
+            regenerate = False
+
+        elif data.startswith("owner_group_regenerate_free_link_"):
+
+            group_id = extract_commercial_request_id(data, "owner_group_regenerate_free_link_")
+            regenerate = True
+
+        else:
+
+            group_id = extract_commercial_request_id(data, "owner_group_test_entry_")
+            regenerate = False
+
+
+        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
+
+            await query.message.reply_text(
+                "⛔ No tienes permiso para gestionar el link gratuito de esta comunidad.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        result = get_or_create_free_group_invite_link(
+            group_id,
+            regenerate=regenerate
+        )
+
+        if not result.get("ok"):
+
+            reason = result.get("reason")
+            community_type = normalize_community_type(result.get("community_type"))
+            community_kind = format_community_kind(community_type)
+
+            if reason == "not_free_group":
+
+                message = "Este grupo aún no está configurado como gratuito ni tiene planes activos."
+
+            elif reason == "telegram_error":
+
+                message = format_free_invite_link_error(
+                    result.get("telegram_result"),
+                    community_kind=community_kind
+                )
+
+            else:
+
+                message = "No he podido generar el link gratuito de esta comunidad."
+
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                f"⚠️ {message}",
+                reply_markup=build_group_publication_controls_keyboard(user_id, group_id)
+            )
+
+            return
+
+
+        action_text = "regenerado" if regenerate else ("creado" if result.get("created") else "ya estaba configurado")
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            (
+                f"✅ Link gratuito {action_text}.\n\n"
+                f"{result.get('invite_link')}"
+            ),
+            reply_markup=build_group_publication_controls_keyboard(user_id, group_id)
         )
 
         return

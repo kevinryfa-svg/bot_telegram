@@ -108,6 +108,16 @@ def create_tables():
 
             is_free_group BOOLEAN DEFAULT FALSE,
 
+            is_marketplace_visible BOOLEAN DEFAULT FALSE,
+
+            is_main_menu_visible BOOLEAN DEFAULT FALSE,
+
+            is_free BOOLEAN DEFAULT FALSE,
+
+            free_invite_link TEXT,
+
+            free_invite_link_created_at TIMESTAMP,
+
             community_type TEXT DEFAULT 'group',
 
             location_gate_enabled BOOLEAN DEFAULT FALSE,
@@ -3325,6 +3335,11 @@ def create_tables():
             ("tags", "TEXT"),
             ("marketplace_badge", "TEXT"),
             ("preview_mode", "TEXT DEFAULT 'manual'"),
+            ("is_marketplace_visible", "BOOLEAN DEFAULT FALSE"),
+            ("is_main_menu_visible", "BOOLEAN DEFAULT FALSE"),
+            ("is_free", "BOOLEAN DEFAULT FALSE"),
+            ("free_invite_link", "TEXT"),
+            ("free_invite_link_created_at", "TIMESTAMP"),
             ("location_gate_enabled", "BOOLEAN DEFAULT FALSE"),
             ("allowed_region", "TEXT"),
             ("allowed_region_type", "TEXT")

@@ -611,7 +611,10 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
                 WHERE is_active=TRUE
                 AND telegram_group_id != 0
-                AND COALESCE(public_visibility, 'start_home')='start_home'
+                AND (
+                    COALESCE(is_main_menu_visible, FALSE)=TRUE
+                    OR COALESCE(public_visibility, 'start_home') IN ('start_home', 'both')
+                )
                 AND """ + active_marketplace_trial_filter() + """
 
                 ORDER BY id ASC
@@ -628,7 +631,10 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
                 WHERE is_active=TRUE
                 AND telegram_group_id != 0
-                AND COALESCE(public_visibility, 'start_home')='explore_only'
+                AND (
+                    COALESCE(is_marketplace_visible, FALSE)=TRUE
+                    OR COALESCE(public_visibility, 'start_home') IN ('explore_only', 'both')
+                )
                 AND """ + active_marketplace_trial_filter() + """
 
                 ORDER BY id ASC
