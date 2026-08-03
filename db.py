@@ -1,4 +1,5 @@
 import os
+import time
 import psycopg2
 
 
@@ -7,6 +8,19 @@ import psycopg2
 # =========================
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
+# Reintentos de conexión al arrancar. Evita que un parón momentáneo de
+# Postgres (o que la base de datos tarde en estar disponible tras un
+# reinicio) tumbe el bot al instante y lo deje en bucle de fallo.
+DB_CONNECT_MAX_RETRIES = int(
+    os.environ.get("DB_CONNECT_MAX_RETRIES", "10")
+)
+DB_CONNECT_RETRY_DELAY_SECONDS = float(
+    os.environ.get("DB_CONNECT_RETRY_DELAY_SECONDS", "3")
+)
+DB_CONNECT_RETRY_MAX_DELAY_SECONDS = float(
+    os.environ.get("DB_CONNECT_RETRY_MAX_DELAY_SECONDS", "30")
+)
 VERBOSE_DB_MIGRATIONS = os.environ.get(
     "VERBOSE_DB_MIGRATIONS",
     "false"
@@ -41,7 +55,7 @@ def print_db_migration_summary():
     )
 
 
-def get_conn():
+def _open_conn():
 
     conn = psycopg2.connect(
         DATABASE_URL,
@@ -51,6 +65,46 @@ def get_conn():
     conn.autocommit = True
 
     return conn
+
+
+def get_conn():
+
+    delay = DB_CONNECT_RETRY_DELAY_SECONDS
+
+    last_error = None
+
+
+    for attempt in range(1, DB_CONNECT_MAX_RETRIES + 1):
+
+        try:
+
+            return _open_conn()
+
+        except psycopg2.OperationalError as error:
+
+            last_error = error
+
+
+            if attempt >= DB_CONNECT_MAX_RETRIES:
+
+                break
+
+
+            print(
+                "No se pudo conectar a la base de datos "
+                f"(intento {attempt}/{DB_CONNECT_MAX_RETRIES}). "
+                f"Reintentando en {delay:.0f}s..."
+            )
+
+            time.sleep(delay)
+
+            delay = min(
+                delay * 2,
+                DB_CONNECT_RETRY_MAX_DELAY_SECONDS
+            )
+
+
+    raise last_error
 
 
 # Mantener compatibilidad temporal
