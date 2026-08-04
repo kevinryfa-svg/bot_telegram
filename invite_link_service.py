@@ -64,6 +64,86 @@ def sanitize_log_value(value, token=None):
 
 
 # =========================
+# INVITE LINKS — MIGRACIÓN A SUPERGRUPO
+# =========================
+# Cuando un grupo se convierte en supergrupo, Telegram cambia su chat_id y
+# rechaza cualquier petición al id antiguo con
+# "group chat was upgraded to a supergroup chat", devolviendo el nuevo id en
+# parameters.migrate_to_chat_id. Sin tratarlo, el bot no puede crear enlaces
+# de acceso para ese grupo: el usuario paga y no recibe su enlace.
+
+def extract_migrated_chat_id(response):
+
+    if not isinstance(response, dict):
+
+        return None
+
+
+    parameters = response.get("parameters") or {}
+    migrated = parameters.get("migrate_to_chat_id")
+
+
+    if migrated in (None, ""):
+
+        return None
+
+
+    try:
+
+        return int(migrated)
+
+    except Exception:
+
+        return None
+
+
+def apply_group_chat_migration(old_chat_id, new_chat_id):
+    """Guarda el nuevo chat_id para que el grupo vuelva a funcionar."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE groups
+                SET telegram_group_id=%s
+                WHERE telegram_group_id=%s
+
+            """, (
+                new_chat_id,
+                old_chat_id
+            ))
+
+            cur.execute("""
+
+                UPDATE invite_links
+                SET telegram_group_id=%s
+                WHERE telegram_group_id=%s
+
+            """, (
+                new_chat_id,
+                old_chat_id
+            ))
+
+        print(
+            "Grupo migrado a supergrupo: "
+            f"{old_chat_id} -> {new_chat_id} (actualizado en la base de datos)"
+        )
+
+        return True
+
+    except Exception as e:
+
+        print(
+            "Error guardando la migración a supergrupo:",
+            e
+        )
+
+        return False
+
+
+# =========================
 # INVITE LINKS — CREATE TELEGRAM LINK
 # =========================
 
@@ -89,6 +169,29 @@ def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, me
             json=payload
 
         ).json()
+
+
+        if "result" not in response:
+
+            # El grupo pasó a supergrupo: guardar el nuevo id y reintentar.
+            migrated_chat_id = extract_migrated_chat_id(response)
+
+            if migrated_chat_id and migrated_chat_id != telegram_group_id:
+
+                apply_group_chat_migration(
+                    telegram_group_id,
+                    migrated_chat_id
+                )
+
+                payload["chat_id"] = migrated_chat_id
+
+                response = requests.post(
+
+                    f"https://api.telegram.org/bot{token}/createChatInviteLink",
+
+                    json=payload
+
+                ).json()
 
 
         if "result" not in response:
@@ -177,6 +280,29 @@ def create_telegram_public_invite_link(token, telegram_group_id, name=None, comm
             json=payload
 
         ).json()
+
+
+        if "result" not in response:
+
+            # El grupo pasó a supergrupo: guardar el nuevo id y reintentar.
+            migrated_chat_id = extract_migrated_chat_id(response)
+
+            if migrated_chat_id and migrated_chat_id != telegram_group_id:
+
+                apply_group_chat_migration(
+                    telegram_group_id,
+                    migrated_chat_id
+                )
+
+                payload["chat_id"] = migrated_chat_id
+
+                response = requests.post(
+
+                    f"https://api.telegram.org/bot{token}/createChatInviteLink",
+
+                    json=payload
+
+                ).json()
 
 
         if "result" not in response:
