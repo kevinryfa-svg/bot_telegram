@@ -3949,6 +3949,51 @@ def create_tables():
 
 
         # =========================
+        # TABLA REENGANCHE (usuarios sin compras)
+        # =========================
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS user_reengagement (
+
+            user_id BIGINT PRIMARY KEY,
+
+            sent_count INTEGER DEFAULT 0,
+
+            last_sent_at TIMESTAMP,
+
+            opted_out BOOLEAN DEFAULT FALSE,
+
+            is_blocked BOOLEAN DEFAULT FALSE,
+
+            last_error TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+        try:
+
+            cur.execute("""
+
+                CREATE INDEX IF NOT EXISTS idx_user_reengagement_pending
+                ON user_reengagement (last_sent_at, opted_out, is_blocked)
+
+            """)
+
+        except Exception as e:
+
+            migration_print(
+                f"Error creando índice de reenganche: {e}",
+                "errors"
+            )
+
+
+        # =========================
         # MIGRACIÓN COLUMNAS group_id
         # =========================
 

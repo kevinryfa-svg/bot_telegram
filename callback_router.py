@@ -264,6 +264,10 @@ from user_activity_logger import (
     log_user_event,
     log_user_event_by_ids
 )
+from reengagement_service import (
+    CALLBACK_REENGAGEMENT_STOP,
+    opt_out_reengagement
+)
 from wizard_state_helpers import (
     clear_location_flow_state,
     clear_owner_payment_provider_wizard_state,
@@ -28109,6 +28113,44 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "⚠️ No encontré esta vinculación pendiente."
+        )
+
+        return
+
+
+    # =========================
+    # BAJA DE AVISOS DE REENGANCHE
+    # =========================
+
+    if data == CALLBACK_REENGAGEMENT_STOP:
+
+        try:
+
+            opt_out_reengagement(user_id)
+
+        except Exception as e:
+
+            print("Reenganche: error dando de baja:", e)
+
+
+        await query.answer("No recibirás más avisos.", show_alert=False)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🔔 Hecho, no volveré a enviarte avisos de novedades.\n\n"
+            "Puedes seguir usando el bot con normalidad y entrar cuando "
+            "quieras a ver las comunidades disponibles.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🔎 Ver comunidades",
+                    callback_data="start_explore_groups"
+                )],
+                [InlineKeyboardButton(
+                    "🏠 Inicio",
+                    callback_data="public_back_start"
+                )]
+            ])
         )
 
         return
