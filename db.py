@@ -130,7 +130,11 @@ class _ResilientConnection:
 
     def __init__(self):
 
-        self._conn = get_conn()
+        # Conexión perezosa: no se abre al importar el módulo, sino en el
+        # primer uso real. Así importar `db` (o cualquier módulo que haga
+        # `from db import conn`) no exige una base de datos disponible, lo
+        # que además permite ejecutar tests sin Postgres.
+        self._conn = None
         self._lock = threading.RLock()
 
     def _is_alive(self):
