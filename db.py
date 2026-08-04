@@ -153,6 +153,9 @@ class _ResilientConnection:
 
             if not self._is_alive():
 
+                first_connect = self._conn is None
+
+
                 try:
 
                     if self._conn is not None:
@@ -164,9 +167,11 @@ class _ResilientConnection:
                     pass
 
 
-                print(
-                    "Conexión a la base de datos perdida. Reconectando..."
-                )
+                if not first_connect:
+
+                    print(
+                        "Conexión a la base de datos perdida. Reconectando..."
+                    )
 
                 self._conn = get_conn()
 
