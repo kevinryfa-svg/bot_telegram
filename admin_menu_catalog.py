@@ -13,7 +13,6 @@ ADMIN_MENU_GROUPS = "groups"
 ADMIN_MENU_PAYMENTS = "payments"
 ADMIN_MENU_BUSINESS = "business"
 ADMIN_MENU_LOGS = "logs"
-ADMIN_MENU_COMMERCIAL = "commercial"
 ADMIN_MENU_SUPPORT = "support"
 ADMIN_MENU_GROUP_ADMINS = "group_admins"
 ADMIN_MENU_BACKUP = "backup_premium"
@@ -128,14 +127,6 @@ ADMIN_MENU_SECTIONS = [
         "key": ADMIN_MENU_SUPPORT,
         "text": "🛟 Soporte",
         "callback_data": "admin_support_tickets",
-        "permissions_any": [
-            "super_admin_only"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_COMMERCIAL,
-        "text": "🧑‍💼 Panel de propietarios",
-        "callback_data": "admin_owners_panel",
         "permissions_any": [
             "super_admin_only"
         ]
