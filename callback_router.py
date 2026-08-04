@@ -36628,6 +36628,110 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # =========================
+    # BLOQUE: PROPIETARIOS Y COMUNIDADES
+    # =========================
+
+    if data == "admin_block_owners":
+
+        if not is_super_admin(user_id):
+
+            await query.answer("Solo el propietario principal.", show_alert=True)
+            return
+
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+            [InlineKeyboardButton("🧑‍💼 Panel de propietarios", callback_data="admin_owners_panel")],
+            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
+            [InlineKeyboardButton("📦 Gestión de grupos", callback_data="menu_groups")],
+            [InlineKeyboardButton("👥 Admins de grupos", callback_data="group_admin_panel")],
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+        ]
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "🧑‍💼 PROPIETARIOS Y COMUNIDADES",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    # =========================
+    # BLOQUE: USUARIOS Y ACCESOS
+    # =========================
+
+    if data == "admin_block_users":
+
+        if not is_super_admin(user_id):
+
+            await query.answer("Solo el propietario principal.", show_alert=True)
+            return
+
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+            [InlineKeyboardButton("👥 Gestión de usuarios", callback_data="menu_users")],
+            [InlineKeyboardButton("🎟 Accesos y códigos", callback_data="menu_codes")],
+            [InlineKeyboardButton("🎟 Códigos por grupo", callback_data="admin_group_user_codes")],
+            [InlineKeyboardButton("🎟 Códigos promocionales", callback_data="admin_commercial_promo_codes")],
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+        ]
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "👥 USUARIOS Y ACCESOS",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    # =========================
+    # BLOQUE: PAGOS Y NEGOCIO
+    # =========================
+
+    if data == "admin_block_business":
+
+        if not is_super_admin(user_id):
+
+            await query.answer("Solo el propietario principal.", show_alert=True)
+            return
+
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        keyboard = [
+            [InlineKeyboardButton("💳 Gestión de pagos", callback_data="menu_payments")],
+            [InlineKeyboardButton("📊 Negocio y estadísticas", callback_data="menu_business")],
+            [InlineKeyboardButton("🛡 Backup premium", callback_data="owner_backup_panel")],
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
+        ]
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "💳 PAGOS Y NEGOCIO",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    # =========================
     # MENÚ USUARIOS
     # =========================
 
