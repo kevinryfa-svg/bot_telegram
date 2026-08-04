@@ -3949,6 +3949,110 @@ def create_tables():
 
 
         # =========================
+        # SANEADO DE TABLAS ANTIGUAS
+        # =========================
+        # Las tablas más viejas del proyecto se crearon antes de que existieran
+        # algunas columnas, y CREATE TABLE IF NOT EXISTS no las añade a una
+        # tabla que ya existe. Eso dejaba producción sin columnas que el código
+        # sí usa (p. ej. payments.status), rompiendo el registro de pagos y,
+        # con él, la entrega del enlace de acceso. Aquí se asegura que cada
+        # tabla crítica tenga todas sus columnas.
+
+        CRITICAL_TABLE_COLUMNS = [
+            ("users", [
+                ("user_id", "BIGINT"),
+                ("group_id", "INTEGER"),
+                ("username", "TEXT"),
+                ("first_name", "TEXT"),
+                ("expiration", "TIMESTAMP"),
+                ("stripe_customer_id", "TEXT"),
+                ("stripe_subscription_id", "TEXT"),
+                ("subscription_active", "BOOLEAN DEFAULT FALSE"),
+                ("last_invite_link", "TEXT"),
+                ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            ]),
+            ("payments", [
+                ("user_id", "BIGINT"),
+                ("group_id", "INTEGER"),
+                ("stripe_payment_id", "TEXT"),
+                ("amount", "INTEGER"),
+                ("currency", "TEXT"),
+                ("status", "TEXT"),
+                ("payment_date", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+                ("plan", "TEXT")
+            ]),
+            ("invite_links", [
+                ("user_id", "BIGINT"),
+                ("group_id", "INTEGER"),
+                ("telegram_group_id", "BIGINT"),
+                ("invite_link", "TEXT"),
+                ("is_active", "BOOLEAN DEFAULT TRUE"),
+                ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+                ("revoked_at", "TIMESTAMP")
+            ]),
+            ("invite_codes", [
+                ("code", "TEXT"),
+                ("duration", "INTEGER"),
+                ("used", "BOOLEAN DEFAULT FALSE"),
+                ("group_id", "INTEGER"),
+                ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            ]),
+            ("banned_users", [
+                ("user_id", "BIGINT"),
+                ("group_id", "INTEGER"),
+                ("banned_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            ]),
+            ("plans", [
+                ("group_id", "INTEGER"),
+                ("name", "TEXT"),
+                ("price_id", "TEXT"),
+                ("payment_provider", "TEXT DEFAULT 'stripe'"),
+                ("stripe_price_id", "TEXT"),
+                ("stripe_product_id", "TEXT"),
+                ("paypal_plan_id", "TEXT"),
+                ("provider_price_id", "TEXT"),
+                ("amount", "INTEGER"),
+                ("currency", "TEXT"),
+                ("duration_days", "INTEGER"),
+                ("is_active", "BOOLEAN DEFAULT TRUE"),
+                ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            ]),
+            ("subscriptions", [
+                ("user_id", "BIGINT"),
+                ("group_id", "INTEGER"),
+                ("stripe_subscription_id", "TEXT"),
+                ("price_id", "TEXT"),
+                ("status", "TEXT"),
+                ("start_date", "TIMESTAMP"),
+                ("end_date", "TIMESTAMP"),
+                ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            ])
+        ]
+
+        for table_name, table_columns in CRITICAL_TABLE_COLUMNS:
+
+            for column_name, column_type in table_columns:
+
+                try:
+
+                    cur.execute(
+                        f"ALTER TABLE {table_name} "
+                        f"ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+                    )
+
+                    migration_print(
+                        f"Columna asegurada: {table_name}.{column_name}"
+                    )
+
+                except Exception as e:
+
+                    migration_print(
+                        f"Error asegurando {table_name}.{column_name}: {e}",
+                        "errors"
+                    )
+
+
+        # =========================
         # TABLA REENGANCHE (usuarios sin compras)
         # =========================
 
