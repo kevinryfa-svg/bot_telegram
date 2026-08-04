@@ -141,6 +141,7 @@ from web_server import run_flask_app
 from group_service import (
     get_latest_telegram_group_id
 )
+from reengagement_service import process_reengagement_batch
 
 
 # =========================
@@ -222,6 +223,16 @@ OWNER_BACKUP_SCHEDULER_INTERVAL_SECONDS = int(
     os.environ.get(
         "OWNER_BACKUP_SCHEDULER_INTERVAL_SECONDS",
         str(60 * 60)
+    )
+)
+
+# Cada cuánto se revisa si hay usuarios sin compras a los que escribir.
+# El intervalo real por usuario son REENGAGEMENT_INTERVAL_DAYS días; este job
+# solo va sacando tandas pequeñas para no superar los límites de Telegram.
+REENGAGEMENT_JOB_INTERVAL_SECONDS = int(
+    os.environ.get(
+        "REENGAGEMENT_JOB_INTERVAL_SECONDS",
+        str(30 * 60)
     )
 )
 
@@ -668,6 +679,47 @@ async def ad_promo_daily_review_job(context: ContextTypes.DEFAULT_TYPE):
             message="Error en revisión diaria de promoción automática.",
             metadata={"error": sanitize_error_text(e)}
         )
+
+
+async def reengagement_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        await process_reengagement_batch(context)
+
+    except Exception as e:
+
+        print(
+            "Reenganche: error en el job programado:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_reengagement_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Reenganche: JobQueue no disponible. "
+            "No se programaron los avisos a usuarios sin compras."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        reengagement_job,
+        interval=max(REENGAGEMENT_JOB_INTERVAL_SECONDS, 300),
+        first=300,
+        name="reengagement_scheduler"
+    )
+
+    print("Reenganche de usuarios sin compras programado.")
+
+    return True
 
 
 def schedule_ad_promo_jobs(application):
@@ -2407,6 +2459,7 @@ def main():
     schedule_owner_backup_jobs(telegram_app)
     schedule_beta_monitor_job(telegram_app)
     schedule_beta_cycle_job(telegram_app)
+    schedule_reengagement_job(telegram_app)
 
     threading.Thread(
         target=check_expirations,
