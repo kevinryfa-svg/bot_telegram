@@ -24,10 +24,15 @@ ADMIN_MENU_BETA_SMOKE_TEST = "beta_smoke_test"
 ADMIN_MENU_AD_PROMO = "ad_promo"
 
 
+# Menú principal reorganizado en 6 bloques. Cada bloque abre un submenú
+# (los destinos internos siguen siendo los callbacks existentes). Los paneles
+# que antes estaban sueltos en el nivel superior (beta, promoción automática,
+# smoke test, métodos de pago, etc.) viven ahora dentro de "Global del bot".
+
 ADMIN_MENU_SECTIONS = [
     {
         "key": ADMIN_MENU_GLOBAL_PANEL,
-        "text": "👑 Panel global del bot",
+        "text": "👑 Global del bot",
         "callback_data": "admin_global_panel",
         "permissions_any": [
             "super_admin_only"
@@ -35,92 +40,33 @@ ADMIN_MENU_SECTIONS = [
     },
     {
         "key": ADMIN_MENU_OWNERS_PANEL,
-        "text": "🧑‍💼 Panel de propietarios",
-        "callback_data": "admin_owners_panel",
-        "permissions_any": [
-            "super_admin_only"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_USERS,
-        "text": "👥 Gestión Usuarios",
-        "callback_data": "menu_users",
-        "permissions_any": [
-            "can_view_users",
-            "can_manage_users"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_CODES,
-        "text": "🎟 Códigos comerciales globales",
-        "callback_data": "menu_codes",
-        "permissions_any": [
-            "super_admin_only"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_OWNER_COMMUNITIES,
-        "text": "🏪 Mis comunidades",
-        "callback_data": "admin_edit_group",
+        "text": "🧑‍💼 Propietarios y comunidades",
+        "callback_data": "admin_block_owners",
         "permissions_any": [
             "can_manage_groups",
             "can_manage_plans",
-            "can_manage_codes",
             "can_manage_admins",
             "can_edit_group_texts",
             "can_edit_marketplace_preview"
         ]
     },
     {
-        "key": ADMIN_MENU_GROUPS,
-        "text": "📦 Gestión Grupos",
-        "callback_data": "menu_groups",
+        "key": ADMIN_MENU_USERS,
+        "text": "👥 Usuarios y accesos",
+        "callback_data": "admin_block_users",
         "permissions_any": [
-            "can_manage_groups",
-            "can_manage_plans",
-            "can_edit_group_texts",
-            "can_edit_marketplace_preview"
+            "can_view_users",
+            "can_manage_users"
         ]
     },
     {
         "key": ADMIN_MENU_PAYMENTS,
-        "text": "💳 Planes comerciales del bot",
-        "callback_data": "menu_payments",
+        "text": "💳 Pagos y negocio",
+        "callback_data": "admin_block_business",
         "permissions_any": [
             "can_view_payments",
-            "can_manage_payments"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_BUSINESS,
-        "text": "📊 Gestión Negocio",
-        "callback_data": "menu_business",
-        "permissions_any": [
+            "can_manage_payments",
             "can_view_stats"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_LOGS,
-        "text": "📜 Logs",
-        "callback_data": "menu_logs",
-        "permissions_any": [
-            "can_view_logs"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_BACKUP,
-        "text": "🛡 Backup premium",
-        "callback_data": "owner_backup_panel",
-        "permissions_any": [
-            "can_manage_groups"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_GROUP_ADMINS,
-        "text": "👥 Admins de mi grupo",
-        "callback_data": "group_admin_panel",
-        "permissions_any": [
-            "can_manage_admins"
         ]
     },
     {
@@ -132,43 +78,11 @@ ADMIN_MENU_SECTIONS = [
         ]
     },
     {
-        "key": "commercial_promo_codes",
-        "text": "🎟 Códigos promocionales",
-        "callback_data": "admin_commercial_promo_codes",
+        "key": ADMIN_MENU_LOGS,
+        "text": "📜 Logs",
+        "callback_data": "menu_logs",
         "permissions_any": [
-            "super_admin_only"
-        ]
-    },
-    {
-        "key": "group_user_promo_codes",
-        "text": "🎟 Códigos por grupo",
-        "callback_data": "admin_group_user_codes",
-        "permissions_any": [
-            "super_admin_only"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_AD_PROMO,
-        "text": "📣 Promoción automática",
-        "callback_data": "admin_ad_promo",
-        "permissions_any": [
-            "super_admin_only"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_BETA_MONITOR,
-        "text": "📊 Monitor beta",
-        "callback_data": "admin_beta_monitor",
-        "permissions_any": [
-            "super_admin_only"
-        ]
-    },
-    {
-        "key": ADMIN_MENU_BETA_SMOKE_TEST,
-        "text": "🧪 Smoke Test Beta",
-        "callback_data": "admin_smoke_test",
-        "permissions_any": [
-            "super_admin_only"
+            "can_view_logs"
         ]
     }
 ]
