@@ -76,287 +76,305 @@ def check_expirations():
 
     while True:
 
-        with conn.cursor() as cur:
+        try:
 
-            cur.execute("""
+            with conn.cursor() as cur:
 
-            SELECT user_id, group_id, expiration
-            FROM users
-            WHERE expiration IS NOT NULL
-            AND expiration < NOW()
-            AND COALESCE(subscription_active, TRUE)=TRUE
+                cur.execute("""
 
-            """)
+                SELECT user_id, group_id, expiration
+                FROM users
+                WHERE expiration IS NOT NULL
+                AND expiration < NOW()
+                AND COALESCE(subscription_active, TRUE)=TRUE
 
-            rows = cur.fetchall()
+                """)
 
-            now = datetime.now()
+                rows = cur.fetchall()
 
-            for user_id, group_id, expiration in rows:
+                now = datetime.now()
 
-                if expiration and now > expiration:
+                for user_id, group_id, expiration in rows:
 
-                    try:
-
-                        print(
-                            "Expulsando expirado:",
-                            user_id,
-                            "grupo:",
-                            group_id
-                        )
-
-                        # =========================
-                        # OBTENER TELEGRAM_GROUP_ID
-                        # =========================
-
-                        cur.execute("""
-
-                        SELECT telegram_group_id,
-                               COALESCE(is_free_group, FALSE)
-                        FROM groups
-                        WHERE id=%s
-
-                        """, (group_id,))
-
-                        group_row = cur.fetchone()
-
-                        if not group_row:
-                            continue
-
-                        telegram_group_id = group_row[0]
-                        is_free_group = group_row[1] is True
-
-
-                        if is_free_group:
-
-                            print("Expiración omitida por grupo gratis:", user_id, group_id)
-                            continue
-
-
-                        if is_protected_group_admin(user_id, group_id):
-
-                            print("Expiración omitida por admin/owner protegido:", user_id, group_id)
-                            continue
-
+                    if expiration and now > expiration:
 
                         try:
 
-                            access_state = get_user_group_access_state(user_id, group_id)
+                            print(
+                                "Expulsando expirado:",
+                                user_id,
+                                "grupo:",
+                                group_id
+                            )
 
-                        except Exception as e:
+                            # =========================
+                            # OBTENER TELEGRAM_GROUP_ID
+                            # =========================
 
-                            print("Error resolviendo estado antes de expulsar:", e)
-                            conn.rollback()
-                            continue
+                            cur.execute("""
 
+                            SELECT telegram_group_id,
+                                   COALESCE(is_free_group, FALSE)
+                            FROM groups
+                            WHERE id=%s
 
-                        if (
-                            access_state.get("has_active_access")
-                            or access_state.get("subscription_status") == "paid_without_access_record"
-                        ):
+                            """, (group_id,))
 
-                            print("Expiración omitida por acceso activo:", user_id, group_id, access_state.get("reason"))
-                            continue
+                            group_row = cur.fetchone()
 
+                            if not group_row:
+                                continue
 
-                        try:
-
-                            active_subscription = has_active_subscription_record(cur, user_id, group_id)
-
-                        except Exception as e:
-
-                            print("Error comprobando suscripción activa antes de expulsar:", e)
-                            conn.rollback()
-                            continue
-
-
-                        if active_subscription:
-
-                            print("Expiración omitida por suscripción activa:", user_id, group_id)
-                            continue
+                            telegram_group_id = group_row[0]
+                            is_free_group = group_row[1] is True
 
 
-                        # =========================
-                        # OBTENER LINK DEL GRUPO
-                        # =========================
+                            if is_free_group:
 
-                        cur.execute("""
-
-                        SELECT invite_link
-                        FROM invite_links
-                        WHERE user_id=%s
-                        AND group_id=%s
-
-                        """, (
-
-                            user_id,
-                            group_id
-
-                        ))
-
-                        links = cur.fetchall()
+                                print("Expiración omitida por grupo gratis:", user_id, group_id)
+                                continue
 
 
-                        # =========================
-                        # REVOCAR LINKS
-                        # =========================
+                            if is_protected_group_admin(user_id, group_id):
 
-                        for (link,) in links:
+                                print("Expiración omitida por admin/owner protegido:", user_id, group_id)
+                                continue
+
 
                             try:
 
-                                revoke_link(
+                                access_state = get_user_group_access_state(user_id, group_id)
+
+                            except Exception as e:
+
+                                print("Error resolviendo estado antes de expulsar:", e)
+                                conn.rollback()
+                                continue
+
+
+                            if (
+                                access_state.get("has_active_access")
+                                or access_state.get("subscription_status") == "paid_without_access_record"
+                            ):
+
+                                print("Expiración omitida por acceso activo:", user_id, group_id, access_state.get("reason"))
+                                continue
+
+
+                            try:
+
+                                active_subscription = has_active_subscription_record(cur, user_id, group_id)
+
+                            except Exception as e:
+
+                                print("Error comprobando suscripción activa antes de expulsar:", e)
+                                conn.rollback()
+                                continue
+
+
+                            if active_subscription:
+
+                                print("Expiración omitida por suscripción activa:", user_id, group_id)
+                                continue
+
+
+                            # =========================
+                            # OBTENER LINK DEL GRUPO
+                            # =========================
+
+                            cur.execute("""
+
+                            SELECT invite_link
+                            FROM invite_links
+                            WHERE user_id=%s
+                            AND group_id=%s
+
+                            """, (
+
+                                user_id,
+                                group_id
+
+                            ))
+
+                            links = cur.fetchall()
+
+
+                            # =========================
+                            # REVOCAR LINKS
+                            # =========================
+
+                            for (link,) in links:
+
+                                try:
+
+                                    revoke_link(
+                                        telegram_group_id,
+                                        link
+                                    )
+
+                                    # =========================
+                                    # MARCAR LINK COMO INACTIVO
+                                    # =========================
+
+                                    cur.execute("""
+
+                                    UPDATE invite_links
+
+                                    SET is_active=FALSE,
+
+                                        revoked_at=NOW()
+
+                                    WHERE invite_link=%s
+
+                                    """, (link,))
+
+
+                                except Exception as e:
+
+                                    print(
+
+                                        "Error revocando link expirado:",
+
+                                        e
+
+                                    )
+
+
+                            # =========================
+                            # EXPULSAR USUARIO
+                            # =========================
+
+                            try:
+
+                                kick_chat_member(
+                                    TOKEN,
                                     telegram_group_id,
-                                    link
+                                    user_id
                                 )
-
-                                # =========================
-                                # MARCAR LINK COMO INACTIVO
-                                # =========================
-
-                                cur.execute("""
-
-                                UPDATE invite_links
-
-                                SET is_active=FALSE,
-
-                                    revoked_at=NOW()
-
-                                WHERE invite_link=%s
-
-                                """, (link,))
-
 
                             except Exception as e:
 
                                 print(
-
-                                    "Error revocando link expirado:",
-
+                                    "Error expulsando usuario:",
                                     e
-
                                 )
 
 
-                        # =========================
-                        # EXPULSAR USUARIO
-                        # =========================
+                            # =========================
+                            # DESACTIVAR LINK EXPIRADO
+                            # =========================
 
-                        try:
+                            cur.execute("""
 
-                            kick_chat_member(
+                            UPDATE invite_links
+
+                            SET is_active=FALSE,
+                                revoked_at=NOW()
+
+                            WHERE user_id=%s
+                            AND group_id=%s
+
+                            """, (
+
+                                user_id,
+                                group_id
+
+                            ))
+
+
+                            # =========================
+                            # BORRAR LINK DESACTIVADO
+                            # =========================
+
+                            cur.execute("""
+
+                            DELETE FROM invite_links
+
+                            WHERE user_id=%s
+                            AND group_id=%s
+
+                            """, (
+
+                                user_id,
+                                group_id
+
+                            ))
+
+
+                            # =========================
+                            # MARCAR SUSCRIPCIÓN EXPIRADA SIN BORRAR HISTORIAL
+                            # =========================
+
+                            cur.execute("""
+
+                            UPDATE users
+                            SET subscription_active=FALSE
+                            WHERE user_id=%s
+                            AND group_id=%s
+
+                            """, (
+
+                                user_id,
+                                group_id
+
+                            ))
+
+
+                            conn.commit()
+
+
+                            # =========================
+                            # AVISAR ADMIN
+                            # =========================
+
+                            send_telegram_message(
                                 TOKEN,
-                                telegram_group_id,
-                                user_id
+                                ADMIN_ID,
+                                f"⛔ Usuario expirado eliminado\n\n"
+                                f"User ID: {user_id}\n"
+                                f"Grupo ID: {group_id}"
                             )
+
+                            send_guardian_event_log_sync(
+                                group_id,
+                                "guardian_access_expired",
+                                "Usuario expirado procesado por el worker.",
+                                telegram_group_id=telegram_group_id,
+                                severity="warning",
+                                actor_user_id=user_id,
+                                target_user_id=user_id,
+                                metadata={
+                                    "user_id": user_id,
+                                    "expiration": expiration,
+                                    "subscription_active": False
+                                }
+                            )
+
 
                         except Exception as e:
 
                             print(
-                                "Error expulsando usuario:",
+
+                                "Error procesando expiración:",
+
                                 e
+
                             )
 
+        except Exception as e:
 
-                        # =========================
-                        # DESACTIVAR LINK EXPIRADO
-                        # =========================
+            print(
+                "Error en el ciclo de expiraciones (se reintentará en 60s):",
+                e
+            )
 
-                        cur.execute("""
+            try:
 
-                        UPDATE invite_links
+                conn.rollback()
 
-                        SET is_active=FALSE,
-                            revoked_at=NOW()
+            except Exception:
 
-                        WHERE user_id=%s
-                        AND group_id=%s
+                pass
 
-                        """, (
-
-                            user_id,
-                            group_id
-
-                        ))
-
-
-                        # =========================
-                        # BORRAR LINK DESACTIVADO
-                        # =========================
-
-                        cur.execute("""
-
-                        DELETE FROM invite_links
-
-                        WHERE user_id=%s
-                        AND group_id=%s
-
-                        """, (
-
-                            user_id,
-                            group_id
-
-                        ))
-
-
-                        # =========================
-                        # MARCAR SUSCRIPCIÓN EXPIRADA SIN BORRAR HISTORIAL
-                        # =========================
-
-                        cur.execute("""
-
-                        UPDATE users
-                        SET subscription_active=FALSE
-                        WHERE user_id=%s
-                        AND group_id=%s
-
-                        """, (
-
-                            user_id,
-                            group_id
-
-                        ))
-
-
-                        conn.commit()
-
-
-                        # =========================
-                        # AVISAR ADMIN
-                        # =========================
-
-                        send_telegram_message(
-                            TOKEN,
-                            ADMIN_ID,
-                            f"⛔ Usuario expirado eliminado\n\n"
-                            f"User ID: {user_id}\n"
-                            f"Grupo ID: {group_id}"
-                        )
-
-                        send_guardian_event_log_sync(
-                            group_id,
-                            "guardian_access_expired",
-                            "Usuario expirado procesado por el worker.",
-                            telegram_group_id=telegram_group_id,
-                            severity="warning",
-                            actor_user_id=user_id,
-                            target_user_id=user_id,
-                            metadata={
-                                "user_id": user_id,
-                                "expiration": expiration,
-                                "subscription_active": False
-                            }
-                        )
-
-
-                    except Exception as e:
-
-                        print(
-
-                            "Error procesando expiración:",
-
-                            e
-
-                        )
 
         time.sleep(60)

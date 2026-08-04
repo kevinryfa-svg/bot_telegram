@@ -1,5 +1,6 @@
 python-telegram-bot[job-queue]==22.7
-psycopg2-binary
-flask
-stripe
-openai
+psycopg2-binary>=2.9,<3
+Flask>=3,<4
+stripe>=7,<20
+openai>=1,<2
+waitress>=3,<4

@@ -1,4 +1,5 @@
 import os
+import hmac
 import stripe
 import traceback
 
@@ -49,6 +50,37 @@ from payment_providers.guardarian_provider import (
     create_platform_guardarian_order,
     process_guardarian_webhook
 )
+
+
+def _webhook_shared_secret_ok(env_var_name):
+    """
+    Verificación opcional de webhooks por token compartido.
+
+    Desactivada por defecto: si la variable de entorno no está definida, no
+    se exige nada y el comportamiento actual queda intacto. Si se define, el
+    webhook debe incluir ese mismo valor en la cabecera 'X-Webhook-Token' o
+    en el query param 'token' (configura la URL del webhook en el panel del
+    proveedor como .../webhook/xxx?token=EL_SECRETO).
+
+    Añade defensa en profundidad para ChangeNOW y Guardarian, que no firman
+    sus webhooks, sin riesgo de rechazar webhooks legítimos mientras no se
+    active explícitamente.
+    """
+
+    expected = os.environ.get(env_var_name)
+
+    if not expected:
+
+        return True
+
+
+    provided = (
+        request.headers.get("X-Webhook-Token")
+        or request.args.get("token")
+        or ""
+    )
+
+    return hmac.compare_digest(str(provided), str(expected))
 
 
 def register_checkout_routes(app):
@@ -822,6 +854,13 @@ def register_checkout_routes(app):
     @app.route("/webhook/changenow", methods=["POST"])
     def changenow_webhook():
 
+        if not _webhook_shared_secret_ok("CHANGENOW_WEBHOOK_SECRET"):
+
+            print("Webhook ChangeNOW rechazado: token compartido inválido.")
+
+            return "Unauthorized", 401
+
+
         event_body = request.get_json(silent=True) or {}
 
         try:
@@ -840,6 +879,13 @@ def register_checkout_routes(app):
 
     @app.route("/webhook/guardarian", methods=["POST"])
     def guardarian_webhook():
+
+        if not _webhook_shared_secret_ok("GUARDARIAN_WEBHOOK_SECRET"):
+
+            print("Webhook Guardarian rechazado: token compartido inválido.")
+
+            return "Unauthorized", 401
+
 
         event_body = request.get_json(silent=True) or {}
 
