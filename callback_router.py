@@ -2780,6 +2780,12 @@ async def notify_location_manual_review_admins(context, review, ticket):
             print("Error avisando revisión manual de ubicación:", recipient_id, e)
 
 
+# Tandas fallidas seguidas antes de pausar sola una campaña de promoción.
+AD_PROMO_MAX_CONSECUTIVE_FAILURES = int(
+    os.environ.get("AD_PROMO_MAX_CONSECUTIVE_FAILURES", "5")
+)
+
+
 AD_PROMO_CAMPAIGN_FIELDS = [
     "id",
     "paid_group_id",
@@ -2817,6 +2823,9 @@ AD_PROMO_CAMPAIGN_FIELDS = [
     "next_run_at",
     "created_by_user_id",
     "updated_by_user_id",
+    "consecutive_failures",
+    "last_error_text",
+    "paused_reason",
     "created_at",
     "updated_at"
 ]
@@ -3335,7 +3344,10 @@ def update_ad_promo_campaign(campaign_id, updates, actor_user_id=None):
         "last_run_at",
         "next_run_at",
         "last_offer_check_at",
-        "next_offer_check_at"
+        "next_offer_check_at",
+        "consecutive_failures",
+        "last_error_text",
+        "paused_reason"
     }
     set_parts = []
     params = []
@@ -5019,8 +5031,86 @@ async def process_due_ad_promo_campaigns(context):
             continue
 
 
-        summary["sent"] += int(result.get("sent", 0) or 0)
-        summary["failed"] += int(result.get("failed", 0) or 0)
+        sent_now = int(result.get("sent", 0) or 0)
+        failed_now = int(result.get("failed", 0) or 0)
+
+        summary["sent"] += sent_now
+        summary["failed"] += failed_now
+
+
+        # =========================
+        # AUTO-PAUSA TRAS FALLOS REPETIDOS
+        # =========================
+        # Sin esto, una campaña cuyo destino esté roto (el bot ya no es admin,
+        # canal borrado, etc.) reintenta cada pocos minutos indefinidamente y
+        # llena el monitor de errores idénticos. Ahora se pausa sola y se avisa
+        # una única vez con el motivo real.
+
+        if failed_now and not sent_now:
+
+            streak = int(campaign.get("consecutive_failures") or 0) + 1
+            last_error_text = str(result.get("error") or "")[:500]
+
+            updates = {
+                "consecutive_failures": streak,
+                "last_error_text": last_error_text
+            }
+
+            if streak >= AD_PROMO_MAX_CONSECUTIVE_FAILURES:
+
+                updates["is_paused"] = True
+                updates["paused_reason"] = (
+                    f"Pausada automáticamente tras {streak} tandas fallidas. "
+                    f"Último error: {last_error_text}"
+                )
+
+            update_ad_promo_campaign(campaign.get("id"), updates)
+
+            if streak >= AD_PROMO_MAX_CONSECUTIVE_FAILURES:
+
+                log_event(
+                    "ad_promo_campaign_auto_paused",
+                    category="marketing",
+                    severity="error",
+                    scope="group",
+                    group_id=campaign.get("paid_group_id"),
+                    message="Campaña de promoción pausada automáticamente por fallos repetidos.",
+                    metadata={
+                        "campaign_id": campaign.get("id"),
+                        "consecutive_failures": streak,
+                        "error": last_error_text
+                    }
+                )
+
+                try:
+
+                    await context.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=(
+                            "⏸ Promoción automática pausada\n\n"
+                            f"Campaña #{campaign.get('id')} se ha pausado sola tras "
+                            f"{streak} tandas fallidas seguidas.\n\n"
+                            f"Motivo: {last_error_text or 'desconocido'}\n\n"
+                            "Revisa que el bot siga siendo administrador del canal "
+                            "de destino y reactívala cuando esté resuelto."
+                        )
+                    )
+
+                except Exception as notify_error:
+
+                    print(
+                        "Ad promo: no se pudo avisar de la pausa automática:",
+                        notify_error
+                    )
+
+        elif sent_now:
+
+            if int(campaign.get("consecutive_failures") or 0):
+
+                update_ad_promo_campaign(
+                    campaign.get("id"),
+                    {"consecutive_failures": 0}
+                )
 
 
     return summary
@@ -5201,6 +5291,14 @@ def build_ad_promo_campaign_detail_text(campaign):
         f"Oferta: {campaign.get('offer_text') or '-'}\n"
         f"CTA: {campaign.get('cta_text') or '-'}\n"
         f"Bot link: {campaign.get('bot_link') or 'auto'}"
+        + (
+            f"\n\n⚠️ Último error: {campaign.get('last_error_text')}"
+            if campaign.get("last_error_text") else ""
+        )
+        + (
+            f"\n⏸ Motivo de la pausa: {campaign.get('paused_reason')}"
+            if campaign.get("paused_reason") else ""
+        )
     )
 
 
@@ -30431,9 +30529,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
+        resume_updates = {"is_paused": not is_resume}
+
+        if is_resume:
+
+            # Al reanudar a mano se limpia el contador y el motivo, para que la
+            # campaña no vuelva a autopausarse por los fallos ya resueltos.
+            resume_updates["consecutive_failures"] = 0
+            resume_updates["paused_reason"] = None
+
         campaign = update_ad_promo_campaign(
             campaign_id,
-            {"is_paused": not is_resume},
+            resume_updates,
             actor_user_id=user_id
         )
 

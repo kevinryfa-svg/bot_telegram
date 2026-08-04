@@ -21,12 +21,20 @@ def test_parse_env_bool_default():
 
 
 def test_default_enabled_providers():
-    # Defaults documentados: Stripe/ChangeNOW/Guardarian activos; resto no.
+    # Por defecto solo Stripe: es el único con credenciales garantizadas.
+    # Los demás requieren activarse por env cuando haya configuración.
     assert cfg.PROVIDER_DEFAULT_ENABLED[cfg.PAYMENT_PROVIDER_STRIPE] is True
-    assert cfg.PROVIDER_DEFAULT_ENABLED[cfg.PAYMENT_PROVIDER_CHANGENOW] is True
-    assert cfg.PROVIDER_DEFAULT_ENABLED[cfg.PAYMENT_PROVIDER_GUARDARIAN] is True
+    assert cfg.PROVIDER_DEFAULT_ENABLED[cfg.PAYMENT_PROVIDER_CHANGENOW] is False
+    assert cfg.PROVIDER_DEFAULT_ENABLED[cfg.PAYMENT_PROVIDER_GUARDARIAN] is False
     assert cfg.PROVIDER_DEFAULT_ENABLED[cfg.PAYMENT_PROVIDER_PAYPAL] is False
     assert cfg.PROVIDER_DEFAULT_ENABLED[cfg.PAYMENT_PROVIDER_REVOLUT] is False
+
+
+def test_crypto_providers_can_be_reenabled_by_env(monkeypatch):
+    monkeypatch.setenv("ENABLE_CHANGENOW_PAYMENTS", "true")
+    monkeypatch.setenv("ENABLE_GUARDARIAN_PAYMENTS", "true")
+    assert cfg.is_payment_provider_enabled(cfg.PAYMENT_PROVIDER_CHANGENOW) is True
+    assert cfg.is_payment_provider_enabled(cfg.PAYMENT_PROVIDER_GUARDARIAN) is True
 
 
 def test_is_payment_provider_enabled_uses_default(monkeypatch):

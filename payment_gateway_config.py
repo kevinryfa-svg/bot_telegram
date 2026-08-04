@@ -82,13 +82,18 @@ PROVIDER_REQUIRED_ENV = {
 }
 
 
+# Por defecto solo se ofrece lo que puede cobrar de verdad con la
+# configuración actual (Stripe). ChangeNOW y Guardarian necesitan una API key
+# por comunidad; mientras no esté puesta, ofrecerlos solo produce errores al
+# intentar pagar. Se pueden reactivar con ENABLE_CHANGENOW_PAYMENTS=true /
+# ENABLE_GUARDARIAN_PAYMENTS=true cuando haya credenciales.
 PROVIDER_DEFAULT_ENABLED = {
     PAYMENT_PROVIDER_STRIPE: True,
     PAYMENT_PROVIDER_PAYPAL: False,
     PAYMENT_PROVIDER_REVOLUT: False,
     PAYMENT_PROVIDER_CRYPTO: False,
-    PAYMENT_PROVIDER_CHANGENOW: True,
-    PAYMENT_PROVIDER_GUARDARIAN: True
+    PAYMENT_PROVIDER_CHANGENOW: False,
+    PAYMENT_PROVIDER_GUARDARIAN: False
 }
 
 
