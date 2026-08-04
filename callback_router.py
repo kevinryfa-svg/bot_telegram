@@ -4869,6 +4869,10 @@ async def send_ad_promo_campaign_batch(context, campaign, test=False):
 
             failed += 1
             last_error = str(e)[:500]
+            print(
+                "Ad promo: fallo enviando vídeo promocional "
+                f"(campaña {campaign.get('id')}, media {media.get('id')}): {e}"
+            )
             log_event(
                 "ad_promo_send_failed",
                 category="marketing",
@@ -26864,7 +26868,7 @@ async def create_changenow_group_checkout_for_user(context, chat_id, user_id, gr
             chat_id=chat_id,
             text=build_changenow_payment_review_text(response_data),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛟 Contactar soporte", callback_data=f"support_group_{group_id}")],
+                [InlineKeyboardButton("🛟 Contactar soporte", callback_data=f"public_support_group_{group_id}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )
@@ -26947,7 +26951,7 @@ async def create_guardarian_group_checkout_for_user(context, chat_id, user_id, g
             chat_id=chat_id,
             text=build_guardarian_payment_text(response_data),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛟 Contactar soporte", callback_data=f"support_group_{group_id}")],
+                [InlineKeyboardButton("🛟 Contactar soporte", callback_data=f"public_support_group_{group_id}")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
             ])
         )

@@ -2162,7 +2162,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
                             tiempo_texto = format_tiempo_restante(
-                                expiration_real
+                                expiration
                             )
 
 
