@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 import psycopg2
 
 
@@ -59,7 +60,15 @@ def _open_conn():
 
     conn = psycopg2.connect(
         DATABASE_URL,
-        sslmode="require"
+        sslmode="require",
+        connect_timeout=10,
+        # Keepalives: que libpq detecte y marque como cerrada una conexión
+        # muerta (reinicio de Postgres, corte de red, timeout de inactividad)
+        # en lugar de quedarse colgada esperando indefinidamente.
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5
     )
 
     conn.autocommit = True
@@ -107,9 +116,97 @@ def get_conn():
     raise last_error
 
 
-# Mantener compatibilidad temporal
+class _ResilientConnection:
+    """
+    Envuelve la conexión psycopg2 y la recrea automáticamente si se ha
+    cerrado (reinicio de Postgres, corte de red, timeout de inactividad).
 
-conn = get_conn()
+    Mantiene intacta la interfaz `from db import conn` usada en todo el
+    proyecto: `conn.cursor()`, `conn.commit()`, `conn.rollback()`, etc.
+    siguen funcionando igual, pero ahora una caída de la base de datos en
+    caliente ya no deja el bot con todas las consultas fallando hasta
+    reiniciar el proceso: la siguiente consulta reabre la conexión sola.
+    """
+
+    def __init__(self):
+
+        self._conn = get_conn()
+        self._lock = threading.RLock()
+
+    def _is_alive(self):
+
+        try:
+
+            return self._conn is not None and self._conn.closed == 0
+
+        except Exception:
+
+            return False
+
+    def _ensure(self):
+
+        with self._lock:
+
+            if not self._is_alive():
+
+                try:
+
+                    if self._conn is not None:
+
+                        self._conn.close()
+
+                except Exception:
+
+                    pass
+
+
+                print(
+                    "Conexión a la base de datos perdida. Reconectando..."
+                )
+
+                self._conn = get_conn()
+
+
+            return self._conn
+
+    def cursor(self, *args, **kwargs):
+
+        conn_obj = self._ensure()
+
+        try:
+
+            return conn_obj.cursor(*args, **kwargs)
+
+        except psycopg2.Error:
+
+            # La conexión pudo romperse entre el chequeo y el uso:
+            # forzar reconexión y reintentar una sola vez.
+            with self._lock:
+
+                try:
+
+                    self._conn.close()
+
+                except Exception:
+
+                    pass
+
+
+                self._conn = get_conn()
+
+
+            return self._conn.cursor(*args, **kwargs)
+
+    def __getattr__(self, name):
+
+        # Solo se invoca para atributos que no son de esta clase
+        # (commit, rollback, closed, autocommit, encoding, ...).
+        return getattr(self._ensure(), name)
+
+
+# Conexión global resiliente. Mantiene `from db import conn` intacto.
+
+conn = _ResilientConnection()
 
 
 # =========================
