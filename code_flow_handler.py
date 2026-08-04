@@ -3,7 +3,11 @@ from functools import partial
 
 from datetime import datetime, timedelta
 
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.ext import ContextTypes
 
 from db import conn
