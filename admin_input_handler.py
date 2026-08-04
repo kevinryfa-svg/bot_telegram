@@ -37,6 +37,7 @@ from plan_payment_provider_helpers import (
     normalize_plan_payment_provider
 )
 from wizard_state_helpers import clear_plan_wizard_state
+from stripe_catalog import create_stripe_product_and_price
 
 
 GROUP_ADMIN_PERMISSION_OPTIONS = [
@@ -895,20 +896,33 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
             )
 
             context.user_data["new_plan"]["payment_provider"] = provider
-            context.user_data["new_plan"]["provider_price_id"] = text
 
             if provider == PLAN_PAYMENT_PROVIDER_PAYPAL:
 
+                context.user_data["new_plan"]["provider_price_id"] = text
                 context.user_data["new_plan"]["paypal_plan_id"] = text
                 context.user_data["new_plan"]["price_id"] = None
 
             elif provider == PLAN_PAYMENT_PROVIDER_STRIPE:
 
-                context.user_data["new_plan"]["stripe_price_id"] = text
-                context.user_data["new_plan"]["price_id"] = text
+                if text.strip().lower() in ("auto", "crear", "nuevo", "-"):
+
+                    # El bot creará el Producto + Precio en Stripe al terminar.
+                    context.user_data["new_plan"]["stripe_autocreate"] = True
+                    context.user_data["new_plan"]["stripe_price_id"] = None
+                    context.user_data["new_plan"]["price_id"] = None
+                    context.user_data["new_plan"]["provider_price_id"] = None
+
+                else:
+
+                    context.user_data["new_plan"]["stripe_autocreate"] = False
+                    context.user_data["new_plan"]["stripe_price_id"] = text
+                    context.user_data["new_plan"]["price_id"] = text
+                    context.user_data["new_plan"]["provider_price_id"] = text
 
             else:
 
+                context.user_data["new_plan"]["provider_price_id"] = text
                 context.user_data["new_plan"]["price_id"] = None
 
             context.user_data["add_plan_step"] = 3
@@ -1010,7 +1024,52 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             provider_price_id = plan.get("provider_price_id")
             stripe_price_id = plan.get("stripe_price_id")
+            stripe_product_id = plan.get("stripe_product_id")
             paypal_plan_id = plan.get("paypal_plan_id")
+
+
+            # =========================
+            # CREAR PRODUCTO + PRECIO EN STRIPE (modo "auto")
+            # =========================
+
+            if (
+                provider == PLAN_PAYMENT_PROVIDER_STRIPE
+                and plan.get("stripe_autocreate")
+                and not stripe_price_id
+            ):
+
+                try:
+
+                    stripe_product_id, stripe_price_id = create_stripe_product_and_price(
+                        plan.get("name") or "Plan",
+                        plan.get("amount"),
+                        currency,
+                        metadata={
+                            "group_id": group_id,
+                            "plan_name": plan.get("name"),
+                            "duration_days": plan.get("duration_days")
+                        }
+                    )
+
+                except Exception as e:
+
+                    print("Error creando producto/precio en Stripe:", e)
+
+                    await update.message.reply_text(
+                        "❌ No se pudo crear el precio en Stripe.\n"
+                        "Revisa la clave de Stripe y reenvía la moneda "
+                        "para reintentarlo."
+                    )
+
+                    return
+
+
+                provider_price_id = stripe_price_id
+                plan["stripe_price_id"] = stripe_price_id
+                plan["price_id"] = stripe_price_id
+                plan["provider_price_id"] = stripe_price_id
+                plan["stripe_product_id"] = stripe_product_id
+
 
             try:
 
@@ -1025,6 +1084,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                             price_id,
                             payment_provider,
                             stripe_price_id,
+                            stripe_product_id,
                             paypal_plan_id,
                             provider_price_id,
                             duration_days,
@@ -1032,7 +1092,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                             currency
                         )
 
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
 
                     """, (
@@ -1042,6 +1102,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                         plan.get("price_id"),
                         provider,
                         stripe_price_id,
+                        stripe_product_id,
                         paypal_plan_id,
                         provider_price_id,
                         plan["duration_days"],
@@ -1087,12 +1148,26 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                 action="add_plan_completed"
             )
 
-            await update.message.reply_text(
-
+            success_message = (
                 "✅ Plan creado correctamente.\n\n"
                 f"Método: {format_plan_payment_provider(provider)}"
-
             )
+
+            if provider == PLAN_PAYMENT_PROVIDER_STRIPE and stripe_price_id:
+
+                success_message += (
+                    f"\nPrecio Stripe: {stripe_price_id}"
+                )
+
+                if plan.get("stripe_autocreate"):
+
+                    success_message += (
+                        "\n\nEl bot ha creado el producto y el precio en "
+                        "Stripe automáticamente. Cada usuario recibirá su "
+                        "enlace de pago único al comprar este plan."
+                    )
+
+            await update.message.reply_text(success_message)
 
             return
 

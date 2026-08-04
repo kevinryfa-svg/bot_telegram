@@ -521,6 +521,8 @@ def create_tables():
 
             stripe_price_id TEXT,
 
+            stripe_product_id TEXT,
+
             paypal_plan_id TEXT,
 
             provider_price_id TEXT,
@@ -543,6 +545,7 @@ def create_tables():
         for column_name, column_type in [
             ("payment_provider", "TEXT DEFAULT 'stripe'"),
             ("stripe_price_id", "TEXT"),
+            ("stripe_product_id", "TEXT"),
             ("paypal_plan_id", "TEXT"),
             ("provider_price_id", "TEXT")
         ]:

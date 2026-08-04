@@ -49,7 +49,10 @@ def get_plan_provider_id_prompt(provider, editing=False):
 
         return (
             "Paso 2️⃣\n\n"
-            f"Envía el {prefix}Stripe Price ID, por ejemplo price_..."
+            "Escribe *auto* y el bot creará el producto y el precio en "
+            "Stripe automáticamente al terminar (recomendado).\n\n"
+            f"O envía un {prefix}Stripe Price ID existente, por ejemplo "
+            "price_..., si ya lo tienes creado."
         )
 
     return (
