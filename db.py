@@ -2626,6 +2626,12 @@ def create_tables():
 
             updated_by_user_id BIGINT,
 
+            consecutive_failures INTEGER DEFAULT 0,
+
+            last_error_text TEXT,
+
+            paused_reason TEXT,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -2640,7 +2646,10 @@ def create_tables():
             ("watermark_position", "TEXT DEFAULT 'bottom_right'"),
             ("watermark_max_file_size_mb", "INTEGER DEFAULT 50"),
             ("watermark_max_duration_seconds", "INTEGER DEFAULT 180"),
-            ("watermark_opacity", "NUMERIC DEFAULT 0.65")
+            ("watermark_opacity", "NUMERIC DEFAULT 0.65"),
+            ("consecutive_failures", "INTEGER DEFAULT 0"),
+            ("last_error_text", "TEXT"),
+            ("paused_reason", "TEXT")
         ]:
 
             try:
