@@ -10147,12 +10147,25 @@ def build_admin_panel_keyboard(user_id):
 
     if is_super_admin(user_id):
 
-        return [
-            [InlineKeyboardButton("👑 Panel global del bot", callback_data="admin_global_panel")],
-            [InlineKeyboardButton("🧑‍💼 Panel de propietarios", callback_data="admin_owners_panel")],
-            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
-            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        # Menú principal ÚNICO: el mismo que muestra /admin (catálogo), para
+        # que "Volver" e "Inicio" no aterricen en un panel distinto del de
+        # entrada. Antes había dos menús principales incompatibles.
+        rows = [
+            [
+                InlineKeyboardButton(
+                    spec["text"],
+                    callback_data=spec["callback_data"]
+                )
+                for spec in row
+            ]
+            for row in build_admin_menu_button_rows(is_super_admin=True)
         ]
+
+        rows.append(
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        )
+
+        return rows
 
 
     if user_has_group_owner_role(user_id):
