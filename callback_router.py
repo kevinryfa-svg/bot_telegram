@@ -13419,6 +13419,10 @@ def build_group_admin_error_keyboard():
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
+            "🏪 Elegir comunidad",
+            callback_data="admin_edit_group"
+        )],
+        [InlineKeyboardButton(
             "⬅️ Volver",
             callback_data="group_admin_panel"
         )],
@@ -17302,6 +17306,39 @@ def classify_owner_panel_repeated_callback(callback_data, placeholder_callbacks=
     return "suspicious"
 
 
+def list_manageable_group_ids(user_id, permissions):
+    """Comunidades sobre las que este usuario puede actuar."""
+
+    group_ids = get_admin_group_ids(user_id, permissions)
+
+
+    # get_admin_group_ids devuelve None para el super admin: puede con todas.
+    if group_ids is None:
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT id
+                    FROM groups
+                    WHERE COALESCE(is_active, TRUE)=TRUE
+                    ORDER BY id
+
+                """)
+
+                return [row[0] for row in cur.fetchall() if row[0]]
+
+        except Exception as e:
+
+            print("Error listando comunidades administrables:", e)
+            return []
+
+
+    return list(group_ids or [])
+
+
 def get_selected_group_for_permissions(context, user_id, permissions):
 
     for key in (
@@ -17331,6 +17368,23 @@ def get_selected_group_for_permissions(context, user_id, permissions):
         if user_has_group_permission_any(user_id, group_id, permissions):
 
             return group_id
+
+
+    # No hay comunidad seleccionada. Esto pasa constantemente porque el estado
+    # de la conversación se pierde en cada reinicio del bot, y hacía que
+    # incluso el propietario principal viera "no tienes permiso" cuando en
+    # realidad solo faltaba saber SOBRE QUÉ comunidad actuar.
+    # Si solo hay una comunidad posible, no hay ambigüedad: se usa esa.
+
+    manageable = list_manageable_group_ids(user_id, permissions)
+
+
+    if len(manageable) == 1:
+
+        group_id = int(manageable[0])
+        context.user_data["selected_group_admin"] = group_id
+
+        return group_id
 
 
     return None
@@ -33817,7 +33871,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)"
             )
 
             return
@@ -33862,7 +33916,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not groups:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
                 reply_markup=build_group_admin_error_keyboard()
             )
 
@@ -34090,7 +34144,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not groups:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
                 reply_markup=build_group_admin_error_keyboard()
             )
 
@@ -34163,7 +34217,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not groups:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
                 reply_markup=build_group_admin_error_keyboard()
             )
 
@@ -34347,7 +34401,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not groups:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
                 reply_markup=build_group_admin_error_keyboard()
             )
 
@@ -42055,7 +42109,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
                 reply_markup=build_owner_panel_nav_keyboard()
             )
 
@@ -45170,7 +45224,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad.",
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
                 reply_markup=build_group_admin_error_keyboard()
             )
 
@@ -45886,7 +45940,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)"
             )
 
             return
@@ -45899,7 +45953,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ):
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)"
             )
 
             return
@@ -45935,7 +45989,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)"
             )
 
             return
@@ -46055,7 +46109,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group_id:
 
             await query.message.reply_text(
-                "⛔ No tienes permiso para realizar esta acción en esta comunidad."
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)"
             )
 
             return
