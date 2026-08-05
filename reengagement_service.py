@@ -63,13 +63,25 @@ def fetch_reengagement_targets(limit=None):
 
         cur.execute("""
 
-            SELECT DISTINCT e.user_id
-            FROM bot_user_events e
+            WITH visitors AS (
+                -- Eventos registrados (visitantes recientes)
+                SELECT DISTINCT user_id
+                FROM bot_user_events
+                WHERE user_id IS NOT NULL AND user_id > 0
+
+                UNION
+
+                -- Usuarios que el bot ya conoce (incluye visitantes antiguos,
+                -- anteriores al registro de eventos)
+                SELECT DISTINCT user_id
+                FROM users
+                WHERE user_id IS NOT NULL AND user_id > 0
+            )
+            SELECT e.user_id
+            FROM visitors e
             LEFT JOIN user_reengagement r
                    ON r.user_id = e.user_id
-            WHERE e.user_id IS NOT NULL
-              AND e.user_id > 0
-              AND e.user_id <> %s
+            WHERE e.user_id <> %s
 
               AND NOT EXISTS (
                   SELECT 1
@@ -126,6 +138,66 @@ def fetch_reengagement_targets(limit=None):
         ))
 
         return [row[0] for row in cur.fetchall() if row[0]]
+
+
+_logged_empty_run = False
+
+
+def count_reengagement_candidates():
+    """Cuántas personas cumplen el perfil (visitó y no compró), sin filtrar
+    por intervalo ni tope: sirve para saber el alcance real de la campaña."""
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            WITH visitors AS (
+                SELECT DISTINCT user_id
+                FROM bot_user_events
+                WHERE user_id IS NOT NULL AND user_id > 0
+
+                UNION
+
+                SELECT DISTINCT user_id
+                FROM users
+                WHERE user_id IS NOT NULL AND user_id > 0
+            )
+            SELECT COUNT(*)
+            FROM visitors e
+            WHERE e.user_id <> %s
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM payments p
+                  WHERE p.user_id = e.user_id
+                    AND LOWER(COALESCE(p.status, '')) IN ('paid', 'completed', 'succeeded')
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM payment_transactions t
+                  WHERE t.user_id = e.user_id
+                    AND LOWER(COALESCE(t.status, '')) IN ('paid', 'completed', 'succeeded')
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM users u
+                  WHERE u.user_id = e.user_id
+                    AND (
+                        COALESCE(u.subscription_active, FALSE) = TRUE
+                        OR (u.expiration IS NOT NULL AND u.expiration > NOW())
+                    )
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM banned_users b WHERE b.user_id = e.user_id
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM admins a WHERE a.user_id = e.user_id
+              )
+
+        """, (int(ADMIN_ID),))
+
+        return (cur.fetchone() or [0])[0] or 0
 
 
 def count_reengagement_pending():
@@ -391,6 +463,28 @@ async def process_reengagement_batch(context):
 
 
     if not targets:
+
+        # Silencioso en la operación normal, pero deja rastro la primera vez
+        # para poder distinguir "no toca a nadie" de "no encuentra a nadie".
+        global _logged_empty_run
+
+        if not _logged_empty_run:
+
+            _logged_empty_run = True
+
+            try:
+
+                candidates = count_reengagement_candidates()
+
+            except Exception:
+
+                candidates = None
+
+            print(
+                "Reenganche: ninguna persona pendiente en esta pasada "
+                f"(candidatos sin compras en total: {candidates})."
+            )
+
 
         return summary
 
