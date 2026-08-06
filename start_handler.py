@@ -22,9 +22,88 @@ from formatters import (
     format_tiempo_restante
 )
 from rbac_helpers import is_super_admin
+from reengagement_service import fetch_offer_snapshot, format_price
 from ui_menu_helpers import send_clean_message
 from user_activity_logger import log_user_event
 from wizard_state_helpers import clear_location_flow_state
+
+
+# =========================
+# BIENVENIDA CON DATOS REALES
+# =========================
+
+def build_public_start_message():
+    """
+    La bienvenida es la pantalla que ve todo el mundo, y era puramente
+    genérica: no decía cuántas comunidades hay, ni desde qué precio, ni qué
+    pasa al pagar. Aquí se compone con datos reales del catálogo. Si algo
+    falla o no hay catálogo, se usa el texto original.
+    """
+
+    try:
+
+        offer = fetch_offer_snapshot(limit=3)
+
+    except Exception as e:
+
+        print("Inicio: no se pudo leer el catálogo:", e)
+        return PUBLIC_START_TEXT_ES
+
+
+    total = offer.get("total") or 0
+
+
+    if not total:
+
+        return PUBLIC_START_TEXT_ES
+
+
+    price = format_price(
+        offer.get("cheapest_amount"),
+        offer.get("cheapest_currency")
+    )
+    free_total = offer.get("free_total") or 0
+
+    noun = "comunidad privada" if total == 1 else "comunidades privadas"
+    plural = "" if total == 1 else "s"
+    catalog_line = f"Hay {total} {noun} disponible{plural}"
+
+
+    if price:
+
+        catalog_line += f", desde {price}"
+
+
+    lines = [
+        "👋 Bienvenido",
+        "",
+        catalog_line + "."
+    ]
+
+
+    if free_total == 1:
+
+        lines.append("1 de ellas es de acceso gratuito.")
+
+    elif free_total > 1:
+
+        lines.append(f"{free_total} de ellas son de acceso gratuito.")
+
+
+    lines.extend([
+        "",
+        "Cómo funciona:",
+        "1️⃣ Eliges la comunidad que te interesa.",
+        "2️⃣ Pagas con tarjeta de forma segura.",
+        "3️⃣ Recibes al instante tu enlace de acceso privado.",
+        "",
+        "🔒 Tu enlace es personal y de un solo uso.",
+        "🛟 Tienes soporte directo aquí en el bot.",
+        "",
+        "Selecciona una opción:"
+    ])
+
+    return "\n".join(lines)
 
 
 
@@ -1052,11 +1131,14 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     # MENSAJE BIENVENIDA
     # =========================
 
+    start_text = build_public_start_message()
+
+
     if suscripciones_texto:
 
         mensaje = (
 
-            f"{PUBLIC_START_TEXT_ES}\n\n"
+            f"{start_text}\n\n"
 
             f"{suscripciones_texto}"
 
@@ -1064,7 +1146,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
     else:
 
-        mensaje = PUBLIC_START_TEXT_ES
+        mensaje = start_text
 
 
     if creator_recovery_text:
