@@ -17078,11 +17078,26 @@ def build_owner_section_keyboard(user_id, group_id, section):
 
     elif section == "security":
 
-        if user_has_group_permission_any(user_id, group_id, ["can_view_logs"]):
-            keyboard.append([InlineKeyboardButton("📜 Logs de accesos", callback_data=f"owner_group_logs_access_{group_id}")])
-
+        # Guardian es el motor real de antispam / antienlaces / modo noche y
+        # antes no aparecía aquí (estaba en un bloque inalcanzable), mientras
+        # que "Anti-intrusos" y "Anti-links" eran dos botones distintos que
+        # abrían exactamente la misma pantalla.
         if user_has_group_permission_any(user_id, group_id, ["can_manage_groups"]):
-            keyboard.append([InlineKeyboardButton("📍 Ubicación permitida", callback_data="owner_panel_location_info")])
+
+            keyboard.append([InlineKeyboardButton(
+                "🛡 Guardian (antispam y enlaces)",
+                callback_data="owner_panel_guardian"
+            )])
+
+            keyboard.append([InlineKeyboardButton(
+                "🔎 Resumen de seguridad",
+                callback_data="owner_panel_security_info"
+            )])
+
+            keyboard.append([InlineKeyboardButton(
+                "📍 Ubicación permitida",
+                callback_data="owner_panel_location_info"
+            )])
 
             if should_show_owner_location_reviews_button(group_id):
 
@@ -17092,18 +17107,28 @@ def build_owner_section_keyboard(user_id, group_id, section):
                 )])
 
 
-            keyboard.append([InlineKeyboardButton("🛡 Anti-intrusos", callback_data="owner_panel_security_info")])
-            keyboard.append([InlineKeyboardButton("🔗 Anti-links", callback_data="owner_panel_security_info")])
-            keyboard.append([InlineKeyboardButton("📢 Grupos de publicidad", callback_data=f"owner_publicity_group_{group_id}")])
+            keyboard.append([InlineKeyboardButton(
+                "📢 Grupos de publicidad",
+                callback_data=f"owner_publicity_group_{group_id}"
+            )])
+
+
+        if user_has_group_permission_any(user_id, group_id, ["can_view_logs"]):
+
+            keyboard.append([InlineKeyboardButton(
+                "📜 Logs de accesos",
+                callback_data=f"owner_group_logs_access_{group_id}"
+            )])
 
     elif section == "marketplace":
 
+        # Antes había tres botones distintos ("Editar preview", "Preview
+        # manual/dinámico/mixto" y "Categoría/tags") que abrían la misma
+        # pantalla. Se deja uno solo, con el nombre de lo que hace de verdad.
         keyboard.extend([
             [InlineKeyboardButton("🌐 Publicación", callback_data=f"owner_group_publication_{group_id}")],
-            [InlineKeyboardButton("✏️ Editar ficha", callback_data="edit_group_name")],
-            [InlineKeyboardButton("🎬 Editar preview", callback_data="edit_group_preview")],
-            [InlineKeyboardButton("👁 Preview manual/dinámico/mixto", callback_data="edit_group_preview")],
-            [InlineKeyboardButton("📂 Categoría/tags", callback_data="edit_group_preview")]
+            [InlineKeyboardButton("✏️ Editar ficha (nombre y descripción)", callback_data="edit_group_name")],
+            [InlineKeyboardButton("🎬 Preview, categoría y etiquetas", callback_data="edit_group_preview")]
         ])
 
     elif section == "admins":
@@ -17150,24 +17175,14 @@ def build_owner_section_keyboard(user_id, group_id, section):
             [InlineKeyboardButton("⚠️ Últimos errores", callback_data="owner_backup_errors")]
         ])
 
-    elif section == "security":
-
-        keyboard.extend([
-            [InlineKeyboardButton("🛡 Guardian", callback_data="owner_panel_guardian")],
-            [InlineKeyboardButton("📍 Gestionar ubicación", callback_data="owner_panel_location_info")],
-            [InlineKeyboardButton("📢 Grupos de publicidad", callback_data=f"owner_publicity_group_{group_id}")],
-            [InlineKeyboardButton("📜 Logs de accesos", callback_data=f"owner_group_logs_access_{group_id}")],
-            [InlineKeyboardButton("👥 Usuarios y accesos", callback_data="owner_panel_users")]
-        ])
-
     elif section == "general":
 
+        # "Nombre comunidad" y "Descripción" abrían la misma pantalla, igual
+        # que "Cupo/configuración" y "Reiniciar configuración segura".
         keyboard.extend([
-            [InlineKeyboardButton("✏️ Nombre comunidad", callback_data="edit_group_name")],
-            [InlineKeyboardButton("📝 Descripción", callback_data="edit_group_name")],
+            [InlineKeyboardButton("✏️ Nombre y descripción", callback_data="edit_group_name")],
             [InlineKeyboardButton("🔓 Tipo gratis/pago", callback_data="owner_panel_commercial_config")],
-            [InlineKeyboardButton("🔢 Cupo/configuración", callback_data="owner_panel_general_info")],
-            [InlineKeyboardButton("🧹 Reiniciar configuración segura", callback_data="owner_panel_general_info")]
+            [InlineKeyboardButton("🔢 Cupo y configuración", callback_data="owner_panel_general_info")]
         ])
 
 
@@ -19952,7 +19967,7 @@ def build_owner_panel_help_text(section):
         "users": "👥 Usuarios y accesos\n\nSirve para revisar usuarios, recuperar enlaces, expulsar, banear y gestionar warnings. Úsalo cuando un usuario tenga problemas de entrada o incumpla normas.",
         "codes": "🎟 Códigos y promociones\n\nCrea códigos de acceso para esta comunidad. Solo afectan a este grupo y no se mezclan con códigos comerciales globales.",
         "payments": "💳 Planes y pagos\n\nGestiona planes, pagos recibidos, suscripciones activas y métodos de pago del grupo. De pago no significa solo Stripe: puedes activar Stripe, PayPal, Revolut, ChangeNOW, Guardarian o códigos/promociones según tu configuración.",
-        "security": "🛡 Seguridad\n\nMuestra controles de acceso, logs, anti-intrusos y ubicación. Las acciones que afectan a usuarios reales quedan en logs.",
+        "security": "🛡 Seguridad\n\nGuardian es el control principal: antispam, palabras prohibidas, bloqueo de enlaces y modo noche. Aquí también tienes el resumen de seguridad, la ubicación permitida, los grupos de publicidad y los logs de accesos. Las acciones que afectan a usuarios reales quedan registradas.",
         "marketplace": "🖼 Marketplace y preview\n\nEdita la ficha pública, previews, categoría y tags de la comunidad.",
         "admins": "👑 Administradores\n\nAñade o retira admins de grupo y define permisos concretos por comunidad.",
         "logs": "📜 Logs y actividad\n\nRevisa actividad importante de esta comunidad: accesos, pagos, códigos, soporte, backups y errores. Owner/admin solo ve su grupo.",
@@ -32979,6 +32994,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if frequency not in ("manual", "daily", "weekly", "monthly"):
 
                 await query.message.reply_text("❌ Frecuencia de backup no válida.")
+                return
+
+
+            # Sin propietario resuelto la inserción rompe la restricción NOT NULL
+            # y el usuario solo veía un error genérico al elegir frecuencia.
+            if not owner_user_id:
+
+                await query.message.reply_text(
+                    "⚠️ Esta comunidad no tiene un propietario registrado, "
+                    "así que todavía no puedo programar sus backups.\n\n"
+                    "Asigna el propietario del grupo y vuelve a intentarlo.",
+                    reply_markup=build_owner_panel_nav_keyboard()
+                )
+
                 return
 
 

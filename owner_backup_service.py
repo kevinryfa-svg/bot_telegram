@@ -609,6 +609,18 @@ def compute_next_backup_run(frequency, base=None):
 
 def upsert_owner_backup_job(owner_user_id, group_id, frequency):
 
+    # owner_user_id y group_id son NOT NULL en la tabla: sin ellos la inserción
+    # rompe y el fallo llegaba al usuario como un error genérico.
+    if not owner_user_id or not group_id:
+
+        print(
+            "Backup: no se puede programar sin propietario y comunidad "
+            f"(owner={owner_user_id}, group={group_id})."
+        )
+
+        return None
+
+
     frequency = (frequency or "manual").lower()
     is_active = frequency in ("daily", "weekly", "monthly")
     next_run_at = compute_next_backup_run(frequency) if is_active else None
