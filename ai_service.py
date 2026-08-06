@@ -9,6 +9,36 @@ AI_PROVIDER = os.environ.get("AI_PROVIDER", "openai")
 AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
+# Límite de la respuesta. Telegram corta en ~4096 caracteres, así que una
+# respuesta acotada llega entera en un solo mensaje y cuesta menos.
+AI_MAX_TOKENS = int(
+    os.environ.get("AI_MAX_TOKENS", "700")
+)
+
+# Sin timeout, una llamada colgada bloquea la respuesta al usuario.
+AI_TIMEOUT_SECONDS = float(
+    os.environ.get("AI_TIMEOUT_SECONDS", "30")
+)
+
+# Un fallo puntual de la API no debe traducirse en "error" para el usuario.
+AI_MAX_ATTEMPTS = int(
+    os.environ.get("AI_MAX_ATTEMPTS", "2")
+)
+
+# Turnos de conversación que recuerda el asistente (pares pregunta/respuesta).
+AI_HISTORY_TURNS = int(
+    os.environ.get("AI_HISTORY_TURNS", "6")
+)
+
+# Tope de la pregunta: evita que un texto pegado enorme dispare el coste.
+AI_MAX_QUESTION_CHARS = int(
+    os.environ.get("AI_MAX_QUESTION_CHARS", "1500")
+)
+
+AI_TEMPERATURE = float(
+    os.environ.get("AI_TEMPERATURE", "0.4")
+)
+
 
 # =========================
 # AI SERVICE — AVAILABILITY
@@ -99,7 +129,55 @@ def build_user_system_prompt(group_name=None):
 # AI SERVICE — REQUEST BUILDER
 # =========================
 
-def build_ai_messages(user_text, system_prompt=None, context_text=None):
+def sanitize_history(history):
+    """
+    Deja el historial en turnos válidos y acotados. Solo se aceptan mensajes
+    de usuario y asistente: el contexto y las reglas van siempre en los
+    mensajes de sistema que construimos nosotros, nunca desde el historial.
+    """
+
+    if not history:
+
+        return []
+
+
+    clean = []
+
+    for item in history:
+
+        if not isinstance(item, dict):
+
+            continue
+
+
+        role = item.get("role")
+        content = item.get("content")
+
+        if role not in ("user", "assistant"):
+
+            continue
+
+
+        if not content:
+
+            continue
+
+
+        clean.append({
+            "role": role,
+            "content": str(content)[:AI_MAX_QUESTION_CHARS]
+        })
+
+
+    if AI_HISTORY_TURNS > 0:
+
+        clean = clean[-AI_HISTORY_TURNS:]
+
+
+    return clean
+
+
+def build_ai_messages(user_text, system_prompt=None, context_text=None, history=None):
 
     messages = [
         {
@@ -117,9 +195,16 @@ def build_ai_messages(user_text, system_prompt=None, context_text=None):
         })
 
 
+    # Conversación previa: sin esto el asistente no entiende preguntas de
+    # seguimiento como "¿y el de 30 días?" o "¿cuánto cuesta ese?".
+    messages.extend(
+        sanitize_history(history)
+    )
+
+
     messages.append({
         "role": "user",
-        "content": user_text
+        "content": str(user_text or "")[:AI_MAX_QUESTION_CHARS]
     })
 
 
@@ -127,10 +212,10 @@ def build_ai_messages(user_text, system_prompt=None, context_text=None):
 
 
 # =========================
-# AI SERVICE — RESPONSE PLACEHOLDER
+# AI SERVICE — RESPUESTA DEL MODELO
 # =========================
 
-def generate_ai_response(user_text, system_prompt=None, context_text=None):
+def generate_ai_response(user_text, system_prompt=None, context_text=None, history=None):
 
     if not is_ai_enabled():
 
@@ -140,37 +225,62 @@ def generate_ai_response(user_text, system_prompt=None, context_text=None):
         )
 
 
-    try:
+    messages = build_ai_messages(
+        user_text,
+        system_prompt=system_prompt,
+        context_text=context_text,
+        history=history
+    )
 
-        from openai import OpenAI
+    last_error = None
 
-        client = OpenAI(
-            api_key=OPENAI_API_KEY
-        )
 
-        response = client.chat.completions.create(
-            model=AI_MODEL,
-            messages=build_ai_messages(
-                user_text,
-                system_prompt=system_prompt,
-                context_text=context_text
-            ),
-            temperature=0.4
-        )
+    for attempt in range(1, max(AI_MAX_ATTEMPTS, 1) + 1):
 
-        text = response.choices[0].message.content
+        try:
 
-        return True, text
+            from openai import OpenAI
 
-    except Exception as e:
+            client = OpenAI(
+                api_key=OPENAI_API_KEY,
+                timeout=AI_TIMEOUT_SECONDS
+            )
 
-        print(
-            "Error generando respuesta IA:",
-            type(e).__name__,
-            str(e)
-        )
+            response = client.chat.completions.create(
+                model=AI_MODEL,
+                messages=messages,
+                temperature=AI_TEMPERATURE,
+                max_tokens=AI_MAX_TOKENS
+            )
 
-        return (
+            text = response.choices[0].message.content
+
+
+            if text and text.strip():
+
+                return True, text
+
+
+            last_error = "respuesta vacía del modelo"
+
+        except Exception as e:
+
+            last_error = f"{type(e).__name__}: {e}"
+
+            print(
+                "Error generando respuesta IA "
+                f"(intento {attempt}/{max(AI_MAX_ATTEMPTS, 1)}):",
+                type(e).__name__,
+                str(e)[:300]
+            )
+
+
+    print(
+        "IA: no se pudo generar respuesta.",
+        str(last_error)[:300]
+    )
+
+    return (
             False,
             "❌ Error generando respuesta con IA."
         )

@@ -74,6 +74,51 @@ async def reply_ai(update: Update, text):
     await message.reply_text(text)
 
 
+# =========================
+# AI HANDLER — MEMORIA DE CONVERSACIÓN
+# =========================
+# Sin memoria, cada mensaje se responde aislado y el asistente no entiende
+# preguntas de seguimiento ("¿y el de 30 días?"). Se guarda en la conversación
+# del usuario y se limita para no crecer sin control ni encarecer la llamada.
+
+AI_HISTORY_KEY = "ai_history"
+AI_HISTORY_MAX_MESSAGES = 6
+
+
+def get_ai_history(context):
+
+    history = context.user_data.get(AI_HISTORY_KEY)
+
+    if not isinstance(history, list):
+
+        return []
+
+
+    return history
+
+
+def remember_ai_exchange(context, question, answer):
+
+    if not question or not answer:
+
+        return
+
+
+    history = list(
+        get_ai_history(context)
+    )
+
+    history.append({"role": "user", "content": str(question)[:1500]})
+    history.append({"role": "assistant", "content": str(answer)[:1500]})
+
+    context.user_data[AI_HISTORY_KEY] = history[-AI_HISTORY_MAX_MESSAGES:]
+
+
+def clear_ai_history(context):
+
+    context.user_data.pop(AI_HISTORY_KEY, None)
+
+
 def build_ai_feedback_markup(interaction_id):
 
     rows = [
@@ -287,8 +332,18 @@ def get_ai_context_label(context):
 
 async def activate_ai_help_context(update: Update, context: ContextTypes.DEFAULT_TYPE, help_context="general"):
 
+    previous_context = context.user_data.get("ai_help_context")
+
     context.user_data["ai_chat_mode"] = True
     context.user_data["ai_help_context"] = help_context
+
+
+    # Al cambiar de tema se empieza conversación nueva: arrastrar el hilo
+    # anterior confundiría al asistente.
+    if previous_context != help_context:
+
+        clear_ai_history(context)
+
 
     label = get_ai_context_label(context)
 
@@ -305,6 +360,7 @@ async def salir_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["ai_chat_mode"] = False
     context.user_data.pop("ai_help_context", None)
+    clear_ai_history(context)
 
     await reply_ai(
         update,
@@ -323,7 +379,6 @@ async def handle_ai_context_text(update: Update, context: ContextTypes.DEFAULT_T
         return
 
 
-    label = get_ai_context_label(context)
     help_context = context.user_data.get("ai_help_context")
 
     await reply_ai(
@@ -336,12 +391,21 @@ async def handle_ai_context_text(update: Update, context: ContextTypes.DEFAULT_T
         user_id=update.effective_user.id,
         question=user_text,
         context_key=resolve_ai_context_key(help_context),
-        group_id=context.user_data.get("selected_owner_group") or context.user_data.get("selected_group_admin")
+        group_id=context.user_data.get("selected_owner_group") or context.user_data.get("selected_group_admin"),
+        history=get_ai_history(context)
     )
+
+    answer = result.get("answer")
+
+    # Solo se recuerda cuando el modelo respondió: guardar un mensaje de error
+    # ensuciaría la conversación siguiente.
+    if result.get("ok"):
+
+        remember_ai_exchange(context, user_text, answer)
 
 
     await send_ai_answer(
         update,
-        result.get("answer"),
+        answer,
         interaction_id=result.get("interaction_id")
     )
