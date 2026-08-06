@@ -359,7 +359,8 @@ def build_contextual_ai_answer(
     context_key=None,
     group_id=None,
     support_ticket_id=None,
-    prefer_model=True
+    prefer_model=True,
+    history=None
 ):
 
     context_data = build_ai_context(
@@ -395,7 +396,8 @@ def build_contextual_ai_answer(
         ok, model_answer = generate_ai_response(
             question,
             system_prompt=policy_prompt,
-            context_text=context_text
+            context_text=context_text,
+            history=history
         )
 
         if ok and model_answer:
