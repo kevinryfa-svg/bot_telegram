@@ -10,10 +10,38 @@ from invite_link_service import revoke_telegram_invite_link
 from notification_service import send_telegram_message
 from payment_access_service import get_user_group_access_state
 from rbac_helpers import is_super_admin
+from renewal_service import build_expired_notice
 from telegram_group_actions import kick_chat_member
 
 
 revoke_link = partial(revoke_telegram_invite_link, TOKEN)
+
+
+def group_name_for_notice(group_id):
+    """Nombre de la comunidad para el aviso, con respaldo si no se encuentra."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT name FROM groups WHERE id=%s",
+                (group_id,)
+            )
+
+            row = cur.fetchone()
+
+
+        if row and row[0]:
+
+            return row[0]
+
+    except Exception as e:
+
+        print("No se pudo leer el nombre de la comunidad:", e)
+
+
+    return "la comunidad"
 
 
 def is_protected_group_admin(user_id, group_id):
@@ -321,6 +349,35 @@ def check_expirations():
 
 
                             conn.commit()
+
+
+                            # =========================
+                            # AVISAR AL USUARIO
+                            # =========================
+                            # Antes solo se avisaba al administrador: el
+                            # cliente se quedaba fuera sin explicación y sin
+                            # forma de volver, así que no renovaba.
+
+                            try:
+
+                                notice_text, notice_keyboard = build_expired_notice(
+                                    group_id,
+                                    group_name_for_notice(group_id)
+                                )
+
+                                send_telegram_message(
+                                    TOKEN,
+                                    user_id,
+                                    notice_text,
+                                    reply_markup=notice_keyboard.to_dict()
+                                )
+
+                            except Exception as e:
+
+                                print(
+                                    "No se pudo avisar al usuario de la caducidad:",
+                                    e
+                                )
 
 
                             # =========================
