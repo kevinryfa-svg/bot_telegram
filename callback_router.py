@@ -7800,6 +7800,8 @@ def build_admin_global_tools_keyboard():
         [InlineKeyboardButton("👁 Seguimiento de usuarios", callback_data="admin_user_tracking")],
         [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
+        [InlineKeyboardButton("🗄️ Copia de la base de datos", callback_data="admin_db_backup")],
+        [InlineKeyboardButton("🧱 Migraciones de base de datos", callback_data="admin_db_migrations")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_tools")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
@@ -48146,6 +48148,113 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "🧪 Smoke Test Beta",
             reply_markup=build_beta_smoke_test_keyboard()
+        )
+
+        return
+
+
+    # =========================
+    # COPIA DE SEGURIDAD DE LA BASE DE DATOS
+    # =========================
+    # La base de datos se perdió una vez y no había copia propia. Desde aquí
+    # se ve si existe una reciente y se puede pedir una al momento.
+
+    if data == "admin_db_migrations":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from migrations_service import describe_migrations
+
+        await query.message.reply_text(
+            describe_migrations(),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Actualizar", callback_data="admin_db_migrations")],
+                [InlineKeyboardButton("⬅️ Volver", callback_data="admin_global_tools")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
+
+    if data.startswith("admin_db_backup"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from db_backup_service import describe_last_backup
+
+        backup_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗄️ Hacer copia ahora", callback_data="admin_db_backup_now")],
+            [InlineKeyboardButton("🔄 Actualizar", callback_data="admin_db_backup")],
+            [InlineKeyboardButton("⬅️ Volver", callback_data="admin_global_tools")],
+            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+        ])
+
+
+        if data == "admin_db_backup_now":
+
+            await query.message.reply_text(
+                "🗄️ Creando la copia de seguridad…\n\n"
+                "Puede tardar un momento. Te llegará como documento en este chat."
+            )
+
+            try:
+
+                import asyncio
+
+                from db_backup_service import run_backup_now
+
+                # Volcar y subir es bloqueante: en un hilo para no congelar el bot.
+                summary = await asyncio.to_thread(run_backup_now, True)
+
+            except Exception as e:
+
+                await query.message.reply_text(
+                    f"❌ No se pudo crear la copia: {type(e).__name__}: {e}",
+                    reply_markup=backup_keyboard
+                )
+
+                return
+
+
+            if summary.get("sent"):
+
+                await query.message.reply_text(
+                    "✅ Copia creada y enviada.\n\n"
+                    f"Fichero: {summary.get('filename')}\n"
+                    f"Método: {summary.get('detail')}",
+                    reply_markup=backup_keyboard
+                )
+
+            else:
+
+                await query.message.reply_text(
+                    "⚠️ No se pudo completar la copia.\n\n"
+                    f"Motivo: {summary.get('detail') or 'desconocido'}",
+                    reply_markup=backup_keyboard
+                )
+
+
+            return
+
+
+        await query.message.reply_text(
+            describe_last_backup(),
+            reply_markup=backup_keyboard
         )
 
         return

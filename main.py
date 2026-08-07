@@ -161,7 +161,42 @@ WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
 bot = Bot(token=TOKEN)
 
-telegram_app = ApplicationBuilder().token(TOKEN).build()
+
+def build_telegram_app():
+    """
+    Construye la aplicación con estado persistente si es posible.
+
+    El estado de conversación (wizard a medio rellenar, comunidad
+    seleccionada, hilo del asistente) vivía solo en memoria y cada reinicio lo
+    borraba. Si la persistencia no se puede activar, se arranca sin ella: es
+    mejor un bot sin memoria que un bot que no arranca.
+    """
+
+    builder = ApplicationBuilder().token(TOKEN)
+
+    try:
+
+        from persistence_service import ResilientApplication, build_persistence
+
+        persistence = build_persistence()
+
+        if persistence is not None:
+
+            builder = (
+                builder
+                .persistence(persistence)
+                .application_class(ResilientApplication)
+            )
+
+    except Exception as e:
+
+        print("No se pudo configurar la persistencia de conversaciones:", e)
+
+
+    return builder.build()
+
+
+telegram_app = build_telegram_app()
 
 app = Flask(__name__)
 
@@ -877,6 +912,120 @@ def schedule_abandoned_checkouts_job(application):
     )
 
     print("Recordatorios de pagos sin completar programados.")
+
+    return True
+
+
+# =========================
+# COPIA DE SEGURIDAD DE LA BASE DE DATOS
+# =========================
+
+async def database_backup_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        from db_backup_service import run_backup_now
+
+        # to_thread para no bloquear el bot mientras se vuelca y se sube.
+        summary = await asyncio.to_thread(run_backup_now, False)
+
+        if summary.get("skipped"):
+
+            return
+
+
+        print("Copia de seguridad de la base de datos:", summary)
+
+        log_event(
+            "database_backup",
+            category="backup",
+            severity="info" if summary.get("sent") else "warning",
+            message="Copia de seguridad de la base de datos ejecutada.",
+            metadata=summary
+        )
+
+    except Exception as e:
+
+        print(
+            "Copia de seguridad: error en el job programado:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_database_backup_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Copia de seguridad: JobQueue no disponible. "
+            "No se programaron las copias de la base de datos."
+        )
+
+        return False
+
+
+    # Se comprueba cada hora, pero solo copia cuando toca según el intervalo
+    # configurado: así un reinicio no dispara una copia extra.
+    job_queue.run_repeating(
+        database_backup_job,
+        interval=3600,
+        first=600,
+        name="database_backup"
+    )
+
+    print("Copias de seguridad de la base de datos programadas.")
+
+    return True
+
+
+# =========================
+# LIMPIEZA DEL ESTADO DE CONVERSACIONES
+# =========================
+
+async def persistence_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        from persistence_service import prune_old_entries
+
+        removed = await asyncio.to_thread(prune_old_entries)
+
+        if removed:
+
+            print(
+                "Persistencia: conversaciones caducadas eliminadas:",
+                removed
+            )
+
+    except Exception as e:
+
+        print(
+            "Persistencia: error limpiando estado caducado:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_persistence_cleanup_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        return False
+
+
+    # El estado caducado ya no se restaura (se filtra al leer); esta limpieza
+    # solo evita que la tabla crezca sin límite.
+    job_queue.run_repeating(
+        persistence_cleanup_job,
+        interval=6 * 3600,
+        first=900,
+        name="persistence_cleanup"
+    )
 
     return True
 
@@ -2518,7 +2667,56 @@ def main():
 
     create_tables()
 
+    # Cambios que deben aplicarse una sola vez (índices, correcciones de
+    # datos), después de asegurar que el esquema existe.
+    try:
+
+        from migrations_service import run_migrations
+
+        migration_summary = run_migrations()
+
+        if migration_summary.get("applied"):
+
+            print(
+                "Migraciones aplicadas:",
+                len(migration_summary["applied"]),
+                "— versión de esquema:",
+                migration_summary.get("version")
+            )
+
+        if migration_summary.get("failed"):
+
+            log_event(
+                "schema_migration_failed",
+                category="database",
+                severity="critical",
+                message="Una migración de esquema falló al arrancar.",
+                metadata=migration_summary["failed"]
+            )
+
+    except Exception as e:
+
+        print("No se pudieron aplicar las migraciones:", e)
+
+
     verify_telegram_token()
+
+    # Deja constancia en los logs de qué modelo de IA está activo: hasta ahora
+    # había que adivinarlo mirando las variables de entorno.
+    try:
+
+        from ai_service import describe_ai_model, is_ai_enabled
+
+        print(
+            "IA:",
+            describe_ai_model() if is_ai_enabled()
+            else "desactivada (falta OPENAI_API_KEY)"
+        )
+
+    except Exception as e:
+
+        print("No se pudo describir la configuración de IA:", e)
+
 
     telegram_app.add_error_handler(global_error_handler)
 
@@ -2705,6 +2903,8 @@ def main():
     schedule_reengagement_job(telegram_app)
     schedule_renewal_reminders_job(telegram_app)
     schedule_abandoned_checkouts_job(telegram_app)
+    schedule_database_backup_job(telegram_app)
+    schedule_persistence_cleanup_job(telegram_app)
 
     threading.Thread(
         target=check_expirations,

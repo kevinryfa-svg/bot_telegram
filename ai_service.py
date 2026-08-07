@@ -6,8 +6,24 @@ import os
 # =========================
 
 AI_PROVIDER = os.environ.get("AI_PROVIDER", "openai")
-AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+# Modelo preferido. Se puede cambiar sin tocar código con la variable AI_MODEL.
+AI_MODEL = os.environ.get("AI_MODEL", "gpt-4.1-mini")
+
+# Modelos de reserva, en orden. Existen por dos motivos reales:
+#   - si AI_MODEL tiene un nombre mal escrito o la cuenta no tiene acceso a
+#     ese modelo, el asistente seguiría contestando en vez de dar error;
+#   - permiten subir de modelo sin miedo: si el nuevo no está disponible, el
+#     bot cae al anterior solo.
+AI_FALLBACK_MODELS = [
+    name.strip()
+    for name in os.environ.get(
+        "AI_FALLBACK_MODELS",
+        "gpt-4o-mini"
+    ).split(",")
+    if name.strip()
+]
 
 # Límite de la respuesta. Telegram corta en ~4096 caracteres, así que una
 # respuesta acotada llega entera en un solo mensaje y cuesta menos.
@@ -49,6 +65,88 @@ def is_ai_enabled():
     return bool(
         OPENAI_API_KEY
     )
+
+
+# =========================
+# AI SERVICE — CADENA DE MODELOS
+# =========================
+# Modelos que la cuenta ha rechazado (nombre inexistente o sin acceso). Se
+# recuerdan mientras vive el proceso para no repetir en cada pregunta una
+# llamada que ya sabemos que va a fallar.
+
+_UNAVAILABLE_MODELS = set()
+
+
+def resolve_model_chain():
+    """Modelo preferido primero, reservas después, sin repetir."""
+
+    chain = []
+
+    for name in [AI_MODEL] + list(AI_FALLBACK_MODELS):
+
+        name = str(name or "").strip()
+
+        if name and name not in chain:
+
+            chain.append(name)
+
+
+    usable = [
+        name
+        for name in chain
+        if name not in _UNAVAILABLE_MODELS
+    ]
+
+    # Si todos quedaron marcados como no disponibles, es más probable que el
+    # problema fuese pasajero que que no exista ningún modelo: se reintenta.
+    if not usable:
+
+        _UNAVAILABLE_MODELS.clear()
+
+        return chain
+
+
+    return usable
+
+
+def is_model_unavailable_error(error):
+    """
+    ¿El fallo es del nombre del modelo (no existe / sin acceso) y no de la
+    llamada? Solo en ese caso tiene sentido probar el modelo de reserva.
+    """
+
+    text = f"{type(error).__name__}: {error}".lower()
+
+    return any(
+        marker in text
+        for marker in (
+            "model_not_found",
+            "does not exist",
+            "do not have access",
+            "no access to model",
+            "unsupported_model",
+            "unknown model",
+            "notfounderror"
+        )
+    )
+
+
+def describe_ai_model():
+    """Texto corto para logs y para el panel: qué modelo se va a usar."""
+
+    chain = resolve_model_chain()
+
+    if not chain:
+
+        return "sin modelo configurado"
+
+
+    if len(chain) == 1:
+
+        return chain[0]
+
+
+    return f"{chain[0]} (reserva: {', '.join(chain[1:])})"
 
 
 # =========================
@@ -233,46 +331,63 @@ def generate_ai_response(user_text, system_prompt=None, context_text=None, histo
     )
 
     last_error = None
+    attempts = max(AI_MAX_ATTEMPTS, 1)
 
 
-    for attempt in range(1, max(AI_MAX_ATTEMPTS, 1) + 1):
+    for model in resolve_model_chain():
 
-        try:
+        for attempt in range(1, attempts + 1):
 
-            from openai import OpenAI
+            try:
 
-            client = OpenAI(
-                api_key=OPENAI_API_KEY,
-                timeout=AI_TIMEOUT_SECONDS
-            )
+                from openai import OpenAI
 
-            response = client.chat.completions.create(
-                model=AI_MODEL,
-                messages=messages,
-                temperature=AI_TEMPERATURE,
-                max_tokens=AI_MAX_TOKENS
-            )
+                client = OpenAI(
+                    api_key=OPENAI_API_KEY,
+                    timeout=AI_TIMEOUT_SECONDS
+                )
 
-            text = response.choices[0].message.content
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=AI_TEMPERATURE,
+                    max_tokens=AI_MAX_TOKENS
+                )
 
-
-            if text and text.strip():
-
-                return True, text
+                text = response.choices[0].message.content
 
 
-            last_error = "respuesta vacía del modelo"
+                if text and text.strip():
 
-        except Exception as e:
+                    return True, text
 
-            last_error = f"{type(e).__name__}: {e}"
 
-            print(
-                "Error generando respuesta IA "
-                f"(intento {attempt}/{max(AI_MAX_ATTEMPTS, 1)}):",
-                type(e).__name__,
-                str(e)[:300]
-            )
+                last_error = f"{model}: respuesta vacía del modelo"
+
+            except Exception as e:
+
+                last_error = f"{model}: {type(e).__name__}: {e}"
+
+                print(
+                    f"Error generando respuesta IA con {model} "
+                    f"(intento {attempt}/{attempts}):",
+                    type(e).__name__,
+                    str(e)[:300]
+                )
+
+
+                # El modelo no existe o la cuenta no lo tiene: no se insiste,
+                # se pasa al siguiente de la cadena.
+                if is_model_unavailable_error(e):
+
+                    _UNAVAILABLE_MODELS.add(model)
+
+                    print(
+                        f"IA: modelo '{model}' no disponible, "
+                        "se usará el de reserva."
+                    )
+
+                    break
 
 
     print(
