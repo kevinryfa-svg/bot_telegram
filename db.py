@@ -4126,6 +4126,50 @@ def create_tables():
 
 
         # =========================
+        # TABLA ESTADO DE CONVERSACIONES
+        # =========================
+        # context.user_data vivía solo en memoria: cualquier reinicio borraba
+        # un wizard a medias o la comunidad seleccionada. Aquí se guarda para
+        # que un despliegue no le deshaga el trabajo al usuario.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS bot_persistence (
+
+            id SERIAL PRIMARY KEY,
+
+            scope TEXT NOT NULL,
+
+            entity_id BIGINT NOT NULL,
+
+            payload BYTEA,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (scope, entity_id)
+
+        );
+
+        """)
+
+        try:
+
+            cur.execute("""
+
+                CREATE INDEX IF NOT EXISTS idx_bot_persistence_updated
+                ON bot_persistence (updated_at)
+
+            """)
+
+        except Exception as e:
+
+            migration_print(
+                f"Error creando índice de estado de conversaciones: {e}",
+                "errors"
+            )
+
+
+        # =========================
         # TABLA COPIAS DE SEGURIDAD DE LA BASE DE DATOS
         # =========================
         # La base de datos de producción se perdió una vez y no había ninguna

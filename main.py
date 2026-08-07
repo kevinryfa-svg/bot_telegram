@@ -161,7 +161,42 @@ WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
 bot = Bot(token=TOKEN)
 
-telegram_app = ApplicationBuilder().token(TOKEN).build()
+
+def build_telegram_app():
+    """
+    Construye la aplicación con estado persistente si es posible.
+
+    El estado de conversación (wizard a medio rellenar, comunidad
+    seleccionada, hilo del asistente) vivía solo en memoria y cada reinicio lo
+    borraba. Si la persistencia no se puede activar, se arranca sin ella: es
+    mejor un bot sin memoria que un bot que no arranca.
+    """
+
+    builder = ApplicationBuilder().token(TOKEN)
+
+    try:
+
+        from persistence_service import ResilientApplication, build_persistence
+
+        persistence = build_persistence()
+
+        if persistence is not None:
+
+            builder = (
+                builder
+                .persistence(persistence)
+                .application_class(ResilientApplication)
+            )
+
+    except Exception as e:
+
+        print("No se pudo configurar la persistencia de conversaciones:", e)
+
+
+    return builder.build()
+
+
+telegram_app = build_telegram_app()
 
 app = Flask(__name__)
 
@@ -942,6 +977,55 @@ def schedule_database_backup_job(application):
     )
 
     print("Copias de seguridad de la base de datos programadas.")
+
+    return True
+
+
+# =========================
+# LIMPIEZA DEL ESTADO DE CONVERSACIONES
+# =========================
+
+async def persistence_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        from persistence_service import prune_old_entries
+
+        removed = await asyncio.to_thread(prune_old_entries)
+
+        if removed:
+
+            print(
+                "Persistencia: conversaciones caducadas eliminadas:",
+                removed
+            )
+
+    except Exception as e:
+
+        print(
+            "Persistencia: error limpiando estado caducado:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_persistence_cleanup_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        return False
+
+
+    # El estado caducado ya no se restaura (se filtra al leer); esta limpieza
+    # solo evita que la tabla crezca sin límite.
+    job_queue.run_repeating(
+        persistence_cleanup_job,
+        interval=6 * 3600,
+        first=900,
+        name="persistence_cleanup"
+    )
 
     return True
 
@@ -2788,6 +2872,7 @@ def main():
     schedule_renewal_reminders_job(telegram_app)
     schedule_abandoned_checkouts_job(telegram_app)
     schedule_database_backup_job(telegram_app)
+    schedule_persistence_cleanup_job(telegram_app)
 
     threading.Thread(
         target=check_expirations,
