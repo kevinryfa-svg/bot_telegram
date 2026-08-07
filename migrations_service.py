@@ -83,6 +83,25 @@ MIGRATIONS = [
         ]
     ),
 
+    (
+        2,
+        "borrar_claves_stripe_de_creadores_en_claro",
+        [
+            # El alta de creadores pedía la STRIPE_SECRET_KEY del creador y la
+            # guardaba en claro en estas columnas, para no usarla en ningún
+            # cobro. Ese paso se ha retirado; esto limpia lo que pudiera haber
+            # quedado guardado de versiones anteriores.
+            #
+            # Las columnas se dejan (vaciarlas es reversible, borrarlas no) pero
+            # ya no las escribe ni las lee nadie.
+            "UPDATE group_payment_settings "
+            "SET owner_stripe_secret_key = NULL, "
+            "    owner_stripe_webhook_secret = NULL "
+            "WHERE owner_stripe_secret_key IS NOT NULL "
+            "   OR owner_stripe_webhook_secret IS NOT NULL",
+        ]
+    ),
+
 ]
 
 

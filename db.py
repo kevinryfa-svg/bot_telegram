@@ -4126,6 +4126,33 @@ def create_tables():
 
 
         # =========================
+        # TABLA PREFERENCIAS DEL USUARIO
+        # =========================
+        # El idioma elegido vivía en un diccionario en memoria, así que cada
+        # reinicio devolvía a todo el mundo al español. language_is_detected
+        # distingue lo que dedujimos de Telegram de lo que el usuario eligió a
+        # mano, para no sobreescribir nunca una elección explícita.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS user_preferences (
+
+            user_id BIGINT PRIMARY KEY,
+
+            language TEXT,
+
+            language_is_detected BOOLEAN DEFAULT FALSE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA ESTADO DE CONVERSACIONES
         # =========================
         # context.user_data vivía solo en memoria: cualquier reinicio borraba

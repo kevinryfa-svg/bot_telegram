@@ -16,7 +16,9 @@ from help_roles import (
 from i18n_service import (
     DEFAULT_LANGUAGE,
     list_supported_languages,
+    load_user_language,
     normalize_language,
+    save_user_language,
     get_language_name
 )
 
@@ -25,7 +27,6 @@ from i18n_service import (
 # HELP HANDLER — TEMP USER SETTINGS
 # =========================
 
-USER_LANGUAGE_CACHE = {}
 USER_ROLE_CACHE = {}
 
 
@@ -33,20 +34,24 @@ USER_ROLE_CACHE = {}
 # HELP HANDLER — USER PREFERENCES
 # =========================
 
-def get_user_language(user_id):
+def get_user_language(user_id, telegram_language_code=None):
+    """
+    Idioma del usuario, desde la base de datos.
 
-    return USER_LANGUAGE_CACHE.get(
+    Antes esto leía un diccionario en memoria: elegir idioma solo duraba hasta
+    el siguiente reinicio.
+    """
+
+    return load_user_language(
         user_id,
-        DEFAULT_LANGUAGE
+        telegram_language_code=telegram_language_code
     )
 
 
 
 def set_user_language(user_id, language):
 
-    USER_LANGUAGE_CACHE[user_id] = normalize_language(
-        language
-    )
+    return save_user_language(user_id, language)
 
 
 
@@ -73,7 +78,12 @@ def set_user_help_role(user_id, role):
 async def ayuda_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
-    language = get_user_language(user_id)
+    # Telegram manda el idioma del cliente: así un comprador inglés se atiende
+    # en inglés desde el primer mensaje, sin tocar el menú de idiomas.
+    language = get_user_language(
+        user_id,
+        telegram_language_code=getattr(update.effective_user, "language_code", None)
+    )
     role = get_user_help_role(user_id)
 
     await update.message.reply_text(
@@ -99,7 +109,10 @@ async def manual_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def idioma_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
-    language = get_user_language(user_id)
+    language = get_user_language(
+        user_id,
+        telegram_language_code=getattr(update.effective_user, "language_code", None)
+    )
 
     keyboard = []
 
@@ -136,7 +149,10 @@ async def handle_help_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     data = query.data or ""
     user_id = query.from_user.id
-    language = get_user_language(user_id)
+    language = get_user_language(
+        user_id,
+        telegram_language_code=getattr(query.from_user, "language_code", None)
+    )
     role = get_user_help_role(user_id)
 
 

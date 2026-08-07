@@ -10,6 +10,7 @@ from invite_link_service import revoke_telegram_invite_link
 from notification_service import send_telegram_message
 from payment_access_service import get_user_group_access_state
 from rbac_helpers import is_super_admin
+from i18n_service import load_user_language
 from renewal_service import build_expired_notice
 from telegram_group_actions import kick_chat_member
 
@@ -362,7 +363,8 @@ def check_expirations():
 
                                 notice_text, notice_keyboard = build_expired_notice(
                                     group_id,
-                                    group_name_for_notice(group_id)
+                                    group_name_for_notice(group_id),
+                                    language=load_user_language(user_id)
                                 )
 
                                 send_telegram_message(
