@@ -2520,6 +2520,23 @@ def main():
 
     verify_telegram_token()
 
+    # Deja constancia en los logs de qué modelo de IA está activo: hasta ahora
+    # había que adivinarlo mirando las variables de entorno.
+    try:
+
+        from ai_service import describe_ai_model, is_ai_enabled
+
+        print(
+            "IA:",
+            describe_ai_model() if is_ai_enabled()
+            else "desactivada (falta OPENAI_API_KEY)"
+        )
+
+    except Exception as e:
+
+        print("No se pudo describir la configuración de IA:", e)
+
+
     telegram_app.add_error_handler(global_error_handler)
 
     telegram_app.add_handler(
