@@ -8,6 +8,27 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    # Base de datos real para los tests de integración del flujo de compra.
+    # Sin ella, el camino del dinero (pago -> acceso -> enlace) quedaría
+    # sin probar, y es donde han aparecido los fallos más caros.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bot
+          POSTGRES_PASSWORD: bot
+          POSTGRES_DB: bottest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql://bot:bot@127.0.0.1:5432/bottest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -25,5 +46,8 @@ jobs:
       - name: Syntax check (compile all modules)
         run: python -m compileall -q .
 
+      # TEST_DATABASE_URL está definida arriba, así que los tests de
+      # integración del flujo de compra no pueden omitirse en silencio: si la
+      # base de datos no responde, la suite falla en vez de quedar en verde.
       - name: Run tests
         run: pytest -q
