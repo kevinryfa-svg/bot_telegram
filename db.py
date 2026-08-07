@@ -4053,6 +4053,32 @@ def create_tables():
 
 
         # =========================
+        # TABLA PAGOS ABANDONADOS
+        # =========================
+        # Un checkout iniciado y no completado queda como transacción
+        # 'pending' y nadie hacía nada con él. La clave única por transacción
+        # garantiza un único recordatorio por intento de pago.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS abandoned_checkout_reminders (
+
+            id SERIAL PRIMARY KEY,
+
+            transaction_id INTEGER UNIQUE,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA AVISOS DE RENOVACIÓN
         # =========================
         # Antes, al caducar un acceso se expulsaba al usuario y solo se avisaba

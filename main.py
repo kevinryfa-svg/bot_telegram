@@ -143,6 +143,7 @@ from group_service import (
 )
 from reengagement_service import process_reengagement_batch
 from renewal_service import process_renewal_reminders
+from abandoned_checkout_service import process_abandoned_checkouts
 
 
 # =========================
@@ -242,6 +243,14 @@ RENEWAL_JOB_INTERVAL_SECONDS = int(
     os.environ.get(
         "RENEWAL_JOB_INTERVAL_SECONDS",
         str(60 * 60)
+    )
+)
+
+# Cada cuánto se buscan pagos empezados y no completados.
+ABANDONED_JOB_INTERVAL_SECONDS = int(
+    os.environ.get(
+        "ABANDONED_JOB_INTERVAL_SECONDS",
+        str(30 * 60)
     )
 )
 
@@ -829,6 +838,47 @@ async def ad_promo_daily_review_job(context: ContextTypes.DEFAULT_TYPE):
             message="Error en revisión diaria de promoción automática.",
             metadata={"error": sanitize_error_text(e)}
         )
+
+
+async def abandoned_checkouts_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        await process_abandoned_checkouts(context)
+
+    except Exception as e:
+
+        print(
+            "Pagos abandonados: error en el job programado:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_abandoned_checkouts_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Pagos abandonados: JobQueue no disponible. "
+            "No se programaron los recordatorios."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        abandoned_checkouts_job,
+        interval=max(ABANDONED_JOB_INTERVAL_SECONDS, 300),
+        first=420,
+        name="abandoned_checkouts"
+    )
+
+    print("Recordatorios de pagos sin completar programados.")
+
+    return True
 
 
 async def renewal_reminders_job(context: ContextTypes.DEFAULT_TYPE):
@@ -2654,6 +2704,7 @@ def main():
     schedule_beta_cycle_job(telegram_app)
     schedule_reengagement_job(telegram_app)
     schedule_renewal_reminders_job(telegram_app)
+    schedule_abandoned_checkouts_job(telegram_app)
 
     threading.Thread(
         target=check_expirations,
