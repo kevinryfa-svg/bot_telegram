@@ -2667,6 +2667,38 @@ def main():
 
     create_tables()
 
+    # Cambios que deben aplicarse una sola vez (índices, correcciones de
+    # datos), después de asegurar que el esquema existe.
+    try:
+
+        from migrations_service import run_migrations
+
+        migration_summary = run_migrations()
+
+        if migration_summary.get("applied"):
+
+            print(
+                "Migraciones aplicadas:",
+                len(migration_summary["applied"]),
+                "— versión de esquema:",
+                migration_summary.get("version")
+            )
+
+        if migration_summary.get("failed"):
+
+            log_event(
+                "schema_migration_failed",
+                category="database",
+                severity="critical",
+                message="Una migración de esquema falló al arrancar.",
+                metadata=migration_summary["failed"]
+            )
+
+    except Exception as e:
+
+        print("No se pudieron aplicar las migraciones:", e)
+
+
     verify_telegram_token()
 
     # Deja constancia en los logs de qué modelo de IA está activo: hasta ahora

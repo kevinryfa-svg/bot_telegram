@@ -7801,6 +7801,7 @@ def build_admin_global_tools_keyboard():
         [InlineKeyboardButton("📜 Logs del sistema", callback_data="menu_logs")],
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
         [InlineKeyboardButton("🗄️ Copia de la base de datos", callback_data="admin_db_backup")],
+        [InlineKeyboardButton("🧱 Migraciones de base de datos", callback_data="admin_db_migrations")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_tools")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
@@ -48157,6 +48158,31 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # =========================
     # La base de datos se perdió una vez y no había copia propia. Desde aquí
     # se ve si existe una reciente y se puede pedir una al momento.
+
+    if data == "admin_db_migrations":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from migrations_service import describe_migrations
+
+        await query.message.reply_text(
+            describe_migrations(),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Actualizar", callback_data="admin_db_migrations")],
+                [InlineKeyboardButton("⬅️ Volver", callback_data="admin_global_tools")],
+                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
+            ])
+        )
+
+        return
+
 
     if data.startswith("admin_db_backup"):
 
