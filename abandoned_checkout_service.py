@@ -5,6 +5,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from db import conn
 from audit_log_service import log_event
+from i18n_service import DEFAULT_LANGUAGE, load_user_language, t
 from renewal_service import fetch_group_entry_price, format_amount, is_unreachable_error
 
 
@@ -169,43 +170,42 @@ def mark_abandoned_reminder_sent(transaction_id, user_id, group_id):
 # MENSAJE
 # =========================
 
-def build_abandoned_text(group_name, price=None):
+def build_abandoned_text(group_name, price=None, language=DEFAULT_LANGUAGE):
 
     price_text = format_amount(price[0], price[1]) if price else None
 
     lines = [
-        "🛒 ¿Te quedaste a medias?",
+        t("abandoned.title", language),
         "",
-        f"Empezaste a entrar en {group_name} pero el pago no se completó."
+        t("abandoned.body", language, group=group_name)
     ]
 
 
     if price_text:
 
         lines.append("")
-        lines.append(f"Sigue disponible desde {price_text}.")
+        lines.append(t("abandoned.price", language, price=price_text))
 
 
     lines.extend([
         "",
-        "Puedes retomarlo desde donde lo dejaste: al confirmar el pago "
-        "recibes tu enlace de acceso al instante.",
+        t("abandoned.footer", language),
         "",
-        "🛟 Si algo te dio problemas, escríbenos y lo miramos."
+        t("abandoned.help", language)
     ])
 
     return "\n".join(lines)
 
 
-def build_abandoned_keyboard(group_id):
+def build_abandoned_keyboard(group_id, language=DEFAULT_LANGUAGE):
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            "💳 Retomar el pago",
+            t("button.resume_payment", language),
             callback_data=f"marketplace_group_{group_id}"
         )],
         [InlineKeyboardButton(
-            "🛟 Tuve un problema",
+            t("button.i_had_a_problem", language),
             callback_data="public_support"
         )]
     ])
@@ -247,13 +247,21 @@ async def process_abandoned_checkouts(context):
 
 
         price = fetch_group_entry_price(group_id)
+        language = load_user_language(user_id)
 
         try:
 
             await context.bot.send_message(
                 chat_id=user_id,
-                text=build_abandoned_text(group_name, price=price),
-                reply_markup=build_abandoned_keyboard(group_id)
+                text=build_abandoned_text(
+                    group_name,
+                    price=price,
+                    language=language
+                ),
+                reply_markup=build_abandoned_keyboard(
+                    group_id,
+                    language=language
+                )
             )
 
             summary["sent"] += 1

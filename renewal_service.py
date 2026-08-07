@@ -5,6 +5,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from db import conn
 from audit_log_service import log_event
+from i18n_service import DEFAULT_LANGUAGE, load_user_language, t
 
 
 # =========================
@@ -187,7 +188,7 @@ def format_amount(amount, currency):
     return f"{text} {currency or 'EUR'}"
 
 
-def format_days_left(expiration):
+def format_days_left(expiration, language=DEFAULT_LANGUAGE):
     """Texto humano del tiempo que queda, sin prometer precisión falsa."""
 
     from datetime import datetime
@@ -198,7 +199,7 @@ def format_days_left(expiration):
 
     except Exception:
 
-        return "muy pronto"
+        return t("time.very_soon", language)
 
 
     import math
@@ -210,20 +211,26 @@ def format_days_left(expiration):
 
     if hours <= 1:
 
-        return "en menos de una hora"
+        return t("time.under_an_hour", language)
 
 
     if hours < 24:
 
-        return f"en {hours} horas"
+        return t("time.in_hours", language, hours=hours)
 
 
     days = math.ceil(hours / 24)
 
-    return f"en {days} día{'s' if days != 1 else ''}"
+    if days == 1:
+
+        return t("time.in_one_day", language)
 
 
-def build_renewal_text(group_name, expiration, price=None, stage=RENEWAL_STAGE_EARLY):
+    return t("time.in_days", language, days=days)
+
+
+def build_renewal_text(group_name, expiration, price=None,
+                       stage=RENEWAL_STAGE_EARLY, language=DEFAULT_LANGUAGE):
 
     price_text = format_amount(price[0], price[1]) if price else None
 
@@ -231,61 +238,65 @@ def build_renewal_text(group_name, expiration, price=None, stage=RENEWAL_STAGE_E
     if stage == RENEWAL_STAGE_EXPIRED:
 
         lines = [
-            "⌛ Tu acceso ha caducado",
+            t("renewal.expired_title", language),
             "",
-            f"Se ha terminado tu acceso a {group_name}.",
+            t("renewal.expired_body", language, group=group_name),
             ""
         ]
 
         if price_text:
 
-            lines.append(f"Puedes volver a entrar desde {price_text}.")
+            lines.append(
+                t("renewal.expired_price", language, price=price_text)
+            )
 
         else:
 
-            lines.append("Puedes volver a entrar cuando quieras.")
+            lines.append(t("renewal.expired_no_price", language))
 
         lines.append("")
-        lines.append("Recuperas el acceso al instante tras el pago.")
+        lines.append(t("renewal.expired_footer", language))
 
         return "\n".join(lines)
 
 
-    header = (
-        "⏳ Tu acceso caduca pronto"
-        if stage == RENEWAL_STAGE_LAST
-        else "🔔 Aviso de renovación"
+    header = t(
+        "renewal.soon_title" if stage == RENEWAL_STAGE_LAST
+        else "renewal.early_title",
+        language
     )
 
     lines = [
         header,
         "",
-        f"Tu acceso a {group_name} termina "
-        f"{format_days_left(expiration)}."
+        t(
+            "renewal.body",
+            language,
+            group=group_name,
+            when=format_days_left(expiration, language=language)
+        )
     ]
 
 
     if price_text:
 
         lines.append("")
-        lines.append(f"Renovar cuesta {price_text}.")
+        lines.append(t("renewal.price", language, price=price_text))
 
 
     lines.append("")
-    lines.append(
-        "Si renuevas antes de que caduque, no pierdes el acceso ni tienes "
-        "que volver a entrar desde cero."
-    )
+    lines.append(t("renewal.footer", language))
 
     return "\n".join(lines)
 
 
-def build_renewal_keyboard(group_id, stage=RENEWAL_STAGE_EARLY):
+def build_renewal_keyboard(group_id, stage=RENEWAL_STAGE_EARLY,
+                           language=DEFAULT_LANGUAGE):
 
-    label = (
-        "🔓 Volver a entrar"
-        if stage == RENEWAL_STAGE_EXPIRED
-        else "💳 Renovar mi acceso"
+    label = t(
+        "button.join_again" if stage == RENEWAL_STAGE_EXPIRED
+        else "button.renew",
+        language
     )
 
     return InlineKeyboardMarkup([
@@ -294,11 +305,11 @@ def build_renewal_keyboard(group_id, stage=RENEWAL_STAGE_EARLY):
             callback_data=f"marketplace_group_{group_id}"
         )],
         [InlineKeyboardButton(
-            "🎟 Mis accesos",
+            t("button.my_accesses", language),
             callback_data="mis_subs"
         )],
         [InlineKeyboardButton(
-            "🛟 Tengo una duda",
+            t("button.i_have_a_question", language),
             callback_data="public_support"
         )]
     ])
@@ -353,6 +364,10 @@ async def send_renewal_stage(context, stage):
 
         price = fetch_group_entry_price(group_id)
 
+        # En el idioma del cliente: un comprador inglés que recibe el aviso en
+        # español es un comprador que no renueva.
+        language = load_user_language(user_id)
+
         try:
 
             await context.bot.send_message(
@@ -361,9 +376,14 @@ async def send_renewal_stage(context, stage):
                     group_name,
                     expiration,
                     price=price,
-                    stage=stage
+                    stage=stage,
+                    language=language
                 ),
-                reply_markup=build_renewal_keyboard(group_id, stage=stage)
+                reply_markup=build_renewal_keyboard(
+                    group_id,
+                    stage=stage,
+                    language=language
+                )
             )
 
             summary["sent"] += 1
@@ -430,7 +450,7 @@ async def process_renewal_reminders(context):
 # AVISO AL CADUCAR
 # =========================
 
-def build_expired_notice(group_id, group_name):
+def build_expired_notice(group_id, group_name, language=DEFAULT_LANGUAGE):
     """Mensaje y teclado para quien acaba de perder el acceso."""
 
     price = fetch_group_entry_price(group_id)
@@ -440,7 +460,12 @@ def build_expired_notice(group_id, group_name):
             group_name,
             None,
             price=price,
-            stage=RENEWAL_STAGE_EXPIRED
+            stage=RENEWAL_STAGE_EXPIRED,
+            language=language
         ),
-        build_renewal_keyboard(group_id, stage=RENEWAL_STAGE_EXPIRED)
+        build_renewal_keyboard(
+            group_id,
+            stage=RENEWAL_STAGE_EXPIRED,
+            language=language
+        )
     )
