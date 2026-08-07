@@ -23483,12 +23483,13 @@ def get_group_payment_settings(request_id):
 
     with conn.cursor() as cur:
 
+        # Solo se lee is_configured, que es lo único que se usaba: quien llama
+        # muestra "configurado" o "pendiente". Antes se traían también las
+        # claves de Stripe del creador para descartarlas acto seguido, así que
+        # ya no se seleccionan.
         cur.execute("""
 
-            SELECT is_configured,
-                   owner_stripe_secret_key,
-                   owner_stripe_webhook_secret,
-                   owner_stripe_publishable_key
+            SELECT is_configured
             FROM group_payment_settings
             WHERE commercial_request_id=%s
             LIMIT 1
@@ -23676,7 +23677,10 @@ def start_creator_setup_state(context, request_id, action):
         "texts": "creator_setup_waiting_text_name",
         "marketplace_preview_text": "creator_setup_waiting_preview_text",
         "marketplace_tags": "creator_setup_waiting_tags",
-        "stripe": "creator_setup_waiting_stripe_secret",
+        # No hay entrada "stripe": ese paso pedía la clave secreta de Stripe del
+        # creador y la guardaba sin cifrar para no usarla nunca. Dejar la
+        # entrada aquí era la trampa: bastaba una llamada con action="stripe"
+        # para reactivar la recogida de credenciales ajenas.
         "plan": "creator_setup_waiting_plan_name",
         "promo_code": "creator_setup_waiting_promo_code"
     }

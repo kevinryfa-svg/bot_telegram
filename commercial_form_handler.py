@@ -190,19 +190,9 @@ def is_valid_price_id(value):
     return re.match(r"^price_[A-Za-z0-9_]+$", value or "") is not None
 
 
-def is_valid_stripe_secret_key(value):
-
-    return re.match(r"^sk_(test|live)_[A-Za-z0-9_]+$", value or "") is not None
-
-
-def is_valid_stripe_publishable_key(value):
-
-    return re.match(r"^pk_(test|live)_[A-Za-z0-9_]+$", value or "") is not None
-
-
-def is_valid_webhook_secret(value):
-
-    return re.match(r"^whsec_[A-Za-z0-9_]+$", value or "") is not None
+# Aquí había tres validadores (sk_, pk_, whsec_) que solo servían al alta de
+# claves Stripe del creador. Ese paso se ha retirado: no se piden credenciales
+# de Stripe de nadie mientras el cobro con la cuenta del creador no exista.
 
 
 def is_valid_url(value):
@@ -1261,138 +1251,20 @@ async def receive_creator_setup(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
 
-    if action == "stripe":
-
-        if step == 1:
-
-            if waiting_state != "creator_setup_waiting_stripe_secret" or not is_valid_stripe_secret_key(text):
-
-                await reply_invalid_data(update, request_id)
-
-                return
-
-
-            setup_data["owner_stripe_secret_key"] = text
-            context.user_data["creator_setup_step"] = 2
-            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_webhook_secret"
-
-            await update.message.reply_text(
-                "Envía ahora el STRIPE_WEBHOOK_SECRET de tu Stripe."
-            )
-
-            return
-
-
-        if step == 2:
-
-            if waiting_state != "creator_setup_waiting_webhook_secret" or not is_valid_webhook_secret(text):
-
-                await reply_invalid_data(update, request_id)
-
-                return
-
-
-            setup_data["owner_stripe_webhook_secret"] = text
-            context.user_data["creator_setup_step"] = 3
-            context.user_data["creator_setup_waiting"] = "creator_setup_waiting_publishable_key"
-
-            await update.message.reply_text(
-                "Envía tu STRIPE_PUBLISHABLE_KEY si la tienes. Si no, escribe \"no tengo\"."
-            )
-
-            return
-
-
-        if step == 3:
-
-            publishable_key = None
-
-
-            if waiting_state != "creator_setup_waiting_publishable_key":
-
-                await reply_invalid_data(update, request_id)
-
-                return
-
-
-            if text.lower() not in ("no tengo", "no", "-", "ninguna"):
-
-                if not is_valid_stripe_publishable_key(text):
-
-                    await reply_invalid_data(update, request_id)
-
-                    return
-
-
-                publishable_key = text
-
-
-            group_id = get_request_group_id(request_row)
-            secret_key = setup_data.get("owner_stripe_secret_key")
-            webhook_secret = setup_data.get("owner_stripe_webhook_secret")
-
-            with conn.cursor() as cur:
-
-                cur.execute("""
-
-                    INSERT INTO group_payment_settings
-                    (
-                        group_id,
-                        commercial_request_id,
-                        owner_user_id,
-                        stripe_mode,
-                        owner_stripe_secret_key,
-                        owner_stripe_webhook_secret,
-                        owner_stripe_publishable_key,
-                        is_configured,
-                        updated_at
-                    )
-                    VALUES (%s, %s, %s, 'owner_stripe', %s, %s, %s, %s, NOW())
-                    ON CONFLICT (commercial_request_id)
-                    DO UPDATE SET
-                        group_id=EXCLUDED.group_id,
-                        owner_user_id=EXCLUDED.owner_user_id,
-                        stripe_mode='owner_stripe',
-                        owner_stripe_secret_key=EXCLUDED.owner_stripe_secret_key,
-                        owner_stripe_webhook_secret=EXCLUDED.owner_stripe_webhook_secret,
-                        owner_stripe_publishable_key=EXCLUDED.owner_stripe_publishable_key,
-                        is_configured=EXCLUDED.is_configured,
-                        updated_at=NOW()
-
-                """, (
-                    group_id,
-                    request_id,
-                    request_row["user_id"],
-                    secret_key,
-                    webhook_secret,
-                    publishable_key,
-                    bool(secret_key and webhook_secret)
-                ))
-
-                cur.execute("""
-
-                    UPDATE commercial_requests
-                    SET stripe_mode='owner_stripe',
-                        creator_setup_status='setup_in_progress',
-                        updated_at=NOW()
-                    WHERE id=%s
-
-                """, (request_id,))
-
-
-            clear_creator_setup(context)
-
-            await update.message.reply_text(
-                "✅ Cobros / Stripe propio guardado.\n\n"
-                f"STRIPE_SECRET_KEY: {mask_secret(secret_key)}\n"
-                f"STRIPE_WEBHOOK_SECRET: {mask_secret(webhook_secret)}\n"
-                f"STRIPE_PUBLISHABLE_KEY: {mask_secret(publishable_key)}\n\n"
-                "El checkout real con Stripe del creador queda pendiente de conectar en una fase posterior.",
-                reply_markup=get_back_to_setup_keyboard(request_id)
-            )
-
-            return
-
+    # Aquí vivía el paso "Cobros / Stripe propio" del alta de creadores. Pedía
+    # la STRIPE_SECRET_KEY del creador y la guardaba en claro en
+    # group_payment_settings, y después ningún cobro la usaba: el propio
+    # mensaje final admitía que el checkout "queda pendiente de conectar".
+    #
+    # Era código inalcanzable (ningún botón llegaba a poner la acción
+    # "stripe"), pero seguía siendo una trampa: bastaba añadir esa llamada para
+    # empezar a recoger claves vivas de terceros sin cifrar.
+    #
+    # Se retira entero. Mientras no exista el cobro con la cuenta del creador,
+    # no se piden sus credenciales — la misma postura que ya tenía el panel
+    # equivalente del propietario. Cuando se conecte, el camino correcto es
+    # Stripe Connect: evita custodiar la clave secreta ajena y resuelve además
+    # la firma de los webhooks por cuenta.
 
     if action == "plan":
 
