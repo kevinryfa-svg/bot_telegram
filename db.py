@@ -4053,6 +4053,53 @@ def create_tables():
 
 
         # =========================
+        # TABLA AVISOS DE RENOVACIÓN
+        # =========================
+        # Antes, al caducar un acceso se expulsaba al usuario y solo se avisaba
+        # al administrador: el cliente se quedaba fuera sin explicación y sin
+        # forma cómoda de volver. La restricción única evita duplicados y, al
+        # incluir la caducidad, un acceso renovado vuelve a ser avisable.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS access_renewal_reminders (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            stage TEXT,
+
+            expiration TIMESTAMP,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (user_id, group_id, stage, expiration)
+
+        );
+
+        """)
+
+        try:
+
+            cur.execute("""
+
+                CREATE INDEX IF NOT EXISTS idx_access_renewal_lookup
+                ON access_renewal_reminders (user_id, group_id, stage)
+
+            """)
+
+        except Exception as e:
+
+            migration_print(
+                f"Error creando índice de avisos de renovación: {e}",
+                "errors"
+            )
+
+
+        # =========================
         # TABLA REENGANCHE (usuarios sin compras)
         # =========================
 

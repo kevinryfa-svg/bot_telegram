@@ -142,6 +142,7 @@ from group_service import (
     get_latest_telegram_group_id
 )
 from reengagement_service import process_reengagement_batch
+from renewal_service import process_renewal_reminders
 
 
 # =========================
@@ -233,6 +234,14 @@ REENGAGEMENT_JOB_INTERVAL_SECONDS = int(
     os.environ.get(
         "REENGAGEMENT_JOB_INTERVAL_SECONDS",
         str(30 * 60)
+    )
+)
+
+# Cada cuánto se revisa qué accesos están a punto de caducar.
+RENEWAL_JOB_INTERVAL_SECONDS = int(
+    os.environ.get(
+        "RENEWAL_JOB_INTERVAL_SECONDS",
+        str(60 * 60)
     )
 )
 
@@ -820,6 +829,47 @@ async def ad_promo_daily_review_job(context: ContextTypes.DEFAULT_TYPE):
             message="Error en revisión diaria de promoción automática.",
             metadata={"error": sanitize_error_text(e)}
         )
+
+
+async def renewal_reminders_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        await process_renewal_reminders(context)
+
+    except Exception as e:
+
+        print(
+            "Renovación: error en el job programado:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_renewal_reminders_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Renovación: JobQueue no disponible. "
+            "No se programaron los avisos de renovación."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        renewal_reminders_job,
+        interval=max(RENEWAL_JOB_INTERVAL_SECONDS, 300),
+        first=240,
+        name="renewal_reminders"
+    )
+
+    print("Avisos de renovación programados.")
+
+    return True
 
 
 async def reengagement_job(context: ContextTypes.DEFAULT_TYPE):
@@ -2603,6 +2653,7 @@ def main():
     schedule_beta_monitor_job(telegram_app)
     schedule_beta_cycle_job(telegram_app)
     schedule_reengagement_job(telegram_app)
+    schedule_renewal_reminders_job(telegram_app)
 
     threading.Thread(
         target=check_expirations,
