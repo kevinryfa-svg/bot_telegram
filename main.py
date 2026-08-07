@@ -403,13 +403,57 @@ async def notify_user_about_handler_error(update, context):
         pass
 
 
+# Errores de infraestructura, no fallos del bot. El más habitual es Conflict:
+# Telegram solo admite una instancia leyendo actualizaciones, así que cada
+# redespliegue provoca un solapamiento breve entre el contenedor viejo y el
+# nuevo. Se resuelve solo en segundos. Tratarlos como críticos llenaba el
+# monitor de alarmas y mandaba un aviso por cada uno.
+TRANSIENT_TELEGRAM_ERRORS = (
+    "Conflict",
+    "NetworkError",
+    "TimedOut",
+    "TimeoutError",
+    "RetryAfter",
+    "ReadTimeout",
+    "ConnectTimeout",
+    "ConnectionError",
+    "RemoteProtocolError",
+    "httpx.ReadError"
+)
+
+
+def is_transient_telegram_error(error_type, error_message=""):
+
+    if error_type in TRANSIENT_TELEGRAM_ERRORS:
+
+        return True
+
+
+    text = str(error_message or "").lower()
+
+    return (
+        "terminated by other getupdates" in text
+        or "timed out" in text
+        or "temporarily unavailable" in text
+    )
+
+
 async def global_error_handler(update, context):
 
     error = getattr(context, "error", None)
     error_context = get_update_error_context(update)
     error_type = error.__class__.__name__ if error else "UnknownError"
     error_message = sanitize_error_text(error)
-    severity = "critical"
+
+    transient = is_transient_telegram_error(error_type, error_message)
+    severity = "warning" if transient else "critical"
+
+
+    if transient:
+
+        print(
+            f"Telegram: incidencia transitoria ({error_type}): {error_message}"
+        )
 
 
     log_event(
@@ -450,7 +494,90 @@ async def global_error_handler(update, context):
             pass
 
 
-    await notify_user_about_handler_error(update, context)
+    # Un Conflict o un timeout de red no vienen de una acción del usuario
+    # (update es None), así que no hay nadie a quien disculparse.
+    if not transient:
+
+        await notify_user_about_handler_error(update, context)
+
+
+# =========================
+# ESTADO DE TELEGRAM
+# =========================
+# El endpoint de salud lo sirve Flask en otro hilo, así que respondía
+# "Bot funcionando" incluso con el token caducado y el bot sin conexión a
+# Telegram. Aquí se comprueba el token al arrancar y el estado queda visible.
+
+TELEGRAM_STATUS = {
+    "checked": False,
+    "ok": None,
+    "username": None,
+    "detail": None
+}
+
+
+def verify_telegram_token():
+    """Comprueba con Telegram que el token sirve, y lo deja registrado."""
+
+    try:
+
+        response = requests.get(
+            f"https://api.telegram.org/bot{TOKEN}/getMe",
+            timeout=15
+        )
+
+        data = response.json()
+
+    except Exception as e:
+
+        TELEGRAM_STATUS.update({
+            "checked": True,
+            "ok": None,
+            "detail": f"No se pudo comprobar el token: {sanitize_error_text(e)}"
+        })
+
+        print(
+            "Telegram: no se pudo comprobar el token:",
+            sanitize_error_text(e)
+        )
+
+        return None
+
+
+    if data.get("ok"):
+
+        username = (data.get("result") or {}).get("username")
+
+        TELEGRAM_STATUS.update({
+            "checked": True,
+            "ok": True,
+            "username": username,
+            "detail": None
+        })
+
+        print(f"Telegram: token válido (bot @{username})")
+
+        return True
+
+
+    detail = str(data.get("description") or "respuesta no válida")
+
+    TELEGRAM_STATUS.update({
+        "checked": True,
+        "ok": False,
+        "username": None,
+        "detail": detail
+    })
+
+    print(
+        "=" * 60,
+        f"\nTELEGRAM RECHAZA EL TOKEN: {detail}\n"
+        "El bot NO recibirá mensajes. Si acabas de renovar el token en "
+        "BotFather, actualiza la variable TOKEN en el hosting.\n"
+        + "=" * 60
+    )
+
+    return False
 
 
 # =========================
@@ -459,7 +586,21 @@ async def global_error_handler(update, context):
 
 @app.route("/")
 def home():
-    return "Bot funcionando"
+
+    if TELEGRAM_STATUS.get("ok") is True:
+
+        return f"Bot funcionando (Telegram OK: @{TELEGRAM_STATUS.get('username')})"
+
+
+    if TELEGRAM_STATUS.get("ok") is False:
+
+        return (
+            "Bot arrancado pero SIN conexión a Telegram: "
+            f"{TELEGRAM_STATUS.get('detail')}"
+        )
+
+
+    return "Bot funcionando (estado de Telegram sin comprobar)"
 
 
 # =========================
@@ -2276,6 +2417,8 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
 
     create_tables()
+
+    verify_telegram_token()
 
     telegram_app.add_error_handler(global_error_handler)
 
