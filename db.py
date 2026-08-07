@@ -4126,6 +4126,56 @@ def create_tables():
 
 
         # =========================
+        # TABLA COPIAS DE SEGURIDAD DE LA BASE DE DATOS
+        # =========================
+        # La base de datos de producción se perdió una vez y no había ninguna
+        # copia propia. Aquí queda el historial para saber, sin adivinar, si
+        # existe una copia reciente y si llegó a su destino.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS database_backups (
+
+            id SERIAL PRIMARY KEY,
+
+            status TEXT,
+
+            method TEXT,
+
+            filename TEXT,
+
+            size_bytes BIGINT DEFAULT 0,
+
+            table_count INTEGER DEFAULT 0,
+
+            row_count BIGINT DEFAULT 0,
+
+            detail TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+        try:
+
+            cur.execute("""
+
+                CREATE INDEX IF NOT EXISTS idx_database_backups_created
+                ON database_backups (created_at DESC)
+
+            """)
+
+        except Exception as e:
+
+            migration_print(
+                f"Error creando índice de copias de seguridad: {e}",
+                "errors"
+            )
+
+
+        # =========================
         # TABLA REENGANCHE (usuarios sin compras)
         # =========================
 

@@ -881,6 +881,71 @@ def schedule_abandoned_checkouts_job(application):
     return True
 
 
+# =========================
+# COPIA DE SEGURIDAD DE LA BASE DE DATOS
+# =========================
+
+async def database_backup_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        from db_backup_service import run_backup_now
+
+        # to_thread para no bloquear el bot mientras se vuelca y se sube.
+        summary = await asyncio.to_thread(run_backup_now, False)
+
+        if summary.get("skipped"):
+
+            return
+
+
+        print("Copia de seguridad de la base de datos:", summary)
+
+        log_event(
+            "database_backup",
+            category="backup",
+            severity="info" if summary.get("sent") else "warning",
+            message="Copia de seguridad de la base de datos ejecutada.",
+            metadata=summary
+        )
+
+    except Exception as e:
+
+        print(
+            "Copia de seguridad: error en el job programado:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_database_backup_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Copia de seguridad: JobQueue no disponible. "
+            "No se programaron las copias de la base de datos."
+        )
+
+        return False
+
+
+    # Se comprueba cada hora, pero solo copia cuando toca según el intervalo
+    # configurado: así un reinicio no dispara una copia extra.
+    job_queue.run_repeating(
+        database_backup_job,
+        interval=3600,
+        first=600,
+        name="database_backup"
+    )
+
+    print("Copias de seguridad de la base de datos programadas.")
+
+    return True
+
+
 async def renewal_reminders_job(context: ContextTypes.DEFAULT_TYPE):
 
     try:
@@ -2722,6 +2787,7 @@ def main():
     schedule_reengagement_job(telegram_app)
     schedule_renewal_reminders_job(telegram_app)
     schedule_abandoned_checkouts_job(telegram_app)
+    schedule_database_backup_job(telegram_app)
 
     threading.Thread(
         target=check_expirations,
