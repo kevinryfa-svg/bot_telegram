@@ -269,6 +269,40 @@ TRANSLATIONS = {
     # administradores y al cliente NO se le decía nada: había pagado y recibía
     # silencio, que es la peor situación posible.
 
+    # Devolución o disputa: se le retira el acceso. Se le dice por qué, aunque
+    # la devolución la haya pedido él: quedarse fuera sin explicación acaba en un
+    # ticket de soporte igualmente.
+
+    "refund.notice": {
+        "es": (
+            "↩️ Devolución procesada\n\n"
+            "Se ha devuelto el pago de tu acceso a {group}, así que tu acceso "
+            "queda cancelado y he retirado tu enlace de entrada.\n\n"
+            "Si es un error o quieres volver a entrar, escríbenos y lo vemos."
+        ),
+        "en": (
+            "↩️ Refund processed\n\n"
+            "The payment for your access to {group} has been refunded, so your "
+            "access is cancelled and your join link has been revoked.\n\n"
+            "If this is a mistake or you want to join again, write to us."
+        ),
+    },
+
+    "refund.dispute_notice": {
+        "es": (
+            "⚠️ Acceso suspendido\n\n"
+            "Tu banco ha abierto una reclamación sobre el pago de tu acceso a "
+            "{group}, así que el acceso queda suspendido mientras se resuelve.\n\n"
+            "Si ha sido un error, escríbenos y lo solucionamos."
+        ),
+        "en": (
+            "⚠️ Access suspended\n\n"
+            "Your bank has opened a dispute over the payment for your access to "
+            "{group}, so the access is suspended while it is resolved.\n\n"
+            "If this was a mistake, write to us and we will sort it out."
+        ),
+    },
+
     "purchase.link_pending_title": {
         "es": "✅ Pago confirmado — falta darte el enlace",
         "en": "✅ Payment confirmed — your link is still pending",

@@ -5,9 +5,7 @@ from flask import request
 
 from datetime import datetime, timedelta
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-from i18n_service import DEFAULT_LANGUAGE, load_user_language, t
+from i18n_service import load_user_language, t
 
 from bot_config import TOKEN, ADMIN_ID, STRIPE_WEBHOOK_SECRET
 from audit_log_service import log_event
@@ -15,8 +13,7 @@ from db import conn
 from group_service import format_community_kind, normalize_community_type
 from invite_link_service import (
     ACCESS_LINK_EXPIRE_SECONDS,
-    create_telegram_invite_link,
-    format_access_link_validity
+    create_telegram_invite_link
 )
 from notification_service import notify_super_admins, send_telegram_message
 from owner_addon_service import (
@@ -31,6 +28,12 @@ from payment_gateway_config import (
     PAYMENT_SCOPE_PLATFORM,
     PAYMENT_STATUS_PAID,
     PURCHASE_TYPE_GROUP_ACCESS
+)
+from purchase_message_service import build_buyer_message
+from refund_service import (
+    REFUND_REASON_DISPUTE,
+    REFUND_REASON_REFUND,
+    process_refund
 )
 from payment_service import create_payment_transaction
 from rbac_helpers import get_group_owner_user_id
@@ -99,151 +102,9 @@ def format_payment_amount(amount, currency):
         return f"{amount} {(currency or '').upper()}".strip()
 
 
-# =========================
-# MENSAJE DE COMPRA CONFIRMADA
-# =========================
-# Es el mensaje que más importa del bot: lo lee alguien que acaba de pagar.
-# Antes era el enlace a secas, y eso deja al cliente sin saber si el cobro
-# ha ido bien, qué ha comprado, cuánto le dura ni a quién preguntar.
-
-def build_purchase_confirmation_text(group_name, plan_name, amount_total,
-                                     currency, expiration, expire_seconds,
-                                     link, language=DEFAULT_LANGUAGE):
-
-    lines = [
-        t("purchase.title", language),
-        "",
-        t("purchase.community", language, group=group_name)
-    ]
-
-
-    if plan_name:
-
-        lines.append(t("purchase.plan", language, plan=plan_name))
-
-
-    if amount_total is not None:
-
-        lines.append(
-            t(
-                "purchase.amount",
-                language,
-                amount=format_payment_amount(amount_total, currency)
-            )
-        )
-
-
-    lines.append("")
-
-    if expiration is None:
-
-        lines.append(t("purchase.permanent", language))
-
-    else:
-
-        try:
-
-            fecha = expiration.strftime("%d/%m/%Y")
-
-        except Exception:
-
-            fecha = str(expiration)
-
-
-        lines.append(t("purchase.until", language, date=fecha))
-
-
-    lines.extend([
-        "",
-        t("purchase.link_title", language),
-        str(link or ""),
-        "",
-        t(
-            "purchase.link_validity",
-            language,
-            validity=format_access_link_validity(expire_seconds, language)
-        ),
-        "",
-        t("purchase.keep_this", language)
-    ])
-
-    return "\n".join(lines)
-
-
-def build_link_pending_text(group_name, plan_name, amount_total, currency,
-                            language=DEFAULT_LANGUAGE):
-    """
-    Mensaje para cuando el cobro salió bien pero el enlace no se pudo crear.
-
-    Antes este caso no enviaba nada al cliente: solo se avisaba a los
-    administradores. Alguien que acababa de pagar se quedaba en silencio, que es
-    exactamente cuando piensa que le han estafado.
-    """
-
-    lines = [
-        t("purchase.link_pending_title", language),
-        "",
-        t("purchase.link_pending_body", language, group=group_name)
-    ]
-
-
-    if plan_name:
-
-        lines.append("")
-        lines.append(t("purchase.plan", language, plan=plan_name))
-
-
-    if amount_total is not None:
-
-        lines.append(
-            t(
-                "purchase.amount",
-                language,
-                amount=format_payment_amount(amount_total, currency)
-            )
-        )
-
-
-    lines.extend([
-        "",
-        t("purchase.link_pending_what_now", language)
-    ])
-
-    return "\n".join(lines)
-
-
-def build_link_pending_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            t("button.get_my_link", language),
-            callback_data=f"mysub_{telegram_group_id}"
-        )],
-        [InlineKeyboardButton(
-            t("button.support", language),
-            callback_data="public_support"
-        )]
-    ])
-
-
-def build_purchase_confirmation_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
-    """
-    Botones del mensaje de compra: pedir otro enlace y hablar con soporte.
-
-    Sin esto, alguien cuyo enlace fallara no tenía a dónde ir desde el propio
-    mensaje del pago.
-    """
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            t("button.my_access_now", language),
-            callback_data=f"mysub_{telegram_group_id}"
-        )],
-        [InlineKeyboardButton(
-            t("button.support", language),
-            callback_data="public_support"
-        )]
-    ])
+# Los mensajes al comprador viven en purchase_message_service.py: los usan
+# también los otros cuatro proveedores de cobro, y tenerlos duplicados aquí es
+# lo que hizo que se arreglaran en un camino y no en el otro.
 
 
 def mask_invite_link(invite_link):
@@ -845,6 +706,125 @@ def stripe_webhook():
             return "OK"
 
 
+    # =========================
+    # DEVOLUCIONES Y DISPUTAS
+    # =========================
+    # Estos eventos no se escuchaban. Alguien podía pagar, entrar, pedir la
+    # devolución y quedarse dentro para siempre; y en una disputa de tarjeta
+    # perdías el dinero y el acceso seguía dado.
+
+    if event["type"] in ("charge.refunded", "charge.refund.updated"):
+
+        objeto = event["data"]["object"]
+
+        # En charge.refunded el objeto es el cargo; en charge.refund.updated es
+        # el reembolso, que trae el cargo dentro y no la misma información.
+        es_reembolso = event["type"] == "charge.refund.updated"
+
+        payment_intent = (
+            objeto.get("payment_intent")
+            or (objeto.get("charge") if isinstance(objeto.get("charge"), str) else None)
+        )
+
+        # charge.refund.updated también salta cuando un reembolso falla o se
+        # cancela. Ahí no se ha devuelto nada: retirar el acceso dejaría al
+        # cliente pagado y fuera, que es peor que el fallo que se arregla aquí.
+        if es_reembolso and objeto.get("status") != "succeeded":
+
+            log_event(
+                "refund_not_succeeded_ignored",
+                category="payment",
+                severity="info",
+                message="Reembolso no completado: el acceso se mantiene.",
+                metadata={
+                    "payment_intent": str(payment_intent or "")[:64],
+                    "refund_status": str(objeto.get("status") or "")[:32]
+                }
+            )
+
+            return "OK"
+
+
+        # Un reembolso parcial no quita el acceso: se ha devuelto parte, pero lo
+        # que compró sigue siendo suyo.
+        #
+        # El cargo trae los dos importes y se puede decidir aquí. El objeto
+        # reembolso solo trae lo devuelto, así que la comparación la hace
+        # process_refund contra el importe del pago que tenemos guardado.
+        if es_reembolso:
+
+            importe = None
+            devuelto = objeto.get("amount")
+
+        else:
+
+            importe = objeto.get("amount")
+            devuelto = objeto.get("amount_refunded")
+
+
+        if (
+            importe is not None
+            and devuelto is not None
+            and int(devuelto) < int(importe)
+        ):
+
+            log_event(
+                "refund_partial_ignored",
+                category="payment",
+                severity="info",
+                message="Devolución parcial: no se retira el acceso.",
+                metadata={
+                    "payment_intent": str(payment_intent or "")[:64],
+                    "amount": importe,
+                    "amount_refunded": devuelto
+                }
+            )
+
+            return "OK"
+
+
+        process_refund(
+            external_payment_id=payment_intent,
+            reason=REFUND_REASON_REFUND,
+            refunded_amount=devuelto
+        )
+
+        return "OK"
+
+
+    if event["type"] in (
+        "charge.dispute.created",
+        "charge.dispute.closed"
+    ):
+
+        disputa = event["data"]["object"]
+
+        # Si la disputa se cierra a tu favor, no hay nada que retirar.
+        if (
+            event["type"] == "charge.dispute.closed"
+            and disputa.get("status") == "won"
+        ):
+
+            log_event(
+                "dispute_won_no_action",
+                category="payment",
+                severity="info",
+                message="Disputa ganada: el acceso se mantiene.",
+                metadata={"dispute_id": str(disputa.get("id") or "")[:64]}
+            )
+
+            return "OK"
+
+
+        process_refund(
+            external_payment_id=disputa.get("payment_intent"),
+            reason=REFUND_REASON_DISPUTE,
+            refunded_amount=disputa.get("amount")
+        )
+
+        return "OK"
+
+
     if event["type"] == "checkout.session.completed":
 
         session = event["data"]["object"]
@@ -1386,43 +1366,17 @@ def stripe_webhook():
         # acababa de pagar no veía confirmado el cobro, ni qué había comprado,
         # ni hasta cuándo, ni qué hacer si el enlace no funcionaba. Y sin
         # botones, la única salida era buscarse la vida por los menús.
-        language = load_user_language(user_id)
-
-        if link:
-
-            texto_comprador = build_purchase_confirmation_text(
-                group_name=group_name,
-                plan_name=plan_name,
-                amount_total=amount_total,
-                currency=currency,
-                expiration=expiration,
-                expire_seconds=expire_seconds,
-                link=link,
-                language=language
-            )
-
-            teclado_comprador = build_purchase_confirmation_keyboard(
-                telegram_group_id,
-                language=language
-            )
-
-        else:
-
-            # El acceso ya está guardado, así que el botón de pedir el enlace
-            # funcionará: es lo único que necesita para desbloquearse solo.
-            texto_comprador = build_link_pending_text(
-                group_name=group_name,
-                plan_name=plan_name,
-                amount_total=amount_total,
-                currency=currency,
-                language=language
-            )
-
-            teclado_comprador = build_link_pending_keyboard(
-                telegram_group_id,
-                language=language
-            )
-
+        texto_comprador, teclado_comprador = build_buyer_message(
+            group_name=group_name,
+            plan_name=plan_name,
+            amount_total=amount_total,
+            currency=currency,
+            expiration=expiration,
+            expire_seconds=expire_seconds,
+            link=link,
+            telegram_group_id=telegram_group_id,
+            language=load_user_language(user_id)
+        )
 
         user_response = send_telegram_message(
             TOKEN,

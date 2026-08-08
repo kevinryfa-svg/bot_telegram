@@ -12,7 +12,9 @@ from invite_link_service import (
     ACCESS_LINK_EXPIRE_SECONDS,
     create_telegram_invite_link
 )
+from i18n_service import load_user_language
 from notification_service import notify_super_admins, send_telegram_message
+from purchase_message_service import build_buyer_message
 from rbac_helpers import get_group_owner_user_id, is_user_group_owner
 from user_activity_logger import log_user_event_by_ids
 
@@ -1168,6 +1170,29 @@ def grant_group_access_after_payment(
             }
         )
 
+        # El acceso ya está guardado (access_recorded), pero aquí no se le
+        # enviaba NADA al comprador: pagaba con PayPal, Revolut, ChangeNOW o
+        # Guardarian y recibía silencio. El botón de pedir el enlace funciona
+        # justo porque el acceso existe.
+        texto_pendiente, teclado_pendiente = build_buyer_message(
+            group_name=group_name,
+            plan_name=plan_name,
+            amount_total=amount,
+            currency=currency,
+            expiration=expiration,
+            expire_seconds=None,
+            link=None,
+            telegram_group_id=telegram_group_id,
+            language=load_user_language(user_id)
+        )
+
+        send_telegram_message(
+            TOKEN,
+            user_id,
+            texto_pendiente,
+            reply_markup=teclado_pendiente.to_dict()
+        )
+
         return {
             "ok": True,
             "reason": "invite_link_failed",
@@ -1265,10 +1290,26 @@ def grant_group_access_after_payment(
 
     amount_text = format_payment_amount(amount, currency)
 
+    # Antes era "🔗 Tu acceso VIP:" y el enlace pelado, igual que en Stripe. Al
+    # compartir el constructor, quien paga con PayPal, Revolut, ChangeNOW o
+    # Guardarian recibe exactamente lo mismo que quien paga con tarjeta.
+    texto_comprador, teclado_comprador = build_buyer_message(
+        group_name=group_name,
+        plan_name=plan_name,
+        amount_total=amount,
+        currency=currency,
+        expiration=expiration,
+        expire_seconds=expire_seconds,
+        link=link,
+        telegram_group_id=telegram_group_id,
+        language=load_user_language(user_id)
+    )
+
     send_telegram_message(
         TOKEN,
         user_id,
-        f"🔗 Tu acceso VIP:\n{link}"
+        texto_comprador,
+        reply_markup=teclado_comprador.to_dict()
     )
 
     notify_super_admins(
