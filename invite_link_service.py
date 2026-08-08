@@ -1,8 +1,87 @@
+import os
 import time
 import requests
 
 from db import conn
 from group_service import format_community_kind, resolve_telegram_group_id
+
+
+# =========================
+# CUÁNTO DURA UN ENLACE DE ACCESO
+# =========================
+# Duraban 180 segundos. Eso dejaba fuera a clientes que habían pagado: si el
+# aviso les llegaba conduciendo, con mala cobertura o simplemente se
+# distraían tres minutos, el enlace ya no servía y quedaban sin entrar en algo
+# que habían comprado.
+#
+# Alargarlo es seguro, y no por confianza: el enlace es de un solo uso
+# (member_limit=1) y, además, al entrar en el grupo detect_user_join comprueba
+# en la base de datos si esa persona tiene acceso y expulsa a quien no lo
+# tenga. Un enlace reenviado no sirve de nada. Los tres minutos no protegían
+# nada que no estuviera ya protegido; solo estorbaban a quien pagaba.
+#
+# Sigue acotado por la caducidad de la propia suscripción: un acceso de un día
+# no puede dar un enlace válido más tiempo que el acceso.
+
+ACCESS_LINK_EXPIRE_SECONDS = int(
+    os.environ.get("ACCESS_LINK_EXPIRE_SECONDS", str(24 * 3600))
+)
+
+
+def access_link_expire_seconds(expiration=None):
+    """
+    Segundos de validez del enlace, sin pasarse de lo que dura el acceso.
+
+    expiration: datetime de caducidad del acceso, o None si es permanente.
+    """
+
+    limit = int(time.time()) + max(ACCESS_LINK_EXPIRE_SECONDS, 60)
+
+    if expiration is not None:
+
+        try:
+
+            limit = min(limit, int(expiration.timestamp()))
+
+        except Exception:
+
+            pass
+
+
+    # Nunca menos de un minuto: un enlace ya caducado al nacer no sirve para
+    # nada y el cliente vería un error en vez de su acceso.
+    return max(60, limit - int(time.time()))
+
+
+def format_access_link_validity(seconds, language=None):
+    """
+    Texto humano de cuánto vale el enlace, para decírselo al cliente.
+
+    Se traduce: este texto va en el mensaje que lee alguien que acaba de pagar,
+    y decirle "valid for 24 horas" en un mensaje en inglés queda a medias.
+    """
+
+    from i18n_service import DEFAULT_LANGUAGE, t
+
+    language = language or DEFAULT_LANGUAGE
+    seconds = int(seconds or 0)
+
+    if seconds >= 7200:
+
+        return t("validity.hours", language, hours=seconds // 3600)
+
+
+    if seconds >= 3600:
+
+        return t("validity.one_hour", language)
+
+
+    if seconds >= 120:
+
+        return t("validity.minutes", language, minutes=seconds // 60)
+
+
+    return t("validity.one_minute", language)
 
 
 def mask_invite_link(invite_link):
@@ -147,7 +226,13 @@ def apply_group_chat_migration(old_chat_id, new_chat_id):
 # INVITE LINKS — CREATE TELEGRAM LINK
 # =========================
 
-def create_telegram_invite_link(token, telegram_group_id, expire_seconds=180, member_limit=1, community_type=None, return_details=False):
+def create_telegram_invite_link(token, telegram_group_id,
+                               expire_seconds=ACCESS_LINK_EXPIRE_SECONDS,
+                               member_limit=1, community_type=None,
+                               return_details=False):
+    # El valor por omisión era 180. Hoy todas las llamadas pasan el suyo, así
+    # que esto no cambia nada ahora mismo; está para que una llamada futura
+    # que se olvide del parámetro no reviva los tres minutos por accidente.
 
     payload = {
         "chat_id": telegram_group_id,

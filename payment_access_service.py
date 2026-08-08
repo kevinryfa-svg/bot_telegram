@@ -8,7 +8,10 @@ from bot_config import ADMIN_ID, TOKEN
 from db import conn
 from guardian_service import send_guardian_event_log_sync
 from group_service import format_community_kind, normalize_community_type
-from invite_link_service import create_telegram_invite_link
+from invite_link_service import (
+    ACCESS_LINK_EXPIRE_SECONDS,
+    create_telegram_invite_link
+)
 from notification_service import notify_super_admins, send_telegram_message
 from rbac_helpers import get_group_owner_user_id, is_user_group_owner
 from user_activity_logger import log_user_event_by_ids
@@ -1070,7 +1073,10 @@ def grant_group_access_after_payment(
         }
 
 
-    max_expire = int(time.time()) + 180
+    # 24 h por defecto (ACCESS_LINK_EXPIRE_SECONDS) en vez de 180 s: el
+    # enlace es de un solo uso y al entrar se comprueba el acceso, así que
+    # los tres minutos solo dejaban fuera a clientes que ya habían pagado.
+    max_expire = int(time.time()) + max(ACCESS_LINK_EXPIRE_SECONDS, 60)
 
     if expiration is None:
 
