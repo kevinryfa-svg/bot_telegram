@@ -213,6 +213,67 @@ TRANSLATIONS = {
     # propietario, y traducir 50.000 líneas de panel a medias sería peor que
     # no traducirlo.
 
+    # Lo que recibe el cliente justo después de pagar. Antes era una sola
+    # línea con el enlace pelado: ni confirmación del pago, ni qué había
+    # comprado, ni cuánto duraba, ni qué hacer si el enlace fallaba, ni un
+    # botón. Es el mensaje más importante del bot y el que más dudas genera.
+
+    "purchase.title": {
+        "es": "✅ Pago confirmado",
+        "en": "✅ Payment confirmed",
+    },
+
+    "purchase.community": {
+        "es": "Comunidad: {group}",
+        "en": "Community: {group}",
+    },
+
+    "purchase.plan": {
+        "es": "Plan: {plan}",
+        "en": "Plan: {plan}",
+    },
+
+    "purchase.amount": {
+        "es": "Importe: {amount}",
+        "en": "Amount: {amount}",
+    },
+
+    "purchase.until": {
+        "es": "Tu acceso dura hasta el {date}.",
+        "en": "Your access runs until {date}.",
+    },
+
+    "purchase.permanent": {
+        "es": "Tu acceso no caduca.",
+        "en": "Your access does not expire.",
+    },
+
+    "purchase.link_title": {
+        "es": "🔗 Entra desde aquí:",
+        "en": "🔗 Join from here:",
+    },
+
+    "purchase.link_validity": {
+        "es": (
+            "⏱ El enlace vale {validity} y solo lo puedes usar tú, una vez.\n"
+            "Si caduca o no funciona, pide otro en «🎟 Mis accesos»."
+        ),
+        "en": (
+            "⏱ The link is valid for {validity} and only you can use it, once.\n"
+            "If it expires or fails, get another one from “🎟 My accesses”."
+        ),
+    },
+
+    "purchase.keep_this": {
+        "es": "Guarda este mensaje: aquí tienes tu acceso y con quién hablar.",
+        "en": "Keep this message: it has your access and who to talk to.",
+    },
+
+    "button.my_access_now": {
+        "es": "🎟 Mis accesos",
+        "en": "🎟 My accesses",
+    },
+
     "renewal.expired_title": {
         "es": "⌛ Tu acceso ha caducado",
         "en": "⌛ Your access has expired",
@@ -267,6 +328,26 @@ TRANSLATIONS = {
             "If you renew before it expires you keep your access and do not "
             "have to start over."
         ),
+    },
+
+    "validity.hours": {
+        "es": "{hours} horas",
+        "en": "{hours} hours",
+    },
+
+    "validity.one_hour": {
+        "es": "1 hora",
+        "en": "1 hour",
+    },
+
+    "validity.minutes": {
+        "es": "{minutes} minutos",
+        "en": "{minutes} minutes",
+    },
+
+    "validity.one_minute": {
+        "es": "1 minuto",
+        "en": "1 minute",
     },
 
     "time.under_an_hour": {

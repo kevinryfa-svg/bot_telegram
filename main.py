@@ -27,6 +27,7 @@ from telegram.ext import (
 from datetime import datetime, timedelta
 
 from invite_link_service import (
+    ACCESS_LINK_EXPIRE_SECONDS,
     create_telegram_invite_link,
     create_fresh_user_group_link,
     revoke_and_delete_user_group_links,
@@ -2020,7 +2021,10 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             # CALCULAR EXPIRACIÓN REAL
                             # =========================
 
-                            max_expire = int(time.time()) + 180
+                            # 24 h por defecto (ACCESS_LINK_EXPIRE_SECONDS) en vez de 180 s: el
+                            # enlace es de un solo uso y al entrar se comprueba el acceso, así que
+                            # los tres minutos solo dejaban fuera a clientes que ya habían pagado.
+                            max_expire = int(time.time()) + max(ACCESS_LINK_EXPIRE_SECONDS, 60)
 
                             if owner_expiration is None:
 

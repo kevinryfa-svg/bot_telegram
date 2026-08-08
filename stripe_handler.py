@@ -5,11 +5,19 @@ from flask import request
 
 from datetime import datetime, timedelta
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+from i18n_service import DEFAULT_LANGUAGE, load_user_language, t
+
 from bot_config import TOKEN, ADMIN_ID, STRIPE_WEBHOOK_SECRET
 from audit_log_service import log_event
 from db import conn
 from group_service import format_community_kind, normalize_community_type
-from invite_link_service import create_telegram_invite_link
+from invite_link_service import (
+    ACCESS_LINK_EXPIRE_SECONDS,
+    create_telegram_invite_link,
+    format_access_link_validity
+)
 from notification_service import notify_super_admins, send_telegram_message
 from owner_addon_service import (
     activate_owner_addon_subscription_from_stripe,
@@ -89,6 +97,97 @@ def format_payment_amount(amount, currency):
     except Exception:
 
         return f"{amount} {(currency or '').upper()}".strip()
+
+
+# =========================
+# MENSAJE DE COMPRA CONFIRMADA
+# =========================
+# Es el mensaje que más importa del bot: lo lee alguien que acaba de pagar.
+# Antes era el enlace a secas, y eso deja al cliente sin saber si el cobro
+# ha ido bien, qué ha comprado, cuánto le dura ni a quién preguntar.
+
+def build_purchase_confirmation_text(group_name, plan_name, amount_total,
+                                     currency, expiration, expire_seconds,
+                                     link, language=DEFAULT_LANGUAGE):
+
+    lines = [
+        t("purchase.title", language),
+        "",
+        t("purchase.community", language, group=group_name)
+    ]
+
+
+    if plan_name:
+
+        lines.append(t("purchase.plan", language, plan=plan_name))
+
+
+    if amount_total is not None:
+
+        lines.append(
+            t(
+                "purchase.amount",
+                language,
+                amount=format_payment_amount(amount_total, currency)
+            )
+        )
+
+
+    lines.append("")
+
+    if expiration is None:
+
+        lines.append(t("purchase.permanent", language))
+
+    else:
+
+        try:
+
+            fecha = expiration.strftime("%d/%m/%Y")
+
+        except Exception:
+
+            fecha = str(expiration)
+
+
+        lines.append(t("purchase.until", language, date=fecha))
+
+
+    lines.extend([
+        "",
+        t("purchase.link_title", language),
+        str(link or ""),
+        "",
+        t(
+            "purchase.link_validity",
+            language,
+            validity=format_access_link_validity(expire_seconds, language)
+        ),
+        "",
+        t("purchase.keep_this", language)
+    ])
+
+    return "\n".join(lines)
+
+
+def build_purchase_confirmation_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
+    """
+    Botones del mensaje de compra: pedir otro enlace y hablar con soporte.
+
+    Sin esto, alguien cuyo enlace fallara no tenía a dónde ir desde el propio
+    mensaje del pago.
+    """
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            t("button.my_access_now", language),
+            callback_data=f"mysub_{telegram_group_id}"
+        )],
+        [InlineKeyboardButton(
+            t("button.support", language),
+            callback_data="public_support"
+        )]
+    ])
 
 
 def mask_invite_link(invite_link):
@@ -942,7 +1041,10 @@ def stripe_webhook():
         # CALCULAR EXPIRACIÓN REAL
         # =========================
 
-        max_expire = int(time.time()) + 180
+        # 24 h por defecto (ACCESS_LINK_EXPIRE_SECONDS) en vez de 180 s: el
+        # enlace es de un solo uso y al entrar se comprueba el acceso, así que
+        # los tres minutos solo dejaban fuera a clientes que ya habían pagado.
+        max_expire = int(time.time()) + max(ACCESS_LINK_EXPIRE_SECONDS, 60)
 
         if expiration is None:
 
@@ -1213,10 +1315,27 @@ def stripe_webhook():
         # ENVIAR LINK AL USUARIO
         # =========================
 
+        # Antes esto era una sola línea: "🔗 Tu acceso VIP:" y el enlace. Quien
+        # acababa de pagar no veía confirmado el cobro, ni qué había comprado,
+        # ni hasta cuándo, ni qué hacer si el enlace no funcionaba. Y sin
+        # botones, la única salida era buscarse la vida por los menús.
         user_response = send_telegram_message(
             TOKEN,
             user_id,
-            f"🔗 Tu acceso VIP:\n{link}"
+            build_purchase_confirmation_text(
+                group_name=group_name,
+                plan_name=plan_name,
+                amount_total=amount_total,
+                currency=currency,
+                expiration=expiration,
+                expire_seconds=expire_seconds,
+                link=link,
+                language=load_user_language(user_id)
+            ),
+            reply_markup=build_purchase_confirmation_keyboard(
+                telegram_group_id,
+                language=load_user_language(user_id)
+            ).to_dict()
         )
 
 

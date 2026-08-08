@@ -110,6 +110,7 @@ from commercial_form_handler import (
 )
 from db import conn
 from formatters import format_tiempo_restante
+from i18n_service import load_user_language
 from owner_addon_service import (
     activate_owner_addon_manual_trial,
     owner_addon_is_purchase_allowed,
@@ -199,8 +200,10 @@ from guardian_service import (
     update_guardian_log_channel
 )
 from invite_link_service import (
+    ACCESS_LINK_EXPIRE_SECONDS,
     create_telegram_invite_link,
     create_telegram_public_invite_link,
+    format_access_link_validity,
     mask_invite_link,
     revoke_telegram_invite_link
 )
@@ -33700,11 +33703,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
+                # Se trae también la caducidad: antes la lista solo decía
+                # "Tus suscripciones activas" y el cliente tenía que abrir cada
+                # comunidad para saber cuánto le quedaba en cada una.
+                # BOOL_OR(... IS NULL) distingue un acceso permanente de uno con
+                # fecha, que MAX() por sí solo no podría.
                 cur.execute("""
 
-                    SELECT DISTINCT g.telegram_group_id,
-                                    g.name,
-                                    COALESCE(g.community_type, 'group')
+                    SELECT g.telegram_group_id,
+                           g.name,
+                           COALESCE(g.community_type, 'group'),
+                           BOOL_OR(u.expiration IS NULL) AS es_permanente,
+                           MAX(u.expiration) AS caduca
 
                     FROM users u
 
@@ -33719,6 +33729,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     AND g.is_active=TRUE
                     AND g.telegram_group_id != 0
+
+                    GROUP BY g.telegram_group_id,
+                             g.name,
+                             COALESCE(g.community_type, 'group')
 
                     ORDER BY g.name ASC
 
@@ -33748,11 +33762,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         keyboard = []
+        lineas = []
 
 
-        for group_id, group_name, community_type in rows:
+        for group_id, group_name, community_type, es_permanente, caduca in rows:
 
             kind_cap = format_community_kind_capitalized(community_type)
+
+            if es_permanente:
+
+                restante = "sin caducidad"
+
+            elif caduca:
+
+                restante = f"quedan {format_tiempo_restante(caduca)}"
+
+            else:
+
+                restante = "caducidad desconocida"
+
+
+            lineas.append(f"📦 {group_name} · {kind_cap}\n   ⏳ {restante}")
 
             keyboard.append([
 
@@ -33793,9 +33823,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
 
+        plural = "acceso" if len(lineas) == 1 else "accesos"
+
         await query.message.reply_text(
 
-            "📦 Tus suscripciones activas:",
+            f"🎟 Tienes {len(lineas)} {plural} activo"
+            f"{'' if len(lineas) == 1 else 's'}:\n\n"
+            + "\n\n".join(lineas)
+            + "\n\nToca una comunidad para recibir tu enlace de entrada.",
 
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -34111,7 +34146,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # CALCULAR EXPIRACIÓN REAL
         # =========================
 
-        max_expire = int(time.time()) + 180
+        # 24 h por defecto (ACCESS_LINK_EXPIRE_SECONDS) en vez de 180 s: el
+        # enlace es de un solo uso y al entrar se comprueba el acceso, así que
+        # los tres minutos solo dejaban fuera a clientes que ya habían pagado.
+        max_expire = int(time.time()) + max(ACCESS_LINK_EXPIRE_SECONDS, 60)
 
         if expiration is None:
 
@@ -34188,6 +34226,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [
 
+                # Si el enlace caduca, antes había que volver atrás y entrar de
+                # nuevo en la comunidad para conseguir otro. Desde aquí es un
+                # solo toque, que es lo que hace falta cuando alguien que ha
+                # pagado se ha quedado fuera.
+                InlineKeyboardButton(
+
+                    "🔄 Enviarme otro enlace",
+
+                    callback_data=f"mysub_{telegram_group_id}"
+
+                )
+
+            ],
+
+            [
+
                 InlineKeyboardButton(
 
                     "💬 Ayuda sobre este menú",
@@ -34229,7 +34283,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏳ Tiempo restante:\n"
             f"{tiempo_texto}\n\n"
 
-            "⚠️ Este link expirará en 3 minutos.\n\n"
+            f"⏱ El enlace vale {format_access_link_validity(expire_seconds, load_user_language(user_id))} "
+            "y solo lo puedes usar tú, una vez.\n"
+            "Si caduca, pide otro con el botón de abajo.\n\n"
 
             f"🔗 Tu nuevo acceso:\n"
             f"{link}"
@@ -34853,7 +34909,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # CALCULAR EXPIRACIÓN REAL
         # =========================
 
-        max_expire = int(time.time()) + 180
+        # 24 h por defecto (ACCESS_LINK_EXPIRE_SECONDS) en vez de 180 s: el
+        # enlace es de un solo uso y al entrar se comprueba el acceso, así que
+        # los tres minutos solo dejaban fuera a clientes que ya habían pagado.
+        max_expire = int(time.time()) + max(ACCESS_LINK_EXPIRE_SECONDS, 60)
 
         if expiration is None:
 
