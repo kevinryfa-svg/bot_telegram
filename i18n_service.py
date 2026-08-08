@@ -274,6 +274,51 @@ TRANSLATIONS = {
         "en": "🎟 My accesses",
     },
 
+    # Aviso a quien abrió la ficha de una comunidad y no compró. Entre "nunca ha
+    # comprado nada" y "empezó a pagar" quedaba este hueco, que es el de más
+    # intención de compra de los tres.
+
+    "interest.title": {
+        "es": "👀 ¿Te quedaste con la duda?",
+        "en": "👀 Still thinking about it?",
+    },
+
+    "interest.body": {
+        "es": "Estuviste viendo {group} y no llegaste a entrar.",
+        "en": "You were looking at {group} and did not join.",
+    },
+
+    "interest.price": {
+        "es": "El acceso sigue disponible desde {price}.",
+        "en": "Access is still available from {price}.",
+    },
+
+    "interest.footer": {
+        "es": (
+            "Recibes tu enlace de entrada al instante tras el pago, y es "
+            "personal y de un solo uso."
+        ),
+        "en": (
+            "You get your access link instantly after paying, and it is "
+            "personal and single-use."
+        ),
+    },
+
+    "interest.opt_out": {
+        "es": "Si no te interesa, dile al botón de abajo y no te escribo más.",
+        "en": "Not interested? Use the button below and I won't write again.",
+    },
+
+    "button.see_access": {
+        "es": "💳 Ver el acceso",
+        "en": "💳 See the access",
+    },
+
+    "button.no_more_messages": {
+        "es": "🔕 No me escribas más",
+        "en": "🔕 Stop writing to me",
+    },
+
     "renewal.expired_title": {
         "es": "⌛ Tu acceso ha caducado",
         "en": "⌛ Your access has expired",

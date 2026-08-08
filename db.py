@@ -4126,6 +4126,33 @@ def create_tables():
 
 
         # =========================
+        # TABLA AVISOS A INTERESADOS
+        # =========================
+        # Quien abre la ficha de una comunidad y no compra era el hueco más
+        # grande del embudo: con más intención que quien nunca ha comprado nada,
+        # y sin llegar a la pantalla de pago. La clave única garantiza un único
+        # aviso por persona y comunidad, para siempre.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS interest_followups (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT NOT NULL,
+
+            group_id INTEGER NOT NULL,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (user_id, group_id)
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA PREFERENCIAS DEL USUARIO
         # =========================
         # El idioma elegido vivía en un diccionario en memoria, así que cada
