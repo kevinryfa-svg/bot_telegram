@@ -14,7 +14,10 @@ Dos problemas reales encontrados leyendo las pantallas de verdad:
 from datetime import datetime, timedelta
 
 import invite_link_service as ils
-import stripe_handler as sh
+# Los mensajes al comprador ya no viven en stripe_handler: se movieron a
+# purchase_message_service para que Stripe y los otros cuatro proveedores manden
+# lo mismo. Se comprueban donde están ahora.
+import purchase_message_service as sh
 
 
 # =========================

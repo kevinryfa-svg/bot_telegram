@@ -1022,6 +1022,20 @@ def process_guardarian_webhook(event_body):
             }
         )
 
+
+        # Una devolución tiene que retirar el acceso. El estado ya se detectaba
+        # pero nadie actuaba: quien devolvía el pago se quedaba dentro.
+        if new_status == PAYMENT_STATUS_REFUNDED:
+
+            from refund_service import REFUND_REASON_REFUND, process_refund
+
+            process_refund(
+                external_payment_id=provider_order_id,
+                reason=REFUND_REASON_REFUND,
+                user_id=transaction.get("user_id"),
+                group_id=transaction.get("group_id")
+            )
+
     log_event(
         "guardarian_payment_processed",
         category="payment",

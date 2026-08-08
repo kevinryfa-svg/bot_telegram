@@ -628,6 +628,19 @@ def process_changenow_webhook(event_body):
         }
     )
 
+    # Una devolución tiene que retirar el acceso. El estado ya se detectaba pero
+    # nadie actuaba: quien devolvía el pago se quedaba dentro del grupo.
+    if mapped_status == PAYMENT_STATUS_REFUNDED:
+
+        from refund_service import REFUND_REASON_REFUND, process_refund
+
+        process_refund(
+            external_payment_id=external_payment_id,
+            reason=REFUND_REASON_REFUND,
+            user_id=transaction.get("user_id"),
+            group_id=transaction.get("group_id")
+        )
+
     log_event(
         "changenow_webhook_received",
         category="payment",
