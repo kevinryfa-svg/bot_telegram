@@ -20767,7 +20767,8 @@ def row_to_marketplace_group(row):
         "entry_amount",
         "entry_currency",
         "entry_duration_days",
-        "plan_count"
+        "plan_count",
+        "recent_joins"
     ]
 
     return dict(zip(fields, row))
@@ -20846,7 +20847,17 @@ def get_marketplace_group_select():
                      AND COALESCE(p.is_active, TRUE)=TRUE
                      AND p.amount IS NOT NULL
                      AND p.amount > 0
-               ) AS plan_count
+               ) AS plan_count,
+               -- Entradas de los últimos 7 días. Es prueba social de verdad,
+               -- sacada de los accesos concedidos: no se inventa nada ni se
+               -- muestra si no ha entrado nadie.
+               (
+                   SELECT COUNT(*)
+                   FROM users u2
+                   WHERE u2.group_id = g.id
+                     AND u2.created_at IS NOT NULL
+                     AND u2.created_at > NOW() - INTERVAL '7 days'
+               ) AS recent_joins
         FROM groups g
         LEFT JOIN community_stats cs
         ON cs.group_id = g.id
@@ -21142,6 +21153,75 @@ def refresh_community_favorites_count(group_id):
     return row[0]
 
 
+def format_marketplace_social_proof(group, members_label="miembros"):
+    """
+    Líneas de prueba social, solo cuando hay algo real que contar.
+
+    Antes se imprimían siempre los contadores, así que toda comunidad recién
+    publicada le decía a cada visitante "⭐ 0 favoritos" y "👥 0 miembros". Eso
+    no es información neutra: es el mejor argumento posible para no comprar.
+    Aquí un cero simplemente no se menciona.
+    """
+
+    def numero(valor):
+
+        try:
+
+            return int(valor or 0)
+
+        except Exception:
+
+            return 0
+
+
+    lineas = []
+
+    miembros = numero(group.get("member_count"))
+
+    if miembros > 0:
+
+        etiqueta = members_label
+
+        if miembros == 1:
+
+            # "1 miembros" / "1 suscriptores" queda mal y se nota.
+            etiqueta = "suscriptor" if members_label == "suscriptores" else "miembro"
+
+
+        lineas.append(
+            f"👥 {format_marketplace_number(miembros)} {etiqueta}"
+        )
+
+
+    recientes = numero(group.get("recent_joins"))
+
+    if recientes > 0:
+
+        if recientes == 1:
+
+            lineas.append("🚀 1 persona ha entrado esta semana")
+
+        else:
+
+            lineas.append(
+                f"🚀 {format_marketplace_number(recientes)} personas han "
+                "entrado esta semana"
+            )
+
+
+    favoritos = numero(group.get("favorites_count"))
+
+    if favoritos > 0:
+
+        lineas.append(
+            f"⭐ {format_marketplace_number(favoritos)} "
+            f"{'favorito' if favoritos == 1 else 'favoritos'}"
+        )
+
+
+    return lineas
+
+
 def format_plan_duration_short(duration_days):
     """Duración de un plan en corto, para caber en la etiqueta de un botón."""
 
@@ -21347,13 +21427,17 @@ def format_marketplace_group_caption(group):
     community_type = normalize_community_type(group.get("community_type"))
     kind_cap = format_community_kind_capitalized(community_type)
     members_label = "suscriptores" if community_type == "channel" else "miembros"
-    base_text = (
-        f"🔥 {group.get('name') or 'Comunidad privada'}\n"
-        f"📡 Tipo: {kind_cap}\n"
-        f"📂 {format_marketplace_category(group)}\n"
-        f"⭐ {format_marketplace_number(group.get('favorites_count'))} favoritos\n"
-        f"👥 {format_marketplace_number(group.get('member_count'))} {members_label}\n"
-        f"{format_marketplace_kind(group)}"
+    # Los contadores en cero no se muestran: una comunidad recién publicada
+    # anunciaba "⭐ 0 favoritos" y "👥 0 miembros" a cada visitante, que es
+    # exactamente lo contrario de dar confianza para comprar.
+    base_text = "\n".join(
+        [
+            f"🔥 {group.get('name') or 'Comunidad privada'}",
+            f"📡 Tipo: {kind_cap}",
+            f"📂 {format_marketplace_category(group)}"
+        ]
+        + format_marketplace_social_proof(group, members_label)
+        + [format_marketplace_kind(group)]
     )
 
 
@@ -21562,9 +21646,12 @@ def format_marketplace_preview_caption(group):
     community_type = normalize_community_type(group.get("community_type"))
     kind_cap = format_community_kind_capitalized(community_type)
     members_label = "suscriptores" if community_type == "channel" else "miembros"
-    stats_text = (
-        f"⭐ {format_marketplace_number(group.get('favorites_count'))} favoritos\n"
-        f"👥 {format_marketplace_number(group.get('member_count'))} {members_label}"
+    # Mismo criterio que en la ficha: los ceros no se anuncian.
+    # Cada línea trae su propio salto para que, cuando no haya ninguna, no
+    # quede un hueco en blanco en medio del texto.
+    stats_text = "".join(
+        f"{linea}\n"
+        for linea in format_marketplace_social_proof(group, members_label)
     )
 
 
@@ -21574,7 +21661,7 @@ def format_marketplace_preview_caption(group):
             f"🔥 {group.get('name') or 'Comunidad privada'}\n"
             f"📡 Tipo: {kind_cap}\n"
             f"📂 {format_marketplace_category(group)}\n"
-            f"{stats_text}\n"
+            f"{stats_text}"
             f"{format_marketplace_kind(group)}"
         )
 
@@ -21585,7 +21672,7 @@ def format_marketplace_preview_caption(group):
             f"🔥 {group.get('name') or 'Comunidad privada'}\n"
             f"📡 Tipo: {kind_cap}\n"
             f"📂 {format_marketplace_category(group)}\n"
-            f"{stats_text}\n"
+            f"{stats_text}"
             f"{format_marketplace_kind(group)}\n\n"
             "⚡ Preview dinámico activo. Se mostrarán los últimos 3 vídeos publicados en la comunidad desde que el owner lo activó."
         )
@@ -21595,7 +21682,7 @@ def format_marketplace_preview_caption(group):
         f"🔥 {group.get('name') or 'Comunidad privada'}\n"
         f"📡 Tipo: {kind_cap}\n"
         f"📂 {format_marketplace_category(group)}\n"
-        f"{stats_text}\n"
+        f"{stats_text}"
         f"{format_marketplace_kind(group)}\n\n"
         f"📝 {group.get('preview_text') or 'Preview manual pendiente de configurar.'}"
     )
@@ -27877,6 +27964,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         group["is_favorite"] = is_group_favorite(user_id, group_id)
+
+        # Queda registrado quién ha mirado esta comunidad. Las pulsaciones de
+        # botón no se guardaban, así que no había forma de saber quién se
+        # interesó y no compró — que es justo a quien tiene sentido escribir.
+        log_user_event_by_ids(
+            user_id,
+            "community_viewed",
+            event_key=f"marketplace_group_{group_id}",
+            group_id=group_id
+        )
 
         await delete_query_message_safely(query)
         await send_marketplace_group_card(

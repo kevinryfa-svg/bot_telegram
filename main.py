@@ -145,6 +145,7 @@ from group_service import (
 from reengagement_service import process_reengagement_batch
 from renewal_service import process_renewal_reminders
 from abandoned_checkout_service import process_abandoned_checkouts
+from interest_followup_service import process_interest_followups
 
 
 # =========================
@@ -278,6 +279,14 @@ REENGAGEMENT_JOB_INTERVAL_SECONDS = int(
 RENEWAL_JOB_INTERVAL_SECONDS = int(
     os.environ.get(
         "RENEWAL_JOB_INTERVAL_SECONDS",
+        str(60 * 60)
+    )
+)
+
+# Cada cuánto se busca a quien miró una comunidad y no compró.
+INTEREST_JOB_INTERVAL_SECONDS = int(
+    os.environ.get(
+        "INTEREST_JOB_INTERVAL_SECONDS",
         str(60 * 60)
     )
 )
@@ -913,6 +922,51 @@ def schedule_abandoned_checkouts_job(application):
     )
 
     print("Recordatorios de pagos sin completar programados.")
+
+    return True
+
+
+# =========================
+# SEGUIMIENTO A INTERESADOS
+# =========================
+
+async def interest_followup_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        await process_interest_followups(context)
+
+    except Exception as e:
+
+        print(
+            "Seguimiento de interés: error en el job programado:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_interest_followup_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Seguimiento de interés: JobQueue no disponible. "
+            "No se programaron los avisos a interesados."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        interest_followup_job,
+        interval=max(INTEREST_JOB_INTERVAL_SECONDS, 300),
+        first=540,
+        name="interest_followup"
+    )
+
+    print("Avisos a interesados que no compraron programados.")
 
     return True
 
@@ -2907,6 +2961,7 @@ def main():
     schedule_reengagement_job(telegram_app)
     schedule_renewal_reminders_job(telegram_app)
     schedule_abandoned_checkouts_job(telegram_app)
+    schedule_interest_followup_job(telegram_app)
     schedule_database_backup_job(telegram_app)
     schedule_persistence_cleanup_job(telegram_app)
 

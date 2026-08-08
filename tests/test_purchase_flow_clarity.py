@@ -116,9 +116,27 @@ def test_the_row_mapping_matches_the_query():
                      "plan_count"):
         assert esperado in campos, f"falta {esperado} en row_to_marketplace_group"
 
-    # Y que el último campo del diccionario sea el último de la consulta.
-    assert campos[-1] == "plan_count"
-    assert select.rstrip().rfind("plan_count") > select.rfind("member_count")
+    # Y que el último campo del diccionario sea también la última columna de la
+    # consulta. Se comprueba sin escribir el nombre a mano: fijarlo obligaba a
+    # tocar este test cada vez que se añade una columna, que es justo lo que no
+    # debe pasar — lo que importa es que sigan alineados.
+    ultimo = campos[-1]
+
+    assert f"AS {ultimo}" in select or f"g.{ultimo}" in select, (
+        f"el último campo del diccionario ({ultimo}) no está en la consulta"
+    )
+
+    posiciones = [
+        (select.rfind(f"AS {campo}"), campo)
+        for campo in campos
+        if f"AS {campo}" in select
+    ]
+
+    assert posiciones == sorted(posiciones), (
+        "el orden de los campos no coincide con el de las columnas: cada "
+        f"comunidad mostraría el dato de otra columna. Orden en la consulta: "
+        f"{[c for _, c in sorted(posiciones)]}"
+    )
 
 
 # =========================
