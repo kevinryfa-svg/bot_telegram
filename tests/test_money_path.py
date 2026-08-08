@@ -206,3 +206,132 @@ def test_banned_user_does_not_get_access(stripe_env):
             (env["user_id"],),
         )
         assert cur.fetchone()[0] == 0, "un usuario baneado recibió acceso"
+
+
+# =========================
+# PAGO COBRADO Y ENLACE FALLIDO
+# =========================
+# El peor estado posible para un cliente. Antes de esto, el webhook avisaba a los
+# administradores y retornaba: al comprador no se le enviaba nada, y como el
+# acceso se guarda DESPUÉS del enlace, se quedaba también sin acceso. Pagaba y
+# recibía silencio, sin nada en «Mis accesos».
+
+@pytest.fixture
+def stripe_env_sin_enlace(stripe_env, monkeypatch):
+    """Mismo entorno, pero la creación del enlace falla."""
+
+    monkeypatch.setattr(
+        stripe_env["sh"], "create_telegram_invite_link", lambda *a, **k: None
+    )
+
+    enviados = []
+
+    def capturar(token, chat_id, text, reply_markup=None):
+        enviados.append((chat_id, text, reply_markup))
+        return {"ok": True}
+
+    monkeypatch.setattr(stripe_env["sh"], "send_telegram_message", capturar)
+
+    stripe_env["enviados"] = enviados
+
+    return stripe_env
+
+
+def test_a_failed_link_still_grants_the_access_that_was_paid_for(stripe_env_sin_enlace):
+    """El pago es real y el derecho también; el enlace solo es la entrega."""
+
+    env = stripe_env_sin_enlace
+    run_webhook(env["sh"], make_event(env["user_id"], env["group_id"]))
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT subscription_active FROM users WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+        row = cur.fetchone()
+
+    assert row is not None, "pagó y se quedó sin acceso porque falló el enlace"
+    assert row[0] is True
+
+
+def test_a_failed_link_still_records_the_payment(stripe_env_sin_enlace):
+    env = stripe_env_sin_enlace
+    run_webhook(env["sh"], make_event(env["user_id"], env["group_id"]))
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT status FROM payments WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+        row = cur.fetchone()
+
+    assert row is not None, "el cobro no quedó registrado"
+    assert str(row[0]).lower() in PAID_STATUSES
+
+
+def test_a_failed_link_does_not_store_an_empty_link_row(stripe_env_sin_enlace):
+    """Una fila activa sin enlace haría creer que ya se entregó el acceso."""
+
+    env = stripe_env_sin_enlace
+    run_webhook(env["sh"], make_event(env["user_id"], env["group_id"]))
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM invite_links WHERE user_id=%s",
+            (env["user_id"],),
+        )
+        assert cur.fetchone()[0] == 0
+
+
+def test_the_buyer_is_told_instead_of_left_in_silence(stripe_env_sin_enlace):
+    env = stripe_env_sin_enlace
+    run_webhook(env["sh"], make_event(env["user_id"], env["group_id"]))
+
+    al_comprador = [
+        (text, markup)
+        for chat_id, text, markup in env["enviados"]
+        if chat_id == env["user_id"]
+    ]
+
+    assert al_comprador, "el comprador no recibió ningún mensaje"
+
+    texto, markup = al_comprador[0]
+
+    # Lo que necesita saber: que el pago está, que el acceso está, y qué hacer.
+    assert "Pago confirmado" in texto
+    assert "acceso" in texto.lower()
+    assert "no has perdido el dinero" in texto.lower()
+
+    callbacks = [
+        boton["callback_data"]
+        for fila in markup["inline_keyboard"]
+        for boton in fila
+    ]
+
+    assert f"mysub_{env['telegram_group_id']}" in callbacks, (
+        "sin botón para pedir el enlace, el cliente sigue bloqueado"
+    )
+    assert "public_support" in callbacks
+
+
+def test_the_recovery_button_can_actually_deliver_the_link(stripe_env_sin_enlace):
+    """
+    El botón solo sirve si el acceso está guardado: «Mis accesos» genera un
+    enlace nuevo a partir del acceso, y por eso se guarda aunque falle la
+    entrega.
+    """
+
+    env = stripe_env_sin_enlace
+    run_webhook(env["sh"], make_event(env["user_id"], env["group_id"]))
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM users WHERE user_id=%s AND group_id=%s "
+            "AND COALESCE(subscription_active, FALSE)=TRUE "
+            "AND (expiration IS NULL OR expiration > NOW())",
+            (env["user_id"], env["group_id"]),
+        )
+
+        assert cur.fetchone() is not None, (
+            "«Mis accesos» no encontraría nada y el botón no podría dar el enlace"
+        )

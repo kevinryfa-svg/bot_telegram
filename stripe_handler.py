@@ -170,6 +170,62 @@ def build_purchase_confirmation_text(group_name, plan_name, amount_total,
     return "\n".join(lines)
 
 
+def build_link_pending_text(group_name, plan_name, amount_total, currency,
+                            language=DEFAULT_LANGUAGE):
+    """
+    Mensaje para cuando el cobro salió bien pero el enlace no se pudo crear.
+
+    Antes este caso no enviaba nada al cliente: solo se avisaba a los
+    administradores. Alguien que acababa de pagar se quedaba en silencio, que es
+    exactamente cuando piensa que le han estafado.
+    """
+
+    lines = [
+        t("purchase.link_pending_title", language),
+        "",
+        t("purchase.link_pending_body", language, group=group_name)
+    ]
+
+
+    if plan_name:
+
+        lines.append("")
+        lines.append(t("purchase.plan", language, plan=plan_name))
+
+
+    if amount_total is not None:
+
+        lines.append(
+            t(
+                "purchase.amount",
+                language,
+                amount=format_payment_amount(amount_total, currency)
+            )
+        )
+
+
+    lines.extend([
+        "",
+        t("purchase.link_pending_what_now", language)
+    ])
+
+    return "\n".join(lines)
+
+
+def build_link_pending_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            t("button.get_my_link", language),
+            callback_data=f"mysub_{telegram_group_id}"
+        )],
+        [InlineKeyboardButton(
+            t("button.support", language),
+            callback_data="public_support"
+        )]
+    ])
+
+
 def build_purchase_confirmation_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
     """
     Botones del mensaje de compra: pedir otro enlace y hablar con soporte.
@@ -1120,7 +1176,16 @@ def stripe_webhook():
                 fallback_admin_id=ADMIN_ID
             )
 
-            return "OK"
+        # Aquí antes había un "return OK": si el enlace fallaba, se avisaba a los
+        # administradores y al cliente NO se le decía nada. Peor aún, el acceso se
+        # guarda más abajo, así que quien había pagado se quedaba sin mensaje y
+        # sin acceso: en «Mis accesos» no le aparecía nada y el pago parecía
+        # perdido.
+        #
+        # El pago es real y el derecho de acceso también; el enlace solo es la
+        # entrega. Así que se sigue adelante: se guarda el acceso y el pago
+        # igualmente, y más abajo se le explica lo ocurrido con un botón para
+        # pedir el enlace él mismo, que ya funcionará porque el acceso existe.
 
 
         # =========================
@@ -1211,29 +1276,31 @@ def stripe_webhook():
                 ))
 
 
-                # guardar nuevo
+                # guardar nuevo (solo si de verdad hay enlace que guardar)
 
-                cur.execute("""
+                if link:
 
-                    INSERT INTO invite_links
-                    (
+                    cur.execute("""
+
+                        INSERT INTO invite_links
+                        (
+                            user_id,
+                            group_id,
+                            telegram_group_id,
+                            invite_link,
+                            is_active
+                        )
+
+                        VALUES (%s, %s, %s, %s, TRUE)
+
+                    """, (
+
                         user_id,
                         group_id,
                         telegram_group_id,
-                        invite_link,
-                        is_active
-                    )
+                        link
 
-                    VALUES (%s, %s, %s, %s, TRUE)
-
-                """, (
-
-                    user_id,
-                    group_id,
-                    telegram_group_id,
-                    link
-
-                ))
+                    ))
 
 
                 conn.commit()
@@ -1319,10 +1386,11 @@ def stripe_webhook():
         # acababa de pagar no veía confirmado el cobro, ni qué había comprado,
         # ni hasta cuándo, ni qué hacer si el enlace no funcionaba. Y sin
         # botones, la única salida era buscarse la vida por los menús.
-        user_response = send_telegram_message(
-            TOKEN,
-            user_id,
-            build_purchase_confirmation_text(
+        language = load_user_language(user_id)
+
+        if link:
+
+            texto_comprador = build_purchase_confirmation_text(
                 group_name=group_name,
                 plan_name=plan_name,
                 amount_total=amount_total,
@@ -1330,12 +1398,37 @@ def stripe_webhook():
                 expiration=expiration,
                 expire_seconds=expire_seconds,
                 link=link,
-                language=load_user_language(user_id)
-            ),
-            reply_markup=build_purchase_confirmation_keyboard(
+                language=language
+            )
+
+            teclado_comprador = build_purchase_confirmation_keyboard(
                 telegram_group_id,
-                language=load_user_language(user_id)
-            ).to_dict()
+                language=language
+            )
+
+        else:
+
+            # El acceso ya está guardado, así que el botón de pedir el enlace
+            # funcionará: es lo único que necesita para desbloquearse solo.
+            texto_comprador = build_link_pending_text(
+                group_name=group_name,
+                plan_name=plan_name,
+                amount_total=amount_total,
+                currency=currency,
+                language=language
+            )
+
+            teclado_comprador = build_link_pending_keyboard(
+                telegram_group_id,
+                language=language
+            )
+
+
+        user_response = send_telegram_message(
+            TOKEN,
+            user_id,
+            texto_comprador,
+            reply_markup=teclado_comprador.to_dict()
         )
 
 
