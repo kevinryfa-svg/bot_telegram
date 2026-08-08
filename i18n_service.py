@@ -264,6 +264,45 @@ TRANSLATIONS = {
         ),
     },
 
+    # Pago cobrado pero el enlace no se pudo crear (el bot ya no es admin del
+    # grupo, el grupo se borró, Telegram falló). Antes se avisaba a los
+    # administradores y al cliente NO se le decía nada: había pagado y recibía
+    # silencio, que es la peor situación posible.
+
+    "purchase.link_pending_title": {
+        "es": "✅ Pago confirmado — falta darte el enlace",
+        "en": "✅ Payment confirmed — your link is still pending",
+    },
+
+    "purchase.link_pending_body": {
+        "es": (
+            "Tu pago está registrado y tu acceso a {group} ya está activo, pero "
+            "no he podido generar el enlace de entrada en este momento."
+        ),
+        "en": (
+            "Your payment is registered and your access to {group} is already "
+            "active, but I could not generate the join link right now."
+        ),
+    },
+
+    "purchase.link_pending_what_now": {
+        "es": (
+            "Prueba a pedirlo con el botón de abajo. Si tampoco sale, ya hemos "
+            "avisado al responsable de la comunidad y lo resolvemos: no has "
+            "perdido el dinero ni el acceso."
+        ),
+        "en": (
+            "Try the button below to request it. If that fails too, the "
+            "community's owner has already been notified and we will sort it "
+            "out: you have not lost your money or your access."
+        ),
+    },
+
+    "button.get_my_link": {
+        "es": "🔗 Pedir mi enlace",
+        "en": "🔗 Get my link",
+    },
+
     "purchase.keep_this": {
         "es": "Guarda este mensaje: aquí tienes tu acceso y con quién hablar.",
         "en": "Keep this message: it has your access and who to talk to.",
