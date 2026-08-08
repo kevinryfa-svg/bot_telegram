@@ -979,12 +979,53 @@ def build_group_recovery_keyboard(group_id, retry_callback=None):
         )])
 
 
+    # Soporte aquí mismo: quien no consigue pagar no debería tener que buscar
+    # con quién hablar por los menús.
+    keyboard.append([InlineKeyboardButton(
+        "🛟 Contactar soporte",
+        callback_data="public_support"
+    )])
+
     keyboard.append([InlineKeyboardButton(
         "🏠 Inicio",
         callback_data="public_back_start"
     )])
 
     return InlineKeyboardMarkup(keyboard)
+
+
+def build_payment_link_keyboard(group_id):
+    """
+    Botones que acompañan al enlace de pago.
+
+    Antes el enlace se enviaba solo, quitando además el teclado: si el cliente
+    dudaba, cerraba el navegador o el enlace no le abría, se quedaba sin salida.
+    """
+
+    keyboard = []
+
+    if group_id:
+
+        keyboard.append([InlineKeyboardButton(
+            "⬅️ Volver a la comunidad",
+            callback_data=f"marketplace_group_{group_id}"
+        )])
+
+
+    keyboard.append([InlineKeyboardButton(
+        "🛟 Tengo un problema con el pago",
+        callback_data="public_support"
+    )])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+PAYMENT_FAILED_TEXT = (
+    "❌ No he podido abrir la pasarela de pago\n\n"
+    "No se te ha cobrado nada.\n\n"
+    "Vuelve a intentarlo en un momento. Si sigue sin funcionar, escríbenos y "
+    "lo miramos: puede ser algo de la comunidad y no tuyo."
+)
 
 
 def format_access_expiration(expires_at):
@@ -20722,7 +20763,11 @@ def row_to_marketplace_group(row):
         "access_clicks",
         "favorites_count",
         "member_count",
-        "created_at"
+        "created_at",
+        "entry_amount",
+        "entry_currency",
+        "entry_duration_days",
+        "plan_count"
     ]
 
     return dict(zip(fields, row))
@@ -20759,7 +20804,49 @@ def get_marketplace_group_select():
                        OR u.expiration > NOW()
                    )
                ) AS member_count,
-               g.created_at
+               g.created_at,
+               -- Precio de entrada y su duración. Se traen aquí para que la
+               -- lista y la ficha puedan mostrar el precio sin una consulta
+               -- por comunidad: antes el cliente no veía cuánto costaba hasta
+               -- pulsar "Comprar acceso", dos toques más adelante.
+               (
+                   SELECT p.amount
+                   FROM plans p
+                   WHERE p.group_id = g.id
+                     AND COALESCE(p.is_active, TRUE)=TRUE
+                     AND p.amount IS NOT NULL
+                     AND p.amount > 0
+                   ORDER BY p.amount ASC
+                   LIMIT 1
+               ) AS entry_amount,
+               (
+                   SELECT COALESCE(NULLIF(p.currency, ''), 'EUR')
+                   FROM plans p
+                   WHERE p.group_id = g.id
+                     AND COALESCE(p.is_active, TRUE)=TRUE
+                     AND p.amount IS NOT NULL
+                     AND p.amount > 0
+                   ORDER BY p.amount ASC
+                   LIMIT 1
+               ) AS entry_currency,
+               (
+                   SELECT p.duration_days
+                   FROM plans p
+                   WHERE p.group_id = g.id
+                     AND COALESCE(p.is_active, TRUE)=TRUE
+                     AND p.amount IS NOT NULL
+                     AND p.amount > 0
+                   ORDER BY p.amount ASC
+                   LIMIT 1
+               ) AS entry_duration_days,
+               (
+                   SELECT COUNT(*)
+                   FROM plans p
+                   WHERE p.group_id = g.id
+                     AND COALESCE(p.is_active, TRUE)=TRUE
+                     AND p.amount IS NOT NULL
+                     AND p.amount > 0
+               ) AS plan_count
         FROM groups g
         LEFT JOIN community_stats cs
         ON cs.group_id = g.id
@@ -21055,6 +21142,163 @@ def refresh_community_favorites_count(group_id):
     return row[0]
 
 
+def format_plan_duration_short(duration_days):
+    """Duración de un plan en corto, para caber en la etiqueta de un botón."""
+
+    try:
+
+        dias = int(duration_days) if duration_days not in (None, "") else None
+
+    except Exception:
+
+        return None
+
+
+    if not dias or dias <= 0:
+
+        # 0 o vacío significa acceso permanente en este bot.
+        return "para siempre"
+
+
+    if dias == 1:
+
+        return "1 día"
+
+
+    if dias % 365 == 0:
+
+        años = dias // 365
+
+        return "1 año" if años == 1 else f"{años} años"
+
+
+    if dias % 30 == 0:
+
+        meses = dias // 30
+
+        return "1 mes" if meses == 1 else f"{meses} meses"
+
+
+    return f"{dias} días"
+
+
+def format_plans_summary(plans):
+    """
+    Los planes en texto, para que se lean antes de tocar ningún botón.
+
+    Las filas llegan como (id, nombre, price_id, importe, moneda, proveedor,
+    duración). Se resume una vez por plan: en los botones cada plan puede
+    aparecer varias veces, una por método de pago disponible.
+    """
+
+    vistos = set()
+    lineas = []
+
+    for plan in plans or []:
+
+        try:
+
+            _, name, _, amount, currency, _, duration_days = plan
+
+        except Exception:
+
+            continue
+
+
+        clave = (name, amount, currency, duration_days)
+
+        if clave in vistos:
+
+            continue
+
+
+        vistos.add(clave)
+
+        linea = f"• {name or 'Acceso'}"
+
+        if amount and currency:
+
+            linea += f" — {amount} {str(currency).upper()}"
+
+
+        duracion = format_plan_duration_short(duration_days)
+
+        if duracion:
+
+            linea += f" · {duracion}"
+
+
+        lineas.append(linea)
+
+
+    if not lineas:
+
+        return "• Acceso a la comunidad"
+
+
+    return "\n".join(lineas)
+
+
+def format_marketplace_price(group):
+    """
+    Precio de entrada tal y como se le dice al cliente.
+
+    Antes esta información no aparecía hasta pulsar "Comprar acceso": en la
+    lista y en la ficha solo se leía "💎 Premium", así que no se podían comparar
+    comunidades sin entrar en cada una y dar otro toque.
+    """
+
+    amount = group.get("entry_amount")
+
+    if amount in (None, ""):
+
+        return None
+
+
+    currency = (group.get("entry_currency") or "EUR").upper()
+
+    try:
+
+        amount_text = f"{int(amount)}" if float(amount) == int(amount) else f"{amount}"
+
+    except Exception:
+
+        amount_text = str(amount)
+
+
+    precio = f"{amount_text} {currency}"
+
+    # "desde" solo si hay más de un plan; con uno solo sería engañoso.
+    try:
+
+        if int(group.get("plan_count") or 0) > 1:
+
+            precio = f"desde {precio}"
+
+    except Exception:
+
+        pass
+
+
+    dias = group.get("entry_duration_days")
+
+    try:
+
+        dias = int(dias) if dias not in (None, "") else None
+
+    except Exception:
+
+        dias = None
+
+
+    if dias:
+
+        precio += f" · {dias} días" if dias != 1 else " · 1 día"
+
+
+    return precio
+
+
 def format_marketplace_kind(group):
 
     if group.get("is_free_group"):
@@ -21062,7 +21306,15 @@ def format_marketplace_kind(group):
         return "🔓 Gratis"
 
 
-    return group.get("marketplace_badge") or "💎 Premium"
+    badge = group.get("marketplace_badge") or "💎 Premium"
+    precio = format_marketplace_price(group)
+
+    if precio:
+
+        return f"{badge} · 💰 {precio}"
+
+
+    return badge
 
 
 def format_marketplace_category(group):
@@ -25880,8 +26132,16 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"💳 Paga aquí:\n{payment_url}",
-            reply_markup=ReplyKeyboardRemove()
+            text=(
+                "💳 Último paso: el pago\n\n"
+                f"{payment_url}\n\n"
+                "Se abre la página segura de Stripe. En cuanto el pago se "
+                "confirme, recibes aquí mismo tu enlace de entrada, sin tener "
+                "que hacer nada más.\n\n"
+                "Si cierras la página sin pagar, no se te cobra nada y puedes "
+                "volver a intentarlo cuando quieras."
+            ),
+            reply_markup=build_payment_link_keyboard(group_id)
         )
 
     except Exception as e:
@@ -25903,7 +26163,7 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="❌ Error creando pago",
+            text=PAYMENT_FAILED_TEXT,
             reply_markup=build_group_recovery_keyboard(
                 group_id,
                 retry_callback=price_id if is_stripe_checkout_callback(price_id) else None
@@ -26007,7 +26267,7 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="❌ Error creando pago PayPal",
+            text=PAYMENT_FAILED_TEXT,
             reply_markup=build_group_recovery_keyboard(group_id)
         )
 
@@ -26091,7 +26351,7 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="❌ Error creando pago Revolut",
+            text=PAYMENT_FAILED_TEXT,
             reply_markup=build_group_recovery_keyboard(group_id)
         )
 
@@ -26174,7 +26434,7 @@ async def create_changenow_group_checkout_for_user(context, chat_id, user_id, gr
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="❌ Error creando pago ChangeNOW",
+            text=PAYMENT_FAILED_TEXT,
             reply_markup=build_group_recovery_keyboard(group_id)
         )
 
@@ -26257,7 +26517,7 @@ async def create_guardarian_group_checkout_for_user(context, chat_id, user_id, g
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="❌ Error creando pago Guardarian",
+            text=PAYMENT_FAILED_TEXT,
             reply_markup=build_group_recovery_keyboard(group_id)
         )
 
@@ -34478,14 +34738,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                            price_id,
                            amount,
                            currency,
-                           COALESCE(NULLIF(payment_provider, ''), 'stripe')
+                           COALESCE(NULLIF(payment_provider, ''), 'stripe'),
+                           duration_days
 
                     FROM plans
 
                     WHERE group_id=%s
                     AND is_active=TRUE
 
-                    ORDER BY id ASC
+                    ORDER BY amount ASC NULLS LAST, id ASC
 
                 """, (group_id,))
 
@@ -34568,13 +34829,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         guardarian_available = is_guardarian_group_checkout_available(group_id)
 
 
-        for plan_id, name, price_id, amount, currency, payment_provider in plans:
+        for plan_id, name, price_id, amount, currency, payment_provider, duration_days in plans:
 
             payment_provider = normalize_plan_payment_provider(payment_provider)
+
+            # La duración va en la etiqueta: el cliente tenía que elegir entre
+            # 15 EUR y 120 EUR sin ver cuánto duraba cada uno, y el nombre del
+            # plan lo pone el dueño y no siempre lo dice.
+            duracion_texto = format_plan_duration_short(duration_days)
 
             if amount and currency:
 
                 button_text = f"{name} — {amount} {currency}"
+
+                if duracion_texto:
+
+                    button_text += f" · {duracion_texto}"
 
             else:
 
@@ -34699,22 +34969,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
 
+        # Antes esto abría con tres líneas sobre familias de métodos de pago,
+        # que el cliente no ha preguntado, y los planes quedaban debajo. Ahora
+        # primero va lo que compra y luego, en corto, cómo puede pagarlo.
         intro_text = (
-            "Selecciona un plan:\n\n"
-            "💳 Pagos tradicionales: tarjeta/Stripe, PayPal o Revolut.\n"
-            "🪙 Cripto / USDT: ChangeNOW para cripto y Guardarian para tarjeta EUR con liquidación USDT.\n"
-            "Solo verás métodos activos para esta comunidad."
+            "💳 Elige tu acceso\n\n"
+            f"{format_plans_summary(plans)}\n\n"
+            "Recibes tu enlace de entrada al instante tras el pago.\n"
+            "Puedes pagar con tarjeta, PayPal, Revolut o cripto, según lo que "
+            "tenga activo esta comunidad."
         )
 
 
         if access_state.get("subscription_status") == "expired":
 
             intro_text = (
-                "⚠️ Tu acceso anterior está vencido.\n\n"
-                "Puedes renovar el acceso seleccionando un plan:\n\n"
-                "💳 Pagos tradicionales: tarjeta/Stripe, PayPal o Revolut.\n"
-                "🪙 Cripto / USDT: ChangeNOW para cripto y Guardarian para tarjeta EUR con liquidación USDT.\n"
-                "Solo verás métodos activos para esta comunidad."
+                "⚠️ Tu acceso anterior ha caducado\n\n"
+                "Puedes recuperarlo eligiendo un plan:\n\n"
+                f"{format_plans_summary(plans)}\n\n"
+                "Recuperas el acceso al instante tras el pago."
             )
 
 

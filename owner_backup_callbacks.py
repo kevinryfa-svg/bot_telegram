@@ -739,6 +739,22 @@ async def handle_owner_backup_callbacks(update, context, query, user_id, data):
                 data
             )
 
+            # Sin dueño resuelto, el INSERT rompía por owner_user_id NOT NULL y
+            # el usuario acababa leyendo el error de PostgreSQL en pantalla.
+            if not owner_user_id:
+
+                await query.message.reply_text(
+                    "⚠️ No he podido identificar al propietario de esta "
+                    "comunidad, así que no puedo crear el backup.\n\n"
+                    "Abre la comunidad desde «🏪 Mis comunidades» y vuelve a "
+                    "intentarlo. Si sigue pasando, avisa al propietario "
+                    "principal.",
+                    reply_markup=build_owner_backup_panel_keyboard(group_id)
+                )
+
+                return
+
+
             try:
 
                 backup = create_owner_backup(
@@ -790,8 +806,14 @@ async def handle_owner_backup_callbacks(update, context, query, user_id, data):
                     }
                 )
 
+                # El detalle técnico queda en el log de arriba. Enseñar el
+                # error de la base de datos no ayuda a nadie y además puede
+                # filtrar nombres de columnas y contenido de las filas.
                 await query.message.reply_text(
-                    f"❌ No he podido crear el backup: {str(e)[:300]}",
+                    "❌ No he podido crear el backup ahora mismo.\n\n"
+                    "Ya ha quedado registrado el motivo. Inténtalo de nuevo en "
+                    "unos minutos; si sigue fallando, avisa al propietario "
+                    "principal.",
                     reply_markup=build_owner_backup_panel_keyboard(group_id)
                 )
 
