@@ -859,17 +859,30 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         ])
 
 
-    keyboard.append([
+    # "Explorar comunidades" solo si de verdad hay algo que explorar que no esté
+    # ya como botón directo aquí abajo. Si el catálogo de explorar está vacío,
+    # este botón llevaba a "Todavía no hay comunidades publicadas": un callejón
+    # sin salida en la primera pantalla. Y si muestra lo mismo que los botones
+    # de abajo, es un toque de más para llegar al mismo sitio.
+    ya_visibles = {group_id for group_id, _ in home_groups}
+    hay_algo_mas = any(
+        group_id not in ya_visibles
+        for group_id, _ in explore_groups
+    )
 
-        InlineKeyboardButton(
+    if hay_algo_mas:
 
-            "🔎 Explorar comunidades",
+        keyboard.append([
 
-            callback_data="start_explore_groups"
+            InlineKeyboardButton(
 
-        )
+                "🔎 Explorar comunidades",
 
-    ])
+                callback_data="start_explore_groups"
+
+            )
+
+        ])
 
 
     for group_id, group_name in home_groups:
@@ -921,6 +934,9 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         print("Error verificando suscripciones:", e)
 
 
+    # "Mis accesos" solo si tiene alguno. A quien llega sin nada, el botón
+    # prometía "recuperar" y le llevaba a "No tienes suscripciones activas": un
+    # toque perdido justo en la pantalla donde hay que decidir si comprar.
     if has_subscriptions:
 
         keyboard.append([
@@ -935,24 +951,43 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
         ])
 
-    else:
 
-        keyboard.append([
+    # =========================
+    # AYUDA Y SOPORTE
+    # =========================
+    # Antes había DOS botones de ayuda con IA en esta misma pantalla:
+    # "💬 Ayuda sobre este menú" y "🤖 Ayuda inteligente". El primero solo
+    # activaba el modo de texto libre y dejaba al usuario sin ningún botón; el
+    # segundo lleva a un panel que resuelve justo las dudas que frenan una
+    # compra ("Pagué y no tengo link", "Cómo puedo pagar"). Se queda el bueno, y
+    # el modo de texto libre sigue estando dentro, en "✍️ Preguntar a la IA".
 
-            InlineKeyboardButton(
+    keyboard.append([
 
-                "🎟 Mis accesos / recuperar",
+        InlineKeyboardButton(
 
-                callback_data="mis_subs"
+            "🤖 Resolver una duda",
 
-            )
+            callback_data="ai_buyer_panel"
 
-        ])
+        ),
+
+        InlineKeyboardButton(
+
+            "🛟 Soporte",
+
+            callback_data=CALLBACK_SUPPORT
+
+        )
+
+    ])
 
 
     # =========================
     # BOTONES COMERCIALES PÚBLICOS
     # =========================
+    # Al final a propósito: va dirigido a otro público (quien quiere vender), y
+    # en medio de las acciones del comprador competía con la compra.
 
     keyboard.append([
 
@@ -961,40 +996,6 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
             "🚀 Publicar mi comunidad",
 
             callback_data=CALLBACK_MONETIZE_COMMUNITY
-
-        )
-
-    ])
-
-
-    keyboard.append([
-
-        InlineKeyboardButton(
-
-            "🛟 Soporte",
-
-            callback_data=CALLBACK_SUPPORT
-
-        ),
-
-        InlineKeyboardButton(
-
-            "💬 Ayuda sobre este menú",
-
-            callback_data=CALLBACK_AI_HELP
-
-        )
-
-    ])
-
-
-    keyboard.append([
-
-        InlineKeyboardButton(
-
-            "🤖 Ayuda inteligente",
-
-            callback_data="ai_buyer_panel"
 
         )
 
