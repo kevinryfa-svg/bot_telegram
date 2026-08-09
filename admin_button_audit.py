@@ -30,14 +30,35 @@ ADMIN_CALLBACK_PREFIXES_FOR_AUDIT = (
 
 
 def load_callback_router_source():
+    """
+    El código donde se buscan los handlers de los botones.
 
-    try:
+    No basta con callback_router.py. Se está partiendo por fases, y cada tramo
+    que sale a su propio módulo dejaba de ser visible aquí: la auditoría empezaba
+    a decir "callback sin handler" de botones que funcionan perfectamente.
 
-        return Path(__file__).resolve().with_name("callback_router.py").read_text()
+    Se leen también los módulos *_callbacks.py hermanos, que es donde van los
+    tramos extraídos. Se hace por patrón y no por lista para que la siguiente
+    fase no tenga que acordarse de tocar este fichero.
+    """
 
-    except Exception:
+    carpeta = Path(__file__).resolve().parent
+    partes = []
 
-        return ""
+    for nombre in ["callback_router.py"] + sorted(
+        p.name for p in carpeta.glob("*_callbacks.py")
+    ):
+
+        try:
+
+            partes.append((carpeta / nombre).read_text())
+
+        except Exception:
+
+            continue
+
+
+    return "\n".join(partes)
 
 
 def get_button_rows(keyboard):
