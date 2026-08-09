@@ -4153,6 +4153,45 @@ def create_tables():
 
 
         # =========================
+        # TABLA SALUD DE ENTREGA POR COMUNIDAD
+        # =========================
+        # El bot necesita ser administrador con permiso de invitar para poder
+        # crear el enlace de acceso. Si el propietario lo degrada, groups.
+        # bot_is_admin se queda en TRUE para siempre (solo se escribe al
+        # registrar), la comunidad sigue en el mercado y TODAS sus ventas cobran
+        # sin poder entregar.
+        #
+        # Aquí se guarda el último resultado comprobado contra Telegram. Se
+        # guarda cuándo se avisó para no repetir el aviso cada vuelta del
+        # trabajo, y consecutive_failures existe porque un fallo de red aislado
+        # no es una pérdida de permisos.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS group_delivery_health (
+
+            group_id INTEGER PRIMARY KEY,
+
+            can_deliver BOOLEAN,
+
+            bot_status TEXT,
+
+            detail TEXT,
+
+            consecutive_failures INTEGER DEFAULT 0,
+
+            checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            broken_since TIMESTAMP,
+
+            owner_notified_at TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA PREFERENCIAS DEL USUARIO
         # =========================
         # El idioma elegido vivía en un diccionario en memoria, así que cada
