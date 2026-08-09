@@ -2597,7 +2597,7 @@ async def check_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             new_link = create_telegram_invite_link(
                                 TOKEN,
                                 telegram_group_id,
-                                expire_seconds=60,
+                                expire_seconds=ACCESS_LINK_EXPIRE_SECONDS,
                                 member_limit=1
                             )
 
