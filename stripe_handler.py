@@ -29,6 +29,14 @@ from payment_gateway_config import (
     PAYMENT_STATUS_PAID,
     PURCHASE_TYPE_GROUP_ACCESS
 )
+from payment_incident_service import (
+    INCIDENT_BANNED_BUYER,
+    INCIDENT_GROUP_MISSING,
+    INCIDENT_PLAN_INVALID,
+    INCIDENT_STORAGE_FAILED,
+    report_payment_incident,
+    resolve_incidents_for
+)
 from purchase_message_service import build_buyer_message
 from refund_service import (
     REFUND_REASON_DISPUTE,
@@ -877,6 +885,29 @@ def stripe_webhook():
                     }
                 )
 
+                # Se le ha cobrado. Callarse es lo peor de las dos opciones: hay
+                # que decírselo y avisar para que le devuelvan el dinero.
+                # El grupo aún no se ha resuelto aquí, así que se saca de la
+                # metadata de la sesión; puede no venir, y el aviso funciona
+                # igual porque lo que importa es el pago y la persona.
+                try:
+
+                    banned_group_id = int(metadata.get("group_id"))
+
+                except (TypeError, ValueError):
+
+                    banned_group_id = None
+
+
+                report_payment_incident(
+                    INCIDENT_BANNED_BUYER,
+                    user_id,
+                    banned_group_id,
+                    provider=PAYMENT_PROVIDER_STRIPE,
+                    external_payment_id=stripe_payment_id,
+                    detail=f"stripe_session_id={stripe_session_id}"
+                )
+
                 return "OK"
 
 
@@ -996,6 +1027,15 @@ def stripe_webhook():
                             }
                         )
 
+                        report_payment_incident(
+                            INCIDENT_PLAN_INVALID,
+                            user_id,
+                            metadata_group_id,
+                            provider=PAYMENT_PROVIDER_STRIPE,
+                            external_payment_id=stripe_payment_id,
+                            detail=f"price_id={price_id} duration_days={duration_value}"
+                        )
+
                         return "OK"
 
 
@@ -1063,6 +1103,15 @@ def stripe_webhook():
                         "amount": amount_total,
                         "currency": currency
                     }
+                )
+
+                report_payment_incident(
+                    INCIDENT_GROUP_MISSING,
+                    user_id,
+                    group_id,
+                    provider=PAYMENT_PROVIDER_STRIPE,
+                    external_payment_id=stripe_payment_id,
+                    detail=f"stripe_session_id={stripe_session_id}"
                 )
 
                 return "OK"
@@ -1309,16 +1358,25 @@ def stripe_webhook():
                 }
             )
 
-            notify_super_admins(
-                TOKEN,
-                "⚠️ Pago recibido pero falló el guardado del acceso.\n\n"
-                f"Grupo: {group_name}\n"
-                f"Usuario: {user_id}\n"
-                f"Plan: {plan_name}",
-                fallback_admin_id=ADMIN_ID
+            # Se avisaba a los administradores y al comprador no. Y aquí se
+            # contesta "OK", así que Stripe no va a reintentar: para él este caso
+            # no se arregla solo, al contrario que en los demás proveedores.
+            report_payment_incident(
+                INCIDENT_STORAGE_FAILED,
+                user_id,
+                group_id,
+                provider=PAYMENT_PROVIDER_STRIPE,
+                external_payment_id=stripe_payment_id,
+                detail=str(e),
+                will_retry=False
             )
 
             return "OK"
+
+
+        # El acceso ha quedado guardado: si había una incidencia abierta de un
+        # intento anterior, se cierra para no perseguir un problema resuelto.
+        resolve_incidents_for(user_id, group_id)
 
 
         log_event(

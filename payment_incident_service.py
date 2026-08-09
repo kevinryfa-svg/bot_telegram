@@ -1,17 +1,25 @@
 """
 El cobro salió bien y el acceso no se pudo conceder.
 
-Hay dos formas de que eso pase, y en las dos el comprador se quedaba en
+Hay varias formas de que eso pase, y en todas el comprador se quedaba en
 silencio: solo quedaba una línea en el registro de auditoría.
 
-  - plan_not_found: se cobró por un plan que ya no existe. Reintentar el webhook
-    no lo va a arreglar nunca, hace falta una persona.
-  - storage_failed: el guardado del acceso falló. Aquí el reintento del proveedor
-    sí puede salvarlo, así que puede resolverse solo en unos minutos.
+  - plan_not_found: se cobró por un plan que ya no existe;
+  - group_not_found: la comunidad interna no aparece;
+  - plan_duration_invalid: el plan tiene una duración fuera de rango;
+  - banned_buyer: pagó alguien con el acceso vetado. Se le cobró y no se le
+    puede dar acceso, así que hay que devolverle el dinero;
+  - storage_failed: falló el guardado del acceso.
 
 Es peor que el caso del enlace que ya estaba cubierto: allí el acceso quedaba
 guardado y el botón «Pedir mi enlace» desbloqueaba al cliente por su cuenta.
 Aquí no hay nada guardado, así que no hay nada que pueda hacer solo.
+
+Si hace falta una persona o se va a arreglar solo no depende solo del tipo:
+depende de si va a haber reintento, y eso lo sabe quien llama. El webhook de
+Stripe contesta "OK" tras un fallo de guardado, así que Stripe no reintenta y
+allí ese caso tampoco se arregla solo, al contrario que en los proveedores que
+devuelven un 500.
 
 Los proveedores reintentan los webhooks, así que avisar sin más significaría
 avisar una y otra vez de la misma incidencia. La clave única de la tabla es lo
@@ -28,15 +36,41 @@ from rbac_helpers import get_group_owner_user_id
 
 INCIDENT_PLAN_MISSING = "plan_not_found"
 INCIDENT_STORAGE_FAILED = "storage_failed"
+INCIDENT_GROUP_MISSING = "group_not_found"
+INCIDENT_PLAN_INVALID = "plan_duration_invalid"
+INCIDENT_BANNED_BUYER = "banned_buyer"
 
 
 # Las que no se arreglan reintentando: hace falta una persona.
-PERMANENT_INCIDENTS = (INCIDENT_PLAN_MISSING,)
+PERMANENT_INCIDENTS = (
+    INCIDENT_PLAN_MISSING,
+    INCIDENT_GROUP_MISSING,
+    INCIDENT_PLAN_INVALID,
+    INCIDENT_BANNED_BUYER,
+)
 
 
 def incident_is_permanent(kind):
 
     return kind in PERMANENT_INCIDENTS
+
+
+def incident_needs_a_person(kind, will_retry=None):
+    """
+    ¿Hace falta que alguien lo mire, o se va a arreglar solo?
+
+    No depende solo del tipo: depende también de si va a haber reintento, y eso
+    lo decide quien llama. El webhook de Stripe contesta "OK" tras un fallo de
+    guardado, así que Stripe no reintenta y ese caso no se arregla solo, al
+    contrario que en los proveedores que devuelven un 500.
+    """
+
+    if will_retry is None:
+
+        return incident_is_permanent(kind)
+
+
+    return not will_retry
 
 
 # =========================
@@ -182,16 +216,25 @@ def fetch_group_name(group_id):
 # MENSAJES
 # =========================
 
-def build_buyer_incident_text(group_name, kind, language=DEFAULT_LANGUAGE):
+def build_buyer_incident_text(group_name, kind, language=DEFAULT_LANGUAGE,
+                              will_retry=None):
     """
     Lo que se le dice a quien ha pagado.
 
-    No se le cuenta cuál de los dos fallos ha sido, porque no le sirve de nada;
-    sí se le dice lo único que le importa: que el cobro está registrado, que no
-    ha perdido el dinero y que hay alguien mirándolo.
+    No se le cuenta el fallo interno, porque no le sirve de nada; sí lo único
+    que le importa: que el cobro está registrado, que no ha perdido el dinero y
+    que hay alguien mirándolo.
+
+    El comprador baneado es un caso aparte: no le sirve esperar, porque el
+    problema no es técnico.
     """
 
-    if incident_is_permanent(kind):
+    if kind == INCIDENT_BANNED_BUYER:
+
+        return t("purchase.incident_banned", language, group=group_name)
+
+
+    if incident_needs_a_person(kind, will_retry):
 
         return t("purchase.incident_manual", language, group=group_name)
 
@@ -217,19 +260,27 @@ def build_buyer_incident_keyboard(language=DEFAULT_LANGUAGE):
 
 def build_staff_incident_text(group_name, kind, user_id, group_id,
                               provider=None, detail=None,
-                              external_payment_id=None):
+                              external_payment_id=None, will_retry=None):
     """
     Aviso para quien puede arreglarlo. Lleva los identificadores a propósito:
     sin ellos hay que buscar el pago a mano.
     """
 
-    if incident_is_permanent(kind):
+    if kind == INCIDENT_BANNED_BUYER:
+
+        cabecera = "🚨 Ha pagado alguien con el acceso vetado"
+        cierre = (
+            "Se le ha cobrado y no se le puede dar acceso porque está vetado. "
+            "Hay que devolverle el pago, o levantarle el veto si el baneo ya no "
+            "corresponde."
+        )
+
+    elif incident_needs_a_person(kind, will_retry):
 
         cabecera = "🚨 Cobro sin acceso: hace falta intervenir"
         cierre = (
-            "El plan por el que se cobró ya no existe, así que el reintento del "
-            "proveedor no lo va a arreglar. Hay que conceder el acceso a mano o "
-            "devolver el pago."
+            "No va a haber un reintento que lo arregle. Hay que conceder el "
+            "acceso a mano o devolver el pago."
         )
 
     else:
@@ -276,7 +327,7 @@ def build_staff_incident_text(group_name, kind, user_id, group_id,
 
 def report_payment_incident(kind, user_id, group_id, provider=None,
                             external_payment_id=None, transaction_id=None,
-                            detail=None, notify_buyer=True):
+                            detail=None, notify_buyer=True, will_retry=None):
     """
     Registra la incidencia y avisa una sola vez al comprador y a los responsables.
 
@@ -288,7 +339,7 @@ def report_payment_incident(kind, user_id, group_id, provider=None,
         "recorded": False,
         "buyer_notified": False,
         "staff_notified": False,
-        "permanent": incident_is_permanent(kind)
+        "permanent": incident_needs_a_person(kind, will_retry)
     }
 
 
@@ -329,7 +380,9 @@ def report_payment_incident(kind, user_id, group_id, provider=None,
                 respuesta = send_telegram_message(
                     TOKEN,
                     user_id,
-                    build_buyer_incident_text(group_name, kind, language),
+                    build_buyer_incident_text(
+                        group_name, kind, language, will_retry=will_retry
+                    ),
                     reply_markup=build_buyer_incident_keyboard(language).to_dict()
                 )
 
@@ -351,7 +404,8 @@ def report_payment_incident(kind, user_id, group_id, provider=None,
             group_id,
             provider=provider,
             detail=detail,
-            external_payment_id=external_payment_id
+            external_payment_id=external_payment_id,
+            will_retry=will_retry
         )
 
         try:
