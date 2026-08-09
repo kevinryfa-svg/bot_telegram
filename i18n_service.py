@@ -303,6 +303,50 @@ TRANSLATIONS = {
         ),
     },
 
+    # El cobro salió bien y el acceso no se pudo conceder. No se le cuenta cuál
+    # de los dos fallos internos ha sido —no le sirve de nada— sino lo único que
+    # le importa: que el cobro consta, que no ha perdido el dinero y que hay
+    # alguien mirándolo. Se distingue si se va a arreglar solo o no, porque decir
+    # "espera" cuando hace falta una persona es hacerle perder la tarde.
+    "purchase.incident_retrying": {
+        "es": (
+            "⏳ Cobro recibido, activando tu acceso\n\n"
+            "Tu pago para {group} está registrado, pero se ha atascado al "
+            "activar el acceso. Se está reintentando solo y lo normal es que se "
+            "resuelva en unos minutos.\n\n"
+            "No has perdido el dinero. Si en una hora sigues sin tu enlace, "
+            "escríbenos y lo resolvemos a mano."
+        ),
+        "en": (
+            "⏳ Payment received, activating your access\n\n"
+            "Your payment for {group} is on record, but activating the access "
+            "got stuck. It is retrying by itself and normally clears up within "
+            "minutes.\n\n"
+            "You have not lost your money. If you still have no link in an "
+            "hour, message us and we will sort it out by hand."
+        ),
+    },
+
+    "purchase.incident_manual": {
+        "es": (
+            "⏳ Cobro recibido, tu acceso necesita un momento\n\n"
+            "Tu pago para {group} está registrado, pero el plan que compraste ya "
+            "no está disponible, así que el acceso no se puede activar solo.\n\n"
+            "Ya hemos avisado a la persona responsable de la comunidad. No has "
+            "perdido el dinero: te darán el acceso o te devolverán el pago. Si "
+            "prefieres que lo miremos nosotros, escríbenos."
+        ),
+        "en": (
+            "⏳ Payment received, your access needs a moment\n\n"
+            "Your payment for {group} is on record, but the plan you bought is "
+            "no longer available, so the access cannot be activated "
+            "automatically.\n\n"
+            "The person in charge of the community has already been notified. "
+            "You have not lost your money: they will either grant the access or "
+            "refund you. If you would rather we looked into it, message us."
+        ),
+    },
+
     "purchase.link_pending_title": {
         "es": "✅ Pago confirmado — falta darte el enlace",
         "en": "✅ Payment confirmed — your link is still pending",

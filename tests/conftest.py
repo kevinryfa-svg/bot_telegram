@@ -94,6 +94,7 @@ def clean_db(db_module):
         "access_renewal_reminders",
         "user_reengagement",
         "group_delivery_health",
+        "payment_incidents",
         "interest_followups",
         "users",
         "plans",

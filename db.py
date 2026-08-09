@@ -4153,6 +4153,45 @@ def create_tables():
 
 
         # =========================
+        # TABLA INCIDENCIAS DE PAGO
+        # =========================
+        # Cuando el cobro sale bien pero el acceso no se puede conceder —el plan
+        # ya no existe, o falla el guardado— el comprador no recibía nada: solo
+        # quedaba una línea en el registro. Y el proveedor reintenta el webhook,
+        # así que avisar sin más lo avisaría una y otra vez.
+        #
+        # La clave única es lo que hace que se avise una sola vez por incidencia.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS payment_incidents (
+
+            id SERIAL PRIMARY KEY,
+
+            incident_key TEXT NOT NULL UNIQUE,
+
+            kind TEXT NOT NULL,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            provider TEXT,
+
+            detail TEXT,
+
+            buyer_notified BOOLEAN DEFAULT FALSE,
+
+            resolved_at TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # TABLA SALUD DE ENTREGA POR COMUNIDAD
         # =========================
         # El bot necesita ser administrador con permiso de invitar para poder
