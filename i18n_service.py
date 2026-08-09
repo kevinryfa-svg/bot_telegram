@@ -332,6 +332,30 @@ TRANSLATIONS = {
         ),
     },
 
+    # Se rechaza la compra antes de cobrar, porque el bot ha perdido el permiso
+    # de invitar y el enlace de acceso no se podría crear. Se le dice sin echarle
+    # la culpa a nadie y sin dejarle con la sensación de que el bot está roto.
+    "purchase.cannot_deliver": {
+        "es": (
+            "⏸ Ahora mismo no se puede entrar en {group}\n\n"
+            "La comunidad tiene la entrada cerrada por un problema de "
+            "configuración, así que no te cobramos: pagar sin poder entrar sería "
+            "peor.\n\n"
+            "Ya hemos avisado a la persona responsable. Inténtalo de nuevo más "
+            "tarde y, si tienes prisa, escríbenos y te avisamos en cuanto se "
+            "arregle."
+        ),
+        "en": (
+            "⏸ Joining {group} is not possible right now\n\n"
+            "The community's entrance is closed because of a configuration "
+            "problem, so we are not charging you: paying without being able to "
+            "get in would be worse.\n\n"
+            "The person in charge has already been notified. Try again later, "
+            "and if you are in a hurry just message us and we will tell you as "
+            "soon as it is fixed."
+        ),
+    },
+
     "button.get_my_link": {
         "es": "🔗 Pedir mi enlace",
         "en": "🔗 Get my link",

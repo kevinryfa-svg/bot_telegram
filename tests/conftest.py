@@ -93,6 +93,8 @@ def clean_db(db_module):
         "abandoned_checkout_reminders",
         "access_renewal_reminders",
         "user_reengagement",
+        "group_delivery_health",
+        "interest_followups",
         "users",
         "plans",
         "banned_users",

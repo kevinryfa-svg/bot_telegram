@@ -146,6 +146,10 @@ from reengagement_service import process_reengagement_batch
 from renewal_service import process_renewal_reminders
 from abandoned_checkout_service import process_abandoned_checkouts
 from interest_followup_service import process_interest_followups
+from group_delivery_health_service import (
+    HEALTH_JOB_INTERVAL_SECONDS,
+    process_group_delivery_health
+)
 
 
 # =========================
@@ -967,6 +971,54 @@ def schedule_interest_followup_job(application):
     )
 
     print("Avisos a interesados que no compraron programados.")
+
+    return True
+
+
+# =========================
+# SALUD DE ENTREGA DE LAS COMUNIDADES
+# =========================
+# Si el bot pierde el permiso de invitar en un grupo, deja de poder crear el
+# enlace de acceso y todas las compras de esa comunidad cobran sin entregar.
+# Nadie lo detectaba: bot_is_admin solo se escribía al registrar el grupo.
+
+async def group_delivery_health_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        await process_group_delivery_health(context)
+
+    except Exception as e:
+
+        print(
+            "Salud de entrega: error en el job programado:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_group_delivery_health_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Salud de entrega: JobQueue no disponible. "
+            "No se comprobará si las comunidades pueden dar acceso."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        group_delivery_health_job,
+        interval=max(HEALTH_JOB_INTERVAL_SECONDS, 900),
+        first=300,
+        name="group_delivery_health"
+    )
+
+    print("Comprobación de la capacidad de entrega de las comunidades programada.")
 
     return True
 
@@ -2962,6 +3014,7 @@ def main():
     schedule_renewal_reminders_job(telegram_app)
     schedule_abandoned_checkouts_job(telegram_app)
     schedule_interest_followup_job(telegram_app)
+    schedule_group_delivery_health_job(telegram_app)
     schedule_database_backup_job(telegram_app)
     schedule_persistence_cleanup_job(telegram_app)
 

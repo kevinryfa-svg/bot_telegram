@@ -110,7 +110,7 @@ from commercial_form_handler import (
 )
 from db import conn
 from formatters import format_tiempo_restante
-from i18n_service import load_user_language
+from i18n_service import load_user_language, t
 from owner_addon_service import (
     activate_owner_addon_manual_trial,
     owner_addon_is_purchase_allowed,
@@ -239,6 +239,10 @@ from payment_service import (
     PAYMENT_UX_GROUP_ORDER,
     save_group_payment_provider_encrypted_config,
     save_platform_payment_provider_encrypted_config
+)
+from group_delivery_health_service import (
+    group_can_deliver_access,
+    recheck_group_delivery_live
 )
 from payment_access_service import (
     get_user_group_access_state,
@@ -26167,6 +26171,75 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
     )
 
 
+async def group_delivery_blocks_purchase(context, chat_id, user_id, group_id):
+    """
+    ¿Hay que rechazar esta compra porque la comunidad no puede dar acceso?
+
+    Para crear el enlace, el bot tiene que seguir siendo administrador del grupo
+    con permiso de invitar. Si lo ha perdido, el cobro salía bien y la entrega
+    fallaba: el comprador pagaba y no entraba. Es mejor no cobrar.
+
+    Solo rechaza cuando consta comprobado que no se puede, y antes de rechazar
+    vuelve a preguntar a Telegram: perder una venta por un dato viejo sería peor
+    que el fallo que se está evitando.
+    """
+
+    if group_can_deliver_access(group_id):
+
+        return False
+
+
+    info = fetch_group_basic_info(group_id)
+
+    if not info:
+
+        return False
+
+
+    group_name = info[1] or f"Comunidad {group_id}"
+    telegram_group_id = info[2]
+
+    if not telegram_group_id:
+
+        return False
+
+
+    todavia_puede = await recheck_group_delivery_live(
+        context,
+        group_id,
+        group_name,
+        telegram_group_id
+    )
+
+    # None es "no se ha podido saber": se deja pasar la compra.
+    if todavia_puede is not False:
+
+        return False
+
+
+    log_event(
+        "purchase_blocked_no_delivery",
+        category="payment",
+        severity="warning",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        message="Compra rechazada: la comunidad no puede crear enlaces de acceso.",
+        metadata={"group_name": str(group_name)[:80]}
+    )
+
+    language = load_user_language(user_id)
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=t("purchase.cannot_deliver", language, group=group_name),
+        reply_markup=build_group_recovery_keyboard(group_id)
+    )
+
+    return True
+
+
 async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id):
 
     access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
@@ -26185,6 +26258,13 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
         )
 
         return
+
+    # No se acepta dinero que no se va a poder entregar: si el bot ha perdido el
+    # permiso de invitar, el enlace de acceso no se puede crear.
+    if await group_delivery_blocks_purchase(context, chat_id, user_id, group_id):
+
+        return
+
 
 
     if not is_stripe_payments_enabled():
@@ -26275,6 +26355,13 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
         )
 
         return
+
+    # No se acepta dinero que no se va a poder entregar: si el bot ha perdido el
+    # permiso de invitar, el enlace de acceso no se puede crear.
+    if await group_delivery_blocks_purchase(context, chat_id, user_id, group_id):
+
+        return
+
 
 
     try:
@@ -26377,6 +26464,13 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
 
         return
 
+    # No se acepta dinero que no se va a poder entregar: si el bot ha perdido el
+    # permiso de invitar, el enlace de acceso no se puede crear.
+    if await group_delivery_blocks_purchase(context, chat_id, user_id, group_id):
+
+        return
+
+
 
     try:
 
@@ -26461,6 +26555,13 @@ async def create_changenow_group_checkout_for_user(context, chat_id, user_id, gr
 
         return
 
+    # No se acepta dinero que no se va a poder entregar: si el bot ha perdido el
+    # permiso de invitar, el enlace de acceso no se puede crear.
+    if await group_delivery_blocks_purchase(context, chat_id, user_id, group_id):
+
+        return
+
+
 
     try:
 
@@ -26543,6 +26644,13 @@ async def create_guardarian_group_checkout_for_user(context, chat_id, user_id, g
         )
 
         return
+
+    # No se acepta dinero que no se va a poder entregar: si el bot ha perdido el
+    # permiso de invitar, el enlace de acceso no se puede crear.
+    if await group_delivery_blocks_purchase(context, chat_id, user_id, group_id):
+
+        return
+
 
 
     try:
