@@ -150,6 +150,7 @@ from group_delivery_health_service import (
     HEALTH_JOB_INTERVAL_SECONDS,
     process_group_delivery_health
 )
+from stripe_webhook_config_service import verify_stripe_webhook_events
 
 
 # =========================
@@ -583,6 +584,52 @@ TELEGRAM_STATUS = {
 }
 
 
+# =========================
+# QUÉ VERSIÓN ESTÁ CORRIENDO
+# =========================
+# Sin esto no había forma de saber si lo que hay desplegado es lo que hay en
+# main: el endpoint de salud contestaba lo mismo con cualquier versión, así que
+# un despliegue que no llegó a subir era indistinguible de uno correcto.
+#
+# Railway inyecta estas variables solo; si no están, se dice que no se sabe en
+# vez de inventarse un valor.
+
+def running_version():
+    """Commit desplegado, en corto, o None si el entorno no lo dice."""
+
+    sha = (
+        os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+        or os.environ.get("GIT_COMMIT_SHA")
+        or os.environ.get("SOURCE_COMMIT")
+        or ""
+    ).strip()
+
+    return sha[:7] if sha else None
+
+
+def running_public_url():
+    """Dominio público por el que se llega a este proceso, si consta."""
+
+    domain = (os.environ.get("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+
+
+    if domain:
+
+        return f"https://{domain}"
+
+
+    return (os.environ.get("SERVER_URL") or "").strip() or None
+
+
+def describe_running_build():
+    """Una línea con versión y URL, para el log de arranque y el endpoint."""
+
+    version = running_version() or "desconocida"
+    url = running_public_url() or "sin dominio público conocido"
+
+    return f"versión {version} en {url}"
+
+
 def verify_telegram_token():
     """Comprueba con Telegram que el token sirve, y lo deja registrado."""
 
@@ -654,20 +701,29 @@ def verify_telegram_token():
 @app.route("/")
 def home():
 
+    # La versión va en la respuesta para poder comprobar desde fuera que lo
+    # desplegado es lo que se espera: sin ella, un despliegue que no llegó a
+    # subir contestaba exactamente igual que uno correcto.
+    build = describe_running_build()
+
+
     if TELEGRAM_STATUS.get("ok") is True:
 
-        return f"Bot funcionando (Telegram OK: @{TELEGRAM_STATUS.get('username')})"
+        return (
+            f"Bot funcionando (Telegram OK: @{TELEGRAM_STATUS.get('username')}) "
+            f"— {build}"
+        )
 
 
     if TELEGRAM_STATUS.get("ok") is False:
 
         return (
             "Bot arrancado pero SIN conexión a Telegram: "
-            f"{TELEGRAM_STATUS.get('detail')}"
+            f"{TELEGRAM_STATUS.get('detail')} — {build}"
         )
 
 
-    return "Bot funcionando (estado de Telegram sin comprobar)"
+    return f"Bot funcionando (estado de Telegram sin comprobar) — {build}"
 
 
 # =========================
@@ -1019,6 +1075,56 @@ def schedule_group_delivery_health_job(application):
     )
 
     print("Comprobación de la capacidad de entrega de las comunidades programada.")
+
+    return True
+
+
+# =========================
+# CONFIGURACIÓN DEL WEBHOOK DE STRIPE
+# =========================
+# Stripe solo manda los eventos marcados en el endpoint. El bot podía atender
+# charge.refunded perfectamente y no enterarse nunca de una devolución porque ese
+# evento no estaba activado: sin error, sin traza, sin nada. Se comprueba al
+# arrancar y, si falta alguno, se añade.
+
+async def stripe_webhook_config_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        verify_stripe_webhook_events(notify=True, token=TOKEN)
+
+    except Exception as e:
+
+        print(
+            "Webhook de Stripe: error comprobando la configuración:",
+            sanitize_error_text(e)
+        )
+
+
+def schedule_stripe_webhook_config_check(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Webhook de Stripe: JobQueue no disponible. "
+            "No se comprobará qué eventos manda Stripe."
+        )
+
+        return False
+
+
+    # Una sola vez al arrancar, y con margen: no compite con el arranque ni
+    # gasta llamadas a Stripe en cada vuelta de reloj.
+    job_queue.run_once(
+        stripe_webhook_config_job,
+        when=120,
+        name="stripe_webhook_config"
+    )
+
+    print("Comprobación de los eventos del webhook de Stripe programada.")
 
     return True
 
@@ -2811,6 +2917,10 @@ def main():
 
     verify_telegram_token()
 
+    # Lo primero que se busca en un log cuando algo no cuadra es qué versión está
+    # corriendo, y no se podía saber.
+    print(f"Arrancando: {describe_running_build()}")
+
     # Deja constancia en los logs de qué modelo de IA está activo: hasta ahora
     # había que adivinarlo mirando las variables de entorno.
     try:
@@ -3015,6 +3125,7 @@ def main():
     schedule_abandoned_checkouts_job(telegram_app)
     schedule_interest_followup_job(telegram_app)
     schedule_group_delivery_health_job(telegram_app)
+    schedule_stripe_webhook_config_check(telegram_app)
     schedule_database_backup_job(telegram_app)
     schedule_persistence_cleanup_job(telegram_app)
 
