@@ -330,20 +330,43 @@ TRANSLATIONS = {
     "purchase.incident_manual": {
         "es": (
             "⏳ Cobro recibido, tu acceso necesita un momento\n\n"
-            "Tu pago para {group} está registrado, pero el plan que compraste ya "
-            "no está disponible, así que el acceso no se puede activar solo.\n\n"
-            "Ya hemos avisado a la persona responsable de la comunidad. No has "
-            "perdido el dinero: te darán el acceso o te devolverán el pago. Si "
-            "prefieres que lo miremos nosotros, escríbenos."
+            "Tu pago para {group} está registrado, pero hay un problema de "
+            "configuración en la comunidad y el acceso no se puede activar "
+            "solo.\n\n"
+            "Ya hemos avisado a la persona responsable. No has perdido el "
+            "dinero: te darán el acceso o te devolverán el pago. Si prefieres "
+            "que lo miremos nosotros, escríbenos."
         ),
         "en": (
             "⏳ Payment received, your access needs a moment\n\n"
-            "Your payment for {group} is on record, but the plan you bought is "
-            "no longer available, so the access cannot be activated "
-            "automatically.\n\n"
-            "The person in charge of the community has already been notified. "
-            "You have not lost your money: they will either grant the access or "
-            "refund you. If you would rather we looked into it, message us."
+            "Your payment for {group} is on record, but there is a "
+            "configuration problem in the community and the access cannot be "
+            "activated automatically.\n\n"
+            "The person in charge has already been notified. You have not lost "
+            "your money: they will either grant the access or refund you. If "
+            "you would rather we looked into it, message us."
+        ),
+    },
+
+    # Ha pagado alguien con el acceso vetado. Se le ha cobrado, así que hay que
+    # decírselo: cobrarle y callar es lo peor de las dos opciones. No se le da
+    # ningún motivo del veto, que es cosa de la comunidad, pero sí la salida.
+    "purchase.incident_banned": {
+        "es": (
+            "⏳ Cobro recibido, pero no podemos darte acceso\n\n"
+            "Tu pago para {group} está registrado. No podemos activarte el "
+            "acceso porque tu entrada a esta comunidad está vetada.\n\n"
+            "No te quedes con el cargo: ya hemos avisado a la persona "
+            "responsable para que te devuelva el pago. Escríbenos si quieres "
+            "que lo sigamos nosotros."
+        ),
+        "en": (
+            "⏳ Payment received, but we cannot give you access\n\n"
+            "Your payment for {group} is on record. We cannot activate your "
+            "access because you are barred from this community.\n\n"
+            "You should not be left out of pocket: the person in charge has "
+            "already been notified so they can refund you. Message us if you "
+            "want us to follow it up."
         ),
     },
 

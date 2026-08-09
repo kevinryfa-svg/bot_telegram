@@ -358,3 +358,122 @@ def test_the_five_providers_all_go_through_the_same_grant(clean_db):
     stripe_source = open("stripe_handler.py", encoding="utf-8").read()
 
     assert re.search(r"build_buyer_message", stripe_source)
+
+
+# =========================
+# EL CAMINO PROPIO DE STRIPE
+# =========================
+# Stripe no pasa por grant_group_access_after_payment: tiene su propio bloque, y
+# ahí había cuatro salidas que devolvían "OK" sin decirle nada al comprador.
+
+def test_stripe_covers_its_four_silent_exits():
+    """
+    Las cuatro salidas del bloque checkout.session.completed que dejaban al
+    comprador en silencio.
+    """
+
+    source = open("stripe_handler.py", encoding="utf-8").read()
+
+    for constante in (
+        "INCIDENT_BANNED_BUYER",
+        "INCIDENT_GROUP_MISSING",
+        "INCIDENT_PLAN_INVALID",
+        "INCIDENT_STORAGE_FAILED",
+    ):
+        assert constante in source, (
+            f"a Stripe le falta avisar en el caso {constante}"
+        )
+
+
+def test_stripe_knows_it_will_not_retry_after_a_storage_failure():
+    """
+    Stripe contesta "OK" tras el fallo de guardado, así que no reintenta: decirle
+    al comprador "espera unos minutos" sería mentirle.
+    """
+
+    import ast
+
+    # Buscar la llamada de verdad, no la primera aparición del nombre: la
+    # constante también sale en el bloque de imports, y cortar por ahí hacía que
+    # esta prueba mirase el sitio equivocado.
+    arbol = ast.parse(open("stripe_handler.py", encoding="utf-8").read())
+
+    llamadas = [
+        nodo for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Call)
+        and getattr(nodo.func, "id", None) == "report_payment_incident"
+        and nodo.args
+        and getattr(nodo.args[0], "id", None) == "INCIDENT_STORAGE_FAILED"
+    ]
+
+    assert llamadas, "Stripe no avisa del fallo de guardado"
+
+    for llamada in llamadas:
+
+        will_retry = [k for k in llamada.keywords if k.arg == "will_retry"]
+
+        assert will_retry, (
+            "Stripe no reintenta, pero no se le está diciendo al servicio: el "
+            "comprador recibiría un «espera unos minutos» que no va a cumplirse"
+        )
+        assert will_retry[0].value.value is False
+
+
+def test_a_storage_failure_reads_differently_for_stripe_and_for_the_rest():
+    """
+    Mismo fallo, dos mensajes: en PayPal el reintento lo arregla, en Stripe no.
+    """
+
+    con_reintento = pis.build_buyer_incident_text(
+        "VIP", pis.INCIDENT_STORAGE_FAILED, will_retry=True
+    )
+    sin_reintento = pis.build_buyer_incident_text(
+        "VIP", pis.INCIDENT_STORAGE_FAILED, will_retry=False
+    )
+
+    assert con_reintento != sin_reintento
+    assert "minutos" in con_reintento
+    assert "responsable" in sin_reintento
+
+
+def test_the_banned_buyer_is_told_and_pointed_at_a_refund():
+    """
+    Se le ha cobrado y no se le puede dar acceso. Cobrarle y callar es lo peor de
+    las dos opciones.
+    """
+
+    texto = pis.build_buyer_incident_text("VIP", pis.INCIDENT_BANNED_BUYER)
+
+    assert "vetada" in texto
+    assert "devuelva" in texto or "devolver" in texto
+
+    staff = pis.build_staff_incident_text(
+        "VIP", pis.INCIDENT_BANNED_BUYER, 1, 1
+    )
+
+    assert "devolverle" in staff
+
+
+def test_the_banned_message_does_not_explain_the_ban():
+    """
+    El motivo del veto es cosa de la comunidad, no del bot: no se inventa una
+    explicación.
+    """
+
+    texto = pis.build_buyer_incident_text("VIP", pis.INCIDENT_BANNED_BUYER)
+
+    for palabra in ("motivo", "compartir", "incumpl"):
+        assert palabra not in texto.lower()
+
+
+def test_the_manual_message_does_not_claim_a_cause_it_cannot_know():
+    """
+    Antes decía "el plan que compraste ya no está disponible". Ahora también
+    cubre grupo no encontrado y duración inválida, así que afirmar la causa
+    sería mentir en dos de los tres casos.
+    """
+
+    texto = pis.build_buyer_incident_text("VIP", pis.INCIDENT_GROUP_MISSING)
+
+    assert "plan" not in texto.lower()
+    assert "configuración" in texto
