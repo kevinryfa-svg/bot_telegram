@@ -16,6 +16,7 @@ from code_flow_handler import (
     format_tiempo_restante
 )
 from invite_link_service import (
+    ACCESS_LINK_EXPIRE_SECONDS,
     create_telegram_invite_link,
     revoke_telegram_invite_link
 )
@@ -1345,7 +1346,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
     link = create_telegram_invite_link(
         TOKEN,
         get_group_id(),
-        expire_seconds=180,
+        expire_seconds=ACCESS_LINK_EXPIRE_SECONDS,
         member_limit=1
     )
 

@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 from db import conn
 
 from invite_link_service import (
+    ACCESS_LINK_EXPIRE_SECONDS,
     create_telegram_invite_link,
     revoke_telegram_invite_link
 )
@@ -740,7 +741,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             link = create_telegram_invite_link(
                                 TOKEN,
                                 telegram_group_id,
-                                expire_seconds=180,
+                                expire_seconds=ACCESS_LINK_EXPIRE_SECONDS,
                                 member_limit=1,
                                 community_type=get_community_type(group_id)
                             )
@@ -901,7 +902,7 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     link = create_telegram_invite_link(
                         TOKEN,
                         get_group_id(),
-                        expire_seconds=180,
+                        expire_seconds=ACCESS_LINK_EXPIRE_SECONDS,
                         member_limit=1
                     )
 

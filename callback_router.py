@@ -110,7 +110,7 @@ from commercial_form_handler import (
 )
 from db import conn
 from formatters import format_tiempo_restante
-from i18n_service import load_user_language, t
+from i18n_service import DEFAULT_LANGUAGE, load_user_language, t
 from owner_addon_service import (
     activate_owner_addon_manual_trial,
     owner_addon_is_purchase_allowed,
@@ -11614,7 +11614,7 @@ async def grant_group_user_promo_access(context, chat_id, telegram_user, promo_r
     link = create_telegram_invite_link(
         TOKEN,
         telegram_group_id,
-        expire_seconds=180,
+        expire_seconds=ACCESS_LINK_EXPIRE_SECONDS,
         member_limit=1,
         community_type=community_type
     )
@@ -18392,7 +18392,10 @@ def recover_or_create_community_access_link(group_id, target_user_id):
 
 
     expires_at = access_state.get("expires_at")
-    expire_seconds = 180
+    # Este es el camino del botón "Pedir mi enlace", el que se le ofrece a quien
+    # acaba de pagar y no ha recibido el suyo. Daba enlaces de 180 segundos: se
+    # le decía que pulsara ahí y lo que recibía caducaba antes de leerlo.
+    expire_seconds = ACCESS_LINK_EXPIRE_SECONDS
 
 
     if expires_at:
@@ -18412,7 +18415,8 @@ def recover_or_create_community_access_link(group_id, target_user_id):
             return {"ok": False, "reason": "expired_access", "access_state": access_state}
 
 
-        expire_seconds = max(60, min(180, remaining))
+        # El enlace nunca puede durar más que el acceso que abre.
+        expire_seconds = max(60, min(ACCESS_LINK_EXPIRE_SECONDS, remaining))
 
 
     telegram_result = create_telegram_invite_link(
@@ -21345,6 +21349,21 @@ def format_plans_summary(plans):
 
 
     return "\n".join(lineas)
+
+
+def build_link_validity_line(language=None):
+    """
+    Cuánto vale un enlace de acceso, dicho al usuario.
+
+    El reenvío masivo mandaba el enlace a secas, así que quien lo recibía no
+    sabía si tenía que correr. Ahora que duran un día entero, decirlo evita que
+    lo deje para luego pensando que caduca en minutos.
+    """
+
+    return (
+        f"⏱ Válido {format_access_link_validity(ACCESS_LINK_EXPIRE_SECONDS, language or DEFAULT_LANGUAGE)}. "
+        "Es personal y de un solo uso."
+    )
 
 
 def format_marketplace_price(group):
@@ -45297,7 +45316,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     link = create_telegram_invite_link(
                         TOKEN,
                         telegram_group_id,
-                        expire_seconds=60,
+                        expire_seconds=ACCESS_LINK_EXPIRE_SECONDS,
                         member_limit=1,
                         community_type=community_type
                     )
@@ -45348,7 +45367,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         json={
                             "chat_id": user_id,
-                            "text": f"🔗 Nuevo acceso VIP:\n{link}"
+                            "text": (
+                                "🔗 Nuevo acceso VIP\n\n"
+                                f"{link}\n\n"
+                                f"{build_link_validity_line()}"
+                            )
                         }
 
                     )

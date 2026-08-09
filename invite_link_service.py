@@ -708,7 +708,8 @@ def revoke_and_delete_user_group_links(token, user_id, telegram_group_id):
 # group_id here must be the Telegram group id currently stored in invite_links.
 # =========================
 
-def create_fresh_user_group_link(token, user_id, telegram_group_id, expire_seconds=180):
+def create_fresh_user_group_link(token, user_id, telegram_group_id,
+                                expire_seconds=ACCESS_LINK_EXPIRE_SECONDS):
 
     revoke_and_delete_user_group_links(
         token,
