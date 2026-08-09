@@ -14,6 +14,12 @@ from invite_link_service import (
 )
 from i18n_service import load_user_language
 from notification_service import notify_super_admins, send_telegram_message
+from payment_incident_service import (
+    INCIDENT_PLAN_MISSING,
+    INCIDENT_STORAGE_FAILED,
+    report_payment_incident,
+    resolve_incidents_for
+)
 from purchase_message_service import build_buyer_message
 from rbac_helpers import get_group_owner_user_id, is_user_group_owner
 from user_activity_logger import log_user_event_by_ids
@@ -979,6 +985,19 @@ def grant_group_access_after_payment(
             }
         )
 
+        # Antes esto se quedaba en una línea del registro: el comprador pagaba
+        # y no recibía nada, y el proveedor reintentaba un webhook que no podía
+        # salir bien nunca.
+        report_payment_incident(
+            INCIDENT_PLAN_MISSING,
+            user_id,
+            group_id,
+            provider=provider,
+            external_payment_id=external_payment_id,
+            transaction_id=transaction_id,
+            detail=f"plan_id={plan_id}"
+        )
+
         return {
             "ok": False,
             "reason": "plan_not_found"
@@ -1069,10 +1088,26 @@ def grant_group_access_after_payment(
             }
         )
 
+        report_payment_incident(
+            INCIDENT_STORAGE_FAILED,
+            user_id,
+            group_id,
+            provider=provider,
+            external_payment_id=external_payment_id,
+            transaction_id=transaction_id,
+            detail=str(e)
+        )
+
         return {
             "ok": False,
             "reason": "storage_failed"
         }
+
+
+    # El acceso ya está guardado. Si había una incidencia abierta por un intento
+    # anterior —el reintento del proveedor es justo lo que salva un
+    # storage_failed— se cierra aquí, para no perseguir un problema resuelto.
+    resolve_incidents_for(user_id, group_id)
 
 
     # 24 h por defecto (ACCESS_LINK_EXPIRE_SECONDS) en vez de 180 s: el
