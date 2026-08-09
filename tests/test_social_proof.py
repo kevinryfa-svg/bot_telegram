@@ -158,7 +158,17 @@ def test_recent_joins_comes_from_real_accesses():
     assert "INTERVAL '7 days'" in select
 
 
-def test_the_row_mapping_includes_the_new_field():
+def test_the_named_columns_line_up_with_the_field_list():
+    """
+    El dict se monta con zip(fields, row), así que una columna añadida a la
+    consulta sin añadirla a la lista —o al revés— desplaza todos los valores en
+    silencio y la ficha empieza a mostrar un dato en el sitio de otro.
+
+    Se comprueba la alineación, no nombres concretos: fijar aquí el último campo
+    hacía que la prueba fallara cada vez que se añadía uno, sin que hubiera nada
+    roto.
+    """
+
     import re
 
     source = open(cr.__file__, encoding="utf-8").read()
@@ -169,7 +179,29 @@ def test_the_row_mapping_includes_the_new_field():
     ).group(0)
 
     campos = re.findall(r'^\s+"(\w+)",?$', bloque, re.MULTILINE)
+    select = cr.get_marketplace_group_select()
 
-    assert campos[-1] == "recent_joins", (
-        "el último campo debe coincidir con la última columna de la consulta"
+    # Las columnas con alias explícito son las que se pueden comprobar: las demás
+    # son expresiones sin nombre. Su orden relativo tiene que ser el mismo que en
+    # la lista de campos.
+    alias = re.findall(r"\)\s+AS\s+(\w+)", select)
+
+    assert alias, "la consulta ya no tiene columnas con alias: revisar esta prueba"
+
+    posiciones = [campos.index(a) for a in alias if a in campos]
+
+    assert len(posiciones) == len(alias), (
+        "hay columnas con alias en la consulta que no están en la lista de "
+        f"campos: {[a for a in alias if a not in campos]}"
+    )
+
+    assert posiciones == sorted(posiciones), (
+        "el orden de las columnas de la consulta no coincide con el de la lista "
+        "de campos: los valores se asignarían al campo equivocado"
+    )
+
+    # Y la última columna de la consulta tiene que ser el último campo, que es
+    # donde se cuela el desajuste al añadir algo nuevo.
+    assert campos[-1] == alias[-1], (
+        "la última columna de la consulta y el último campo no coinciden"
     )

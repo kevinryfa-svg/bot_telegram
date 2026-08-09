@@ -241,6 +241,7 @@ from payment_service import (
     save_platform_payment_provider_encrypted_config
 )
 from group_delivery_health_service import (
+    describe_group_delivery,
     group_can_deliver_access,
     recheck_group_delivery_live
 )
@@ -13846,6 +13847,10 @@ def build_owner_quick_status_text(user_id, group_id):
         f"Códigos activos: {status['active_codes']}\n"
         f"Admins activos: {status['active_admins']}\n"
         f"Backup: {backup_text}\n"
+        # Sin esta línea, el propietario no tenía forma de ver desde el panel que
+        # su comunidad no puede dar acceso: se enteraba por el aviso, y si lo
+        # había borrado, por nada.
+        f"Entrega de accesos: {describe_group_delivery(group_id)}\n"
         f"Errores críticos recientes: {errors_text}\n\n"
         f"{get_group_permission_summary(user_id, group_id)}\n\n"
         "🏪 Panel de comunidad\n"
@@ -20772,7 +20777,8 @@ def row_to_marketplace_group(row):
         "entry_currency",
         "entry_duration_days",
         "plan_count",
-        "recent_joins"
+        "recent_joins",
+        "can_deliver"
     ]
 
     return dict(zip(fields, row))
@@ -20861,7 +20867,16 @@ def get_marketplace_group_select():
                    WHERE u2.group_id = g.id
                      AND u2.created_at IS NOT NULL
                      AND u2.created_at > NOW() - INTERVAL '7 days'
-               ) AS recent_joins
+               ) AS recent_joins,
+               -- Si el bot ha perdido el permiso de invitar en el grupo, la
+               -- compra se rechaza más adelante. Se dice aquí para no llevar a
+               -- nadie a un callejón sin salida. NULL es "sin comprobar", que
+               -- no es lo mismo que "cerrado".
+               (
+                   SELECT h.can_deliver
+                   FROM group_delivery_health h
+                   WHERE h.group_id = g.id
+               ) AS can_deliver
         FROM groups g
         LEFT JOIN community_stats cs
         ON cs.group_id = g.id
@@ -21221,6 +21236,15 @@ def format_marketplace_social_proof(group, members_label="miembros"):
             f"⭐ {format_marketplace_number(favoritos)} "
             f"{'favorito' if favoritos == 1 else 'favoritos'}"
         )
+
+
+    # La comunidad no puede dar acceso ahora mismo, así que la compra se va a
+    # rechazar. Se dice antes de que pulse, no después: llevar a alguien hasta el
+    # pago para rechazarlo allí es peor que avisarle aquí. Solo cuando consta
+    # comprobado: None es "sin comprobar" y no se menciona.
+    if group.get("can_deliver") is False:
+
+        lineas.append("⏸ Entrada cerrada temporalmente")
 
 
     return lineas

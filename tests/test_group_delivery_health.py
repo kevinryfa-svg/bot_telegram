@@ -527,3 +527,98 @@ def test_an_unknown_community_is_not_blocked(comunidad):
     bot = FakeBot(error=AssertionError("no se debía preguntar a Telegram"))
 
     assert bloquea(bot, 999999) is False
+
+
+# =========================
+# QUE SE VEA, NO SOLO QUE FUNCIONE
+# =========================
+# Un estado que solo existe en la base de datos no sirve de nada: el comprador
+# llega igual al callejón sin salida y el propietario no sabe que no vende.
+
+def test_the_marketplace_card_warns_before_the_click(comunidad):
+    """
+    Rechazar la compra al final está bien, pero llevar a alguien hasta el pago
+    para rechazarlo allí es peor que decírselo en la ficha.
+    """
+
+    env = comunidad
+    marcar_rota(env["group_id"])
+
+    ficha = cr.fetch_marketplace_group(env["group_id"])
+
+    assert ficha is not None, "la comunidad debe seguir visible, no desaparecer"
+    assert ficha["can_deliver"] is False
+
+    lineas = cr.format_marketplace_social_proof(ficha)
+
+    assert any("cerrada" in l.lower() for l in lineas), (
+        "la ficha no avisa de que la entrada está cerrada"
+    )
+
+
+def test_a_healthy_card_says_nothing_about_it(comunidad, monkeypatch):
+    """No se anuncia lo que funciona: solo ensuciaría la ficha."""
+
+    env = comunidad
+    responder(monkeypatch, ADMIN_OK)
+    comprobar(env)
+
+    ficha = cr.fetch_marketplace_group(env["group_id"])
+    lineas = cr.format_marketplace_social_proof(ficha)
+
+    assert not any("cerrada" in l.lower() for l in lineas)
+
+
+def test_an_unchecked_community_is_not_called_closed(comunidad):
+    """
+    NULL es "sin comprobar", no "cerrada". Una comunidad recién publicada no
+    puede aparecer como cerrada por no haber pasado todavía el repaso.
+    """
+
+    env = comunidad
+
+    ficha = cr.fetch_marketplace_group(env["group_id"])
+
+    assert ficha["can_deliver"] is None
+
+    lineas = cr.format_marketplace_social_proof(ficha)
+
+    assert not any("cerrada" in l.lower() for l in lineas)
+
+
+def test_the_owner_sees_it_in_their_own_panel(comunidad):
+    """
+    El aviso se puede borrar o silenciar. El panel es donde el propietario mira
+    cuando algo va mal.
+    """
+
+    env = comunidad
+    marcar_rota(env["group_id"])
+
+    estado = gh.describe_group_delivery(env["group_id"])
+
+    assert "No puede dar acceso" in estado
+    assert "invitar" in estado
+
+
+def test_the_panel_says_so_when_it_works(comunidad, monkeypatch):
+    env = comunidad
+    responder(monkeypatch, ADMIN_OK)
+    comprobar(env)
+
+    assert "Puede dar acceso" in gh.describe_group_delivery(env["group_id"])
+
+
+def test_the_panel_does_not_invent_a_state(comunidad):
+    """
+    Sin comprobación previa se dice eso y no se inventa un veredicto: dar por
+    buena una comunidad sin haberla mirado es lo que hacía bot_is_admin.
+    """
+
+    env = comunidad
+
+    estado = gh.describe_group_delivery(env["group_id"])
+
+    assert "sin comprobar" in estado.lower()
+    assert "No puede dar acceso" not in estado
+    assert "Puede dar acceso" not in estado
