@@ -402,6 +402,28 @@ TRANSLATIONS = {
     # Se rechaza la compra antes de cobrar, porque el bot ha perdido el permiso
     # de invitar y el enlace de acceso no se podría crear. Se le dice sin echarle
     # la culpa a nadie y sin dejarle con la sensación de que el bot está roto.
+    # Tiene el acceso pagado y activo, pero el enlace no se puede crear ahora
+    # mismo. Antes se le decía «asegúrate de que el bot es administrador del grupo
+    # y tiene permisos para invitar usuarios»: una instrucción interna, sobre un
+    # grupo que no es suyo y donde no puede tocar nada.
+    "access.link_unavailable": {
+        "es": (
+            "⏳ Tu acceso está activo, pero el enlace no sale ahora mismo\n\n"
+            "No es cosa tuya y no has perdido nada: {group} tiene un problema de "
+            "configuración que impide crear enlaces de entrada.\n\n"
+            "Ya hemos avisado a la persona responsable. Vuelve a pulsar «Pedir mi "
+            "enlace» en un rato, o escríbenos y te avisamos en cuanto se arregle."
+        ),
+        "en": (
+            "⏳ Your access is active, but the link will not generate right now\n\n"
+            "This is not on you and you have not lost anything: {group} has a "
+            "configuration problem that stops entry links from being created.\n\n"
+            "The person in charge has already been notified. Try “Get my link” "
+            "again in a while, or message us and we will tell you as soon as it "
+            "is fixed."
+        ),
+    },
+
     "purchase.cannot_deliver": {
         "es": (
             "⏸ Ahora mismo no se puede entrar en {group}\n\n"
