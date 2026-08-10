@@ -20,6 +20,36 @@ RENEWAL_STAGE_EARLY = "3d"
 RENEWAL_STAGE_LAST = "1d"
 RENEWAL_STAGE_EXPIRED = "expired"
 
+
+# =========================
+# RECUPERAR AL QUE SE FUE
+# =========================
+# Había avisos ANTES de caducar y uno AL caducar. Después, nada: quien no
+# renovaba en el momento desaparecía para siempre, y es la persona más barata de
+# recuperar que existe —ya conoce la comunidad y ya pagó una vez.
+#
+# Vive en este fichero y no en uno nuevo a propósito: reutiliza la tabla de
+# avisos con su clave única, el marcador que hace todo idempotente, el lector de
+# precio y el bucle de envío. Un módulo aparte habría sido la quinta copia de lo
+# mismo.
+
+WINBACK_STAGE_WEEK = "winback_7d"
+WINBACK_STAGE_MONTH = "winback_30d"
+
+WINBACK_STAGES = (WINBACK_STAGE_WEEK, WINBACK_STAGE_MONTH)
+
+WINBACK_WEEK_DAYS = int(os.environ.get("WINBACK_WEEK_DAYS", "7"))
+WINBACK_MONTH_DAYS = int(os.environ.get("WINBACK_MONTH_DAYS", "30"))
+
+# Más allá de esto no se insiste: alguien que se fue hace medio año y no ha
+# vuelto no quiere volver, y escribirle es ganarse un bloqueo.
+WINBACK_MAX_AGE_DAYS = int(os.environ.get("WINBACK_MAX_AGE_DAYS", "120"))
+
+WINBACK_ENABLED = os.environ.get(
+    "WINBACK_ENABLED",
+    "true"
+).strip().lower() not in ("0", "false", "no", "off")
+
 RENEWAL_EARLY_DAYS = int(
     os.environ.get("RENEWAL_EARLY_DAYS", "3")
 )
@@ -133,6 +163,118 @@ def fetch_accesses_expiring(stage, limit=None):
         return cur.fetchall() or []
 
 
+def fetch_expired_accesses(stage, limit=None):
+    """
+    Gente a la que se le caducó el acceso y no ha vuelto.
+
+    Las ventanas no se solapan, para que nadie reciba los dos avisos: la de una
+    semana coge lo caducado entre WINBACK_WEEK_DAYS y WINBACK_MONTH_DAYS días
+    atrás, y la de un mes desde ahí hasta WINBACK_MAX_AGE_DAYS.
+
+    Se excluye a quien:
+      - ha vuelto: al recomprar, su caducidad pasa a ser futura y la ventana ya
+        lo excluye. Escribirle "vuelve" a alguien que ya está dentro sería lo
+        peor que podría hacer esto, así que hay una prueba que lo fija;
+      - está vetado, se ha dado de baja de los avisos o tiene el bot bloqueado;
+      - ya recibió este aviso para esta misma caducidad;
+      - pertenece a una comunidad gratuita, apagada, o sin ningún plan de pago
+        activo: no se puede invitar a volver a algo que no se vende;
+      - pertenece a una comunidad que consta SIN PODER dar acceso. Mandar a
+        alguien a comprar donde la compra se va a rechazar es peor que no
+        escribirle.
+    """
+
+    limit = int(limit or RENEWAL_BATCH_SIZE)
+
+    if stage == WINBACK_STAGE_WEEK:
+
+        desde, hasta = WINBACK_WEEK_DAYS, WINBACK_MONTH_DAYS
+
+    else:
+
+        desde, hasta = WINBACK_MONTH_DAYS, WINBACK_MAX_AGE_DAYS
+
+
+    params = {
+        "stage": stage,
+        "limit": limit,
+        "desde": desde,
+        "hasta": hasta
+    }
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT u.user_id,
+                   u.group_id,
+                   u.expiration,
+                   COALESCE(g.name, 'la comunidad')
+            FROM users u
+            JOIN groups g ON g.id = u.group_id
+            WHERE u.expiration IS NOT NULL
+              AND u.expiration < NOW() - (%(desde)s || ' days')::interval
+              AND u.expiration >= NOW() - (%(hasta)s || ' days')::interval
+              AND COALESCE(g.is_active, TRUE) = TRUE
+              AND COALESCE(g.is_free_group, FALSE) = FALSE
+
+              -- Quien ha vuelto queda fuera por la propia ventana: la clave
+              -- primaria de users es (user_id, group_id), así que solo hay una
+              -- fila por persona y comunidad, y al volver a comprar esa misma
+              -- fila pasa a tener caducidad futura. Aquí había además un NOT
+              -- EXISTS comprobándolo que era imposible de satisfacer: aparentaba
+              -- una protección que no hacía nada.
+
+              -- La comunidad tiene que seguir vendiendo algo.
+              AND EXISTS (
+                  SELECT 1
+                  FROM plans p
+                  WHERE p.group_id = u.group_id
+                    AND COALESCE(p.is_active, TRUE) = TRUE
+                    AND p.amount IS NOT NULL
+                    AND p.amount > 0
+              )
+
+              -- Y tiene que poder entregar: si consta que no, la compra se
+              -- rechazaría y el aviso sería una tomadura de pelo.
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM group_delivery_health h
+                  WHERE h.group_id = u.group_id
+                    AND h.can_deliver IS FALSE
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM access_renewal_reminders r
+                  WHERE r.user_id = u.user_id
+                    AND r.group_id = u.group_id
+                    AND r.stage = %(stage)s
+                    AND r.expiration = u.expiration
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM banned_users b WHERE b.user_id = u.user_id
+              )
+
+              -- El mismo opt-out que el resto de avisos del bot.
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_reengagement re
+                  WHERE re.user_id = u.user_id
+                    AND (
+                        COALESCE(re.opted_out, FALSE) = TRUE
+                        OR COALESCE(re.is_blocked, FALSE) = TRUE
+                    )
+              )
+
+            ORDER BY u.expiration DESC
+            LIMIT %(limit)s
+
+        """, params)
+
+        return cur.fetchall() or []
+
+
 def mark_renewal_reminder_sent(user_id, group_id, stage, expiration):
     """Devuelve True si el aviso se registró (y por tanto toca enviarlo)."""
 
@@ -232,6 +374,13 @@ def format_days_left(expiration, language=DEFAULT_LANGUAGE):
 def build_renewal_text(group_name, expiration, price=None,
                        stage=RENEWAL_STAGE_EARLY, language=DEFAULT_LANGUAGE):
 
+    if stage in WINBACK_STAGES:
+
+        return build_winback_text(
+            group_name, expiration, price=price, stage=stage, language=language
+        )
+
+
     price_text = format_amount(price[0], price[1]) if price else None
 
 
@@ -290,8 +439,89 @@ def build_renewal_text(group_name, expiration, price=None,
     return "\n".join(lines)
 
 
+def format_time_since(expiration, stage, language=DEFAULT_LANGUAGE):
+    """
+    Cuánto hace que se fue, en palabras.
+
+    Se dice por la etapa y no calculando los días exactos: "hace 34 días" suena
+    a base de datos, y "hace un mes" a persona.
+    """
+
+    if stage == WINBACK_STAGE_WEEK:
+
+        return t("winback.since_week", language)
+
+
+    return t("winback.since_month", language)
+
+
+def build_winback_text(group_name, expiration, price=None,
+                       stage=WINBACK_STAGE_WEEK, language=DEFAULT_LANGUAGE):
+    """
+    Lo que se le dice a quien se fue.
+
+    Sin culpar y sin urgencia falsa: se le recuerda dónde estaba, cuánto cuesta
+    volver, y se le deja marchar en paz si no quiere saber más.
+    """
+
+    price_text = format_amount(price[0], price[1]) if price else None
+
+    lines = [
+        t("winback.title", language),
+        "",
+        t(
+            "winback.body",
+            language,
+            group=group_name,
+            when=format_time_since(expiration, stage, language=language)
+        )
+    ]
+
+
+    if price_text:
+
+        lines.append("")
+        lines.append(t("winback.price", language, price=price_text))
+
+
+    lines.append("")
+    lines.append(t("winback.footer", language))
+
+    return "\n".join(lines)
+
+
+def build_winback_keyboard(group_id, language=DEFAULT_LANGUAGE):
+    """
+    Con baja voluntaria, que los avisos de renovación no llevan.
+
+    La diferencia importa: un aviso de renovación va a un cliente que tiene algo
+    contratado; esto va a alguien que ya no es cliente. Si no quiere que le
+    escribamos, tiene que poder decirlo en el mismo mensaje.
+    """
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            t("button.join_again", language),
+            callback_data=f"marketplace_group_{group_id}"
+        )],
+        [InlineKeyboardButton(
+            t("button.i_have_a_question", language),
+            callback_data="public_support"
+        )],
+        [InlineKeyboardButton(
+            t("button.no_more_messages", language),
+            callback_data="reengagement_stop"
+        )]
+    ])
+
+
 def build_renewal_keyboard(group_id, stage=RENEWAL_STAGE_EARLY,
                            language=DEFAULT_LANGUAGE):
+
+    if stage in WINBACK_STAGES:
+
+        return build_winback_keyboard(group_id, language=language)
+
 
     label = t(
         "button.join_again" if stage == RENEWAL_STAGE_EXPIRED
@@ -341,7 +571,13 @@ async def send_renewal_stage(context, stage):
 
     try:
 
-        rows = fetch_accesses_expiring(stage)
+        if stage in WINBACK_STAGES:
+
+            rows = fetch_expired_accesses(stage)
+
+        else:
+
+            rows = fetch_accesses_expiring(stage)
 
     except Exception as e:
 
@@ -417,7 +653,16 @@ async def process_renewal_reminders(context):
         return total
 
 
-    for stage in (RENEWAL_STAGE_LAST, RENEWAL_STAGE_EARLY):
+    etapas = [RENEWAL_STAGE_LAST, RENEWAL_STAGE_EARLY]
+
+    # La recuperación va al final: primero los clientes que todavía lo son, que
+    # es donde el aviso vale más y donde no hay que gastar la cuota de envío.
+    if WINBACK_ENABLED:
+
+        etapas.extend(WINBACK_STAGES)
+
+
+    for stage in etapas:
 
         summary = await send_renewal_stage(context, stage)
 

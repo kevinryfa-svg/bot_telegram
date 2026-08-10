@@ -530,6 +530,45 @@ TRANSLATIONS = {
         "en": "You get your access back instantly after paying.",
     },
 
+    # Recuperar al que se fue. Va a alguien que ya NO es cliente, así que el tono
+    # es distinto del aviso de renovación: sin urgencia falsa, sin reprocharle
+    # nada, y con la puerta abierta para decir que no quiere más mensajes.
+    "winback.title": {
+        "es": "👋 Te dejamos la puerta abierta",
+        "en": "👋 The door is still open",
+    },
+
+    "winback.body": {
+        "es": "{when} se te acabó el acceso a {group}, y no has vuelto.",
+        "en": "Your access to {group} ran out {when}, and you have not come back.",
+    },
+
+    "winback.since_week": {
+        "es": "Hace una semana",
+        "en": "a week ago",
+    },
+
+    "winback.since_month": {
+        "es": "Hace un mes",
+        "en": "a month ago",
+    },
+
+    "winback.price": {
+        "es": "Volver a entrar cuesta {price}.",
+        "en": "Coming back costs {price}.",
+    },
+
+    "winback.footer": {
+        "es": (
+            "Si te sigue interesando, entras otra vez en un toque. Y si no, "
+            "dilo con el último botón y no te volvemos a escribir."
+        ),
+        "en": (
+            "If you are still interested, you can join again in one tap. And if "
+            "not, say so with the last button and we will not write again."
+        ),
+    },
+
     "renewal.soon_title": {
         "es": "⏳ Tu acceso caduca pronto",
         "en": "⏳ Your access expires soon",
