@@ -1157,9 +1157,12 @@ def grant_group_access_after_payment(
                 "transaction_id": transaction_id,
                 "plan_id": plan_id,
                 "community_type": community_type,
-                "user_message": (
-                    f"No he podido crear enlace de invitación. Asegúrate de que el bot es administrador del {community_kind} "
-                    "y tiene permisos para invitar usuarios."
+                # Se llamaba "user_message" y nunca se le enviaba a ningún
+                # usuario: es el diagnóstico para quien lea el registro. El
+                # comprador recibe el mensaje de purchase_message_service.
+                "diagnostico": (
+                    f"No se pudo crear el enlace de invitación del {community_kind}. "
+                    "Lo habitual es que el bot haya perdido el permiso de invitar."
                 )
             }
         )

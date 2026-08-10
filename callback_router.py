@@ -998,6 +998,85 @@ def build_group_recovery_keyboard(group_id, retry_callback=None):
     return InlineKeyboardMarkup(keyboard)
 
 
+async def report_access_link_unavailable(context, query, user_id, group_id,
+                                        group_name, telegram_group_id,
+                                        community_kind):
+    """
+    Tiene el acceso pagado y activo, y el enlace no se puede crear.
+
+    Es el mismo fallo que vigila el repaso periódico de entrega, pero aquí hay una
+    persona esperando delante, así que hace falta algo más que apuntarlo:
+
+      - al cliente se le dice lo que le sirve —que no es cosa suya, que no ha
+        perdido nada y que hay alguien mirándolo—, con botones. Antes se le daba
+        una instrucción interna sobre un grupo que no es el suyo;
+      - a quien puede arreglarlo se le avisa de que un cliente que ha pagado está
+        fuera, que es lo único que mueve a alguien a mirarlo hoy;
+      - y se vuelve a preguntar a Telegram para dejar el estado de entrega al día:
+        acabamos de tener la prueba de que algo no va.
+    """
+
+    language = load_user_language(user_id)
+
+    await query.message.reply_text(
+        t("access.link_unavailable", language, group=group_name or community_kind),
+        reply_markup=build_group_recovery_keyboard(group_id)
+    )
+
+
+    log_event(
+        "access_link_unavailable_for_paid_user",
+        category="access",
+        severity="critical",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        message="Un usuario con acceso activo no ha podido recibir su enlace.",
+        metadata={
+            "telegram_group_id": telegram_group_id,
+            "group_name": str(group_name or "")[:80]
+        }
+    )
+
+
+    aviso = (
+        "🚨 Un cliente con acceso pagado no puede entrar\n\n"
+        f"Comunidad: {group_name or group_id}\n"
+        f"Usuario: {user_id}\n\n"
+        "El bot no ha podido crear su enlace de invitación. Lo más habitual es "
+        "que haya perdido el permiso «Invitar usuarios mediante enlace» en el "
+        "grupo.\n\n"
+        "Mientras siga así, nadie puede entrar en esta comunidad."
+    )
+
+    try:
+
+        owner_user_id = get_group_owner_user_id(group_id)
+
+        if owner_user_id:
+
+            await context.bot.send_message(chat_id=owner_user_id, text=aviso)
+
+    except Exception as e:
+
+        print("Enlace no disponible: no se pudo avisar al propietario:", str(e)[:200])
+
+
+    try:
+
+        await recheck_group_delivery_live(
+            context,
+            group_id,
+            group_name or f"Comunidad {group_id}",
+            telegram_group_id
+        )
+
+    except Exception as e:
+
+        print("Enlace no disponible: fallo la reconsulta de entrega:", str(e)[:200])
+
+
 def build_payment_link_keyboard(group_id):
     """
     Botones que acompañan al enlace de pago.
@@ -10309,13 +10388,16 @@ async def grant_group_user_promo_access(context, chat_id, telegram_user, promo_r
 
     if not link:
 
+        # Quien canjea un código es un cliente, no el administrador del grupo:
+        # pedirle que revise permisos ajenos no le sirve de nada.
         await context.bot.send_message(
             chat_id=chat_id,
-            text=(
-                "❌ Error creando el enlace de acceso.\n\n"
-                f"No he podido crear enlace de invitación. Asegúrate de que el bot es administrador del {community_kind} "
-                "y tiene permisos para invitar usuarios."
-            )
+            text=t(
+                "access.link_unavailable",
+                load_user_language(user_id),
+                group=group_name or community_kind
+            ),
+            reply_markup=build_group_recovery_keyboard(group_id)
         )
 
         return
@@ -31238,8 +31320,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if not group_row:
 
-                    await query.message.reply_text(
-                        "❌ Grupo no encontrado."
+                    # Sin botones, esta pantalla era un callejón sin salida: y es
+                    # justo la que se le ofrece a quien acaba de pagar.
+                    await reply_with_recover_navigation(
+                        query,
+                        "❌ No encuentro esa comunidad."
                     )
 
                     return
@@ -31379,8 +31464,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             print("Error cargando detalle suscripción:", e)
 
-            await query.message.reply_text(
-                "❌ Error cargando suscripción."
+            await reply_with_recover_navigation(
+                query,
+                "❌ No he podido cargar tu acceso ahora mismo.\n\n"
+                "Inténtalo otra vez en un momento. Si sigue igual, escríbenos."
             )
 
             return
@@ -31523,10 +31610,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not link:
 
-            await query.message.reply_text(
-                "❌ Error creando acceso.\n\n"
-                f"No he podido crear enlace de invitación. Asegúrate de que el bot es administrador del {community_kind} "
-                "y tiene permisos para invitar usuarios."
+            # Antes esto le decía al CLIENTE que se asegurase de que el bot es
+            # administrador del grupo: una instrucción interna, sobre un grupo que
+            # no es suyo. Ahora se le dice lo que le sirve y se avisa a quien
+            # puede arreglarlo de verdad.
+            await report_access_link_unavailable(
+                context,
+                query,
+                user_id,
+                real_group_id,
+                group_name,
+                telegram_group_id,
+                community_kind
             )
 
             return
