@@ -47,6 +47,32 @@ REQUIRED_EVENTS = (
 WEBHOOK_PATH = "/webhook"
 
 
+def campo(endpoint, nombre, defecto=None):
+    """
+    Lee un campo del endpoint, venga como objeto de Stripe o como diccionario.
+
+    Hace falta porque en el SDK de Stripe los recursos NO son diccionarios: no
+    tienen .get(), y pedírselo lanza AttributeError con el nombre del atributo
+    como único texto. Eso es exactamente lo que pasó en producción: el log decía
+    "error comprobando la configuración: get" y nada más.
+    """
+
+    valor = getattr(endpoint, nombre, None)
+
+    if valor is not None:
+
+        return valor
+
+
+    # Un diccionario (las pruebas y cualquier respuesta ya normalizada).
+    if isinstance(endpoint, dict):
+
+        return endpoint.get(nombre, defecto)
+
+
+    return defecto
+
+
 def autofix_enabled():
     """
     Arreglarlo solo está activado por omisión a propósito.
@@ -106,15 +132,15 @@ def find_our_endpoint(endpoints, expected_url):
 
         for endpoint in endpoints:
 
-            if str(endpoint.get("url") or "").rstrip("/") == expected_url:
+            if str(campo(endpoint, "url") or "").rstrip("/") == expected_url:
 
                 return endpoint
 
 
     candidatos = [
         endpoint for endpoint in endpoints
-        if str(endpoint.get("url") or "").rstrip("/").endswith(WEBHOOK_PATH)
-        and endpoint.get("status") != "disabled"
+        if str(campo(endpoint, "url") or "").rstrip("/").endswith(WEBHOOK_PATH)
+        and campo(endpoint, "status") != "disabled"
     ]
 
     if len(candidatos) == 1:
@@ -133,7 +159,7 @@ def missing_events(endpoint):
         return list(REQUIRED_EVENTS)
 
 
-    activados = list(endpoint.get("enabled_events") or [])
+    activados = list(campo(endpoint, "enabled_events") or [])
 
     # "*" significa todos: no falta nada.
     if "*" in activados:
@@ -151,7 +177,7 @@ def enable_missing_events(endpoint, faltan):
     Devuelve la lista final, o None si no se pudo.
     """
 
-    activados = list(endpoint.get("enabled_events") or [])
+    activados = list(campo(endpoint, "enabled_events") or [])
 
     # Se conserva el orden original y se añade al final: así el diff en el panel
     # de Stripe se lee de un vistazo.
@@ -160,7 +186,7 @@ def enable_missing_events(endpoint, faltan):
     try:
 
         stripe.WebhookEndpoint.modify(
-            endpoint.get("id"),
+            campo(endpoint, "id"),
             enabled_events=final
         )
 
@@ -305,7 +331,7 @@ def verify_stripe_webhook_events(notify=True, token=None):
         return summary
 
 
-    url = endpoint.get("url")
+    url = campo(endpoint, "url")
 
     print(
         "Webhook de Stripe: faltan eventos:",
