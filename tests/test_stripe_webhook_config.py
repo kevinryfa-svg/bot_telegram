@@ -84,12 +84,75 @@ def test_the_refund_events_are_in_the_list():
 
 def endpoint(url="https://bot.example.com/webhook", eventos=(), status="enabled",
              id_="we_1"):
+    """
+    Un endpoint como el que devuelve Stripe DE VERDAD.
+
+    Esto empezó siendo un diccionario, y ese fue el fallo más caro de toda la
+    serie: los recursos del SDK de Stripe NO son diccionarios —no tienen .get()—
+    así que el código pasaba las pruebas y en producción reventaba con
+    "AttributeError: get", sin llegar a comprobar nada. El doble era más
+    permisivo que la realidad.
+
+    Se construye con la clase real para que el doble no pueda volver a ser más
+    tolerante que producción.
+    """
+
+    import stripe
+
+    return stripe.WebhookEndpoint.construct_from(
+        {
+            "id": id_,
+            "url": url,
+            "enabled_events": list(eventos),
+            "status": status,
+        },
+        key=None,
+    )
+
+
+def endpoint_dict(**kwargs):
+    """
+    La misma cosa como diccionario.
+
+    Se mantiene porque el lector de campos tiene que servir para las dos formas:
+    hay respuestas ya normalizadas por otras partes del bot.
+    """
+
+    e = endpoint(**kwargs)
+
     return {
-        "id": id_,
-        "url": url,
-        "enabled_events": list(eventos),
-        "status": status,
+        "id": e.id,
+        "url": e.url,
+        "enabled_events": list(e.enabled_events),
+        "status": e.status,
     }
+
+
+def test_the_double_is_not_more_permissive_than_production():
+    """
+    La prueba que faltaba. Si el doble tuviese .get(), este fichero volvería a dar
+    verde con el código roto.
+    """
+
+    e = endpoint()
+
+    assert not isinstance(e, dict), "el doble ha vuelto a ser un diccionario"
+
+    with pytest.raises(AttributeError):
+        e.get("url")
+
+
+def test_fields_are_read_from_both_shapes():
+    """El lector tiene que servir para el objeto de Stripe y para un dict."""
+
+    for muestra in (endpoint(eventos=["invoice.paid"]),
+                    endpoint_dict(eventos=["invoice.paid"])):
+
+        assert swc.campo(muestra, "url") == "https://bot.example.com/webhook"
+        assert swc.campo(muestra, "enabled_events") == ["invoice.paid"]
+        assert swc.campo(muestra, "status") == "enabled"
+        assert swc.campo(muestra, "id") == "we_1"
+        assert swc.campo(muestra, "no_existe", "por_defecto") == "por_defecto"
 
 
 def test_a_wildcard_endpoint_is_missing_nothing():

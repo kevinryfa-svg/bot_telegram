@@ -1095,9 +1095,13 @@ async def stripe_webhook_config_job(context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
 
+        # Con el tipo delante. Sin él, este mismo fallo apareció en producción
+        # como "error comprobando la configuración: get" —el texto de un
+        # AttributeError de Stripe es solo el nombre del atributo— y no había
+        # forma de saber qué había pasado sin reproducirlo a ciegas.
         print(
             "Webhook de Stripe: error comprobando la configuración:",
-            sanitize_error_text(e)
+            f"{type(e).__name__}: {sanitize_error_text(e)}"
         )
 
 
