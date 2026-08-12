@@ -13,6 +13,7 @@ from audit_log_service import log_event
 from db import conn
 from payment_access_service import grant_group_access_after_payment
 from payment_gateway_config import (
+    amount_to_minor_units,
     PAYMENT_PROVIDER_REVOLUT,
     PAYMENT_SCOPE_GROUP,
     PAYMENT_SCOPE_PLATFORM,
@@ -513,7 +514,11 @@ def create_group_revolut_order(
         raise ValueError("Plan inválido para esta comunidad.")
 
 
-    amount_minor = int(plan.get("amount") or 0)
+    # plans.amount está en euros y la API de Revolut espera céntimos. Esto
+    # mandaba los euros tal cual, así que un plan de 15 € generaba un pedido
+    # de 0,15 €: el cliente pagaba el 1% del precio y recibía el acceso entero.
+    currency_code = (plan.get("currency") or "EUR").upper()
+    amount_minor = amount_to_minor_units(plan.get("amount") or 0, currency_code)
 
 
     if amount_minor < 1:
@@ -521,7 +526,6 @@ def create_group_revolut_order(
         raise ValueError("El plan no tiene importe válido.")
 
 
-    currency_code = (plan.get("currency") or "EUR").upper()
     credentials = get_group_revolut_credentials(group_id)
     internal_reference = f"revolut_group_{uuid.uuid4().hex}"
     safe_metadata = sanitize_payment_metadata(metadata or {})

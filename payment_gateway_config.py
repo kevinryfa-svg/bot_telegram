@@ -1,5 +1,49 @@
 import os
 
+from decimal import Decimal, ROUND_HALF_UP
+
+
+# =========================
+# UNIDADES DE DINERO
+# =========================
+# plans.amount está en la unidad PRINCIPAL (15 = quince euros): el asistente
+# pide "el PRECIO" y el propietario teclea 15, no 1500. Las tablas de pagos y
+# transacciones, en cambio, van en la unidad MÍNIMA (céntimos), que es lo que
+# asumen todas las capas que muestran importes (dividen entre 100) y lo que
+# mandan los webhooks de Stripe y PayPal.
+#
+# Esta función es LA conversión entre ambas. Antes cada proveedor decidía por
+# su cuenta y tres de los cuatro se equivocaban: PayPal guardaba euros y los
+# comparaba contra los céntimos del webhook (rechazaba todos los pagos por
+# "amount mismatch"), Revolut mandaba euros a una API que espera céntimos
+# (cobraba 0,15 € por un plan de 15 €), y Guardarian/ChangeNOW guardaban euros
+# que las pantallas luego dividían entre 100.
+
+ZERO_DECIMAL_CURRENCIES = {
+    "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga",
+    "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"
+}
+
+
+def amount_to_minor_units(amount_major, currency):
+    """
+    15 EUR -> 1500; 15 JPY -> 15 (el yen no tiene decimales).
+
+    Decimal y no float: 19.99 * 100 en float da 1998.9999..., y en dinero un
+    céntimo perdido es una discusión con un cliente.
+    """
+
+    currency = (currency or "eur").strip().lower()
+
+    value = Decimal(str(amount_major))
+
+    if currency in ZERO_DECIMAL_CURRENCIES:
+
+        return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+    return int((value * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
 
 PAYMENT_PROVIDER_STRIPE = "stripe"
 PAYMENT_PROVIDER_PAYPAL = "paypal"

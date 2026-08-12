@@ -9,6 +9,7 @@ import requests
 from audit_log_service import log_event
 from db import conn
 from payment_gateway_config import (
+    amount_to_minor_units,
     PAYMENT_PROVIDER_PAYPAL,
     PAYMENT_SCOPE_GROUP,
     PAYMENT_SCOPE_PLATFORM,
@@ -495,7 +496,12 @@ def create_group_paypal_order(
         )
 
 
-    amount_minor = int(plan.get("amount") or 0)
+    # plans.amount está en euros (el propietario teclea 15). El webhook de
+    # PayPal manda céntimos, y aquí se guardaba el valor en euros tal cual:
+    # la validación comparaba 15 contra 1500 y rechazaba TODOS los pagos de
+    # grupo por "amount mismatch". Nadie llegó a recibir acceso por PayPal.
+    currency_code = (plan.get("currency") or "EUR").upper()
+    amount_minor = amount_to_minor_units(plan.get("amount") or 0, currency_code)
 
 
     if amount_minor < 1:
@@ -503,7 +509,6 @@ def create_group_paypal_order(
         raise ValueError("El plan no tiene importe válido.")
 
 
-    currency_code = (plan.get("currency") or "EUR").upper()
     credentials = get_group_paypal_credentials(group_id)
     internal_reference = f"paypal_group_{uuid.uuid4().hex}"
     safe_metadata = sanitize_payment_metadata(metadata or {})
