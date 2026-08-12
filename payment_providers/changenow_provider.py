@@ -6,6 +6,7 @@ import requests
 from audit_log_service import log_event
 from db import conn
 from payment_gateway_config import (
+    amount_to_minor_units,
     PAYMENT_PROVIDER_CHANGENOW,
     PAYMENT_SCOPE_GROUP,
     PAYMENT_SCOPE_PLATFORM,
@@ -329,7 +330,13 @@ def create_group_changenow_order(user_id, group_id, plan_id, metadata=None):
         owner_user_id=config_row.get("owner_user_id"),
         group_id=group_id,
         plan_id=plan_id,
-        amount=plan.get("amount"),
+        # En céntimos, como el resto de transacciones: las pantallas dividen
+        # entre 100. Lo que paga el cliente en cripto lo calcula ChangeNOW y
+        # sale de su respuesta, no de aquí.
+        amount=amount_to_minor_units(
+            plan.get("amount") or 0,
+            plan.get("currency")
+        ),
         currency=plan.get("currency"),
         idempotency_key=internal_reference,
         provider_config_id=config_row.get("id"),

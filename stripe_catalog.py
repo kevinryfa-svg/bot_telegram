@@ -9,29 +9,16 @@ import stripe
 # configurada en main.py (stripe.api_key).
 
 
-# Monedas "de cero decimales" en Stripe: el importe NO se multiplica por 100.
-_ZERO_DECIMAL_CURRENCIES = {
-    "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga",
-    "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"
-}
+from payment_gateway_config import amount_to_minor_units
 
 
 def to_stripe_unit_amount(amount_major, currency):
     """
-    Convierte un importe en la unidad principal (p.ej. 10 EUR) a la unidad
-    mínima que espera Stripe (p.ej. 1000 céntimos). Respeta las monedas de
-    cero decimales.
+    Delegado en la conversión compartida de payment_gateway_config: antes cada
+    proveedor tenía la suya y tres de cuatro se equivocaban de unidad.
     """
 
-    currency = (currency or "eur").strip().lower()
-
-    value = float(amount_major)
-
-    if currency in _ZERO_DECIMAL_CURRENCIES:
-
-        return int(round(value))
-
-    return int(round(value * 100))
+    return amount_to_minor_units(amount_major, currency)
 
 
 def create_stripe_product_and_price(name, amount_major, currency, metadata=None):
