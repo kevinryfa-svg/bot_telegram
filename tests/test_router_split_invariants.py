@@ -380,3 +380,44 @@ def test_ningun_modulo_dejo_una_copia_de_sus_ramas_en_el_router():
     assert not duplicados, (
         f"el router sigue atendiendo callbacks ya movidos: {duplicados[:5]}"
     )
+
+
+def test_ningun_import_de_un_tramo_queda_sombreado():
+    """
+    La fase 6 encontró esto dos veces: una constante movida al módulo nuevo
+    seguía definida en el router DESPUÉS del import, así que el import quedaba
+    sombreado. Con TOKEN y OWNER_PAYMENT_PROVIDER_* los valores coincidían y no
+    se notaba; con una constante calculada, el router y el módulo divergirían
+    en silencio y el fallo aparecería lejos de la causa.
+    """
+
+    importados = {}
+
+    for n in ROUTER_TREE.body:
+        if isinstance(n, ast.ImportFrom) and n.module in MODULOS:
+            for alias in n.names:
+                importados[alias.asname or alias.name] = (n.module, n.lineno)
+
+    assert importados, "el router no importa nada de los tramos: el glob falla"
+
+    sombras = []
+
+    for n in ROUTER_TREE.body:
+
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name) and t.id in importados:
+                    mod, linea_import = importados[t.id]
+                    if n.lineno > linea_import:
+                        sombras.append((t.id, mod, n.lineno))
+
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if n.name in importados:
+                mod, linea_import = importados[n.name]
+                if n.lineno > linea_import:
+                    sombras.append((n.name, mod, n.lineno))
+
+    assert not sombras, (
+        f"el router redefine nombres que importa de un tramo (import sombreado): "
+        f"{sombras}"
+    )
