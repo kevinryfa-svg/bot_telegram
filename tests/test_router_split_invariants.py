@@ -48,6 +48,19 @@ for _n in ROUTER_TREE.body:
             if isinstance(_t, ast.Name):
                 TIPO_EN_ROUTER[_t.id] = "const"
 
+# Nombres que main.py rellena en caliente (callback_router_module.X = ...).
+# En el AST del router parecen constantes (X = None), pero son funciones
+# inyectadas: envolverlas en diferido es lo CORRECTO, no un error.
+INYECTADOS_POR_MAIN = set()
+for _n in ast.walk(ast.parse((RAIZ / "main.py").read_text(encoding="utf-8"))):
+    if isinstance(_n, ast.Assign):
+        for _t in _n.targets:
+            if (isinstance(_t, ast.Attribute)
+                    and isinstance(_t.value, ast.Name)
+                    and _t.value.id in ("callback_router_module",
+                                        "callback_router")):
+                INYECTADOS_POR_MAIN.add(_t.attr)
+
 
 def arbol(nombre):
     return ast.parse((RAIZ / f"{nombre}.py").read_text(encoding="utf-8"))
@@ -112,6 +125,7 @@ def test_ninguna_constante_esta_envuelta_como_funcion(nombre):
     malas = [
         w for w, destino in envoltorios(arbol(nombre)).items()
         if TIPO_EN_ROUTER.get(destino) == "const"
+        and destino not in INYECTADOS_POR_MAIN
     ]
 
     assert not malas, (
@@ -421,3 +435,60 @@ def test_ningun_import_de_un_tramo_queda_sombreado():
         f"el router redefine nombres que importa de un tramo (import sombreado): "
         f"{sombras}"
     )
+
+
+def test_los_marcadores_que_inyecta_main_viven_en_el_router():
+    """
+    main.py rellena algunos nombres en caliente con
+    `callback_router_module.X = ...`. La fase 7 estuvo a punto de llevarse
+    revoke_link (un `= None` a nivel de módulo) a un tramo: la inyección habría
+    seguido apuntando al router y el módulo se habría quedado con su None para
+    siempre — el botón reventaría con "NoneType is not callable" solo al
+    pulsarlo.
+
+    Regla: cada nombre inyectado tiene que estar definido en el router, y
+    ningún módulo troceado puede tener su propia copia `= None`.
+    """
+
+    main_tree = ast.parse((RAIZ / "main.py").read_text(encoding="utf-8"))
+
+    inyectados = set()
+
+    for n in ast.walk(main_tree):
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if (isinstance(t, ast.Attribute)
+                        and isinstance(t.value, ast.Name)
+                        and t.value.id in ("callback_router_module",
+                                           "callback_router")):
+                    inyectados.add(t.attr)
+
+    assert inyectados, "main.py ya no inyecta nada: revisar esta prueba"
+
+    definidos_en_router = {
+        t.id for n in ROUTER_TREE.body if isinstance(n, ast.Assign)
+        for t in n.targets if isinstance(t, ast.Name)
+    }
+
+    for nombre_inyectado in inyectados:
+
+        assert nombre_inyectado in definidos_en_router, (
+            f"main.py inyecta {nombre_inyectado} en el router, pero el router "
+            "ya no lo define: la inyección crearía un atributo que el código "
+            "importado nunca ve"
+        )
+
+    for modulo in MODULOS:
+
+        for n in arbol(modulo).body:
+
+            if not isinstance(n, ast.Assign):
+                continue
+
+            for t in n.targets:
+                if isinstance(t, ast.Name) and t.id in inyectados:
+                    pytest.fail(
+                        f"{modulo} define {t.id}, que main.py inyecta EN EL "
+                        "ROUTER: este módulo se quedaría con su propia copia "
+                        "muerta para siempre"
+                    )

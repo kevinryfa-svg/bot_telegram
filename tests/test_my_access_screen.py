@@ -14,13 +14,22 @@ persona esperando delante y nadie avisaba a quien podía arreglarlo.
 """
 
 import ast
+import pathlib
 
 import pytest
 
 import callback_router as cr
+import mysub_callbacks as mc
 
 
-SOURCE = open(cr.__file__, encoding="utf-8").read()
+# La pantalla vive en mysub_callbacks desde la fase 7 del troceo, y las frases
+# vigiladas pueden estar en cualquier tramo: se escanea la unión del router y
+# todos los módulos extraídos, no un solo fichero.
+_RAIZ = pathlib.Path(cr.__file__).parent
+SOURCE = "\n".join(
+    p.read_text(encoding="utf-8")
+    for p in [_RAIZ / "callback_router.py", *sorted(_RAIZ.glob("*_callbacks.py"))]
+)
 
 
 # =========================
@@ -89,20 +98,12 @@ def test_no_exit_of_the_screen_leaves_the_customer_stuck():
     llega porque algo falló, quedarse sin botones es quedarse sin salida.
     """
 
-    tree = ast.parse(SOURCE)
-
-    button = next(
-        n for n in ast.walk(tree)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "button"
-    )
+    tree = ast.parse(open(mc.__file__, encoding="utf-8").read())
 
     rama = next(
-        s for s in button.body
-        if isinstance(s, ast.If)
-        and any(
-            isinstance(c, ast.Constant) and c.value == "mysub_"
-            for c in ast.walk(s.test)
-        )
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name == "handle_mysub_callbacks"
     )
 
     sin_teclado = []
@@ -197,16 +198,15 @@ def test_when_the_link_cannot_be_created_the_owner_is_told(comprador_dentro, mon
     apuntarlo en un registro.
     """
 
-    monkeypatch.setattr(cr, "create_telegram_invite_link", lambda *a, **k: None)
-    monkeypatch.setattr(cr, "get_group_owner_user_id", lambda gid: 555)
-    monkeypatch.setattr(cr, "revoke_telegram_invite_link", lambda *a, **k: True)
+    monkeypatch.setattr(mc, "create_telegram_invite_link", lambda *a, **k: None)
+    monkeypatch.setattr(mc, "get_group_owner_user_id", lambda gid: 555)
 
     query, context = FakeQuery(), FakeContext()
 
     import asyncio
 
     asyncio.run(
-        cr.report_access_link_unavailable(
+        mc.report_access_link_unavailable(
             context, query, 7101, 71, "VIP Fitness", -1071, "grupo"
         )
     )
@@ -238,14 +238,14 @@ def test_a_broken_telegram_does_not_break_the_screen(comprador_dentro, monkeypat
     def owner_roto(gid):
         raise RuntimeError("base de datos caída")
 
-    monkeypatch.setattr(cr, "get_group_owner_user_id", owner_roto)
+    monkeypatch.setattr(mc, "get_group_owner_user_id", owner_roto)
 
     query, context = FakeQuery(), FakeContext()
 
     import asyncio
 
     asyncio.run(
-        cr.report_access_link_unavailable(
+        mc.report_access_link_unavailable(
             context, query, 7101, 71, "VIP Fitness", -1071, "grupo"
         )
     )
