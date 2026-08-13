@@ -227,25 +227,31 @@ def test_no_purchase_button_is_dead():
 # LA PANTALLA DEL ENLACE
 # =========================
 
+def _fuente_router_y_tramos():
+    """La pantalla vive en mysub_callbacks desde la fase 7 del troceo: se mira
+    la unión del router y todos los módulos extraídos."""
+
+    import pathlib
+
+    raiz = pathlib.Path(__import__("callback_router").__file__).parent
+
+    return "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in [raiz / "callback_router.py", *sorted(raiz.glob("*_callbacks.py"))]
+    )
+
+
 def test_the_access_screen_lets_them_ask_for_another_link():
     """
     Antes, si el enlace caducaba, había que volver atrás y entrar otra vez en la
     comunidad. Dos toques de más justo cuando alguien no puede entrar.
     """
 
-    router = open(
-        __import__("callback_router").__file__, encoding="utf-8"
-    ).read()
-
-    assert "🔄 Enviarme otro enlace" in router
+    assert "🔄 Enviarme otro enlace" in _fuente_router_y_tramos()
 
 
 def test_the_access_screen_no_longer_hardcodes_three_minutes():
-    router = open(
-        __import__("callback_router").__file__, encoding="utf-8"
-    ).read()
-
-    assert "expirará en 3 minutos" not in router, (
+    assert "expirará en 3 minutos" not in _fuente_router_y_tramos(), (
         "vuelve a anunciarse una caducidad fija que ya no es la real"
     )
 

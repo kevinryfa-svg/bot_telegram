@@ -31,10 +31,24 @@ from user_activity_logger import log_user_event_by_ids
 # =========================
 # El import va dentro de la función porque callback_router importa este
 # módulo: arriba sería circular.
-
-def build_customer_satisfaction_delivery_status_text(*args, **kwargs):
-    from callback_router import build_customer_satisfaction_delivery_status_text as impl
-    return impl(*args, **kwargs)
+#
+# ESTOS DIEZ ya no están en el router: la fase 7 los movió a
+# owner_satisfaction_callbacks (sus últimos usos del router se fueron con
+# ese tramo). Se importan directo — ese módulo no importa el router a nivel
+# de módulo, así que no hay ciclo. Los envoltorios diferidos anteriores
+# apuntaban a nombres que ya no existen: 10 botones muertos al pulsarlos.
+from owner_satisfaction_callbacks import (
+    build_customer_satisfaction_delivery_status_text,
+    build_customer_satisfaction_targeting,
+    create_customer_satisfaction_survey,
+    fetch_customer_satisfaction_survey,
+    get_customer_satisfaction_audience_label,
+    mark_customer_satisfaction_delivery_failed,
+    mark_customer_satisfaction_delivery_skipped,
+    mark_customer_satisfaction_survey_sending,
+    reserve_customer_satisfaction_delivery,
+    update_customer_satisfaction_sent_counts,
+)
 
 
 def build_customer_satisfaction_panel_keyboard(*args, **kwargs):
@@ -42,53 +56,8 @@ def build_customer_satisfaction_panel_keyboard(*args, **kwargs):
     return impl(*args, **kwargs)
 
 
-def build_customer_satisfaction_targeting(*args, **kwargs):
-    from callback_router import build_customer_satisfaction_targeting as impl
-    return impl(*args, **kwargs)
-
-
-def create_customer_satisfaction_survey(*args, **kwargs):
-    from callback_router import create_customer_satisfaction_survey as impl
-    return impl(*args, **kwargs)
-
-
 def extract_commercial_request_id(*args, **kwargs):
     from callback_router import extract_commercial_request_id as impl
-    return impl(*args, **kwargs)
-
-
-def fetch_customer_satisfaction_survey(*args, **kwargs):
-    from callback_router import fetch_customer_satisfaction_survey as impl
-    return impl(*args, **kwargs)
-
-
-def get_customer_satisfaction_audience_label(*args, **kwargs):
-    from callback_router import get_customer_satisfaction_audience_label as impl
-    return impl(*args, **kwargs)
-
-
-def mark_customer_satisfaction_delivery_failed(*args, **kwargs):
-    from callback_router import mark_customer_satisfaction_delivery_failed as impl
-    return impl(*args, **kwargs)
-
-
-def mark_customer_satisfaction_delivery_skipped(*args, **kwargs):
-    from callback_router import mark_customer_satisfaction_delivery_skipped as impl
-    return impl(*args, **kwargs)
-
-
-def mark_customer_satisfaction_survey_sending(*args, **kwargs):
-    from callback_router import mark_customer_satisfaction_survey_sending as impl
-    return impl(*args, **kwargs)
-
-
-def reserve_customer_satisfaction_delivery(*args, **kwargs):
-    from callback_router import reserve_customer_satisfaction_delivery as impl
-    return impl(*args, **kwargs)
-
-
-def update_customer_satisfaction_sent_counts(*args, **kwargs):
-    from callback_router import update_customer_satisfaction_sent_counts as impl
     return impl(*args, **kwargs)
 
 
