@@ -138,14 +138,22 @@ def test_the_bulk_resend_tells_people_how_long_they_have():
     evita que se deje para luego creyendo que caduca en minutos.
     """
 
-    import callback_router as cr
+    # El reenvío masivo vive en admin_resend_callbacks desde la fase 10 del
+    # troceo, y build_link_validity_line se mudó con él.
+    import admin_resend_callbacks as arc
 
-    linea = cr.build_link_validity_line()
+    linea = arc.build_link_validity_line()
 
     assert "24" in linea or "hora" in linea.lower()
     assert "un solo uso" in linea
 
-    source = open("callback_router.py", encoding="utf-8").read()
+    import pathlib
+
+    raiz = pathlib.Path(arc.__file__).parent
+    source = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in [raiz / "callback_router.py", *sorted(raiz.glob("*_callbacks.py"))]
+    )
 
     assert "🔗 Nuevo acceso VIP:\\n{link}" not in source, (
         "el reenvío masivo sigue mandando el enlace a secas"
@@ -158,9 +166,9 @@ def test_the_validity_line_is_translated():
         86400, "en"
     )
 
-    import callback_router as cr
+    import admin_resend_callbacks as arc
 
-    assert cr.build_link_validity_line("en") != cr.build_link_validity_line("es")
+    assert arc.build_link_validity_line("en") != arc.build_link_validity_line("es")
 
 
 # =========================
