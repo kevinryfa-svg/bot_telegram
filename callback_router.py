@@ -336,6 +336,38 @@ from owner_group_callbacks import (
     NOT_HANDLED as OWNER_GROUP_NOT_HANDLED,
     handle_owner_group_callbacks
 )
+from owner_support_callbacks import (
+    NOT_HANDLED as OWNER_SUPPORT_NOT_HANDLED,
+    handle_owner_support_callbacks
+)
+from group_user_callbacks import (
+    NOT_HANDLED as GROUP_USER_NOT_HANDLED,
+    handle_group_user_callbacks
+)
+from edit_group_callbacks import (
+    ADMIN_PERMISSION_COLUMNS,
+    NOT_HANDLED as EDIT_GROUP_NOT_HANDLED,
+    handle_edit_group_callbacks
+)
+from community_links_callbacks import (
+    NOT_HANDLED as COMMUNITY_LINKS_NOT_HANDLED,
+    handle_community_links_callbacks
+)
+from add_group_callbacks import (
+    GROUP_ADMIN_PERMISSION_OPTIONS,
+    OWNER_PAYMENT_PROVIDER_STRIPE,
+    NOT_HANDLED as ADD_GROUP_NOT_HANDLED,
+    handle_add_group_callbacks
+)
+from group_admin_callbacks import (
+    NOT_HANDLED as GROUP_ADMIN_NOT_HANDLED,
+    handle_group_admin_callbacks
+)
+from owner_panel_callbacks import (
+    OWNER_PANEL_SECTIONS,
+    NOT_HANDLED as OWNER_PANEL_NOT_HANDLED,
+    handle_owner_panel_callbacks
+)
 from owner_payment_callbacks import (
     OWNER_PAYMENT_CALLBACK_PREFIXES,
     handle_owner_payment_callbacks
@@ -403,7 +435,6 @@ revoke_link = None
 
 get_group_id = None
 
-OWNER_PAYMENT_PROVIDER_STRIPE = PLAN_PAYMENT_PROVIDER_STRIPE
 # OWNER_PAYMENT_PROVIDER_CHANGENOW/GUARDARIAN viven en
 # admin_payment_provider_callbacks (tramo extraído) y se importan arriba.
 # Redefinirlas aquí sombreaba el import: mismo valor hoy, bug latente mañana.
@@ -463,32 +494,6 @@ def get_group_payment_provider_status(provider_statuses, provider):
     return None
 
 
-def is_group_provider_configurable_for_plan(provider_status):
-
-    if not provider_status:
-
-        return False
-
-    provider = provider_status.get("provider")
-
-    if provider == OWNER_PAYMENT_PROVIDER_STRIPE:
-
-        return provider_status.get("global_enabled") is True
-
-    if provider in (
-        OWNER_PAYMENT_PROVIDER_PAYPAL,
-        OWNER_PAYMENT_PROVIDER_REVOLUT,
-        OWNER_PAYMENT_PROVIDER_CHANGENOW,
-        OWNER_PAYMENT_PROVIDER_GUARDARIAN
-    ):
-
-        return (
-            provider_status.get("group_enabled") is True
-            and provider_status.get("status") == "active"
-            and provider_status.get("has_encrypted_config") is True
-        )
-
-    return False
 
 
 def is_group_provider_globally_disabled(provider_status):
@@ -496,91 +501,10 @@ def is_group_provider_globally_disabled(provider_status):
     return bool(provider_status and provider_status.get("global_enabled") is not True)
 
 
-def get_group_plan_configurable_payment_providers(group_id):
-
-    provider_statuses = list_group_payment_provider_statuses(group_id)
-    stripe_status = get_group_payment_provider_status(
-        provider_statuses,
-        OWNER_PAYMENT_PROVIDER_STRIPE
-    )
-    paypal_status = get_group_payment_provider_status(
-        provider_statuses,
-        OWNER_PAYMENT_PROVIDER_PAYPAL
-    )
-    providers = []
 
 
-    for provider in (
-        OWNER_PAYMENT_PROVIDER_STRIPE,
-        OWNER_PAYMENT_PROVIDER_PAYPAL,
-        OWNER_PAYMENT_PROVIDER_REVOLUT,
-        OWNER_PAYMENT_PROVIDER_CHANGENOW,
-        OWNER_PAYMENT_PROVIDER_GUARDARIAN
-    ):
-
-        provider_status = get_group_payment_provider_status(
-            provider_statuses,
-            provider
-        )
-
-        if is_group_provider_configurable_for_plan(provider_status):
-
-            providers.append(provider)
 
 
-    log_event(
-        "plan_provider_detection",
-        category="payment",
-        severity="info",
-        scope="group",
-        group_id=group_id,
-        message="Detección de proveedores configurables para creación de planes.",
-        metadata={
-            "group_id": group_id,
-            "stripe_configurable": is_group_provider_configurable_for_plan(stripe_status),
-            "stripe_checkout_available": is_stripe_payments_enabled(),
-            "paypal_configurable": is_group_provider_configurable_for_plan(paypal_status),
-            "paypal_checkout_available": is_paypal_group_checkout_available(group_id),
-            "providers_for_plan_creation": providers
-        }
-    )
-
-    return providers
-
-
-def build_plan_provider_global_warning(group_id, provider):
-
-    provider_status = get_group_payment_provider_status(
-        list_group_payment_provider_statuses(group_id),
-        provider
-    )
-
-    if provider == OWNER_PAYMENT_PROVIDER_PAYPAL and is_group_provider_globally_disabled(provider_status):
-
-        return (
-            "⚠️ PayPal está configurado para esta comunidad, pero el pago PayPal está "
-            "deshabilitado globalmente. Podrás crear el plan, pero los clientes no podrán "
-            "pagarlo hasta que se active ENABLE_PAYPAL_PAYMENTS.\n\n"
-        )
-
-    return ""
-
-
-def build_plan_provider_selection_keyboard(providers):
-
-    keyboard = []
-
-    for provider in providers:
-
-        keyboard.append([InlineKeyboardButton(
-            format_plan_payment_provider(provider),
-            callback_data=f"add_group_plan_provider_{provider}"
-        )])
-
-
-    keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="edit_group_plans")])
-
-    return InlineKeyboardMarkup(keyboard)
 
 
 async def delete_query_message_safely(query):
@@ -6015,27 +5939,6 @@ def save_group_location_verification(group_id, user_id, resolved_region, status)
         conn.commit()
 
 
-ADMIN_PERMISSION_COLUMNS = [
-    "can_manage_users",
-    "can_kick_users",
-    "can_ban_users",
-    "can_unban_users",
-    "can_warn_users",
-    "can_reset_warnings",
-    "can_manage_plans",
-    "can_manage_codes",
-    "can_manage_groups",
-    "can_manage_payments",
-    "can_manage_admins",
-    "can_view_users",
-    "can_view_payments",
-    "can_view_stats",
-    "can_view_logs",
-    "can_edit_group_texts",
-    "can_edit_marketplace_preview",
-    "can_respond_group_support",
-    "can_resend_links"
-]
 
 
 def get_admin_permissions(user_id):
@@ -8953,22 +8856,6 @@ def user_has_group_permission_any(user_id, group_id, permissions):
     )
 
 
-GROUP_ADMIN_PERMISSION_OPTIONS = [
-    ("view_users", "Ver usuarios", "can_view_users"),
-    ("manage_users", "Gestionar usuarios", "can_manage_users"),
-    ("kick_users", "Expulsar usuarios", "can_kick_users"),
-    ("ban_users", "Banear usuarios", "can_ban_users"),
-    ("unban_users", "Desbanear usuarios", "can_unban_users"),
-    ("warn_users", "Dar warnings", "can_warn_users"),
-    ("reset_warnings", "Resetear warnings", "can_reset_warnings"),
-    ("manage_links", "Gestionar enlaces", "can_resend_links"),
-    ("view_stats", "Ver estadísticas", "can_view_stats"),
-    ("manage_plans", "Gestionar planes", "can_manage_plans"),
-    ("edit_texts", "Editar textos del grupo", "can_edit_group_texts"),
-    ("edit_preview", "Editar preview marketplace", "can_edit_marketplace_preview"),
-    ("support", "Responder soporte del grupo", "can_respond_group_support"),
-    ("view_logs", "Ver logs del grupo", "can_view_logs")
-]
 
 
 GROUP_ADMIN_PERMISSION_BY_KEY = {
@@ -9171,73 +9058,8 @@ def clear_group_user_promo_wizard(context, keep_group=True):
             context.user_data.pop(key, None)
 
 
-def fetch_group_user_promo_codes(group_id, active_only=False):
-
-    with conn.cursor() as cur:
-
-        active_filter = ""
 
 
-        if active_only:
-
-            active_filter = """
-                AND is_active=TRUE
-                AND (
-                    expires_at IS NULL
-                    OR expires_at > NOW()
-                )
-                AND (
-                    max_uses=0
-                    OR used_count < max_uses
-                )
-            """
-
-
-        cur.execute(f"""
-
-            SELECT id,
-                   code,
-                   duration_days,
-                   is_permanent,
-                   max_uses,
-                   used_count,
-                   is_active,
-                   expires_at,
-                   created_at
-            FROM group_user_promo_codes
-            WHERE group_id=%s
-            {active_filter}
-            ORDER BY created_at DESC
-            LIMIT 50
-
-        """, (group_id,))
-
-        return cur.fetchall()
-
-
-def fetch_group_user_promo_usage(group_id, limit=30):
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            SELECT r.redeemed_at,
-                   r.user_id,
-                   c.code,
-                   r.expiration
-            FROM group_user_promo_redemptions r
-            JOIN group_user_promo_codes c
-            ON c.id = r.code_id
-            WHERE r.group_id=%s
-            ORDER BY r.redeemed_at DESC
-            LIMIT %s
-
-        """, (
-            group_id,
-            limit
-        ))
-
-        return cur.fetchall()
 
 
 def format_group_user_promo_duration(duration_days, is_permanent):
@@ -9250,14 +9072,6 @@ def format_group_user_promo_duration(duration_days, is_permanent):
     return f"{duration_days} día(s)"
 
 
-def format_group_user_promo_uses(max_uses, used_count):
-
-    if max_uses == 0:
-
-        return f"{used_count}/ilimitado"
-
-
-    return f"{used_count}/{max_uses}"
 
 
 def build_group_user_code_callback(callback_data, group_id=None):
@@ -9281,18 +9095,6 @@ def build_group_user_codes_keyboard(group_id=None):
     ])
 
 
-def build_group_user_code_duration_keyboard(group_id=None):
-
-    suffix = f"_{group_id}" if group_id else ""
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("1 día", callback_data=f"group_user_code_duration{suffix}_1")],
-        [InlineKeyboardButton("7 días", callback_data=f"group_user_code_duration{suffix}_7")],
-        [InlineKeyboardButton("30 días", callback_data=f"group_user_code_duration{suffix}_30")],
-        [InlineKeyboardButton("Permanente", callback_data=f"group_user_code_duration{suffix}_permanent")],
-        [InlineKeyboardButton("Personalizado", callback_data=f"group_user_code_duration{suffix}_custom")],
-        [InlineKeyboardButton("⬅️ Volver", callback_data=build_group_user_code_callback("group_user_codes_panel", group_id))]
-    ])
 
 
 def build_group_user_code_uses_keyboard(group_id=None):
@@ -9308,37 +9110,8 @@ def build_group_user_code_uses_keyboard(group_id=None):
     ])
 
 
-def build_group_user_code_kind_keyboard(group_id=None):
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Código automático", callback_data=build_group_user_code_callback("group_user_code_auto", group_id))],
-        [InlineKeyboardButton("Código manual", callback_data=build_group_user_code_callback("group_user_code_manual", group_id))],
-        [InlineKeyboardButton("⬅️ Volver", callback_data=build_group_user_code_callback("group_user_code_create", group_id))]
-    ])
 
 
-def build_group_user_code_deactivate_keyboard(rows, group_id=None):
-
-    keyboard = []
-
-
-    for code_id, code, duration_days, is_permanent, max_uses, used_count, _is_active, _expires_at, _created_at in rows:
-
-        keyboard.append([
-            InlineKeyboardButton(
-                f"{code} · {format_group_user_promo_duration(duration_days, is_permanent)} · {format_group_user_promo_uses(max_uses, used_count)}",
-                callback_data=(
-                    f"group_user_code_deactivate_{group_id}_{code_id}"
-                    if group_id
-                    else f"group_user_code_deactivate_{code_id}"
-                )
-            )
-        ])
-
-
-    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=build_group_user_code_callback("group_user_codes_panel", group_id))])
-
-    return InlineKeyboardMarkup(keyboard)
 
 
 def create_group_user_promo_code(
@@ -9525,288 +9298,6 @@ def validate_group_user_promo_row(row):
     return True, None
 
 
-async def grant_group_user_promo_access(context, chat_id, telegram_user, promo_row):
-
-    (
-        code_id,
-        group_id,
-        telegram_group_id,
-        owner_user_id,
-        code,
-        duration_days,
-        is_permanent,
-        _max_uses,
-        _used_count,
-        _is_active,
-        _expires_at,
-        group_name,
-        community_type,
-        _group_is_active
-    ) = promo_row
-
-    community_type = normalize_community_type(community_type)
-    community_kind = format_community_kind(community_type)
-
-    user_id = telegram_user.id
-
-
-    if not is_permanent and not duration_days:
-
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="❌ Este código no tiene una duración válida."
-        )
-
-        return
-
-
-    expiration = None
-
-
-    if not is_permanent:
-
-        expiration = datetime.now() + timedelta(days=int(duration_days))
-
-
-    link = create_telegram_invite_link(
-        TOKEN,
-        telegram_group_id,
-        expire_seconds=ACCESS_LINK_EXPIRE_SECONDS,
-        member_limit=1,
-        community_type=community_type
-    )
-
-
-    if not link:
-
-        # Quien canjea un código es un cliente, no el administrador del grupo:
-        # pedirle que revise permisos ajenos no le sirve de nada.
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=t(
-                "access.link_unavailable",
-                load_user_language(user_id),
-                group=group_name or community_kind
-            ),
-            reply_markup=build_group_recovery_keyboard(group_id)
-        )
-
-        return
-
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            UPDATE group_user_promo_codes
-            SET used_count=used_count + 1
-            WHERE id=%s
-            AND is_active=TRUE
-            AND (
-                expires_at IS NULL
-                OR expires_at > NOW()
-            )
-            AND (
-                max_uses=0
-                OR used_count < max_uses
-            )
-            RETURNING used_count
-
-        """, (code_id,))
-
-        code_update = cur.fetchone()
-
-
-        if not code_update:
-
-            conn.rollback()
-
-            try:
-
-                revoke_telegram_invite_link(
-                    TOKEN,
-                    telegram_group_id,
-                    link
-                )
-
-            except Exception as e:
-
-                print("Error revocando link de código no disponible:", e)
-
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="❌ Este código ya no está disponible."
-            )
-
-            return
-
-
-        cur.execute("""
-
-            DELETE FROM invite_links
-            WHERE user_id=%s
-            AND (
-                group_id=%s
-                OR telegram_group_id=%s
-                OR group_id=%s
-            )
-
-        """, (
-            user_id,
-            group_id,
-            telegram_group_id,
-            telegram_group_id
-        ))
-
-        cur.execute("""
-
-            INSERT INTO invite_links
-            (user_id, group_id, telegram_group_id, invite_link, is_active)
-            VALUES (%s, %s, %s, %s, TRUE)
-
-        """, (
-            user_id,
-            group_id,
-            telegram_group_id,
-            link
-        ))
-
-        cur.execute("""
-
-            INSERT INTO users
-            (
-                user_id,
-                group_id,
-                username,
-                first_name,
-                expiration,
-                subscription_active,
-                last_invite_link
-            )
-            VALUES (%s, %s, %s, %s, %s, TRUE, %s)
-            ON CONFLICT (user_id, group_id)
-            DO UPDATE SET
-                username=EXCLUDED.username,
-                first_name=EXCLUDED.first_name,
-                expiration=EXCLUDED.expiration,
-                subscription_active=TRUE,
-                last_invite_link=EXCLUDED.last_invite_link
-
-        """, (
-            user_id,
-            group_id,
-            telegram_user.username,
-            telegram_user.first_name,
-            expiration,
-            link
-        ))
-
-        cur.execute("""
-
-            INSERT INTO group_user_promo_redemptions
-            (
-                code_id,
-                group_id,
-                user_id,
-                invite_link,
-                expiration
-            )
-            VALUES (%s, %s, %s, %s, %s)
-
-        """, (
-            code_id,
-            group_id,
-            user_id,
-            link,
-            expiration
-        ))
-
-        conn.commit()
-
-
-    log_event(
-        "group_user_promo_redeemed",
-        category="access",
-        severity="info",
-        scope="group",
-        group_id=group_id,
-        telegram_group_id=telegram_group_id,
-        actor_user_id=user_id,
-        target_user_id=owner_user_id,
-        message="Código promocional de grupo canjeado.",
-        metadata={
-            "code_id": code_id,
-            "code": code,
-            "is_permanent": is_permanent,
-            "duration_days": duration_days
-        }
-    )
-
-    await send_guardian_event_log(
-        context,
-        group_id,
-        "guardian_group_code_redeemed",
-        "Código promocional de grupo canjeado.",
-        telegram_group_id=telegram_group_id,
-        severity="info",
-        actor_user_id=user_id,
-        target_user_id=user_id,
-        metadata={
-            "user_id": user_id,
-            "code_id": code_id,
-            "is_permanent": is_permanent,
-            "duration_days": duration_days,
-            "expiration": expiration
-        }
-    )
-
-    log_user_event_by_ids(
-        user_id,
-        "code_redeemed",
-        event_key="group_user_promo_code",
-        username=telegram_user.username,
-        first_name=telegram_user.first_name,
-        group_id=group_id,
-        metadata={
-            "code_id": code_id,
-            "duration_days": duration_days,
-            "is_permanent": is_permanent
-        }
-    )
-
-
-    try:
-
-        await context.bot.send_message(
-            chat_id=owner_user_id,
-            text=(
-                "🎟 Código de tu grupo canjeado\n\n"
-                f"Grupo: {group_name or group_id}\n"
-                f"Usuario: {user_id}\n"
-                f"Código: {code}"
-            )
-        )
-
-    except Exception as e:
-
-        print("Error avisando al owner del canje de código:", e)
-
-
-    expiration_text = "permanente" if expiration is None else expiration.strftime("%Y-%m-%d %H:%M")
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=(
-            "✅ Código canjeado correctamente.\n\n"
-            f"Comunidad: {group_name or group_id}\n"
-            f"Acceso: {expiration_text}\n\n"
-            "Este enlace es personal y de un solo uso.\n"
-            "No lo compartas.\n\n"
-            f"{link}"
-        ),
-        reply_markup=ReplyKeyboardRemove()
-    )
 
 
 async def receive_group_user_promo_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11076,31 +10567,8 @@ async def receive_owner_payment_provider_text(update: Update, context: ContextTy
     )
 
 
-def fetch_group_admin_manageable_groups(user_id):
-
-    return fetch_admin_groups_for_permissions(
-        user_id,
-        ["can_manage_admins"]
-    )
 
 
-def fetch_group_admin_context_groups(context, user_id):
-
-    focused_group_id = context.user_data.get("selected_owner_group")
-
-
-    if focused_group_id and can_manage_group_admins(user_id, focused_group_id):
-
-        return [
-            (
-                focused_group_id,
-                fetch_group_name(focused_group_id),
-                None
-            )
-        ]
-
-
-    return fetch_group_admin_manageable_groups(user_id)
 
 
 def build_group_admin_error_keyboard():
@@ -11149,55 +10617,8 @@ def build_group_admin_panel_keyboard():
     ])
 
 
-def build_group_admin_group_select_keyboard(groups, callback_prefix, back_callback="group_admin_panel"):
-
-    keyboard = []
 
 
-    for group_id, name, _telegram_group_id in groups:
-
-        keyboard.append([InlineKeyboardButton(
-            name or f"Grupo {group_id}",
-            callback_data=f"{callback_prefix}{group_id}"
-        )])
-
-
-    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=back_callback)])
-
-    return InlineKeyboardMarkup(keyboard)
-
-
-def fetch_group_admins(group_id):
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            SELECT user_id,
-                   role,
-                   can_view_users,
-                   can_manage_users,
-                   can_kick_users,
-                   can_ban_users,
-                   can_unban_users,
-                   can_warn_users,
-                   can_reset_warnings,
-                   can_resend_links,
-                   can_view_stats,
-                   can_manage_plans,
-                   can_edit_group_texts,
-                   can_edit_marketplace_preview,
-                   can_respond_group_support,
-                   can_view_logs,
-                   is_active
-            FROM admins
-            WHERE group_id=%s
-            AND is_super_admin=FALSE
-            ORDER BY role DESC, user_id ASC
-
-        """, (group_id,))
-
-        return cur.fetchall()
 
 
 def fetch_group_admin_permissions(group_id, target_user_id):
@@ -11386,26 +10807,6 @@ def save_group_admin_permissions(group_id, target_user_id, permissions):
         """, values)
 
 
-def disable_group_admin(group_id, target_user_id):
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            UPDATE admins
-            SET is_active=FALSE
-            WHERE group_id=%s
-            AND user_id=%s
-            AND is_super_admin=FALSE
-            AND COALESCE(role, '') != 'GROUP_OWNER'
-            RETURNING id
-
-        """, (
-            group_id,
-            target_user_id
-        ))
-
-        return cur.fetchone() is not None
 
 
 def fetch_group_name(group_id):
@@ -11427,79 +10828,8 @@ def fetch_group_name(group_id):
     return row[0] if row else f"Grupo {group_id}"
 
 
-def build_group_admins_text(group_id):
-
-    rows = fetch_group_admins(group_id)
-    group_name = fetch_group_name(group_id)
 
 
-    if not rows:
-
-        return f"👥 Admins de mi grupo\n\nGrupo: {group_name}\n\nNo hay admins activos."
-
-
-    lines = [
-        f"👥 Admins de mi grupo\n\nGrupo: {group_name}"
-    ]
-
-
-    for row in rows:
-
-        target_user_id = row[0]
-        role = row[1] or "GROUP_ADMIN"
-        is_active = row[-1] is True
-        permissions = {
-            permission: row[index + 2] is True
-            for index, (_key, _label, permission) in enumerate(GROUP_ADMIN_PERMISSION_OPTIONS)
-        }
-        status = "activo" if is_active else "inactivo"
-        lines.append(
-            "\n"
-            f"Usuario: {target_user_id}\n"
-            f"Rol: {role}\n"
-            f"Estado: {status}\n"
-            f"{format_group_admin_permission_list(permissions)}"
-        )
-
-
-    return "\n".join(lines)
-
-
-def build_group_admin_user_select_keyboard(group_id, callback_prefix, include_owner=False):
-
-    rows = fetch_group_admins(group_id)
-    keyboard = []
-
-
-    for row in rows:
-
-        target_user_id = row[0]
-        role = row[1] or "GROUP_ADMIN"
-        is_active = row[-1] is True
-
-
-        if not include_owner and role == "GROUP_OWNER":
-
-            continue
-
-
-        if not is_active:
-
-            continue
-
-
-        keyboard.append([InlineKeyboardButton(
-            f"{target_user_id} — {role}",
-            callback_data=f"{callback_prefix}{group_id}_{target_user_id}"
-        )])
-
-
-    keyboard.append([InlineKeyboardButton(
-        "⬅️ Volver",
-        callback_data="group_admin_panel"
-    )])
-
-    return InlineKeyboardMarkup(keyboard)
 
 
 def fetch_admin_groups_for_permissions(user_id, permissions):
@@ -11548,84 +10878,8 @@ def fetch_admin_groups_for_permissions(user_id, permissions):
         raise
 
 
-OWNER_QUICK_STATUS_PERMISSIONS = {
-    "can_view_users": "ver usuarios",
-    "can_manage_users": "gestionar usuarios",
-    "can_kick_users": "expulsar usuarios",
-    "can_ban_users": "banear usuarios",
-    "can_unban_users": "desbanear usuarios",
-    "can_warn_users": "gestionar warnings",
-    "can_reset_warnings": "reiniciar warnings",
-    "can_resend_links": "reenviar enlaces",
-    "can_recover_access": "recuperar accesos",
-    "can_manage_codes": "gestionar códigos",
-    "can_manage_plans": "gestionar planes",
-    "can_manage_payments": "gestionar pagos",
-    "can_view_payments": "ver pagos",
-    "can_manage_groups": "configurar comunidad",
-    "can_manage_admins": "gestionar admins",
-    "can_view_logs": "ver logs",
-    "can_edit_group_texts": "editar textos",
-    "can_edit_marketplace_preview": "editar marketplace",
-}
 
 
-def get_group_permission_summary(user_id, group_id):
-
-    if is_super_admin(user_id):
-
-        return "Puedes gestionar: todo el panel de esta comunidad."
-
-
-    try:
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT role, """ + ", ".join(ADMIN_PERMISSION_COLUMNS) + """
-                FROM admins
-                WHERE user_id=%s
-                AND group_id=%s
-                AND is_active=TRUE
-                LIMIT 1
-
-            """, (user_id, group_id))
-
-            row = cur.fetchone()
-
-    except Exception as e:
-
-        print("Error cargando permisos del grupo:", e)
-
-        return "Puedes gestionar: permisos no disponibles ahora."
-
-
-    if not row:
-
-        return "Puedes gestionar: ninguna sección de esta comunidad."
-
-
-    role = row[0]
-
-    if role == "GROUP_OWNER":
-
-        return "Puedes gestionar: todo el panel owner de esta comunidad."
-
-
-    granted = [
-        OWNER_QUICK_STATUS_PERMISSIONS[column]
-        for index, column in enumerate(ADMIN_PERMISSION_COLUMNS, start=1)
-        if row[index] and column in OWNER_QUICK_STATUS_PERMISSIONS
-    ]
-
-
-    if not granted:
-
-        return "Puedes gestionar: permisos limitados sin accesos rápidos activos."
-
-
-    return "Puedes gestionar: " + ", ".join(granted[:8]) + ("..." if len(granted) > 8 else "") + "."
 
 
 def fetch_owner_group_quick_status(group_id):
@@ -11774,48 +11028,6 @@ def fetch_owner_group_quick_status(group_id):
     return status
 
 
-def build_owner_quick_status_text(user_id, group_id):
-
-    status = fetch_owner_group_quick_status(group_id)
-    access_type = "Gratis" if status["is_free_group"] else "Pago"
-    marketplace_text = "ON" if status["is_marketplace_visible"] else "OFF"
-    main_menu_text = "ON" if status["is_main_menu_visible"] else "OFF"
-    free_link_text = "Configurado" if status["free_invite_link"] else "Pendiente"
-    community_kind_cap = format_community_kind_capitalized(status.get("community_type"))
-    backup_text = "Activo" if status["backup_active"] else "No activo"
-    errors_text = "Sin errores críticos recientes"
-
-
-    if status["critical_errors"]:
-
-        errors_text = "\n".join(
-            f"- {event_type or 'error'}: {message or 'sin detalle'}"
-            for event_type, message in status["critical_errors"]
-        )
-
-
-    return (
-        "✅ Estado rápido de esta comunidad\n\n"
-        f"Comunidad: {status['name']}\n"
-        f"Tipo: {community_kind_cap}\n"
-        f"Tipo de acceso: {access_type}\n"
-        f"Marketplace: {marketplace_text}\n"
-        f"Menú principal: {main_menu_text}\n"
-        f"Link gratuito: {free_link_text}\n"
-        f"Usuarios activos: {status['active_users']}\n"
-        f"Planes activos: {status['active_plans']}\n"
-        f"Códigos activos: {status['active_codes']}\n"
-        f"Admins activos: {status['active_admins']}\n"
-        f"Backup: {backup_text}\n"
-        # Sin esta línea, el propietario no tenía forma de ver desde el panel que
-        # su comunidad no puede dar acceso: se enteraba por el aviso, y si lo
-        # había borrado, por nada.
-        f"Entrega de accesos: {describe_group_delivery(group_id)}\n"
-        f"Errores críticos recientes: {errors_text}\n\n"
-        f"{get_group_permission_summary(user_id, group_id)}\n\n"
-        "🏪 Panel de comunidad\n"
-        "Elige el apartado que quieres gestionar."
-    )
 
 
 def build_owner_setup_assistant_text(group_id):
@@ -13126,43 +12338,6 @@ def log_owner_backup_addon_gate(event_name, user_id, owner_user_id, group_id, ac
 
 
 
-def build_owner_guardian_panel_text(group_id, settings=None):
-
-    group = fetch_group_basic_info(group_id)
-    group_name = group[1] if group else f"Grupo {group_id}"
-    telegram_group_id = group[2] if group else None
-    settings = settings or fetch_guardian_settings(group_id)
-
-    if not settings:
-
-        settings = ensure_guardian_settings(
-            group_id,
-            owner_user_id=get_group_owner_user_id(group_id),
-            telegram_group_id=telegram_group_id
-        )
-
-
-    log_channel = (
-        f"{settings.get('log_channel_title') or settings.get('log_channel_id')}"
-        if settings and settings.get("log_channel_id")
-        else "No conectado"
-    )
-    enabled_text = "Configurado" if settings and settings.get("is_enabled") else "Pendiente"
-    action_mode = settings.get("action_mode") if settings else "log_only"
-
-    return (
-        "🛡 Guardian\n\n"
-        f"Comunidad: {group_name}\n"
-        f"Telegram group id: {telegram_group_id or '-'}\n"
-        f"Estado: {enabled_text}\n"
-        f"Canal de logs: {log_channel}\n"
-        f"Modo: {action_mode or 'log_only'}\n\n"
-        "Base técnica activa:\n"
-        "- Canal de logs Guardian.\n"
-        "- Ajustes iniciales anti-links, palabras bloqueadas, warnings y modo noche.\n"
-        "- Registro interno de eventos.\n\n"
-        "Seguridad: en esta fase Guardian está en modo solo registro. No expulsa, no banea, no borra mensajes y no modifica accesos."
-    )
 
 
 
@@ -14008,130 +13183,12 @@ def build_owner_section_keyboard(user_id, group_id, section):
     return InlineKeyboardMarkup(keyboard)
 
 
-OWNER_PANEL_SECTIONS = {
-    "owner_panel_users": (
-        "👥 Usuarios y accesos",
-        "Gestiona entradas, expulsiones, bans, warnings y recuperación de acceso.",
-        ["can_view_users", "can_manage_users", "can_kick_users", "can_ban_users", "can_unban_users", "can_warn_users", "can_reset_warnings", "can_resend_links", "can_recover_access"],
-        "users"
-    ),
-    "owner_panel_codes": (
-        "🎟 Códigos y promociones",
-        "Crea y revisa códigos de acceso exclusivos para esta comunidad.",
-        ["can_manage_codes"],
-        "codes"
-    ),
-    "owner_panel_payments": (
-        "💳 Planes y pagos del grupo",
-        "Gestiona planes y métodos de pago: Stripe, PayPal, Revolut, ChangeNOW, Guardarian y promociones.",
-        ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"],
-        "payments"
-    ),
-    "owner_panel_security": (
-        "🛡 Seguridad del grupo",
-        "Revisa protección de acceso, anti-intrusos, anti-links y ubicación permitida.",
-        ["can_manage_groups", "can_view_logs"],
-        "security"
-    ),
-    "owner_panel_marketplace": (
-        "🖼 Marketplace y preview",
-        "Configura visibilidad pública, ficha, previews, categoría y tags.",
-        ["can_manage_groups", "can_edit_group_texts", "can_edit_marketplace_preview"],
-        "marketplace"
-    ),
-    "owner_panel_admins": (
-        "👑 Administradores del grupo",
-        "Añade admins de grupo y ajusta sus permisos por comunidad.",
-        ["can_manage_admins"],
-        "admins"
-    ),
-    "owner_panel_logs": (
-        "📜 Logs y actividad del grupo",
-        "Consulta accesos, pagos, códigos, backups y errores de esta comunidad.",
-        ["can_view_logs"],
-        "logs"
-    ),
-    "owner_panel_support": (
-        "🛟 Solicitudes de soporte",
-        "Revisa el acceso al soporte de esta comunidad sin mezclar tickets globales.",
-        ["can_respond_group_support"],
-        "support"
-    ),
-    "owner_panel_satisfaction": (
-        "😊 Encuestas de comunidad",
-        "Envía encuestas solo a usuarios de esta comunidad sin duplicar completados.",
-        ["can_manage_groups", "can_view_logs"],
-        "satisfaction"
-    ),
-    "owner_panel_backup": (
-        "💾 Backups automáticos",
-        "Crea backups JSON manuales o automáticos de la configuración operativa de esta comunidad.",
-        ["can_manage_groups"],
-        "backup"
-    ),
-    "owner_panel_general": (
-        "⚙️ Configuración de la comunidad",
-        "Edita datos básicos, tipo de acceso y ajustes seguros de la comunidad.",
-        ["can_manage_groups", "can_edit_group_texts"],
-        "general"
-    )
-}
 
 
-OWNER_PANEL_ALLOWED_REPEATED_CALLBACKS = {
-    "public_back_start",
-    "admin_edit_group",
-    "edit_group_back",
-    "back_admin",
-    "back_owner",
-    "owner_panel_users",
-    "owner_panel_codes",
-    "owner_panel_payments",
-    "owner_panel_security",
-    "owner_panel_marketplace",
-    "owner_panel_admins",
-    "owner_panel_logs",
-    "owner_panel_support",
-    "owner_panel_satisfaction",
-    "owner_panel_backup",
-    "owner_panel_guardian",
-    "owner_panel_general",
-    "owner_addons_menu",
-    "owner_addons_active",
-    "owner_panel_commercial_config",
-    "edit_group_name",
-    "edit_group_preview",
-    "owner_panel_location_info",
-    "owner_panel_security_info",
-    "owner_panel_audit"
-}
 
 
-OWNER_PANEL_ALLOWED_REPEATED_PREFIXES = (
-    "owner_panel_help_",
-    "owner_group_logs_",
-    "owner_group_users_",
-    "community_users_sync_known_",
-    "owner_location_",
-    "owner_backup_",
-    "owner_guardian_"
-)
 
 
-def classify_owner_panel_repeated_callback(callback_data, placeholder_callbacks=None):
-
-    placeholder_callbacks = placeholder_callbacks or {}
-
-    if callback_data in OWNER_PANEL_ALLOWED_REPEATED_CALLBACKS:
-        return "allowed_navigation"
-
-    if any(callback_data.startswith(prefix) for prefix in OWNER_PANEL_ALLOWED_REPEATED_PREFIXES):
-        return "allowed_navigation"
-
-    if callback_data in placeholder_callbacks:
-        return "allowed_informational"
-
-    return "suspicious"
 
 
 def list_manageable_group_ids(user_id, permissions):
@@ -14342,42 +13399,6 @@ def set_group_location_rule(group_id, enabled=None, region_type=None, allowed_re
     return True
 
 
-def build_owner_security_text(group_id):
-
-    group = fetch_group_basic_info(group_id)
-    group_name = group[1] if group else f"Grupo {group_id}"
-    location_enabled, region_label = get_group_location_gate_display(group_id)
-    location_status = "Activada" if location_enabled else "Desactivada"
-
-    return (
-        "🛡 Seguridad del grupo\n\n"
-        f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
-        "Estado actual:\n"
-        "- Anti-intrusos: activo con validación de users e invite_links.\n"
-        "- Links no registrados: se bloquean desde el control de entrada.\n"
-        f"- Restricción por ubicación: {location_status}.\n"
-        f"- Región permitida: {region_label}.\n\n"
-        "Acciones disponibles ahora:\n"
-        "- Gestionar ubicación permitida.\n"
-        "- Revisar logs de accesos y bloqueos.\n"
-        "- Gestionar usuarios/warnings desde Usuarios y accesos.\n\n"
-        "Próximamente: interruptores separados para anti-links y políticas avanzadas. "
-        "No aparecen como botones porque todavía no existen como configuración independiente segura."
-    )
-
-
-def build_owner_security_keyboard(group_id):
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛡 Guardian", callback_data="owner_panel_guardian")],
-        [InlineKeyboardButton("📍 Gestionar ubicación", callback_data="owner_panel_location_info")],
-        [InlineKeyboardButton("📢 Grupos de publicidad", callback_data=f"owner_publicity_group_{group_id}")],
-        [InlineKeyboardButton("📜 Logs de accesos", callback_data=f"owner_group_logs_access_{group_id}")],
-        [InlineKeyboardButton("👥 Usuarios y accesos", callback_data="owner_panel_users")],
-        [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_security")],
-        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
-        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-    ])
 
 
 
@@ -14390,22 +13411,8 @@ def build_owner_security_keyboard(group_id):
 
 
 
-def build_owner_users_panel_text(group_id):
 
-    group = fetch_group_basic_info(group_id)
-    group_name = group[1] if group else f"Grupo {group_id}"
 
-    return (
-        "👥 Usuarios y accesos\n\n"
-        f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
-        "Desde aquí puedes revisar usuarios de esta comunidad y abrir acciones de acceso. "
-        "Las acciones usan el grupo seleccionado para evitar mezclar usuarios de otras comunidades.\n\n"
-        "Acciones disponibles según permisos:\n"
-        "- Ver usuarios de esta comunidad.\n"
-        "- Expulsar, banear o desbanear usuarios.\n"
-        "- Gestionar warnings si tu rol lo permite.\n"
-        "- Reenviar o recuperar enlaces de acceso."
-    )
 
 
 COMMUNITY_USERS_PAGE_SIZE = 6
@@ -16044,96 +15051,8 @@ def build_community_links_recover_menu_keyboard(group_id):
     ])
 
 
-def build_community_links_recover_user_page(group_id, page=0):
-
-    rows = [
-        row
-        for row in fetch_community_user_rows(group_id)
-        if row.get("is_active")
-    ]
-    per_page = 8
-    total = len(rows)
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    page = max(0, min(page, total_pages - 1))
-    inicio = page * per_page
-    page_rows = rows[inicio:inicio + per_page]
-    group = fetch_group_basic_info(group_id)
-    group_name = group[1] if group else f"Grupo {group_id}"
-
-    text = (
-        "👤 Reenviar link a usuario específico\n\n"
-        f"Comunidad: {group_name or f'Grupo {group_id}'}\n"
-        f"Usuarios activos: {total}\n"
-        f"Página {page + 1}/{total_pages}\n\n"
-    )
 
 
-    if not page_rows:
-
-        text += "No hay usuarios activos a los que reenviar link."
-
-    else:
-
-        text += "Selecciona un usuario activo:"
-
-
-    keyboard = []
-
-
-    for row in page_rows:
-
-        keyboard.append([
-            InlineKeyboardButton(
-                f"🔗 Reenviar link · {format_community_user_display_name(row)}",
-                callback_data=f"community_link_recover_user_{group_id}_{row.get('user_id')}"
-            )
-        ])
-
-
-    nav_row = []
-
-
-    if page > 0:
-
-        nav_row.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"community_links_recover_one_{group_id}_{page - 1}"))
-
-
-    if page + 1 < total_pages:
-
-        nav_row.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"community_links_recover_one_{group_id}_{page + 1}"))
-
-
-    if nav_row:
-
-        keyboard.append(nav_row)
-
-
-    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data=f"community_links_recover_menu_{group_id}")])
-    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
-
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-def build_owner_backup_panel_text(group_id):
-
-    group = fetch_group_basic_info(group_id)
-    group_name = group[1] if group else f"Grupo {group_id}"
-    owner_user_id = get_group_owner_user_id(group_id)
-    job = fetch_owner_backup_job(owner_user_id, group_id) if owner_user_id else None
-    frequency = job.get("frequency") if job else "manual"
-    automatic_status = "Activo" if job and job.get("is_active") else "Manual"
-    next_run_at = format_commercial_datetime(job.get("next_run_at")) if job else "-"
-
-    return (
-        "💾 Backups automáticos\n\n"
-        f"Comunidad actual: {group_name or f'Grupo {group_id}'}\n\n"
-        "Puedes crear un backup JSON manual o configurar backups automáticos de la configuración operativa de esta comunidad.\n\n"
-        "Incluye configuración básica, planes, permisos, resúmenes de códigos, links, campañas, servicios extra, encuestas, soporte y métricas.\n"
-        "No incluye secretos, tokens, datos de tarjetas, variables de entorno, conversaciones completas ni enlaces privados completos.\n\n"
-        f"Modo actual: {automatic_status}\n"
-        f"Frecuencia: {format_owner_backup_frequency(frequency)}\n"
-        f"Próximo backup: {next_run_at}"
-    )
 
 
 def format_owner_backup_frequency(frequency):
@@ -16334,512 +15253,34 @@ async def process_due_owner_backups(context):
     return summary
 
 
-def build_owner_general_text(group_id):
 
-    group = fetch_group_basic_info(group_id)
-    group_name = group[1] if group else f"Grupo {group_id}"
-    telegram_group_id = group[2] if group else None
-    community_type = normalize_community_type(group[3] if group and len(group) > 3 else None)
-    access_type = "No configurado"
-    public_visibility = "-"
 
 
-    try:
 
-        with conn.cursor() as cur:
 
-            cur.execute("""
 
-                SELECT (
-                           COALESCE(is_free_group, FALSE)
-                           OR COALESCE(is_free, FALSE)
-                       ),
-                       public_visibility
-                FROM groups
-                WHERE id=%s
-                LIMIT 1
 
-            """, (group_id,))
 
-            row = cur.fetchone()
 
 
-        if row:
 
-            access_type = "Gratis" if row[0] else "Pago"
-            public_visibility = row[1] or "-"
 
-    except Exception as e:
 
-        print("Error cargando configuración general owner:", e)
 
 
-    return (
-        "⚙️ Configuración de la comunidad\n\n"
-        f"Nombre: {group_name or f'Grupo {group_id}'}\n"
-        f"ID interno: {group_id}\n"
-        f"Telegram ID: {telegram_group_id or '-'}\n"
-        f"Tipo: {format_community_kind_capitalized(community_type)}\n"
-        f"Tipo de acceso: {access_type}\n"
-        f"Visibilidad marketplace: {public_visibility}\n\n"
-        "Esta pantalla agrupa rutas seguras de configuración. Los cambios sensibles, como pagos o visibilidad, "
-        "se abren en pantallas específicas para evitar tocar checkout o accesos por accidente."
-    )
 
 
-def build_owner_general_keyboard(group_id):
 
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Nombre / descripción", callback_data="edit_group_name")],
-        [InlineKeyboardButton("🔓 Configuración comercial", callback_data="owner_panel_commercial_config")],
-        [InlineKeyboardButton("🖼 Marketplace y preview", callback_data="owner_panel_marketplace")],
-        [InlineKeyboardButton("📍 Ubicación permitida", callback_data="owner_panel_location_info")],
-        [InlineKeyboardButton("🛡 Seguridad del grupo", callback_data="owner_panel_security")],
-        [InlineKeyboardButton("💳 Métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
-        [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_general")],
-        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
-        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-    ])
 
 
-def build_owner_commercial_config_text(group_id):
 
-    group = fetch_group_basic_info(group_id)
-    group_name = group[1] if group else f"Grupo {group_id}"
-    is_free_group = None
-    active_plans = 0
-    active_payment_methods = 0
 
 
-    try:
 
-        with conn.cursor() as cur:
 
-            cur.execute("""
 
-                SELECT (
-                    COALESCE(is_free_group, FALSE)
-                    OR COALESCE(is_free, FALSE)
-                )
-                FROM groups
-                WHERE id=%s
-                LIMIT 1
 
-            """, (group_id,))
 
-            row = cur.fetchone()
-
-            is_free_group = row[0] if row else None
-
-            cur.execute("""
-
-                SELECT COUNT(*)
-                FROM plans
-                WHERE group_id=%s
-                AND is_active=TRUE
-
-            """, (group_id,))
-            active_plans = cur.fetchone()[0]
-
-            cur.execute("""
-
-                SELECT COUNT(*)
-                FROM group_payment_provider_configs
-                WHERE group_id=%s
-                AND is_enabled=TRUE
-                AND status='active'
-
-            """, (group_id,))
-            active_payment_methods = cur.fetchone()[0]
-
-    except Exception as e:
-
-        print("Error cargando configuración comercial owner:", e)
-
-
-    access_type = "Gratis" if is_free_group is True else "Pago" if is_free_group is False else "No configurado"
-
-    return (
-        "💳 Configuración de pagos del grupo\n\n"
-        f"Comunidad: {group_name or f'Grupo {group_id}'}\n"
-        f"Tipo de acceso actual: {access_type}\n"
-        f"Planes activos: {active_plans}\n"
-        f"Métodos de pago del grupo activos: {active_payment_methods}\n\n"
-        "Marcar el grupo como de pago no obliga a usar Stripe. Puedes activar uno o varios métodos de pago para cobrar tus suscripciones.\n\n"
-        "💳 Pagos tradicionales\n"
-        "- Stripe\n"
-        "- PayPal\n"
-        "- Revolut\n\n"
-        "🪙 Cripto / USDT\n"
-        "- ChangeNOW.io / Cripto\n"
-        "- Tarjeta EUR → USDT / Guardarian\n\n"
-        "🎟 Promociones\n"
-        "- Códigos y promociones\n\n"
-        "Guardarian permite que el comprador pague con tarjeta en euros y que tú recibas USDT en tu wallet.\n"
-        "ChangeNOW sirve para pagos cripto y puede requerir revisión manual según configuración."
-    )
-
-
-def build_owner_commercial_config_keyboard(group_id, user_id=None):
-
-    keyboard = []
-    owner_can_manage_payment_methods = (
-        user_id is not None
-        and (
-            is_super_admin(user_id)
-            or get_group_owner_user_id(group_id) == user_id
-        )
-    )
-
-
-    if owner_can_manage_payment_methods:
-
-        keyboard.extend([
-            [InlineKeyboardButton("💳 Stripe", callback_data="edit_group_stripe")],
-            [InlineKeyboardButton("🅿️ PayPal", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_PAYPAL}")],
-            [InlineKeyboardButton("🏦 Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")],
-            [InlineKeyboardButton("💱 ChangeNOW.io / Cripto", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")],
-            [InlineKeyboardButton("💳 Tarjeta EUR → USDT / Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_GUARDARIAN}")],
-            [InlineKeyboardButton("💳 Ver todos los métodos", callback_data=f"owner_group_payment_methods_{group_id}")]
-        ])
-
-
-    keyboard.extend([
-        [InlineKeyboardButton("🎟 Códigos y promociones", callback_data="owner_panel_codes")],
-        [InlineKeyboardButton("📋 Ver planes", callback_data="view_group_plans")],
-        [InlineKeyboardButton("➕ Crear/editar planes", callback_data="edit_group_plans")],
-        [InlineKeyboardButton("🖼 Marketplace y preview", callback_data="owner_panel_marketplace")],
-        [InlineKeyboardButton("❓ Ayuda", callback_data="owner_panel_help_payments")],
-        [InlineKeyboardButton("⬅️ Volver a configuración", callback_data="owner_panel_general")],
-        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-    ])
-
-    return InlineKeyboardMarkup(keyboard)
-
-
-def build_owner_panel_help_text(section):
-
-    help_texts = {
-        "users": "👥 Usuarios y accesos\n\nSirve para revisar usuarios, recuperar enlaces, expulsar, banear y gestionar warnings. Úsalo cuando un usuario tenga problemas de entrada o incumpla normas.",
-        "codes": "🎟 Códigos y promociones\n\nCrea códigos de acceso para esta comunidad. Solo afectan a este grupo y no se mezclan con códigos comerciales globales.",
-        "payments": "💳 Planes y pagos\n\nGestiona planes, pagos recibidos, suscripciones activas y métodos de pago del grupo. De pago no significa solo Stripe: puedes activar Stripe, PayPal, Revolut, ChangeNOW, Guardarian o códigos/promociones según tu configuración.",
-        "security": "🛡 Seguridad\n\nGuardian es el control principal: antispam, palabras prohibidas, bloqueo de enlaces y modo noche. Aquí también tienes el resumen de seguridad, la ubicación permitida, los grupos de publicidad y los logs de accesos. Las acciones que afectan a usuarios reales quedan registradas.",
-        "marketplace": "🖼 Marketplace y preview\n\nEdita la ficha pública, previews, categoría y tags de la comunidad.",
-        "admins": "👑 Administradores\n\nAñade o retira admins de grupo y define permisos concretos por comunidad.",
-        "logs": "📜 Logs y actividad\n\nRevisa actividad importante de esta comunidad: accesos, pagos, códigos, soporte, backups y errores. Owner/admin solo ve su grupo.",
-        "support": "🛟 Soporte\n\nMuestra tickets vinculados a esta comunidad. El owner solo ve tickets de sus grupos; el soporte global queda para super admin.",
-        "satisfaction": "😊 Encuestas de comunidad\n\nEnvía encuestas solo a usuarios de esta comunidad. Por justicia, quienes ya respondieron no vuelven a recibirla por defecto.",
-        "backup": "🛡 Backup premium\n\nConfigura copia de mensajes nuevos que el bot recibe. No descarga archivos ni usa cuentas usuario.",
-        "general": "⚙️ Configuración general\n\nAgrupa datos básicos y opciones seguras de comunidad. Los cambios sensibles usan confirmación o pantallas específicas."
-    }
-
-    return help_texts.get(
-        section,
-        "🏪 Panel de comunidad\n\nGestiona esta comunidad por apartados. Usa Volver para regresar al panel y Inicio para salir."
-    )
-
-
-def build_owner_panel_audit_report(user_id, group_id):
-
-    router_source = load_callback_router_source()
-    handler_source = router_source.split("async def button", 1)[-1]
-    menu_specs = [{
-        "name": "Panel de comunidad",
-        "keyboard": InlineKeyboardMarkup(build_group_settings_keyboard(user_id, group_id))
-    }]
-
-
-    for callback_data, (_title, _description, required_permissions, section) in OWNER_PANEL_SECTIONS.items():
-
-        if user_has_group_permission_any(user_id, group_id, required_permissions):
-
-            menu_specs.append({
-                "name": f"Sección {section}",
-                "keyboard": build_owner_section_keyboard(user_id, group_id, section)
-            })
-
-
-    all_buttons = []
-
-
-    for menu in menu_specs:
-
-        all_buttons.extend(
-            flatten_keyboard_buttons(
-                menu.get("name"),
-                menu.get("keyboard")
-            )
-        )
-
-
-    placeholder_callbacks = {
-        "owner_panel_general_info": "solo informativo: configuración general avanzada pendiente",
-        "edit_group_stripe": "solo informativo: Stripe propio por grupo pendiente"
-    }
-    editable_callbacks = {
-        "owner_panel_users",
-        "owner_panel_security",
-        "owner_panel_backup",
-        "owner_panel_general",
-        "owner_panel_commercial_config",
-        "owner_panel_access_type_info",
-        "owner_panel_location_info",
-        "owner_panel_security_info",
-        "owner_support_tickets",
-        "owner_panel_satisfaction",
-        "owner_satisfaction_send_pending",
-        "owner_satisfaction_resend_incomplete",
-        "owner_satisfaction_send_never_sent",
-        "owner_satisfaction_delivery_status",
-        "owner_satisfaction_force_new_cycle",
-        "owner_panel_logs",
-        "owner_panel_codes",
-        "owner_panel_payments",
-        "owner_panel_admins",
-        "owner_panel_marketplace"
-    }
-    occurrences = {}
-
-
-    for button in all_buttons:
-
-        occurrences.setdefault(button.get("callback_data"), []).append(button)
-
-
-    details = []
-    missing_handlers = 0
-    repeated_allowed = 0
-    repeated_suspicious = 0
-    placeholders = 0
-    editable = 0
-
-
-    for button in all_buttons:
-
-        callback_data = button.get("callback_data")
-        observations = []
-        state = "✅ OK"
-
-
-        if not callback_has_handler(callback_data, handler_source):
-
-            state = "❌ Problema"
-            missing_handlers += 1
-            observations.append("callback sin handler")
-
-
-        if callback_data in placeholder_callbacks:
-
-            if state == "✅ OK":
-
-                state = "ℹ️ Informativo"
-
-
-            placeholders += 1
-            observations.append(placeholder_callbacks[callback_data])
-
-
-        if callback_data in editable_callbacks or callback_data.startswith("owner_location_") or callback_data.startswith("owner_group_logs_") or callback_data.startswith("owner_group_users_"):
-
-            editable += 1
-            observations.append("funcional para esta comunidad")
-
-
-        if len(occurrences.get(callback_data, [])) > 1:
-
-            duplicate_kind = classify_owner_panel_repeated_callback(
-                callback_data,
-                placeholder_callbacks
-            )
-
-
-            if duplicate_kind == "suspicious":
-
-                if state == "✅ OK":
-
-                    state = "⚠️ Revisar"
-
-
-                repeated_suspicious += 1
-                observations.append("callback repetido sospechoso en el panel")
-
-            elif duplicate_kind == "allowed_informational":
-
-                repeated_allowed += 1
-                observations.append("Repetido permitido: acción informativa compartida")
-
-            else:
-
-                repeated_allowed += 1
-                observations.append("Repetido permitido: navegación común")
-
-
-        required_permissions = get_required_permissions_for_callback(callback_data)
-
-        details.append({
-            "menu": button.get("menu"),
-            "text": button.get("text"),
-            "callback_data": callback_data,
-            "state": state,
-            "permissions": ", ".join(required_permissions) if required_permissions else "público/validación interna",
-            "observation": "; ".join(observations) or "sin observaciones"
-        })
-
-
-    return {
-        "group_id": group_id,
-        "total_buttons": len(all_buttons),
-        "missing_handlers": missing_handlers,
-        "repeated_allowed": repeated_allowed,
-        "repeated_suspicious": repeated_suspicious,
-        "placeholders": placeholders,
-        "editable": editable,
-        "details": details
-    }
-
-
-def format_owner_panel_audit_summary(report):
-
-    state = "✅ OK"
-
-
-    if report.get("missing_handlers"):
-
-        state = "❌ Problema"
-
-    elif report.get("repeated_suspicious"):
-
-        state = "⚠️ Revisar"
-
-
-    return (
-        "🧪 Auditoría del panel de comunidad\n\n"
-        f"Estado: {state}\n"
-        f"Comunidad: {report.get('group_id')}\n"
-        f"Botones visibles revisados: {report.get('total_buttons')}\n"
-        f"Acciones funcionales/editables detectadas: {report.get('editable')}\n"
-        f"Callbacks sin handler: {report.get('missing_handlers')}\n"
-        f"Callbacks repetidos permitidos/navegación: {report.get('repeated_allowed')}\n"
-        f"Callbacks repetidos sospechosos: {report.get('repeated_suspicious')}\n"
-        f"Acciones informativas/próximamente: {report.get('placeholders')}\n\n"
-        "Usa Ver detalle para revisar botón por botón."
-    )
-
-
-def format_owner_panel_audit_detail(report, limit=60):
-
-    lines = [
-        "📋 Detalle auditoría comunidad",
-        ""
-    ]
-
-
-    for index, detail in enumerate((report.get("details") or [])[:limit], start=1):
-
-        lines.extend([
-            f"{index}. {detail.get('state')} {detail.get('menu')}",
-            f"Botón: {detail.get('text')}",
-            f"Callback: {detail.get('callback_data')}",
-            f"Permisos: {detail.get('permissions')}",
-            f"Observación: {detail.get('observation')}",
-            ""
-        ])
-
-
-    return "\n".join(lines)[:3900]
-
-
-def build_owner_panel_audit_keyboard():
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Ver detalle", callback_data="owner_panel_audit_detail")],
-        [InlineKeyboardButton("🔁 Repetir auditoría", callback_data="owner_panel_audit")],
-        [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
-        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-    ])
-
-
-
-
-
-
-
-
-def resolve_group_user_codes_group(context, user_id, permissions, group_id=None):
-
-    if group_id:
-
-        try:
-
-            group_id = int(group_id)
-
-        except Exception:
-
-            return None
-
-
-        if not user_has_group_permission_any(user_id, group_id, permissions):
-
-            return None
-
-
-        if not set_group_user_promo_context(context, group_id):
-
-            return None
-
-
-        return group_id
-
-
-    return get_selected_group_for_permissions(
-        context,
-        user_id,
-        permissions
-    )
-
-
-def parse_group_user_code_group_callback(data, prefix):
-
-    if data == prefix:
-
-        return None
-
-
-    if not data.startswith(f"{prefix}_"):
-
-        return None
-
-
-    payload = data.replace(f"{prefix}_", "", 1)
-
-
-    if not payload.isdigit():
-
-        return None
-
-
-    return int(payload)
-
-
-def parse_group_user_code_step_callback(data, prefix):
-
-    payload = data.replace(prefix, "", 1).strip("_")
-
-
-    if not payload:
-
-        return None, None
-
-
-    parts = payload.split("_", 1)
-
-
-    if len(parts) == 2 and parts[0].isdigit():
-
-        return int(parts[0]), parts[1]
-
-
-    return None, payload
 
 
 
@@ -19272,45 +17713,8 @@ def build_creator_marketplace_keyboard(request_id):
 
 
 
-def build_group_preview_mode_keyboard():
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "📝 Preview manual",
-            callback_data="edit_group_preview_mode_manual"
-        )],
-        [InlineKeyboardButton(
-            "⚡ Preview dinámico",
-            callback_data="edit_group_preview_mode_dynamic"
-        )],
-        [InlineKeyboardButton(
-            "💎 Preview mixto",
-            callback_data="edit_group_preview_mode_hybrid"
-        )],
-        [InlineKeyboardButton(
-            "🔒 Sin preview público",
-            callback_data="edit_group_preview_mode_private"
-        )],
-        [InlineKeyboardButton(
-            "⬅️ Volver",
-            callback_data="edit_group_back"
-        )]
-    ])
 
 
-def preview_mode_selection_text():
-
-    return (
-        "¿Qué tipo de preview quieres para este grupo?\n\n"
-        "📝 Manual:\n"
-        "Subes una imagen o vídeo fijo que verán los usuarios antes de entrar.\n\n"
-        "⚡ Dinámico:\n"
-        "El bot mostrará los últimos 3 vídeos publicados en el grupo desde que actives este modo.\n\n"
-        "💎 Mixto:\n"
-        "Muestra primero el preview manual y además permite ver los últimos vídeos dinámicos.\n\n"
-        "🔒 Sin preview:\n"
-        "No se mostrará contenido previo, solo la ficha del grupo."
-    )
 
 
 
@@ -21043,24 +19447,6 @@ def build_support_ticket_detail_text(ticket):
     )
 
 
-def build_owner_support_ticket_keyboard(ticket):
-
-    ticket_id = ticket.get("id") if isinstance(ticket, dict) else ticket
-    ticket_status = ticket.get("status") if isinstance(ticket, dict) else None
-    keyboard = []
-
-
-    if ticket_status != "closed":
-
-        keyboard.append([InlineKeyboardButton("✍️ Responder", callback_data=f"owner_support_reply_{ticket_id}")])
-        keyboard.append([InlineKeyboardButton("🤖 Sugerir respuesta", callback_data=f"owner_support_ai_{ticket_id}")])
-        keyboard.append([InlineKeyboardButton("✅ Cerrar ticket", callback_data=f"owner_support_close_{ticket_id}")])
-
-
-    keyboard.append([InlineKeyboardButton("⬅️ Volver a soporte de comunidad", callback_data="owner_support_tickets")])
-    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
-
-    return keyboard
 
 
 def build_support_ticket_keyboard(ticket):
@@ -25629,144 +24015,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data == "group_admin_panel":
-
-        context.user_data["adding_group_admin"] = False
-        context.user_data.pop("group_admin_target_user_id", None)
-        context.user_data.pop("group_admin_target_display", None)
-        context.user_data.pop("group_admin_selected_group_id", None)
-        context.user_data.pop("group_admin_permissions", None)
-
-        groups = fetch_group_admin_manageable_groups(user_id)
-
-
-        if not groups:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)"
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "👥 Admins de mi grupo\n\nGestiona admins y permisos por comunidad.",
-            reply_markup=build_group_admin_panel_keyboard()
-        )
+    # Tramo movido a group_admin_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_group_admin_callbacks(
+        update, context, query, user_id, data
+    ) is not GROUP_ADMIN_NOT_HANDLED:
 
         return
 
 
-    if data == "group_admin_permissions_info":
 
-        text = (
-            "📖 Permisos disponibles\n\n"
-            "Estos permisos se aplican solo al group_id interno de la comunidad seleccionada.\n\n"
-            + "\n".join(
-                f"• {label}"
-                for _key, label, _permission in GROUP_ADMIN_PERMISSION_OPTIONS
-            )
-        )
 
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            text,
-            reply_markup=build_group_admin_panel_keyboard()
-        )
+
+
+
+
+    # Tramo movido a add_group_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_add_group_callbacks(
+        update, context, query, user_id, data
+    ) is not ADD_GROUP_NOT_HANDLED:
 
         return
 
 
-    if data == "group_admin_add":
-
-        groups = fetch_group_admin_context_groups(context, user_id)
-
-
-        if not groups:
-
-            await query.message.reply_text(
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
-                reply_markup=build_group_admin_error_keyboard()
-            )
-
-            return
-
-
-        context.user_data["adding_group_admin"] = True
-        context.user_data.pop("group_admin_target_user_id", None)
-        context.user_data.pop("group_admin_target_display", None)
-        context.user_data.pop("group_admin_permissions", None)
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "➕ Añadir admin\n\n"
-            "Envía el user_id del usuario.\n\n"
-            "También puedes enviar @username si ese usuario ya existe en la base de datos.",
-            reply_markup=build_group_admin_error_keyboard()
-        )
-
-        return
-
-
-    if data.startswith("add_group_admin_select_group_"):
-
-        group_id = extract_commercial_request_id(
-            data,
-            "add_group_admin_select_group_"
-        )
-
-
-        if not can_manage_group_admins(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ Esta comunidad no pertenece a tu panel.",
-                reply_markup=build_group_admin_error_keyboard()
-            )
-
-            return
-
-
-        target_user_id = context.user_data.get("group_admin_target_user_id")
-
-
-        if not target_user_id:
-
-            await query.message.reply_text(
-                "❌ No hay usuario pendiente para añadir.",
-                reply_markup=build_group_admin_error_keyboard()
-            )
-
-            return
-
-
-        context.user_data["group_admin_selected_group_id"] = group_id
-        context.user_data["group_admin_permissions"] = {
-            permission: False
-            for _key, _label, permission in GROUP_ADMIN_PERMISSION_OPTIONS
-        }
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "Permisos del nuevo admin:\n\n"
-            + format_group_admin_permission_list(
-                context.user_data["group_admin_permissions"]
-            ),
-            reply_markup=build_group_admin_permissions_keyboard(
-                group_id,
-                target_user_id,
-                context.user_data["group_admin_permissions"],
-                "gga_t"
-            )
-        )
-
-        return
 
 
     if data.startswith("gga_t_"):
@@ -25841,210 +24113,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("add_group_admin_save_"):
 
-        group_id = extract_commercial_request_id(
-            data,
-            "add_group_admin_save_"
-        )
 
 
-        if not can_manage_group_admins(user_id, group_id):
 
-            await query.message.reply_text(
-                "⛔ Esta comunidad no pertenece a tu panel.",
-                reply_markup=build_group_admin_error_keyboard()
-            )
 
-            return
 
 
-        target_user_id = context.user_data.get("group_admin_target_user_id")
-        permissions = context.user_data.get("group_admin_permissions") or {}
 
-
-        if not target_user_id:
-
-            await query.message.reply_text(
-                "❌ No hay usuario pendiente para añadir.",
-                reply_markup=build_group_admin_error_keyboard()
-            )
-
-            return
-
-
-        save_group_admin_permissions(
-            group_id,
-            target_user_id,
-            permissions
-        )
-
-        context.user_data["adding_group_admin"] = False
-        context.user_data.pop("group_admin_target_user_id", None)
-        context.user_data.pop("group_admin_target_display", None)
-        context.user_data.pop("group_admin_selected_group_id", None)
-        context.user_data.pop("group_admin_permissions", None)
-
-        try:
-
-            await context.bot.send_message(
-                chat_id=target_user_id,
-                text=(
-                    "✅ Has sido añadido como admin de una comunidad.\n\n"
-                    f"Grupo: {fetch_group_name(group_id)}"
-                )
-            )
-
-        except Exception as e:
-
-            print("Error avisando admin de grupo:", e)
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Admin guardado correctamente.",
-            reply_markup=build_group_admin_panel_keyboard()
-        )
-
-        return
-
-
-    if data == "group_admin_view":
-
-        groups = fetch_group_admin_context_groups(context, user_id)
-
-
-        if not groups:
-
-            await query.message.reply_text(
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
-                reply_markup=build_group_admin_error_keyboard()
-            )
-
-            return
-
-
-        if len(groups) == 1:
-
-            group_id = groups[0][0]
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                build_group_admins_text(group_id),
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("⬅️ Volver", callback_data="group_admin_panel")
-                ]])
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "📋 Ver admins\n\nSelecciona una comunidad.",
-            reply_markup=build_group_admin_group_select_keyboard(
-                groups,
-                "group_admin_view_group_"
-            )
-        )
-
-        return
-
-
-    if data.startswith("group_admin_view_group_"):
-
-        group_id = extract_commercial_request_id(
-            data,
-            "group_admin_view_group_"
-        )
-
-
-        if not can_manage_group_admins(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ Esta comunidad no pertenece a tu panel."
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_group_admins_text(group_id),
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Volver", callback_data="group_admin_panel")
-            ]])
-        )
-
-        return
-
-
-    if data == "group_admin_edit":
-
-        groups = fetch_group_admin_context_groups(context, user_id)
-
-
-        if not groups:
-
-            await query.message.reply_text(
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
-                reply_markup=build_group_admin_error_keyboard()
-            )
-
-            return
-
-
-        if len(groups) == 1:
-
-            data = f"group_admin_edit_group_{groups[0][0]}"
-
-        else:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "✏️ Editar permisos\n\nSelecciona una comunidad.",
-                reply_markup=build_group_admin_group_select_keyboard(
-                    groups,
-                    "group_admin_edit_group_"
-                )
-            )
-
-            return
-
-
-    if data.startswith("group_admin_edit_group_"):
-
-        group_id = extract_commercial_request_id(
-            data,
-            "group_admin_edit_group_"
-        )
-
-
-        if not can_manage_group_admins(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ Esta comunidad no pertenece a tu panel."
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✏️ Editar permisos\n\nSelecciona el admin.",
-            reply_markup=build_group_admin_user_select_keyboard(
-                group_id,
-                "edit_admin_permissions_user_"
-            )
-        )
-
-        return
 
 
     if data.startswith("edit_admin_permissions_user_"):
@@ -26167,114 +24243,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data == "group_admin_remove":
-
-        groups = fetch_group_admin_context_groups(context, user_id)
 
 
-        if not groups:
-
-            await query.message.reply_text(
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
-                reply_markup=build_group_admin_error_keyboard()
-            )
-
-            return
 
 
-        if len(groups) == 1:
-
-            data = f"group_admin_remove_group_{groups[0][0]}"
-
-        else:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "❌ Quitar admin\n\nSelecciona una comunidad.",
-                reply_markup=build_group_admin_group_select_keyboard(
-                    groups,
-                    "group_admin_remove_group_"
-                )
-            )
-
-            return
-
-
-    if data.startswith("group_admin_remove_group_"):
-
-        group_id = extract_commercial_request_id(
-            data,
-            "group_admin_remove_group_"
-        )
-
-
-        if not can_manage_group_admins(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ Esta comunidad no pertenece a tu panel."
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "❌ Quitar admin\n\nSelecciona el admin.",
-            reply_markup=build_group_admin_user_select_keyboard(
-                group_id,
-                "group_admin_remove_user_"
-            )
-        )
-
-        return
-
-
-    if data.startswith("group_admin_remove_user_"):
-
-        payload = data.replace("group_admin_remove_user_", "", 1)
-
-        try:
-
-            group_id_text, target_user_id_text = payload.split("_", 1)
-            group_id = int(group_id_text)
-            target_user_id = int(target_user_id_text)
-
-        except Exception:
-
-            await query.message.reply_text("❌ Admin no válido.")
-
-            return
-
-
-        if not can_manage_group_admins(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ Esta comunidad no pertenece a tu panel."
-            )
-
-            return
-
-
-        removed = disable_group_admin(group_id, target_user_id)
-
-
-        if not removed:
-
-            await query.message.reply_text("❌ Admin no encontrado o no editable.")
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Admin quitado correctamente.",
-            reply_markup=build_group_admin_panel_keyboard()
-        )
-
-        return
 
 
     if data == "admin_support_tickets":
@@ -28417,63 +26389,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("group_user_code_select_group_"):
-
-        group_id = extract_commercial_request_id(
-            data,
-            "group_user_code_select_group_"
-        )
-
-
-        if not user_has_group_permission_any(
-            user_id,
-            group_id,
-            ["can_manage_codes"]
-        ):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para gestionar códigos en esta comunidad.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Volver", callback_data="admin_group_user_codes")],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-            return
-
-
-        group = set_group_user_promo_context(
-            context,
-            group_id,
-            step="panel"
-        )
-
-
-        if not group:
-
-            await query.message.reply_text(
-                "❌ Grupo no encontrado.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Volver", callback_data="admin_group_user_codes")],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-            return
-
-
-        _group_id, group_name, _telegram_group_id, *_ = group
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "🎟 Códigos de mi grupo\n\n"
-            f"Grupo: {group_name or group_id}\n\n"
-            "Crea códigos para usuarios finales de esta comunidad.",
-            reply_markup=build_group_user_codes_keyboard(group_id)
-        )
+    # Tramo movido a group_user_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_group_user_callbacks(
+        update, context, query, user_id, data
+    ) is not GROUP_USER_NOT_HANDLED:
 
         return
+
+
 
 
     # =========================
@@ -28711,36 +26635,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data == "owner_panel_satisfaction":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_groups", "can_view_logs"]
-        )
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para gestionar encuestas de esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-        context.user_data["selected_group_admin"] = group_id
-        context.user_data["selected_owner_group"] = group_id
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "😊 Encuestas de comunidad\n\n"
-            "Envía encuestas solo a usuarios de esta comunidad.\n\n"
-            "Para que sea justo, el bot nunca reenvía por defecto a usuarios que ya respondieron.",
-            reply_markup=build_owner_satisfaction_panel_keyboard()
-        )
+    # Tramo movido a owner_panel_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_owner_panel_callbacks(
+        update, context, query, user_id, data
+    ) is not OWNER_PANEL_NOT_HANDLED:
 
         return
+
+
 
 
     # Tramo movido a owner_satisfaction_callbacks.py. El despacho va AQUÍ y no arriba: las
@@ -28754,48 +26657,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data in ("owner_panel_audit", "owner_panel_audit_detail"):
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_groups", "can_view_logs"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para auditar este panel de comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        report = context.user_data.get("owner_panel_audit_report")
-
-
-        if data == "owner_panel_audit" or not report or report.get("group_id") != group_id:
-
-            report = build_owner_panel_audit_report(user_id, group_id)
-            context.user_data["owner_panel_audit_report"] = report
-
-
-        text = (
-            format_owner_panel_audit_detail(report)
-            if data == "owner_panel_audit_detail"
-            else format_owner_panel_audit_summary(report)
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            text,
-            reply_markup=build_owner_panel_audit_keyboard()
-        )
-
-        return
 
 
     # Tramo movido a owner_addon_callbacks.py. El despacho va AQUÍ y no arriba: las
@@ -29302,87 +27163,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("owner_panel_help_"):
-
-        section = data.replace("owner_panel_help_", "", 1)
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_owner_panel_help_text(section),
-            reply_markup=build_owner_panel_nav_keyboard()
-        )
-
-        return
 
 
-    if data == "owner_panel_guardian":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_groups", "can_view_logs"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para abrir Guardian en esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data["selected_group_admin"] = group_id
-        context.user_data["selected_owner_group"] = group_id
-
-        allowed, owner_user_id = owner_can_use_guardian(user_id, group_id)
-
-        if not allowed:
-
-            log_owner_guardian_addon_gate(
-                "owner_guardian_addon_required",
-                user_id,
-                owner_user_id,
-                group_id,
-                data
-            )
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                build_owner_guardian_addon_required_text(group_id),
-                reply_markup=build_owner_guardian_addon_required_keyboard()
-            )
-
-            return
-
-
-        group = fetch_group_basic_info(group_id)
-        settings = ensure_guardian_settings(
-            group_id,
-            owner_user_id=owner_user_id,
-            telegram_group_id=group[2] if group else None
-        )
-
-        log_owner_guardian_addon_gate(
-            "owner_guardian_addon_allowed",
-            user_id,
-            owner_user_id,
-            group_id,
-            data
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_owner_guardian_panel_text(group_id, settings=settings),
-            reply_markup=build_owner_guardian_panel_keyboard(group_id)
-        )
-
-        return
 
 
     if data.startswith("owner_guardian_"):
@@ -29395,148 +27177,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data in (
-        "owner_panel_users",
-        "owner_panel_security",
-        "owner_panel_backup",
-        "owner_panel_general"
-    ):
-
-        title, description, required_permissions, section = OWNER_PANEL_SECTIONS[data]
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            required_permissions
-        )
 
 
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para abrir esta sección de la comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data["selected_group_admin"] = group_id
-        context.user_data["selected_owner_group"] = group_id
-
-
-        if data == "owner_panel_users":
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                build_owner_users_panel_text(group_id),
-                reply_markup=build_owner_section_keyboard(
-                    user_id,
-                    group_id,
-                    section
-                )
-            )
-
-            return
-
-
-        if data == "owner_panel_security":
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                build_owner_security_text(group_id),
-                reply_markup=build_owner_security_keyboard(group_id)
-            )
-
-            return
-
-
-        if data == "owner_panel_backup":
-
-            allowed, owner_user_id = owner_can_use_backups(user_id, group_id)
-
-            if not allowed:
-
-                log_owner_backup_addon_gate(
-                    "owner_backup_addon_required",
-                    user_id,
-                    owner_user_id,
-                    group_id,
-                    data
-                )
-
-                await send_clean_message(
-                    context,
-                    query.message.chat_id,
-                    build_owner_backup_addon_required_text(group_id),
-                    reply_markup=build_owner_backup_addon_required_keyboard()
-                )
-
-                return
-
-
-            log_owner_backup_addon_gate(
-                "owner_backup_addon_allowed",
-                user_id,
-                owner_user_id,
-                group_id,
-                data
-            )
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                build_owner_backup_panel_text(group_id),
-                reply_markup=build_owner_backup_panel_keyboard(group_id)
-            )
-
-            return
-
-
-        if data == "owner_panel_general":
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                build_owner_general_text(group_id),
-                reply_markup=build_owner_general_keyboard(group_id)
-            )
-
-            return
-
-
-    if data == "owner_panel_commercial_config" or data == "owner_panel_access_type_info":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_groups", "can_manage_plans", "can_view_payments", "can_manage_payments"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para abrir la configuración comercial de esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data["selected_group_admin"] = group_id
-        context.user_data["selected_owner_group"] = group_id
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_owner_commercial_config_text(group_id),
-            reply_markup=build_owner_commercial_config_keyboard(group_id, user_id)
-        )
-
-        return
 
 
     # Tramo movido a owner_publicity_callbacks.py. El despacho va AQUÍ y no arriba: las
@@ -29561,87 +27203,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data.startswith("community_links_recover_menu_"):
-
-        group_id = extract_commercial_request_id(
-            data,
-            "community_links_recover_menu_"
-        )
-
-
-        if not user_can_recover_community_access_links(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para reenviar o recuperar links de esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data["selected_group_admin"] = group_id
-        context.user_data["selected_owner_group"] = group_id
-
-        log_event(
-            "community_link_recover_menu_opened",
-            category="access",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            message="Menú de reenvío/recuperación de links abierto.",
-            metadata={}
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_community_links_recover_menu_text(group_id),
-            reply_markup=build_community_links_recover_menu_keyboard(group_id)
-        )
+    # Tramo movido a community_links_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_community_links_callbacks(
+        update, context, query, user_id, data
+    ) is not COMMUNITY_LINKS_NOT_HANDLED:
 
         return
 
 
-    if data.startswith("community_links_recover_one_"):
-
-        payload = data.replace("community_links_recover_one_", "", 1)
-        parts = payload.split("_")
 
 
-        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
-
-            await query.message.reply_text(
-                "⚠️ No he podido identificar la comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        group_id = int(parts[0])
-        page = int(parts[1])
-
-
-        if not user_can_recover_community_access_links(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para reenviar o recuperar links de esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        text, keyboard = build_community_links_recover_user_page(group_id, page)
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            text,
-            reply_markup=keyboard
-        )
-
-        return
 
 
     if data.startswith("community_link_recover_user_"):
@@ -29734,288 +27306,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("community_links_recover_all_yes_"):
 
-        group_id = extract_commercial_request_id(
-            data,
-            "community_links_recover_all_yes_"
-        )
 
-
-        if not user_can_recover_community_access_links(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para reenviar links de esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        active_rows = [
-            row
-            for row in fetch_community_user_rows(group_id)
-            if row.get("is_active")
-        ]
-        limit = 50
-        rows_to_send = active_rows[:limit]
-        sent_count = 0
-        link_reused_count = 0
-        link_created_count = 0
-        failed_dm_count = 0
-        no_access_count = 0
-        link_generation_failed_count = 0
-        failed_no_telegram_group_id = 0
-        failed_bot_permission = 0
-        failed_telegram_api = 0
-        failed_db_save = 0
-        failed_other = 0
-        failed_paid_without_access_record = 0
-        failed_rate_limited = 0
-        stopped_by_rate_limit = False
-        retry_after = None
-
-        log_event(
-            "community_link_recover_all_started",
-            category="access",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            message="Reenvío masivo de links de acceso iniciado.",
-            metadata={
-                "total": len(active_rows),
-                "limit": limit
-            }
-        )
-
-
-        for row in rows_to_send:
-
-            target_user_id = row.get("user_id")
-
-            if not target_user_id:
-
-                continue
-
-
-            result = await send_recovered_community_access_link(
-                context,
-                group_id,
-                target_user_id,
-                user_id
-            )
-
-
-            if result.get("source") == "existing":
-
-                link_reused_count += 1
-
-            elif result.get("source") == "new":
-
-                link_created_count += 1
-
-
-            if result.get("ok"):
-
-                sent_count += 1
-
-            elif result.get("reason") == "dm_failed":
-
-                failed_dm_count += 1
-
-            elif result.get("reason") in ("no_active_access", "expired_access"):
-
-                no_access_count += 1
-
-            elif result.get("reason") == "paid_without_access_record":
-
-                failed_paid_without_access_record += 1
-
-            else:
-
-                link_generation_failed_count += 1
-
-                if result.get("reason") == "telegram_rate_limited":
-
-                    failed_rate_limited += 1
-                    retry_after = result.get("retry_after")
-                    stopped_by_rate_limit = True
-                    break
-
-                elif result.get("reason") == "missing_telegram_group_id":
-
-                    failed_no_telegram_group_id += 1
-
-                elif result.get("reason") == "bot_permission_failed":
-
-                    failed_bot_permission += 1
-
-                elif result.get("reason") == "db_save_failed":
-
-                    failed_db_save += 1
-
-                elif result.get("reason") == "telegram_api_failed":
-
-                    failed_telegram_api += 1
-
-                else:
-
-                    failed_other += 1
-
-
-            await asyncio.sleep(0.15)
-
-
-        skipped_by_limit = max(0, len(active_rows) - len(rows_to_send))
-
-        log_event(
-            "community_link_recover_all_completed",
-            category="access",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            message="Reenvío masivo de links de acceso terminado.",
-            metadata={
-                "total": len(active_rows),
-                "link_reused_count": link_reused_count,
-                "link_created_count": link_created_count,
-                "sent_count": sent_count,
-                "dm_failed_count": failed_dm_count,
-                "no_access_count": no_access_count,
-                "link_generation_failed_count": link_generation_failed_count,
-                "failed_no_telegram_group_id": failed_no_telegram_group_id,
-                "failed_bot_permission": failed_bot_permission,
-                "failed_telegram_api": failed_telegram_api,
-                "failed_db_save": failed_db_save,
-                "failed_other": failed_other,
-                "failed_paid_without_access_record": failed_paid_without_access_record,
-                "failed_rate_limited": failed_rate_limited,
-                "stopped_by_rate_limit": stopped_by_rate_limit,
-                "retry_after": retry_after,
-                "skipped_by_limit": skipped_by_limit
-            }
-        )
-
-        await send_guardian_event_log(
-            context,
-            group_id,
-            "guardian_access_links_bulk_completed",
-            "Reenvío masivo de links de acceso terminado.",
-            severity="info" if not link_generation_failed_count else "warning",
-            actor_user_id=user_id,
-            metadata={
-                "total": len(active_rows),
-                "limit": limit,
-                "link_reused_count": link_reused_count,
-                "link_created_count": link_created_count,
-                "sent_count": sent_count,
-                "dm_failed_count": failed_dm_count,
-                "link_generation_failed_count": link_generation_failed_count,
-                "failed_rate_limited": failed_rate_limited,
-                "stopped_by_rate_limit": stopped_by_rate_limit,
-                "skipped_by_limit": skipped_by_limit
-            }
-        )
-
-        error_hint = ""
-
-        if link_generation_failed_count:
-
-            error_hint = "\n\nRevisa logs: community_link_recover_generation_failed"
-
-
-        rate_limit_hint = ""
-
-        if stopped_by_rate_limit:
-
-            retry_text = f"{retry_after} segundos" if retry_after else "unos minutos"
-            rate_limit_hint = (
-                "\n\nTelegram ha limitado temporalmente la creación de enlaces.\n"
-                f"Espera aproximadamente {retry_text} y vuelve a intentarlo.\n"
-                "No se han seguido generando enlaces para evitar más errores."
-            )
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            (
-                "✅ Reenvío terminado\n\n"
-                f"Usuarios activos encontrados: {len(active_rows)}\n"
-                f"Límite aplicado: {limit}\n"
-                f"Links reutilizados: {link_reused_count}\n"
-                f"Links nuevos creados: {link_created_count}\n"
-                f"Links enviados por privado: {sent_count}\n"
-                f"Privado bloqueado/fallido: {failed_dm_count}\n"
-                f"Errores generando link: {link_generation_failed_count}\n"
-                f"- Sin telegram_group_id: {failed_no_telegram_group_id}\n"
-                f"- Permisos del bot: {failed_bot_permission}\n"
-                f"- Telegram API: {failed_telegram_api}\n"
-                f"- Guardado DB: {failed_db_save}\n"
-                f"- Otros errores: {failed_other}\n"
-                f"- Pagos confirmados sin registro local: {failed_paid_without_access_record}\n"
-                f"- Rate limit Telegram: {failed_rate_limited}\n"
-                f"Omitidos sin acceso activo: {no_access_count}\n"
-                f"Omitidos por límite de seguridad: {skipped_by_limit}"
-                f"{error_hint}"
-                f"{rate_limit_hint}"
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👥 Ver usuarios de esta comunidad", callback_data=f"owner_group_users_{group_id}")],
-                [InlineKeyboardButton("⬅️ Menú de links", callback_data=f"community_links_recover_menu_{group_id}")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data.startswith("community_links_recover_all_") or data.startswith("community_links_recover_all"):
-
-        group_id = extract_commercial_request_id(
-            data,
-            "community_links_recover_all_"
-        ) or extract_commercial_request_id(
-            data,
-            "community_links_recover_all"
-        )
-
-
-        if not user_can_recover_community_access_links(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para reenviar links de esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        active_count = sum(
-            1
-            for row in fetch_community_user_rows(group_id)
-            if row.get("is_active")
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            (
-                "⚠️ Vas a reenviar o regenerar links de acceso a los usuarios activos de esta comunidad.\n\n"
-                "Esto puede enviar muchos mensajes privados. No toca pagos ni suscripciones.\n\n"
-                f"Usuarios activos detectados: {active_count}\n"
-                "Por seguridad, se procesarán como máximo 50 usuarios por ejecución.\n\n"
-                "¿Continuar?"
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Sí, enviar a todos los activos", callback_data=f"community_links_recover_all_yes_{group_id}")],
-                [InlineKeyboardButton("❌ Cancelar", callback_data=f"community_links_recover_menu_{group_id}")]
-            ])
-        )
-
-        return
 
 
     if data.startswith("community_users_sync_known_yes_"):
@@ -30625,44 +27917,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data == "owner_panel_revenue":
-
-        # Misma resolución de comunidad y mismos permisos que la sección de
-        # pagos: quien puede ver los pagos puede ver los ingresos.
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\n"
-                "Ábrela primero en «🏪 Mis comunidades» y repite la acción.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        info = fetch_group_basic_info(group_id)
-        group_name = (info[1] if info else None) or f"Comunidad {group_id}"
-
-        teclado = [
-            [InlineKeyboardButton("🔄 Actualizar", callback_data="owner_panel_revenue")]
-        ]
-        teclado.extend(build_owner_panel_nav_keyboard().inline_keyboard)
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_owner_revenue_text(group_id, group_name),
-            reply_markup=InlineKeyboardMarkup(teclado)
-        )
-
-        return
 
 
     if data in OWNER_PANEL_SECTIONS:
@@ -30760,70 +28014,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data == "owner_support_tickets":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_respond_group_support"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para ver soporte de esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data["selected_owner_group"] = group_id
-        tickets = fetch_recent_support_tickets(group_id=group_id)
-        keyboard = []
-
-
-        if should_show_owner_location_reviews_button(group_id):
-
-            keyboard.append([InlineKeyboardButton(
-                "📍 Revisiones de ubicación",
-                callback_data=f"owner_location_reviews_{group_id}"
-            )])
-
-
-        for ticket in tickets:
-
-            username = format_support_username(ticket)
-            label_name = username if username != "-" else ticket.get("first_name") or ticket.get("user_id")
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"📨 Ticket #{ticket.get('id')} - {label_name}",
-                    callback_data=f"owner_support_ticket_{ticket.get('id')}"
-                )
-            ])
-
-
-        if is_super_admin(user_id):
-
-            keyboard.append([InlineKeyboardButton("🛟 Abrir bandeja global", callback_data="admin_support_tickets")])
-
-
-        keyboard.extend([
-            [InlineKeyboardButton("⬅️ Volver al apartado soporte", callback_data="owner_panel_support")],
-            [InlineKeyboardButton("🏪 Mis comunidades", callback_data="admin_edit_group")],
-            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-        ])
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_support_tickets_text(tickets).replace("🛟 Tickets de soporte", "🛟 Tickets de soporte de esta comunidad"),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+    # Tramo movido a owner_support_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_owner_support_callbacks(
+        update, context, query, user_id, data
+    ) is not OWNER_SUPPORT_NOT_HANDLED:
 
         return
+
+
 
 
     if data.startswith("owner_location_reviews_"):
@@ -30903,322 +28102,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("owner_support_ai_"):
 
-        ticket_id = extract_commercial_request_id(
-            data,
-            "owner_support_ai_"
-        )
-        ticket = fetch_support_ticket(ticket_id)
 
 
-        if not ticket or not ticket.get("group_id"):
 
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
 
-            return
 
 
-        if not user_has_group_permission_any(user_id, ticket.get("group_id"), ["can_respond_group_support"]):
 
-            await query.message.reply_text(
-                "⛔ No tienes permiso para usar IA en este ticket.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
 
-            return
 
 
-        result = build_support_reply_suggestion(
-            user_id,
-            AI_ROLE_OWNER,
-            ticket_id,
-            group_id=ticket.get("group_id")
-        )
-        keyboard = [
-            [InlineKeyboardButton("✍️ Usar como base", callback_data=f"owner_support_use_ai_{ticket_id}")],
-            [InlineKeyboardButton("⬅️ Volver al ticket", callback_data=f"owner_support_ticket_{ticket_id}")]
-        ]
 
-
-        if result.get("interaction_id"):
-
-            for label, callback_data in build_ai_feedback_keyboard_rows(result.get("interaction_id")):
-
-                keyboard.append([InlineKeyboardButton(label, callback_data=callback_data)])
-
-
-        await query.message.reply_text(
-            "🤖 Borrador sugerido para soporte\n\n"
-            f"{result.get('answer') or 'No tengo suficiente información para preparar un borrador.'}\n\n"
-            "No se enviará automáticamente. Puedes usarlo como base y editarlo antes de responder.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-        return
-
-
-    if data.startswith("owner_support_use_ai_"):
-
-        ticket_id = extract_commercial_request_id(
-            data,
-            "owner_support_use_ai_"
-        )
-        ticket = fetch_support_ticket(ticket_id)
-
-
-        if not ticket or not ticket.get("group_id"):
-
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        if not user_has_group_permission_any(user_id, ticket.get("group_id"), ["can_respond_group_support"]):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para responder este ticket.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data["selected_owner_group"] = ticket.get("group_id")
-        context.user_data["replying_support_ticket"] = ticket_id
-
-        await query.message.reply_text(
-            f"✍️ Responder ticket #{ticket_id}\n\n"
-            "Usa el borrador anterior como base, edítalo si hace falta y escribe ahora la respuesta final para el usuario.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Cancelar", callback_data=f"owner_support_ticket_{ticket_id}")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data.startswith("owner_support_ticket_"):
-
-        ticket_id = extract_commercial_request_id(
-            data,
-            "owner_support_ticket_"
-        )
-        ticket = fetch_support_ticket(ticket_id)
-
-
-        if not ticket:
-
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        ticket_group_id = ticket.get("group_id")
-
-
-        if not ticket_group_id or not user_has_group_permission_any(user_id, ticket_group_id, ["can_respond_group_support"]):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para ver este ticket de soporte.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data["selected_owner_group"] = ticket_group_id
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_support_ticket_detail_text(ticket),
-            reply_markup=InlineKeyboardMarkup(build_owner_support_ticket_keyboard(ticket))
-        )
-
-        return
-
-
-    if data.startswith("owner_support_reply_"):
-
-        ticket_id = extract_commercial_request_id(
-            data,
-            "owner_support_reply_"
-        )
-        ticket = fetch_support_ticket(ticket_id)
-
-
-        if not ticket or not ticket.get("group_id"):
-
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        if not user_has_group_permission_any(user_id, ticket.get("group_id"), ["can_respond_group_support"]):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para responder este ticket.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        if ticket.get("status") == "closed":
-
-            await query.message.reply_text(
-                "📁 Este ticket está cerrado.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Volver a soporte de comunidad", callback_data="owner_support_tickets")],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-            return
-
-
-        context.user_data["selected_owner_group"] = ticket.get("group_id")
-        context.user_data["replying_support_ticket"] = ticket_id
-
-        await query.message.reply_text(
-            f"✍️ Responder ticket #{ticket_id}\n\n"
-            "Escribe ahora la respuesta para el usuario.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Cancelar", callback_data=f"owner_support_ticket_{ticket_id}")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data.startswith("owner_support_close_"):
-
-        ticket_id = extract_commercial_request_id(
-            data,
-            "owner_support_close_"
-        )
-        ticket = fetch_support_ticket(ticket_id)
-
-
-        if not ticket or not ticket.get("group_id"):
-
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        if not user_has_group_permission_any(user_id, ticket.get("group_id"), ["can_respond_group_support"]):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para cerrar este ticket.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        update_support_ticket_status(ticket_id, "closed")
-        context.user_data["selected_owner_group"] = ticket.get("group_id")
-
-        log_event(
-            "owner_support_ticket_closed",
-            category="support",
-            severity="info",
-            scope="group",
-            group_id=ticket.get("group_id"),
-            actor_user_id=user_id,
-            target_user_id=ticket.get("user_id"),
-            message="Owner cerró un ticket de soporte de comunidad.",
-            metadata={"ticket_id": ticket_id}
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Ticket cerrado.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Volver a soporte de comunidad", callback_data="owner_support_tickets")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data == "owner_panel_location_info":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_groups"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para gestionar ubicación en esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_owner_location_management_text(group_id),
-            reply_markup=build_owner_location_management_keyboard(group_id)
-        )
-
-        return
-
-
-    if data == "owner_panel_security_info":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_groups", "can_view_logs"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para revisar seguridad en esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_owner_security_text(group_id),
-            reply_markup=build_owner_security_keyboard(group_id)
-        )
-
-        return
 
 
     if data.startswith("owner_location_regions_"):
@@ -31428,981 +28323,55 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data in (
-        "owner_panel_access_type_info",
-        "owner_panel_general_info"
-    ):
-
-        info_texts = {
-            "owner_panel_access_type_info": (
-                "🔓 Tipo gratis/pago\n\n"
-                "El tipo de acceso se revisa desde Configuración de pagos del grupo. "
-                "De pago no significa solo Stripe: puedes activar Stripe, PayPal, Revolut, ChangeNOW, Guardarian o códigos."
-            ),
-            "owner_panel_general_info": (
-                "⚙️ Configuración general\n\n"
-                "Estos ajustes se gestionan con flujos seguros existentes. "
-                "No se reinicia ni borra configuración sin confirmación específica."
-            )
-        }
-
-        await query.message.reply_text(
-            info_texts.get(data, "Información no disponible."),
-            reply_markup=build_owner_panel_nav_keyboard()
-        )
-
-        return
 
 
     # =========================
     # MENÚ INTERNO DEL GRUPO
     # =========================
 
-    edit_group_parts = data.split("_")
-
-
-    if (
-        data.startswith("edit_group_")
-        and len(edit_group_parts) >= 3
-        and edit_group_parts[2].isdigit()
-    ):
-
-        try:
-            await query.message.delete()
-        except:
-            pass
-
-
-        group_id = int(edit_group_parts[2])
-
-
-        if not user_has_group_permission_any(
-            user_id,
-            group_id,
-            ["can_manage_groups", "can_manage_plans"]
-            + ["can_manage_codes", "can_manage_admins"]
-            + ["can_edit_group_texts", "can_edit_marketplace_preview"]
-        ):
-
-            await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar este grupo."
-            )
-
-            return
-
-
-        # Guardar grupo seleccionado
-
-        context.user_data["selected_group_admin"] = group_id
-        context.user_data["selected_owner_group"] = group_id
-
-
-        keyboard = build_group_settings_keyboard(user_id, group_id)
-
-
-        await query.message.reply_text(
-
-            build_owner_quick_status_text(user_id, group_id)
-            + "\nSolo verás secciones compatibles con tus permisos en esta comunidad.",
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
-        )
+    # Tramo movido a edit_group_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_edit_group_callbacks(
+        update, context, query, user_id, data
+    ) is not EDIT_GROUP_NOT_HANDLED:
 
         return
 
 
-    if data == "edit_group_back":
 
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_groups", "can_manage_plans"]
-            + ["can_manage_codes", "can_manage_admins"]
-            + ["can_edit_group_texts", "can_edit_marketplace_preview"]
-        )
 
 
-        if not group_id:
 
-            await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar este grupo."
-            )
 
-            return
 
 
-        await query.message.reply_text(
-            build_owner_quick_status_text(user_id, group_id),
-            reply_markup=InlineKeyboardMarkup(
-                build_group_settings_keyboard(user_id, group_id)
-            )
-        )
 
-        return
 
 
-    if data in (
-        "edit_group_name",
-        "edit_group_stripe",
-        "edit_group_admins",
-        "edit_group_user_codes"
-    ):
 
-        required_permissions = ["can_manage_groups"]
 
 
-        if data == "edit_group_name":
 
-            required_permissions = ["can_edit_group_texts", "can_manage_groups"]
 
 
-        if data == "edit_group_admins":
 
-            required_permissions = ["can_manage_admins"]
 
-        if data == "edit_group_user_codes":
 
-            required_permissions = ["can_manage_codes"]
 
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            required_permissions
-        )
 
 
-        if not group_id:
 
-            await query.message.reply_text(
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)",
-                reply_markup=build_group_admin_error_keyboard()
-            )
 
-            return
 
 
-        if data == "edit_group_admins":
-
-            context.user_data["selected_owner_group"] = group_id
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "👥 Admins de mi grupo\n\nGestiona admins y permisos por comunidad.",
-                reply_markup=build_group_admin_panel_keyboard()
-            )
-
-            return
-
-
-        if data == "edit_group_user_codes":
-
-            set_group_user_promo_context(
-                context,
-                group_id,
-                step="panel"
-            )
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "🎟 Códigos de mi grupo\n\n"
-                "Crea códigos para usuarios finales de esta comunidad. "
-                "Estos códigos solo funcionan en este grupo y no se mezclan con los códigos promocionales comerciales.",
-                reply_markup=build_group_user_codes_keyboard(group_id)
-            )
-
-            return
-
-
-        if data == "edit_group_stripe":
-
-            group = fetch_group_basic_info(group_id)
-            group_name = group[1] if group else f"Grupo {group_id}"
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "🔗 Stripe/configuración pagos\n\n"
-                f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
-                "Stripe global sigue funcionando para los pagos actuales del bot.\n\n"
-                "La configuración de Stripe propio por grupo todavía no está disponible. "
-                "Se activará en una fase posterior, con almacenamiento seguro y validación de webhooks por comunidad.\n\n"
-                "Por seguridad, todavía no se piden ni se guardan credenciales Stripe del owner desde este panel.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💳 Ver métodos de pago del grupo", callback_data=f"owner_group_payment_methods_{group_id}")],
-                    [InlineKeyboardButton("⬅️ Volver a planes y pagos", callback_data="owner_panel_payments")],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-            return
-
-
-        log_event(
-            "owner_panel_placeholder_callback",
-            category="ui",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            message="Callback placeholder del panel owner pulsado.",
-            metadata={"callback_data": data}
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            (
-                "⚠️ Esta acción todavía no tiene un flujo seguro disponible.\n\n"
-                "No se ha modificado ningún dato. Usa las opciones disponibles del panel de comunidad."
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Volver al panel comunidad", callback_data="edit_group_back")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data == "group_user_codes_panel" or data.startswith("group_user_codes_panel_"):
-
-        callback_group_id = parse_group_user_code_group_callback(
-            data,
-            "group_user_codes_panel"
-        )
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para gestionar códigos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        set_group_user_promo_context(
-            context,
-            group_id,
-            step="panel"
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "🎟 Códigos de mi grupo\n\n"
-            "Estos códigos dan acceso a usuarios finales solo para esta comunidad.",
-            reply_markup=build_group_user_codes_keyboard(group_id)
-        )
-
-        return
-
-
-    if data == "group_user_code_create" or data.startswith("group_user_code_create_"):
-
-        callback_group_id = parse_group_user_code_group_callback(
-            data,
-            "group_user_code_create"
-        )
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        set_group_user_promo_context(
-            context,
-            group_id,
-            step="duration"
-        )
-        clear_group_user_promo_wizard(context, keep_group=True)
-        context.user_data["group_user_promo_step"] = "duration"
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "➕ Crear código\n\nElige la duración del acceso para el usuario final.",
-            reply_markup=build_group_user_code_duration_keyboard(group_id)
-        )
-
-        return
-
-
-    if data.startswith("group_user_code_duration_"):
-
-        callback_group_id, slug = parse_group_user_code_step_callback(
-            data,
-            "group_user_code_duration"
-        )
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        set_group_user_promo_context(
-            context,
-            group_id,
-            step="uses"
-        )
-
-
-        if slug == "custom":
-
-            context.user_data["group_user_promo_waiting"] = "custom_duration"
-
-            await query.message.reply_text(
-                "Envía la duración en días, entre 1 y 3650.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        if slug == "permanent":
-
-            context.user_data["group_user_promo_duration_days"] = None
-            context.user_data["group_user_promo_is_permanent"] = True
-
-        else:
-
-            try:
-
-                duration_days = int(slug)
-
-            except Exception:
-
-                await query.message.reply_text(
-                    "❌ Duración no válida.",
-                    reply_markup=build_group_user_codes_error_keyboard()
-                )
-
-                return
-
-
-            if not 1 <= duration_days <= 3650:
-
-                await query.message.reply_text(
-                    "❌ Duración no válida.",
-                    reply_markup=build_group_user_codes_error_keyboard()
-                )
-
-                return
-
-
-            context.user_data["group_user_promo_duration_days"] = duration_days
-            context.user_data["group_user_promo_is_permanent"] = False
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "Elige cuántos usos tendrá el código.",
-            reply_markup=build_group_user_code_uses_keyboard(group_id)
-        )
-
-        return
-
-
-    if data.startswith("group_user_code_uses_"):
-
-        callback_group_id, uses_text = parse_group_user_code_step_callback(
-            data,
-            "group_user_code_uses"
-        )
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        try:
-
-            max_uses = int(uses_text)
-
-        except Exception:
-
-            await query.message.reply_text(
-                "❌ Número de usos no válido.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        if max_uses not in (0, 1, 5, 10):
-
-            await query.message.reply_text(
-                "❌ Número de usos no válido.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        set_group_user_promo_context(
-            context,
-            group_id,
-            step="code_kind"
-        )
-        context.user_data["group_user_promo_max_uses"] = max_uses
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "Elige cómo quieres generar el código.",
-            reply_markup=build_group_user_code_kind_keyboard(group_id)
-        )
-
-        return
-
-
-    if data == "group_user_code_manual" or data.startswith("group_user_code_manual_"):
-
-        callback_group_id = parse_group_user_code_group_callback(
-            data,
-            "group_user_code_manual"
-        )
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        set_group_user_promo_context(
-            context,
-            group_id,
-            step="manual_code"
-        )
-        context.user_data["group_user_promo_waiting"] = "manual_code"
-
-        await query.message.reply_text(
-            "Envía el código manual.\n\n"
-            "Usa entre 4 y 32 caracteres: letras, números, guion o guion bajo.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Volver", callback_data=build_group_user_code_callback("group_user_codes_panel", group_id))]
-            ])
-        )
-
-        return
-
-
-    if data == "group_user_code_auto" or data.startswith("group_user_code_auto_"):
-
-        callback_group_id = parse_group_user_code_group_callback(
-            data,
-            "group_user_code_auto"
-        )
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para crear códigos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        duration_days = context.user_data.get("group_user_promo_duration_days")
-        is_permanent = context.user_data.get("group_user_promo_is_permanent") is True
-        max_uses = context.user_data.get("group_user_promo_max_uses")
-
-
-        if max_uses is None:
-
-            await query.message.reply_text(
-                "❌ Falta completar la configuración del código.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        try:
-
-            row = create_group_user_promo_code(
-                group_id,
-                user_id,
-                duration_days,
-                is_permanent,
-                max_uses
-            )
-
-        except Exception as e:
-
-            print("Error creando código de grupo:", e)
-
-            await query.message.reply_text(
-                "❌ Error creando el código.",
-                reply_markup=build_group_user_codes_keyboard(group_id)
-            )
-
-            return
-
-
-        if not row:
-
-            await query.message.reply_text(
-                "❌ Error creando el código.",
-                reply_markup=build_group_user_codes_keyboard(group_id)
-            )
-
-            return
-
-
-        clear_group_user_promo_wizard(context, keep_group=True)
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Código creado\n\n"
-            f"Código: {row[1]}\n"
-            f"Duración: {format_group_user_promo_duration(row[2], row[3])}\n"
-            f"Usos máximos: {'ilimitado' if row[4] == 0 else row[4]}",
-            reply_markup=build_group_user_codes_keyboard(group_id)
-        )
-
-        return
-
-
-    if data == "group_user_codes_active" or data.startswith("group_user_codes_active_"):
-
-        callback_group_id = parse_group_user_code_group_callback(
-            data,
-            "group_user_codes_active"
-        )
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para ver códigos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        rows = fetch_group_user_promo_codes(group_id, active_only=True)
-
-
-        if not rows:
-
-            await query.message.reply_text(
-                "📋 No hay códigos activos para este grupo.",
-                reply_markup=build_group_user_codes_keyboard(group_id)
-            )
-
-            return
-
-
-        text = "📋 Códigos activos de mi grupo\n\n"
-
-
-        for _code_id, code, duration_days, is_permanent, max_uses, used_count, _is_active, expires_at, _created_at in rows:
-
-            text += (
-                f"Código: {code}\n"
-                f"Duración: {format_group_user_promo_duration(duration_days, is_permanent)}\n"
-                f"Usos: {format_group_user_promo_uses(max_uses, used_count)}\n"
-                f"Caduca: {expires_at or '-'}\n\n"
-            )
-
-
-        await query.message.reply_text(
-            text,
-            reply_markup=build_group_user_codes_keyboard(group_id)
-        )
-
-        return
-
-
-    if data == "group_user_code_deactivate_menu" or data.startswith("group_user_code_deactivate_menu_"):
-
-        callback_group_id = parse_group_user_code_group_callback(
-            data,
-            "group_user_code_deactivate_menu"
-        )
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para desactivar códigos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        rows = fetch_group_user_promo_codes(group_id, active_only=True)
-
-
-        await query.message.reply_text(
-            "🚫 Desactivar código\n\nElige el código que quieres desactivar.",
-            reply_markup=build_group_user_code_deactivate_keyboard(rows, group_id)
-        )
-
-        return
-
-
-    if data.startswith("group_user_code_deactivate_"):
-
-        payload = data.replace("group_user_code_deactivate_", "", 1)
-        callback_group_id = None
-        code_id_text = payload
-
-
-        if "_" in payload:
-
-            maybe_group_id, maybe_code_id = payload.split("_", 1)
-
-
-            if maybe_group_id.isdigit() and maybe_code_id.isdigit():
-
-                callback_group_id = int(maybe_group_id)
-                code_id_text = maybe_code_id
-
-
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para desactivar códigos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        try:
-
-            code_id = int(code_id_text)
-
-        except Exception:
-
-            await query.message.reply_text(
-                "❌ Código no válido.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                UPDATE group_user_promo_codes
-                SET is_active=FALSE
-                WHERE id=%s
-                AND group_id=%s
-                RETURNING code
-
-            """, (
-                code_id,
-                group_id
-            ))
-
-            row = cur.fetchone()
-            conn.commit()
-
-
-        if not row:
-
-            await query.message.reply_text(
-                "❌ Código no encontrado.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        await query.message.reply_text(
-            f"🚫 Código desactivado:\n{row[0]}",
-            reply_markup=build_group_user_codes_keyboard(group_id)
-        )
-
-        return
-
-
-    if data == "group_user_code_usage" or data.startswith("group_user_code_usage_"):
-
-        callback_group_id = parse_group_user_code_group_callback(
-            data,
-            "group_user_code_usage"
-        )
-        group_id = resolve_group_user_codes_group(
-            context,
-            user_id,
-            ["can_manage_codes"],
-            callback_group_id
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para ver usos en esta comunidad.",
-                reply_markup=build_group_user_codes_error_keyboard()
-            )
-
-            return
-
-
-        rows = fetch_group_user_promo_usage(group_id)
-
-
-        if not rows:
-
-            await query.message.reply_text(
-                "📊 Todavía no hay usos de códigos en este grupo.",
-                reply_markup=build_group_user_codes_keyboard(group_id)
-            )
-
-            return
-
-
-        text = "📊 Usos de códigos\n\n"
-
-
-        for redeemed_at, redeemed_user_id, code, expiration in rows:
-
-            text += (
-                f"Código: {code}\n"
-                f"Usuario: {redeemed_user_id}\n"
-                f"Canjeado: {redeemed_at}\n"
-                f"Expira: {expiration or 'permanente'}\n\n"
-            )
-
-
-        await query.message.reply_text(
-            text,
-            reply_markup=build_group_user_codes_keyboard(group_id)
-        )
-
-        return
 
 
     # =========================
     # EDITAR PREVIEW
     # =========================
 
-    if data == "edit_group_preview":
-
-        try:
-            await query.message.delete()
-        except:
-            pass
 
 
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_edit_marketplace_preview", "can_manage_groups"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)"
-            )
-
-            return
-
-
-        if not user_has_group_permission_any(
-            user_id,
-            group_id,
-            ["can_edit_marketplace_preview", "can_manage_groups"]
-        ):
-
-            await query.message.reply_text(
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)"
-            )
-
-            return
-
-
-        await query.message.reply_text(
-            preview_mode_selection_text(),
-            reply_markup=build_group_preview_mode_keyboard()
-
-        )
-
-        return
-
-
-    if data.startswith("edit_group_preview_mode_"):
-
-        preview_mode = data.replace("edit_group_preview_mode_", "", 1)
-
-        if preview_mode not in PREVIEW_MODE_LABELS:
-
-            await query.message.reply_text("❌ Nivel de preview no válido.")
-
-            return
-
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_edit_marketplace_preview", "can_manage_groups"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\nÁbrela primero en «🏪 Mis comunidades» y repite la acción. Si administras varias, elige la correcta.\n\n(Si crees que deberías tener acceso y no lo tienes, avisa al propietario principal.)"
-            )
-
-            return
-
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                UPDATE groups
-                SET preview_mode=%s
-                WHERE id=%s
-
-            """, (
-                preview_mode,
-                group_id
-            ))
-
-            conn.commit()
-
-
-        if preview_mode in ("manual", "hybrid"):
-
-            context.user_data["editing_preview"] = True
-            context.user_data["editing_preview_mode"] = preview_mode
-
-            await query.message.reply_text(
-                "✅ Tipo de preview actualizado.\n\n"
-                "Envía ahora una imagen o vídeo para guardarlo como preview manual.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "⬅️ Volver",
-                        callback_data="edit_group_back"
-                    )]
-                ])
-            )
-
-            return
-
-
-        message = "✅ Preview dinámico activado."
-
-        if preview_mode == "dynamic":
-
-            message = (
-                "✅ Preview dinámico activado.\n\n"
-                "Solo capturará vídeos nuevos publicados en el grupo después de activar este modo."
-            )
-
-        elif preview_mode == "private":
-
-            message = "✅ Sin preview público activado."
-
-
-        await query.message.reply_text(
-            message,
-            reply_markup=InlineKeyboardMarkup(
-                build_group_settings_keyboard(user_id, group_id)
-            )
-        )
-
-        return
 
     # =========================
     # OMITIR PREVIEW
@@ -32581,274 +28550,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # EDITAR PLANES — MENÚ
     # =========================
 
-    if data == "edit_group_plans":
-
-        try:
-            await query.message.delete()
-        except:
-            pass
-
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_plans", "can_manage_groups"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar planes de este grupo."
-            )
-
-            return
-
-
-        keyboard = [
-
-            [InlineKeyboardButton(
-                "📋 Ver planes",
-                callback_data="view_group_plans"
-            )],
-
-            [InlineKeyboardButton(
-                "➕ Añadir plan",
-                callback_data="add_group_plan"
-            )],
-
-            [InlineKeyboardButton(
-                "✏️ Editar plan",
-                callback_data="edit_group_plan_select"
-            )],
-
-            [InlineKeyboardButton(
-                "🗑 Eliminar plan",
-                callback_data="delete_group_plan_select"
-            )],
-
-            [InlineKeyboardButton(
-                "⬅️ Volver",
-                callback_data=f"edit_group_{group_id}"
-            )]
-
-        ]
-
-
-        await query.message.reply_text(
-
-            "💳 GESTIÓN DE PLANES\n\n"
-            "Selecciona una opción:",
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
-        )
-
-        return
 
 
     # =========================
     # AÑADIR PLAN — INICIO
     # =========================
 
-    if data == "add_group_plan":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_plans", "can_manage_groups"]
-        )
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar planes de este grupo."
-            )
-
-            return
 
 
-        clear_plan_wizard_state(
-            context,
-            user_id=user_id,
-            action="start_add_group_plan"
-        )
-        clear_owner_payment_provider_wizard_state(
-            context,
-            user_id=user_id,
-            action="start_add_group_plan"
-        )
-
-        providers = get_group_plan_configurable_payment_providers(group_id)
-
-        if not providers:
-
-            log_event(
-                "plan_provider_missing_config",
-                category="payment",
-                severity="warning",
-                scope="group",
-                group_id=group_id,
-                actor_user_id=user_id,
-                target_user_id=user_id,
-                message="Intento de crear plan sin proveedores de pago configurados.",
-                metadata={
-                    "group_id": group_id,
-                    "user_id": user_id
-                }
-            )
-
-            await query.message.reply_text(
-                "⚠️ Primero configura al menos un método de pago para esta comunidad.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⚙️ Configurar pagos", callback_data="owner_panel_payments")],
-                    [InlineKeyboardButton("❌ Cancelar", callback_data="edit_group_plans")]
-                ])
-            )
-
-            return
-
-
-        if len(providers) > 1:
-
-            await query.message.reply_text(
-                "➕ CREAR NUEVO PLAN\n\n"
-                "Elige para qué método de pago quieres crear este plan:",
-                reply_markup=build_plan_provider_selection_keyboard(providers)
-            )
-
-            return
-
-
-        context.user_data["adding_plan"] = True
-        context.user_data["add_plan_step"] = 1
-        context.user_data["new_plan"] = {
-            "payment_provider": providers[0]
-        }
-        provider_warning = build_plan_provider_global_warning(group_id, providers[0])
-
-        log_event(
-            "plan_wizard_provider_selected",
-            category="payment",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            target_user_id=user_id,
-            message="Proveedor único seleccionado automáticamente para nuevo plan.",
-            metadata={
-                "group_id": group_id,
-                "user_id": user_id,
-                "provider": providers[0]
-            }
-        )
-
-
-        await query.message.reply_text(
-
-            "➕ CREAR NUEVO PLAN\n\n"
-            f"Método seleccionado: {format_plan_payment_provider(providers[0])}\n\n"
-            f"{provider_warning}"
-
-            "Paso 1️⃣\n"
-            "Introduce el nombre del plan.\n\n"
-
-            "Ejemplo:\n"
-            "VIP Mensual"
-
-        )
-
-        return
-
-
-    if data.startswith("add_group_plan_provider_"):
-
-        provider = data.replace("add_group_plan_provider_", "", 1).strip().lower()
-
-        if provider not in PLAN_PAYMENT_PROVIDER_LABELS:
-
-            await query.message.reply_text(
-                "⚠️ Método de pago no reconocido.",
-                reply_markup=build_unknown_callback_keyboard()
-            )
-
-            return
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_plans", "can_manage_groups"]
-        )
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar planes de este grupo."
-            )
-
-            return
-
-
-        providers = get_group_plan_configurable_payment_providers(group_id)
-
-        if provider not in providers:
-
-            await query.message.reply_text(
-                "⚠️ Este método de pago no está configurado para esta comunidad.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⚙️ Configurar pagos", callback_data="owner_panel_payments")],
-                    [InlineKeyboardButton("❌ Cancelar", callback_data="edit_group_plans")]
-                ])
-            )
-
-            return
-
-
-        clear_plan_wizard_state(
-            context,
-            user_id=user_id,
-            action="start_add_group_plan_provider"
-        )
-        clear_owner_payment_provider_wizard_state(
-            context,
-            user_id=user_id,
-            action="start_add_group_plan_provider"
-        )
-
-        context.user_data["adding_plan"] = True
-        context.user_data["add_plan_step"] = 1
-        context.user_data["new_plan"] = {
-            "payment_provider": provider
-        }
-        provider_warning = build_plan_provider_global_warning(group_id, provider)
-
-        log_event(
-            "plan_wizard_provider_selected",
-            category="payment",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            target_user_id=user_id,
-            message="Proveedor seleccionado para nuevo plan.",
-            metadata={
-                "group_id": group_id,
-                "user_id": user_id,
-                "provider": provider
-            }
-        )
-
-        await query.message.reply_text(
-            "➕ CREAR NUEVO PLAN\n\n"
-            f"Método seleccionado: {format_plan_payment_provider(provider)}\n\n"
-            f"{provider_warning}"
-            "Paso 1️⃣\n"
-            "Introduce el nombre del plan.\n\n"
-            "Ejemplo:\n"
-            "VIP Mensual"
-        )
-
-        return
 
 
     # =========================
@@ -33013,81 +28722,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # EDITAR PLAN — SELECCIÓN
     # =========================
 
-    if data == "edit_group_plan_select":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_plans", "can_manage_groups"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permisos para gestionar planes de este grupo."
-            )
-
-            return
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT id, name
-                FROM plans
-                WHERE group_id=%s
-                AND is_active=TRUE
-                ORDER BY id ASC
-
-            """, (group_id,))
-
-            plans = cur.fetchall()
-
-
-        if not plans:
-
-            await query.message.reply_text(
-                "⚠️ No hay planes disponibles."
-            )
-
-            return
-
-
-        keyboard = []
-
-
-        for plan_id, name in plans:
-
-            keyboard.append([
-
-                InlineKeyboardButton(
-                    name,
-                    callback_data=f"edit_plan_{plan_id}"
-                )
-
-            ])
-
-
-        keyboard.append([
-
-            InlineKeyboardButton(
-                "⬅️ Volver",
-                callback_data="edit_group_plans"
-            )
-
-        ])
-
-
-        await query.message.reply_text(
-
-            "✏️ Selecciona el plan a editar:",
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
-        )
-
-        return
 
 
     # =========================
@@ -34867,222 +30501,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data == "group_user_promo_redeem_start":
-
-        await clear_location_flow_navigation(context, query.message.chat_id)
-
-        await query.message.reply_text(
-            "🎟 Código de comunidad\n\n"
-            "El canje de códigos se hace desde la ficha de una comunidad concreta.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
 
 
-    if data.startswith("group_user_promo_redeem_start_"):
-
-        await clear_location_flow_navigation(context, query.message.chat_id)
-
-        redeem_group_id = extract_commercial_request_id(
-            data,
-            "group_user_promo_redeem_start_"
-        )
-
-        if redeem_group_id is None:
-
-            await query.message.reply_text(
-                "❌ Comunidad no válida.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-            return
-
-        context.user_data["group_user_promo_waiting"] = "redeem_code"
-        context.user_data["group_user_promo_redeem_group_id"] = redeem_group_id
-
-        await query.message.reply_text(
-            "🎟 Canjear código de esta comunidad\n\n"
-            "Envía ahora el código de acceso. Solo será válido si pertenece a esta comunidad.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Volver a comunidad", callback_data=f"marketplace_group_{redeem_group_id}")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
 
 
-    if data.startswith("group_user_promo_confirm_"):
-
-        code_id = extract_commercial_request_id(
-            data,
-            "group_user_promo_confirm_"
-        )
-
-        if code_id is None:
-
-            await query.message.reply_text(
-                "❌ Código no válido.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-            return
-
-
-        pending_code_id = context.user_data.get("group_user_promo_pending_code_id")
-
-
-        if int(pending_code_id or 0) != code_id:
-
-            await query.message.reply_text(
-                "❌ No hay un código pendiente para confirmar.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-            return
-
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT c.id,
-                       c.group_id,
-                       c.telegram_group_id,
-                       c.owner_user_id,
-                       c.code,
-                       c.duration_days,
-                       c.is_permanent,
-                       c.max_uses,
-                       c.used_count,
-                       c.is_active,
-                       c.expires_at,
-                       g.name,
-                       COALESCE(g.community_type, 'group'),
-                       COALESCE(g.is_active, TRUE)
-                FROM group_user_promo_codes c
-                JOIN groups g
-                ON g.id = c.group_id
-                WHERE c.id=%s
-                LIMIT 1
-
-            """, (code_id,))
-
-            promo_row = cur.fetchone()
-
-
-        valid, error_message = validate_group_user_promo_row(promo_row)
-        selected_group_id = context.user_data.get("group_user_promo_redeem_group_id")
-
-
-        if valid and selected_group_id and int(promo_row[1]) != int(selected_group_id):
-
-            valid = False
-            error_message = "❌ Este código no pertenece a esta comunidad."
-
-
-        if not valid:
-
-            await query.message.reply_text(
-                error_message,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "⬅️ Volver a comunidad",
-                        callback_data=f"marketplace_group_{selected_group_id}"
-                        if selected_group_id
-                        else "start_explore_groups"
-                    )],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-            return
-
-
-        if len(promo_row) != 14:
-
-            log_event(
-                "group_user_promo_confirm_error",
-                category="access",
-                severity="error",
-                scope="group",
-                group_id=promo_row[1] if promo_row and len(promo_row) > 1 else None,
-                actor_user_id=user_id,
-                target_user_id=user_id,
-                message="Formato inesperado de código de acceso de grupo.",
-                metadata={
-                    "callback_data": data,
-                    "promo_id": code_id,
-                    "row_length": len(promo_row) if promo_row else 0,
-                    "error": "unexpected_promo_row_length"
-                }
-            )
-
-            await query.message.reply_text(
-                "❌ No he podido confirmar este código ahora mismo. Inténtalo de nuevo o contacta con el administrador.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-            return
-
-
-        try:
-
-            await grant_group_user_promo_access(
-                context,
-                query.message.chat_id,
-                query.from_user,
-                promo_row
-            )
-
-            context.user_data.pop("group_user_promo_pending_code_id", None)
-            context.user_data.pop("group_user_promo_waiting", None)
-            context.user_data.pop("group_user_promo_redeem_group_id", None)
-
-        except Exception as e:
-
-            print("Error canjeando código de grupo:", e)
-            log_event(
-                "group_user_promo_confirm_error",
-                category="access",
-                severity="error",
-                scope="group",
-                group_id=promo_row[1] if promo_row and len(promo_row) > 1 else None,
-                actor_user_id=user_id,
-                target_user_id=user_id,
-                message="Error confirmando código de acceso de grupo.",
-                metadata={
-                    "callback_data": data,
-                    "promo_id": code_id,
-                    "error": str(e)[:500]
-                }
-            )
-
-            await query.message.reply_text(
-                "❌ Error canjeando el código.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔎 Explorar comunidades", callback_data="start_explore_groups")],
-                    [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-                ])
-            )
-
-        return
 
 
     if data.startswith("user_trial_setup_free_"):
