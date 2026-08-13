@@ -437,6 +437,49 @@ def test_ningun_import_de_un_tramo_queda_sombreado():
     )
 
 
+@pytest.mark.parametrize("nombre", ["callback_router"] + MODULOS)
+def test_ninguna_funcion_asigna_el_nombre_de_un_import(nombre):
+    """
+    La fase 8 encontró esto vivo en producción: varias ramas hacían
+    `requests = fetch_pending_commercial_requests()` dentro de button(), y con
+    eso `requests` pasa a ser LOCAL de button() entero (regla de ámbito de
+    Python). Otra rama a miles de líneas usaba `requests.post(...)` esperando
+    el módulo: UnboundLocalError al pulsar ese botón, desde que se introdujo
+    la sombra. Regla: dentro de una función, no se asigna un nombre que sea un
+    import del fichero.
+    """
+
+    tree = arbol(nombre)
+
+    imports = set()
+
+    for n in tree.body:
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                imports.add(a.asname or a.name.split(".")[0])
+        if isinstance(n, ast.ImportFrom):
+            for a in n.names:
+                imports.add(a.asname or a.name)
+
+    sombras = []
+
+    for fn in ast.walk(tree):
+
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Name)
+                    and not isinstance(node.ctx, ast.Load)
+                    and node.id in imports):
+                sombras.append((fn.name, node.id, node.lineno))
+
+    assert not sombras, (
+        f"{nombre}: funciones que asignan el nombre de un import (el import "
+        f"deja de verse en TODA la función): {sombras[:6]}"
+    )
+
+
 def test_los_marcadores_que_inyecta_main_viven_en_el_router():
     """
     main.py rellena algunos nombres en caliente con

@@ -10,6 +10,7 @@ Estos tests fijan la decisión: mientras no exista el cobro con la cuenta del
 creador, no se piden sus credenciales.
 """
 
+import pathlib
 import re
 
 import callback_router as cr
@@ -18,6 +19,19 @@ import migrations_service as ms
 
 
 CREATOR_SETUP_SOURCE = open(cfh.__file__, encoding="utf-8").read()
+
+
+def fuente_router_y_tramos():
+    """Las funciones vigiladas pueden vivir en el router o en cualquier tramo
+    extraído (get_group_payment_settings se mudó en la fase 8): se escanea la
+    unión, no un fichero."""
+
+    raiz = pathlib.Path(cr.__file__).parent
+
+    return "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in [raiz / "callback_router.py", *sorted(raiz.glob("*_callbacks.py"))]
+    )
 
 
 def test_the_creator_setup_no_longer_asks_for_a_stripe_secret_key():
@@ -38,7 +52,7 @@ def test_no_wizard_can_route_to_a_stripe_credential_step():
     recogida de credenciales con una sola llamada.
     """
 
-    source = open(cr.__file__, encoding="utf-8").read()
+    source = fuente_router_y_tramos()
 
     match = re.search(
         r"def start_creator_setup_state.*?\n    context\.user_data\[\"creator_setup\"\]",
@@ -62,7 +76,7 @@ def test_no_wizard_can_route_to_a_stripe_credential_step():
 def test_nothing_reads_the_plaintext_secret_columns():
     """Se seleccionaban para descartarlas: leerlas no aportaba nada."""
 
-    source = open(cr.__file__, encoding="utf-8").read()
+    source = fuente_router_y_tramos()
 
     match = re.search(
         r"def get_group_payment_settings.*?return cur\.fetchone\(\)",
