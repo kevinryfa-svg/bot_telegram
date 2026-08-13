@@ -368,6 +368,54 @@ from owner_panel_callbacks import (
     NOT_HANDLED as OWNER_PANEL_NOT_HANDLED,
     handle_owner_panel_callbacks
 )
+from owner_location_callbacks import (
+    NOT_HANDLED as OWNER_LOCATION_NOT_HANDLED,
+    handle_owner_location_callbacks
+)
+from admin_guardarian_callbacks import (
+    NOT_HANDLED as ADMIN_GUARDARIAN_NOT_HANDLED,
+    handle_admin_guardarian_callbacks
+)
+from admin_beta_callbacks import (
+    NOT_HANDLED as ADMIN_BETA_NOT_HANDLED,
+    handle_admin_beta_callbacks
+)
+from admin_guardian_callbacks import (
+    NOT_HANDLED as ADMIN_GUARDIAN_NOT_HANDLED,
+    handle_admin_guardian_callbacks
+)
+from guardian_user_callbacks import (
+    NOT_HANDLED as GUARDIAN_USER_NOT_HANDLED,
+    handle_guardian_user_callbacks
+)
+from community_user_callbacks import (
+    NOT_HANDLED as COMMUNITY_USER_NOT_HANDLED,
+    handle_community_user_callbacks
+)
+from admin_support_callbacks import (
+    NOT_HANDLED as ADMIN_SUPPORT_NOT_HANDLED,
+    handle_admin_support_callbacks
+)
+from admin_view_callbacks import (
+    NOT_HANDLED as ADMIN_VIEW_NOT_HANDLED,
+    handle_admin_view_callbacks
+)
+from admin_changenow_callbacks import (
+    NOT_HANDLED as ADMIN_CHANGENOW_NOT_HANDLED,
+    handle_admin_changenow_callbacks
+)
+from admin_resend_callbacks import (
+    NOT_HANDLED as ADMIN_RESEND_NOT_HANDLED,
+    handle_admin_resend_callbacks
+)
+from creator_dynamic_callbacks import (
+    NOT_HANDLED as CREATOR_DYNAMIC_NOT_HANDLED,
+    handle_creator_dynamic_callbacks
+)
+from recover_access_callbacks import (
+    NOT_HANDLED as RECOVER_ACCESS_NOT_HANDLED,
+    handle_recover_access_callbacks
+)
 from owner_payment_callbacks import (
     OWNER_PAYMENT_CALLBACK_PREFIXES,
     handle_owner_payment_callbacks
@@ -429,11 +477,11 @@ from wizard_state_helpers import (
 # TOKEN vive en owner_publicity_callbacks (tramo extraído) y se importa arriba.
 SERVER_URL = os.environ.get("SERVER_URL")
 
-# Marcador: main.py lo rellena en caliente (callback_router_module.revoke_link).
-# mysub_callbacks lo lee de aquí en diferido, en el momento de la llamada.
+# Marcadores: main.py los rellena en caliente (callback_router_module.X = ...).
+# Los tramos extraídos los leen de aquí en diferido, en el momento de la llamada.
 revoke_link = None
-
 get_group_id = None
+
 
 # OWNER_PAYMENT_PROVIDER_CHANGENOW/GUARDARIAN viven en
 # admin_payment_provider_callbacks (tramo extraído) y se importan arriba.
@@ -2214,75 +2262,8 @@ def should_show_owner_location_reviews_button(group_id):
     return location_enabled is True or group_has_location_manual_reviews(group_id)
 
 
-def fetch_location_manual_review_status_counts(group_id):
-
-    counts = {
-        "pending": 0,
-        "approved_temp": 0,
-        "completed": 0,
-        "rejected": 0,
-        "expired": 0
-    }
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            SELECT status,
-                   COUNT(*)
-            FROM location_manual_reviews
-            WHERE group_id=%s
-            GROUP BY status
-
-        """, (group_id,))
-
-        rows = cur.fetchall()
 
 
-    for status, total in rows:
-
-        if status in counts:
-
-            counts[status] = total or 0
-
-
-    return counts
-
-
-def fetch_owner_location_manual_reviews(group_id, limit=10):
-
-    with conn.cursor() as cur:
-
-        cur.execute(f"""
-
-            SELECT {", ".join(LOCATION_MANUAL_REVIEW_FIELDS)}
-            FROM location_manual_reviews
-            WHERE group_id=%s
-            ORDER BY
-                CASE status
-                    WHEN 'pending' THEN 0
-                    WHEN 'approved_temp' THEN 1
-                    WHEN 'rejected' THEN 2
-                    WHEN 'completed' THEN 3
-                    WHEN 'expired' THEN 4
-                    ELSE 5
-                END,
-                updated_at DESC NULLS LAST,
-                created_at DESC NULLS LAST
-            LIMIT %s
-
-        """, (
-            group_id,
-            limit
-        ))
-
-        rows = cur.fetchall()
-
-
-    return [
-        row_to_location_manual_review(row)
-        for row in rows
-    ]
 
 
 def mark_location_manual_review_completed(user_id, group_id):
@@ -2501,18 +2482,6 @@ def format_location_manual_review_detail(review, ticket=None):
     )
 
 
-def format_location_review_status_label(status):
-
-    labels = {
-        "pending": "pendiente",
-        "approved_temp": "aprobada temporal",
-        "completed": "completada",
-        "expired": "caducada",
-        "rejected": "rechazada",
-        "cancelled": "cancelada"
-    }
-
-    return labels.get(status, status or "-")
 
 
 def format_location_review_reason_preview(reason):
@@ -2527,120 +2496,12 @@ def format_location_review_reason_preview(reason):
     return first_line[:120] if first_line else "-"
 
 
-def build_owner_location_reviews_text(group_id, reviews, counts):
-
-    group_details = fetch_group_location_review_details(group_id) or {}
-    group_name = group_details.get("name") or group_id
-    lines = [
-        "📍 Revisiones manuales de ubicación",
-        f"Comunidad: {group_name}",
-        "",
-        f"Pendientes: {counts.get('pending', 0)}",
-        f"Aprobadas temporales: {counts.get('approved_temp', 0)}",
-        f"Completadas: {counts.get('completed', 0)}",
-        f"Rechazadas: {counts.get('rejected', 0)}",
-        f"Caducadas: {counts.get('expired', 0)}"
-    ]
 
 
-    if not reviews:
-
-        lines.extend([
-            "",
-            "Todavía no hay solicitudes de revisión manual de ubicación para esta comunidad."
-        ])
-
-        return "\n".join(lines)
 
 
-    lines.append("")
 
 
-    for review in reviews:
-
-        lines.extend([
-            f"#{review.get('id')}",
-            f"Usuario: {review.get('user_id') or '-'}",
-            f"Estado: {format_location_review_status_label(review.get('status'))}",
-            f"Creada: {format_commercial_datetime(review.get('created_at'))}",
-            f"Caduca: {format_commercial_datetime(review.get('expires_at')) if review.get('expires_at') else '-'}",
-            f"Motivo: {format_location_review_reason_preview(review.get('question_1_reason'))}",
-            ""
-        ])
-
-
-    return "\n".join(lines)[:3900]
-
-
-def build_owner_location_reviews_keyboard(group_id, reviews):
-
-    keyboard = []
-
-
-    for review in reviews:
-
-        keyboard.append([InlineKeyboardButton(
-            f"📍 Ver detalle #{review.get('id')}",
-            callback_data=f"owner_location_review_detail_{review.get('id')}"
-        )])
-
-
-    keyboard.extend([
-        [InlineKeyboardButton("⬅️ Volver al soporte", callback_data="owner_support_tickets")],
-        [InlineKeyboardButton("🔙 Volver al panel de comunidad", callback_data="edit_group_back")],
-        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-    ])
-
-    return InlineKeyboardMarkup(keyboard)
-
-
-def build_owner_location_review_detail_text(review, ticket=None):
-
-    base_text = format_location_manual_review_detail(review, ticket)
-
-    return (
-        f"{base_text}\n"
-        f"Creada: {format_commercial_datetime(review.get('created_at'))}\n"
-        f"Caduca: {format_commercial_datetime(review.get('expires_at')) if review.get('expires_at') else '-'}\n"
-        f"Completada: {format_commercial_datetime(review.get('completed_at')) if review.get('completed_at') else '-'}"
-    )
-
-
-def build_owner_location_review_detail_keyboard(review):
-
-    review_id = review.get("id")
-    group_id = review.get("group_id")
-    ticket_id = review.get("support_ticket_id")
-    keyboard = []
-
-
-    if review.get("status") == "pending":
-
-        keyboard.append([InlineKeyboardButton(
-            "✅ Aprobar revisión temporal 7 días",
-            callback_data=f"location_review_approve7_{review_id}"
-        )])
-        keyboard.append([InlineKeyboardButton(
-            "❌ Rechazar revisión",
-            callback_data=f"location_review_reject_{review_id}"
-        )])
-
-
-    if ticket_id:
-
-        keyboard.append([InlineKeyboardButton(
-            "💬 Responder ticket",
-            callback_data=f"owner_support_reply_{ticket_id}"
-        )])
-
-
-    keyboard.extend([
-        [InlineKeyboardButton("🔙 Volver a revisiones", callback_data=f"owner_location_reviews_{group_id}")],
-        [InlineKeyboardButton("🔙 Volver al panel de comunidad", callback_data="edit_group_back")],
-        [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-    ])
-
-    return InlineKeyboardMarkup(keyboard)
 
 
 def build_location_manual_review_admin_keyboard(review):
@@ -8233,60 +8094,8 @@ def build_admin_panel_keyboard(user_id):
     return []
 
 
-def build_beta_monitor_keyboard():
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Últimas 24h", callback_data="admin_beta_monitor_24h")],
-        [InlineKeyboardButton("Críticos", callback_data="admin_beta_monitor_critical")],
-        [InlineKeyboardButton("Warnings", callback_data="admin_beta_monitor_warning")],
-        [InlineKeyboardButton("Pagos/accesos", callback_data="admin_beta_monitor_payments")],
-        [InlineKeyboardButton("Códigos", callback_data="admin_beta_monitor_codes")],
-        [InlineKeyboardButton("Backups", callback_data="admin_beta_monitor_backups")],
-        [InlineKeyboardButton("🗓 Ciclo beta", callback_data="admin_beta_cycle")],
-        [InlineKeyboardButton("▶️ Iniciar beta 1 semana", callback_data="admin_beta_cycle_start_beta_1")],
-        [InlineKeyboardButton("🔁 Iniciar beta 2.0", callback_data="admin_beta_cycle_start_beta_2")],
-        [InlineKeyboardButton("✅ Finalizar beta", callback_data="admin_beta_cycle_finish")],
-        [InlineKeyboardButton("📋 Ver estado beta", callback_data="admin_beta_cycle_status")],
-        [InlineKeyboardButton("🚀 Preparar lanzamiento final", callback_data="admin_beta_cycle_final_review")],
-        [InlineKeyboardButton("Marcar resueltos", callback_data="admin_beta_monitor_resolve_all")],
-        [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
-    ])
 
 
-def format_beta_monitor_events_text(title, rows):
-
-    if not rows:
-
-        return f"{title}\n\nSin eventos registrados."
-
-
-    text = f"{title}\n\n"
-
-
-    for (
-        event_id,
-        created_at,
-        event_type,
-        severity,
-        event_user_id,
-        event_group_id,
-        event_telegram_group_id,
-        message,
-        resolved
-    ) in rows[:30]:
-
-        status = "resuelto" if resolved else "pendiente"
-
-        text += (
-            f"#{event_id} · {event_type or '-'} · {severity or '-'} · {status}\n"
-            f"Usuario: {event_user_id or '-'}\n"
-            f"Grupo: {event_group_id or '-'} / {event_telegram_group_id or '-'}\n"
-            f"Detalle: {message or '-'}\n"
-            f"Fecha: {created_at or '-'}\n\n"
-        )
-
-
-    return text[:3900]
 
 
 def format_beta_cycle_row(row):
@@ -8320,45 +8129,8 @@ def format_beta_cycle_row(row):
     )
 
 
-def format_beta_cycle_status_text():
-
-    active_cycle = get_active_beta_cycle()
-    latest_cycle = active_cycle or get_latest_beta_cycle()
-    counts = get_beta_cycle_monitor_counts(hours=24)
-
-    lines = [
-        "🗓 Ciclo beta",
-        "",
-        format_beta_cycle_row(latest_cycle),
-        "",
-        "📊 Estado últimas 24h",
-        f"Críticos abiertos: {counts.get('critical_open', 0)}",
-        f"Warnings abiertos: {counts.get('warning_open', 0)}",
-        f"Pagos: {counts.get('payments', 0)}",
-        f"Accesos permitidos: {counts.get('access_allowed', 0)}",
-        f"Códigos canjeados: {counts.get('codes', 0)}",
-        f"Backups fallidos: {counts.get('backup_failed', 0)}",
-        f"Tickets soporte: {counts.get('support_tickets', 0)}"
-    ]
-
-    return "\n".join(lines)
 
 
-def format_final_launch_checklist():
-
-    return (
-        "🚀 Preparar lanzamiento final\n\n"
-        "Antes de abrir comercialmente, revisa:\n\n"
-        "☐ Bugs P0 cerrados\n"
-        "☐ Bugs P1 cerrados o aceptados\n"
-        "☐ Smoke test OK\n"
-        "☐ Railway estable\n"
-        "☐ Stripe probado\n"
-        "☐ Backups probados\n"
-        "☐ Soporte probado\n"
-        "☐ Logs limpios\n\n"
-        "Este checklist no cambia pagos, grupos ni datos de usuarios."
-    )
 
 
 def build_beta_smoke_test_keyboard():
@@ -11681,91 +11453,10 @@ def fetch_admin_guardian_trial_groups(page=0, page_size=8, query=None):
     return rows[:page_size], len(rows) > page_size
 
 
-def fetch_admin_guardian_trial_group(group_id):
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            SELECT g.id,
-                   g.name,
-                   g.telegram_group_id,
-                   a.user_id AS owner_user_id,
-                   COALESCE(g.is_active, TRUE)
-            FROM groups g
-            LEFT JOIN admins a
-              ON a.group_id = g.id
-             AND a.role = 'GROUP_OWNER'
-             AND COALESCE(a.is_active, TRUE)=TRUE
-            WHERE g.id=%s
-            LIMIT 1
-
-        """, (group_id,))
-
-        return cur.fetchone()
 
 
-def build_admin_guardian_trial_groups_text(page=0, query=None):
-
-    query_text = (query or "").strip()
-    lines = [
-        "🎁 Activar Guardian 30 días",
-        "",
-        "Elige el grupo al que quieres activar Guardian."
-    ]
-
-    if query_text:
-
-        lines.extend([
-            "",
-            f"Búsqueda: {query_text}"
-        ])
 
 
-    lines.extend([
-        "",
-        "Solo aparecen grupos activos con owner asignado."
-    ])
-
-    return "\n".join(lines)
-
-
-def build_admin_guardian_trial_groups_keyboard(page=0, query=None):
-
-    rows, has_next = fetch_admin_guardian_trial_groups(page=page, query=query)
-    keyboard = []
-
-    for group_id, name, telegram_group_id, owner_user_id, _is_active in rows:
-
-        label = name or f"Grupo {group_id}"
-        keyboard.append([
-            InlineKeyboardButton(
-                f"{label} · #{group_id}",
-                callback_data=f"admin_guardian_trial_group_{group_id}"
-            )
-        ])
-
-
-    nav_row = []
-
-    if page > 0:
-
-        nav_row.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"admin_guardian_trial_groups_{page - 1}"))
-
-    if has_next:
-
-        nav_row.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"admin_guardian_trial_groups_{page + 1}"))
-
-    if nav_row:
-
-        keyboard.append(nav_row)
-
-
-    keyboard.append([InlineKeyboardButton("🔎 Buscar grupo", callback_data="admin_guardian_trial_search")])
-    keyboard.append([InlineKeyboardButton("✍️ Introducir IDs manualmente", callback_data="admin_guardian_trial_manual_input")])
-    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
-
-    return InlineKeyboardMarkup(keyboard)
 
 
 def build_admin_guardian_trial_search_results_text(query):
@@ -12382,55 +12073,8 @@ def log_owner_backup_addon_gate(event_name, user_id, owner_user_id, group_id, ac
 
 
 
-def build_guardian_user_warnings_text(group_id, target_user_id):
-
-    warnings = list_guardian_warnings(group_id, target_user_id=target_user_id, limit=10)
-    active_count = count_guardian_warnings(group_id, target_user_id)
-
-    lines = [
-        "⚠️ Guardian warnings de usuario",
-        "",
-        f"Usuario: {target_user_id}",
-        f"Warnings activos: {active_count}",
-        "",
-        "Últimos warnings:"
-    ]
 
 
-    if not warnings:
-
-        lines.append("- Todavía no hay warnings registrados.")
-
-    else:
-
-        for warning in warnings:
-
-            status = "activo" if warning.get("is_active") else "reseteado"
-            created_at = format_commercial_datetime(warning.get("created_at"))
-            lines.append(
-                f"- #{warning.get('id')} · {status} · {created_at} · {warning.get('reason') or '-'}"
-            )
-
-
-    return "\n".join(lines)
-
-
-def build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id):
-
-    keyboard = []
-
-    if user_can_add_guardian_warning(user_id, group_id):
-
-        keyboard.append([InlineKeyboardButton("➕ Añadir warning manual", callback_data=f"guardian_user_warn_add_{group_id}_{target_user_id}")])
-
-    if user_can_reset_guardian_warnings(user_id, group_id):
-
-        keyboard.append([InlineKeyboardButton("🧹 Resetear warnings", callback_data=f"guardian_user_warn_reset_{group_id}_{target_user_id}")])
-
-    keyboard.append([InlineKeyboardButton("⬅️ Volver al usuario", callback_data=f"community_user_manage_{group_id}_{target_user_id}")])
-    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
-
-    return InlineKeyboardMarkup(keyboard)
 
 
 async def receive_guardian_log_channel_forward(update, context):
@@ -13307,30 +12951,6 @@ def build_owner_location_management_keyboard(group_id):
     ])
 
 
-def build_owner_location_regions_keyboard(group_id):
-
-    keyboard = []
-
-
-    for slug, label in SPANISH_AUTONOMOUS_COMMUNITIES:
-
-        if slug == "all_spain":
-
-            continue
-
-
-        keyboard.append([
-            InlineKeyboardButton(
-                label,
-                callback_data=f"owner_location_region_set_{group_id}_{slug}"
-            )
-        ])
-
-
-    keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="owner_panel_location_info")])
-    keyboard.append([InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")])
-
-    return InlineKeyboardMarkup(keyboard)
 
 
 def build_owner_location_management_text(group_id):
@@ -13353,50 +12973,6 @@ def build_owner_location_management_text(group_id):
     )
 
 
-def set_group_location_rule(group_id, enabled=None, region_type=None, allowed_region=None):
-
-    updates = []
-    params = []
-
-
-    if enabled is not None:
-
-        updates.append("location_gate_enabled=%s")
-        params.append(enabled)
-
-
-    if region_type is not None:
-
-        updates.append("allowed_region_type=%s")
-        params.append(region_type)
-
-
-    if allowed_region is not None:
-
-        updates.append("allowed_region=%s")
-        params.append(allowed_region)
-
-
-    if not updates:
-
-        return False
-
-
-    params.append(group_id)
-
-    with conn.cursor() as cur:
-
-        cur.execute(f"""
-
-            UPDATE groups
-            SET {", ".join(updates)}
-            WHERE id=%s
-
-        """, params)
-
-        conn.commit()
-
-    return True
 
 
 
@@ -13428,14 +13004,6 @@ def user_can_view_community_users(user_id, group_id):
     return user_has_group_permission_any(user_id, group_id, ["can_view_users", "can_manage_users", "can_manage_groups"])
 
 
-def user_can_manage_community_user_access(user_id, group_id):
-
-    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
-
-        return True
-
-
-    return user_has_group_permission_any(user_id, group_id, ["can_manage_users"])
 
 
 def user_can_recover_community_access_links(user_id, group_id):
@@ -13454,32 +13022,8 @@ def user_can_recover_community_access_links(user_id, group_id):
 
 
 
-def user_can_add_guardian_warning(user_id, group_id):
-
-    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
-
-        return True
 
 
-    return user_has_group_permission_any(
-        user_id,
-        group_id,
-        ["can_warn_users", "can_manage_users"]
-    )
-
-
-def user_can_reset_guardian_warnings(user_id, group_id):
-
-    if is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id:
-
-        return True
-
-
-    return user_has_group_permission_any(
-        user_id,
-        group_id,
-        ["can_reset_warnings", "can_manage_users"]
-    )
 
 
 def fetch_free_community_for_known_user_sync(group_id):
@@ -14399,167 +13943,16 @@ def build_community_user_manage_keyboard(group_id, target_user_id, actor_user_id
     return InlineKeyboardMarkup(keyboard)
 
 
-async def build_community_user_detail_text(context, group_id, target_user_id):
-
-    group = fetch_group_basic_info(group_id)
-    group_name = group[1] if group else f"Grupo {group_id}"
-    profile = fetch_community_user_profile(group_id, target_user_id)
-    access_state = await resolve_group_access_state_for_user(context, target_user_id, group_id)
-    expires_at = access_state.get("expires_at") or profile.get("expiration")
-    expires_text = "permanente" if access_state.get("has_active_access") and not expires_at else format_commercial_datetime(expires_at)
-
-    return (
-        "👤 Gestión de usuario\n\n"
-        f"Usuario: {format_community_user_display_name(profile)}\n"
-        f"ID: {target_user_id}\n"
-        f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
-        f"Estado actual: {'activo' if access_state.get('has_active_access') else access_state.get('subscription_status') or 'inactivo'}\n"
-        f"Expiración: {expires_text}\n"
-        f"Tipo/fuente: {format_community_user_access_type(access_state)}\n"
-        f"Acceso permanente: {'sí' if access_state.get('has_active_access') and not expires_at else 'no'}"
-    )
 
 
-def upsert_community_user_access(group_id, target_user_id, expiration, active=True):
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            INSERT INTO users (user_id, group_id, expiration, subscription_active, created_at)
-            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (user_id, group_id) DO UPDATE
-            SET expiration=EXCLUDED.expiration,
-                subscription_active=EXCLUDED.subscription_active
-
-        """, (target_user_id, group_id, expiration, active))
-
-        cur.execute("""
-
-            UPDATE subscriptions
-            SET end_date=%s,
-                status=%s
-            WHERE id=(
-                SELECT id
-                FROM subscriptions
-                WHERE user_id=%s
-                AND group_id=%s
-                ORDER BY created_at DESC
-                LIMIT 1
-            )
-
-        """, (expiration, "active" if active else "revoked", target_user_id, group_id))
 
 
-        if cur.rowcount == 0 and active:
-
-            cur.execute("""
-
-                INSERT INTO subscriptions (user_id, group_id, status, start_date, end_date)
-                VALUES (%s, %s, 'active', CURRENT_TIMESTAMP, %s)
-
-            """, (target_user_id, group_id, expiration))
-
-    conn.commit()
 
 
-def adjust_community_user_access_days(group_id, target_user_id, days, operation):
-
-    access_state = get_user_group_access_state(target_user_id, group_id)
-    expires_at = access_state.get("expires_at")
 
 
-    if access_state.get("has_active_access") and not expires_at:
-
-        return {"ok": False, "reason": "permanent_access"}
 
 
-    now = datetime.now()
-
-
-    if operation == "add":
-
-        base = expires_at if expires_at and expires_at > now else now
-        new_expiration = base + timedelta(days=days)
-        upsert_community_user_access(group_id, target_user_id, new_expiration, active=True)
-
-        return {"ok": True, "expiration": new_expiration}
-
-
-    if not expires_at:
-
-        return {"ok": False, "reason": "permanent_access"}
-
-
-    new_expiration = expires_at - timedelta(days=days)
-    active = new_expiration > now
-
-
-    if not active:
-
-        new_expiration = now
-
-
-    upsert_community_user_access(group_id, target_user_id, new_expiration, active=active)
-
-    return {"ok": True, "expiration": new_expiration}
-
-
-def revoke_community_user_access(group_id, target_user_id):
-
-    now = datetime.now()
-
-
-    with conn.cursor() as cur:
-
-        cur.execute("UPDATE users SET subscription_active=FALSE, expiration=%s WHERE user_id=%s AND group_id=%s", (now, target_user_id, group_id))
-        users_count = cur.rowcount
-        cur.execute("UPDATE subscriptions SET status='revoked', end_date=%s WHERE user_id=%s AND group_id=%s", (now, target_user_id, group_id))
-        subscriptions_count = cur.rowcount
-        cur.execute("UPDATE invite_links SET is_active=FALSE, revoked_at=CURRENT_TIMESTAMP WHERE user_id=%s AND group_id=%s", (target_user_id, group_id))
-        invite_links_count = cur.rowcount
-
-    conn.commit()
-
-    return {"users": users_count, "subscriptions": subscriptions_count, "invite_links": invite_links_count}
-
-
-def delete_community_user_records(group_id, target_user_id):
-
-    deleted_counts = {}
-
-
-    with conn.cursor() as cur:
-
-        for table_name in ("group_user_promo_redemptions", "invite_links", "subscriptions", "users"):
-
-            cur.execute(f"DELETE FROM {table_name} WHERE user_id=%s AND group_id=%s", (target_user_id, group_id))
-            deleted_counts[table_name] = cur.rowcount
-
-    conn.commit()
-
-    return deleted_counts
-
-
-async def notify_community_user_access_change(context, target_user_id, text, group_id, actor_user_id):
-
-    try:
-
-        await context.bot.send_message(chat_id=target_user_id, text=text)
-
-    except Exception as e:
-
-        log_event(
-            "community_user_access_notification_failed",
-            category="access",
-            severity="warning",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=actor_user_id,
-            target_user_id=target_user_id,
-            message="No se pudo notificar al usuario sobre un cambio de acceso.",
-            metadata={"error": str(e)[:300]}
-        )
 
 
 def fetch_recent_community_access_invite_link(group_id, target_user_id):
@@ -17025,19 +16418,6 @@ def format_plans_summary(plans):
     return "\n".join(lineas)
 
 
-def build_link_validity_line(language=None):
-    """
-    Cuánto vale un enlace de acceso, dicho al usuario.
-
-    El reenvío masivo mandaba el enlace a secas, así que quien lo recibía no
-    sabía si tenía que correr. Ahora que duran un día entero, decirlo evita que
-    lo deje para luego pensando que caduca en minutos.
-    """
-
-    return (
-        f"⏱ Válido {format_access_link_validity(ACCESS_LINK_EXPIRE_SECONDS, language or DEFAULT_LANGUAGE)}. "
-        "Es personal y de un solo uso."
-    )
 
 
 def format_marketplace_price(group):
@@ -17284,24 +16664,6 @@ def fetch_dynamic_preview_videos(group_id, limit=3):
     ]
 
 
-def deactivate_dynamic_preview_video(video_id, group_id):
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            UPDATE group_preview_videos
-            SET is_active=FALSE
-            WHERE id=%s
-            AND group_id=%s
-            RETURNING id
-
-        """, (
-            video_id,
-            group_id
-        ))
-
-        return cur.fetchone() is not None
 
 
 def format_dynamic_preview_video_caption(group, video, index, total):
@@ -17721,83 +17083,12 @@ def build_creator_marketplace_keyboard(request_id):
 
 
 
-def set_group_preview_mode(group_id, preview_mode):
-
-    with conn.cursor() as cur:
-
-        cur.execute("""
-
-            UPDATE groups
-            SET preview_mode=%s
-            WHERE id=%s
-
-        """, (
-            preview_mode,
-            group_id
-        ))
-
-        conn.commit()
 
 
 
 
-def format_owner_dynamic_videos_text(group_id):
-
-    videos = fetch_dynamic_preview_videos(group_id, limit=10)
 
 
-    if not videos:
-
-        return (
-            "🎬 Vídeos guardados\n\n"
-            "Todavía no hay vídeos guardados. Solo se guardarán vídeos publicados en el grupo después de activar el preview dinámico."
-        )
-
-
-    lines = ["🎬 Vídeos guardados"]
-
-
-    for index, video in enumerate(videos, start=1):
-
-        caption = video.get("caption") or "sin caption"
-
-
-        if len(caption) > 80:
-
-            caption = caption[:77] + "..."
-
-
-        lines.append(
-            "\n"
-            f"{index}. ID interno: {video.get('id')}\n"
-            f"Mensaje: {video.get('message_id') or '-'}\n"
-            f"Caption: {caption}"
-        )
-
-
-    return "\n".join(lines)
-
-
-def build_dynamic_video_delete_keyboard(request_id, group_id):
-
-    videos = fetch_dynamic_preview_videos(group_id, limit=10)
-    keyboard = []
-
-
-    for index, video in enumerate(videos, start=1):
-
-        keyboard.append([InlineKeyboardButton(
-            f"🗑 Borrar vídeo {index}",
-            callback_data=f"creator_dynamic_preview_delete_video_{request_id}_{video.get('id')}"
-        )])
-
-
-    keyboard.append([InlineKeyboardButton(
-        "⬅️ Volver",
-        callback_data=f"creator_setup_marketplace_{request_id}"
-    )])
-
-    return InlineKeyboardMarkup(keyboard)
 
 
 def format_commercial_datetime(value):
@@ -19449,54 +18740,6 @@ def build_support_ticket_detail_text(ticket):
 
 
 
-def build_support_ticket_keyboard(ticket):
-
-    if isinstance(ticket, dict):
-
-        ticket_id = ticket.get("id")
-        ticket_status = ticket.get("status")
-
-    else:
-
-        ticket_id = ticket
-        ticket_status = None
-
-
-    if ticket_status == "closed":
-
-        return [
-
-            [InlineKeyboardButton(
-                "⬅️ Volver",
-                callback_data="admin_support_tickets"
-            )]
-
-        ]
-
-
-    return [
-
-        [InlineKeyboardButton(
-            "✍️ Responder",
-            callback_data=f"admin_support_reply_{ticket_id}"
-        )],
-
-        [InlineKeyboardButton(
-            "🤖 Sugerir respuesta",
-            callback_data=f"admin_support_ai_{ticket_id}"
-        )],
-
-        [InlineKeyboardButton(
-            "✅ Cerrar ticket",
-            callback_data=f"admin_support_close_{ticket_id}"
-        )],
-
-        [InlineKeyboardButton(
-            "⬅️ Volver",
-            callback_data="admin_support_tickets"
-        )]
-
-    ]
 
 
 def build_support_user_navigation_keyboard():
@@ -23267,459 +22510,36 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data == "admin_guardarian_manual_review":
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT id,
-                       user_id,
-                       group_id,
-                       plan_id,
-                       amount,
-                       currency,
-                       status,
-                       external_payment_id,
-                       external_checkout_id,
-                       created_at
-                FROM payment_transactions
-                WHERE provider=%s
-                AND status=%s
-                ORDER BY created_at DESC
-                LIMIT 20
-
-            """, (
-                OWNER_PAYMENT_PROVIDER_GUARDARIAN,
-                "manual_review"
-            ))
-
-            rows = cur.fetchall()
-
-        lines = [
-            "🧪 Pagos Guardarian en revisión",
-            "",
-            "Estos pagos no se pudieron verificar automáticamente como finished. Reconsulta o decide manualmente con cuidado."
-        ]
-        keyboard = []
-
-        if not rows:
-
-            lines.append("\nNo hay pagos Guardarian pendientes de revisión.")
-
-        for row in rows:
-
-            transaction_id, tx_user_id, tx_group_id, tx_plan_id, amount, currency, status, external_payment_id, external_checkout_id, created_at = row
-            lines.extend([
-                "",
-                f"#{transaction_id} Usuario: {tx_user_id}",
-                f"Grupo: {tx_group_id or '-'} Plan: {tx_plan_id or '-'}",
-                f"Importe: {amount or '-'} {currency or ''}",
-                f"Estado: {status}",
-                f"Provider id: {external_payment_id or external_checkout_id or '-'}",
-                f"Fecha: {created_at}"
-            ])
-            keyboard.append([
-                InlineKeyboardButton(f"✅ Confirmar #{transaction_id}", callback_data=f"admin_guardarian_mark_paid_{transaction_id}"),
-                InlineKeyboardButton(f"❌ Rechazar #{transaction_id}", callback_data=f"admin_guardarian_reject_{transaction_id}")
-            ])
-
-        keyboard.extend([
-            [InlineKeyboardButton("🔁 Reconsultar pagos pendientes", callback_data="admin_guardarian_recheck_pending")],
-            [InlineKeyboardButton("⬅️ Guardarian", callback_data="admin_payment_guardarian")],
-            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-        ])
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "\n".join(lines),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+    # Tramo movido a admin_guardarian_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_admin_guardarian_callbacks(
+        update, context, query, user_id, data
+    ) is not ADMIN_GUARDARIAN_NOT_HANDLED:
 
         return
 
 
-    if data == "admin_guardarian_recheck_pending":
 
-        with conn.cursor() as cur:
 
-            cur.execute("""
 
-                SELECT external_checkout_id
-                FROM payment_transactions
-                WHERE provider=%s
-                AND status IN (%s, %s)
-                AND external_checkout_id IS NOT NULL
-                ORDER BY created_at ASC
-                LIMIT 20
 
-            """, (
-                OWNER_PAYMENT_PROVIDER_GUARDARIAN,
-                "pending",
-                "manual_review"
-            ))
-            rows = cur.fetchall()
 
-        checked = 0
 
-        for row in rows:
 
-            provider_order_id = row[0]
 
-            if not provider_order_id:
-
-                continue
-
-            process_guardarian_webhook({"id": provider_order_id})
-            checked += 1
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            f"🔁 Reconsulta Guardarian terminada. Pagos revisados: {checked}",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🧪 Ver revisión", callback_data="admin_guardarian_manual_review")],
-                [InlineKeyboardButton("⬅️ Guardarian", callback_data="admin_payment_guardarian")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
+    # Tramo movido a admin_changenow_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_admin_changenow_callbacks(
+        update, context, query, user_id, data
+    ) is not ADMIN_CHANGENOW_NOT_HANDLED:
 
         return
 
 
-    if data.startswith("admin_guardarian_reject_"):
 
-        transaction_id = extract_commercial_request_id(data, "admin_guardarian_reject_")
 
-        with conn.cursor() as cur:
 
-            cur.execute("""
 
-                UPDATE payment_transactions
-                SET status='failed',
-                    updated_at=CURRENT_TIMESTAMP
-                WHERE id=%s
-                AND provider=%s
-                RETURNING id
-
-            """, (
-                transaction_id,
-                OWNER_PAYMENT_PROVIDER_GUARDARIAN
-            ))
-            updated = cur.fetchone()
-
-        conn.commit()
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Pago Guardarian rechazado." if updated else "⚠️ No encontré ese pago Guardarian.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🧪 Volver a revisión", callback_data="admin_guardarian_manual_review")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data.startswith("admin_guardarian_mark_paid_"):
-
-        transaction_id = extract_commercial_request_id(data, "admin_guardarian_mark_paid_")
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT id,
-                       user_id,
-                       group_id,
-                       plan_id,
-                       amount,
-                       currency,
-                       external_payment_id,
-                       external_checkout_id,
-                       status
-                FROM payment_transactions
-                WHERE id=%s
-                AND provider=%s
-                LIMIT 1
-
-            """, (
-                transaction_id,
-                OWNER_PAYMENT_PROVIDER_GUARDARIAN
-            ))
-            row = cur.fetchone()
-
-        if not row:
-
-            await query.message.reply_text(
-                "⚠️ No encontré ese pago Guardarian.",
-                reply_markup=build_admin_payment_providers_keyboard()
-            )
-
-            return
-
-
-        _tx_id, tx_user_id, tx_group_id, tx_plan_id, amount, currency, external_payment_id, external_checkout_id, tx_status = row
-
-        if tx_status == "paid":
-
-            result = {"ok": True, "reason": "already_paid"}
-            new_status = "paid"
-
-        elif tx_group_id and tx_plan_id:
-
-            result = grant_group_access_after_payment(
-                OWNER_PAYMENT_PROVIDER_GUARDARIAN,
-                tx_user_id,
-                tx_group_id,
-                tx_plan_id,
-                external_payment_id=external_payment_id,
-                external_checkout_id=external_checkout_id,
-                amount=amount,
-                currency=currency,
-                transaction_id=transaction_id
-            )
-            new_status = "paid" if result.get("ok") else "manual_review"
-
-        else:
-
-            result = {"ok": True, "reason": "platform_manual_mark_paid"}
-            new_status = "paid"
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                UPDATE payment_transactions
-                SET status=%s,
-                    metadata_json=COALESCE(metadata_json, '{}'::jsonb) || %s::jsonb,
-                    metadata=COALESCE(metadata, '{}'::jsonb) || %s::jsonb,
-                    updated_at=CURRENT_TIMESTAMP
-                WHERE id=%s
-
-            """, (
-                new_status,
-                json.dumps({"manual_confirmed_by": user_id, "manual_result": result}),
-                json.dumps({"manual_confirmed_by": user_id, "manual_result": result}),
-                transaction_id
-            ))
-
-        conn.commit()
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Pago Guardarian confirmado manualmente." if result.get("ok") else "⚠️ No pude conceder el acceso. El pago sigue en revisión.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🧪 Volver a revisión", callback_data="admin_guardarian_manual_review")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data == "admin_changenow_manual_review":
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT id,
-                       user_id,
-                       group_id,
-                       plan_id,
-                       amount,
-                       currency,
-                       status,
-                       external_payment_id,
-                       created_at
-                FROM payment_transactions
-                WHERE provider=%s
-                AND status=%s
-                ORDER BY created_at DESC
-                LIMIT 20
-
-            """, (
-                OWNER_PAYMENT_PROVIDER_CHANGENOW,
-                "manual_review"
-            ))
-
-            rows = cur.fetchall()
-
-        lines = [
-            "🧪 Pagos ChangeNOW en revisión",
-            "",
-            "Estos pagos NO conceden acceso automático. Revisa wallet, importe y estado antes de confirmar."
-        ]
-        keyboard = []
-
-        if not rows:
-
-            lines.append("\nNo hay pagos ChangeNOW pendientes de revisión.")
-
-        for row in rows:
-
-            transaction_id, tx_user_id, tx_group_id, tx_plan_id, amount, currency, status, external_payment_id, created_at = row
-            lines.extend([
-                "",
-                f"#{transaction_id} Usuario: {tx_user_id}",
-                f"Grupo: {tx_group_id or '-'} Plan: {tx_plan_id or '-'}",
-                f"Importe: {amount or '-'} {currency or ''}",
-                f"Estado: {status}",
-                f"Provider id: {external_payment_id or '-'}",
-                f"Fecha: {created_at}"
-            ])
-            keyboard.append([
-                InlineKeyboardButton(f"✅ Confirmar #{transaction_id}", callback_data=f"admin_changenow_mark_paid_{transaction_id}"),
-                InlineKeyboardButton(f"❌ Rechazar #{transaction_id}", callback_data=f"admin_changenow_reject_{transaction_id}")
-            ])
-
-        keyboard.extend([
-            [InlineKeyboardButton("⬅️ ChangeNOW", callback_data="admin_payment_changenow")],
-            [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-        ])
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "\n".join(lines),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-        return
-
-
-    if data.startswith("admin_changenow_reject_"):
-
-        transaction_id = extract_commercial_request_id(data, "admin_changenow_reject_")
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                UPDATE payment_transactions
-                SET status='failed',
-                    updated_at=CURRENT_TIMESTAMP
-                WHERE id=%s
-                AND provider=%s
-                RETURNING id
-
-            """, (
-                transaction_id,
-                OWNER_PAYMENT_PROVIDER_CHANGENOW
-            ))
-            updated = cur.fetchone()
-
-        conn.commit()
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Pago ChangeNOW rechazado." if updated else "⚠️ No encontré ese pago ChangeNOW.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🧪 Volver a revisión", callback_data="admin_changenow_manual_review")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data.startswith("admin_changenow_mark_paid_"):
-
-        transaction_id = extract_commercial_request_id(data, "admin_changenow_mark_paid_")
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT id,
-                       user_id,
-                       group_id,
-                       plan_id,
-                       amount,
-                       currency,
-                       external_payment_id,
-                       external_checkout_id,
-                       status
-                FROM payment_transactions
-                WHERE id=%s
-                AND provider=%s
-                LIMIT 1
-
-            """, (
-                transaction_id,
-                OWNER_PAYMENT_PROVIDER_CHANGENOW
-            ))
-            row = cur.fetchone()
-
-        if not row:
-
-            await query.message.reply_text(
-                "⚠️ No encontré ese pago ChangeNOW.",
-                reply_markup=build_admin_payment_providers_keyboard()
-            )
-
-            return
-
-
-        _tx_id, tx_user_id, tx_group_id, tx_plan_id, amount, currency, external_payment_id, external_checkout_id, tx_status = row
-
-        if tx_group_id and tx_plan_id:
-
-            result = grant_group_access_after_payment(
-                OWNER_PAYMENT_PROVIDER_CHANGENOW,
-                tx_user_id,
-                tx_group_id,
-                tx_plan_id,
-                external_payment_id=external_payment_id,
-                external_checkout_id=external_checkout_id,
-                amount=amount,
-                currency=currency,
-                transaction_id=transaction_id
-            )
-            new_status = "paid" if result.get("ok") else "manual_review"
-
-        else:
-
-            result = {"ok": True, "reason": "platform_manual_mark_paid"}
-            new_status = "paid"
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                UPDATE payment_transactions
-                SET status=%s,
-                    metadata_json=COALESCE(metadata_json, '{}'::jsonb) || %s::jsonb,
-                    metadata=COALESCE(metadata, '{}'::jsonb) || %s::jsonb,
-                    updated_at=CURRENT_TIMESTAMP
-                WHERE id=%s
-
-            """, (
-                new_status,
-                json.dumps({"manual_confirmed_by": user_id, "manual_result": result}),
-                json.dumps({"manual_confirmed_by": user_id, "manual_result": result}),
-                transaction_id
-            ))
-
-        conn.commit()
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Pago ChangeNOW confirmado manualmente." if result.get("ok") else "⚠️ No pude conceder el acceso. El pago sigue en revisión.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🧪 Volver a revisión", callback_data="admin_changenow_manual_review")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
 
 
     if data in (
@@ -24249,223 +23069,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data == "admin_support_tickets":
-
-        tickets = fetch_recent_support_tickets()
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_support_tickets_text(tickets),
-            reply_markup=InlineKeyboardMarkup(
-                build_support_tickets_keyboard(tickets)
-            )
-        )
+    # Tramo movido a admin_support_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_admin_support_callbacks(
+        update, context, query, user_id, data
+    ) is not ADMIN_SUPPORT_NOT_HANDLED:
 
         return
 
 
-    if data.startswith("admin_support_ai_"):
 
-        ticket_id = extract_commercial_request_id(
-            data,
-            "admin_support_ai_"
-        )
 
-        ticket = fetch_support_ticket(ticket_id)
 
 
-        if not ticket:
 
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado."
-            )
 
-            return
 
 
-        result = build_support_reply_suggestion(
-            user_id,
-            AI_ROLE_SUPERADMIN,
-            ticket_id,
-            group_id=ticket.get("group_id")
-        )
-        keyboard = [
-            [InlineKeyboardButton("✍️ Usar como base", callback_data=f"admin_support_use_ai_{ticket_id}")],
-            [InlineKeyboardButton("⬅️ Volver al ticket", callback_data=f"admin_support_ticket_{ticket_id}")]
-        ]
 
 
-        if result.get("interaction_id"):
-
-            for label, callback_data in build_ai_feedback_keyboard_rows(result.get("interaction_id")):
-
-                keyboard.append([InlineKeyboardButton(label, callback_data=callback_data)])
-
-
-        await query.message.reply_text(
-            "🤖 Borrador sugerido para soporte\n\n"
-            f"{result.get('answer') or 'No tengo suficiente información para preparar un borrador.'}\n\n"
-            "No se enviará automáticamente. Puedes usarlo como base y editarlo antes de responder.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-        return
-
-
-    if data.startswith("admin_support_use_ai_"):
-
-        ticket_id = extract_commercial_request_id(
-            data,
-            "admin_support_use_ai_"
-        )
-
-        ticket = fetch_support_ticket(ticket_id)
-
-
-        if not ticket:
-
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado."
-            )
-
-            return
-
-
-        context.user_data["replying_support_ticket"] = ticket_id
-
-        await query.message.reply_text(
-            f"✍️ Responder ticket #{ticket_id}\n\n"
-            "Usa el borrador anterior como base, edítalo si hace falta y escribe ahora la respuesta final para el usuario.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Cancelar", callback_data=f"admin_support_ticket_{ticket_id}")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data.startswith("admin_support_ticket_"):
-
-        ticket_id = extract_commercial_request_id(
-            data,
-            "admin_support_ticket_"
-        )
-
-        ticket = fetch_support_ticket(ticket_id)
-
-
-        if not ticket:
-
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado."
-            )
-
-            return
-
-
-        await query.message.reply_text(
-            build_support_ticket_detail_text(ticket),
-            reply_markup=InlineKeyboardMarkup(
-                build_support_ticket_keyboard(ticket)
-            )
-        )
-
-        return
-
-
-    if data.startswith("admin_support_reply_"):
-
-        ticket_id = extract_commercial_request_id(
-            data,
-            "admin_support_reply_"
-        )
-
-        ticket = fetch_support_ticket(ticket_id)
-
-
-        if not ticket:
-
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado."
-            )
-
-            return
-
-
-        if ticket.get("status") == "closed":
-
-            await query.message.reply_text(
-                "📁 Este ticket está cerrado.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "🛟 Tickets abiertos",
-                        callback_data="admin_support_tickets"
-                    )]
-                ])
-            )
-
-            return
-
-
-        context.user_data["replying_support_ticket"] = ticket_id
-
-        await query.message.reply_text(
-            f"✍️ Responder ticket #{ticket_id}\n\n"
-            "Escribe ahora la respuesta para el usuario."
-        )
-
-        return
-
-
-    if data.startswith("admin_support_close_"):
-
-        ticket_id = extract_commercial_request_id(
-            data,
-            "admin_support_close_"
-        )
-
-        ticket = fetch_support_ticket(ticket_id)
-
-
-        if not ticket:
-
-            await query.message.reply_text(
-                "❌ Ticket de soporte no encontrado."
-            )
-
-            return
-
-
-        update_support_ticket_status(
-            ticket_id,
-            "closed"
-        )
-
-        try:
-
-            await context.bot.send_message(
-                chat_id=ticket.get("user_id"),
-                text=f"✅ Tu ticket #{ticket_id} ha sido cerrado."
-            )
-
-        except Exception as e:
-
-            print("Error avisando cierre soporte:", e)
-
-
-        await query.message.reply_text(
-            f"✅ Ticket #{ticket_id} cerrado.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "🛟 Tickets abiertos",
-                    callback_data="admin_support_tickets"
-                )]
-            ])
-        )
-
-        return
 
 
 
@@ -25347,205 +23969,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # RECUPERAR ACCESO
     # =========================
 
-    if data == "recover_access":
-
-        user_id = query.from_user.id
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT expiration
-                FROM users
-                WHERE user_id=%s
-                AND group_id=%s
-                AND COALESCE(subscription_active, FALSE)=TRUE
-                AND (
-                    expiration IS NULL
-                    OR expiration > NOW()
-                )
-
-                LIMIT 1
-
-            """, (user_id, get_group_id()))
-
-            row = cur.fetchone()
-
-        if not row:
-
-            await reply_with_recover_navigation(
-                query,
-                "No tienes una suscripción activa para este grupo."
-            )
-
-            return
-
-
-        expiration = row[0]
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT invite_link
-                FROM invite_links
-                WHERE user_id=%s
-                AND group_id=%s
-                ORDER BY created_at DESC
-                LIMIT 1
-
-            """, (
-
-                user_id,
-                get_group_id()
-
-            ))
-
-            link_row = cur.fetchone()
-
-
-        # =========================
-        # REVOCAR LINKS ANTIGUOS
-        # =========================
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                SELECT invite_link
-                FROM invite_links
-                WHERE user_id=%s
-                AND group_id=%s
-
-            """, (
-
-                user_id,
-                get_group_id()
-
-            ))
-
-            old_links = cur.fetchall()
-
-
-        for (old_link,) in old_links:
-
-            try:
-
-                revoke_telegram_invite_link(
-                    TOKEN,
-                    get_group_id(),
-                    old_link
-                )
-
-            except Exception as e:
-
-                print(
-                    "Error revocando link:",
-                    e
-                )
-
-
-        # =========================
-        # BORRAR LINKS ANTIGUOS
-        # =========================
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                DELETE FROM invite_links
-                WHERE user_id=%s
-                AND group_id=%s
-
-            """, (
-
-                user_id,
-                get_group_id()
-
-            ))
-
-            conn.commit()
-
-
-        # =========================
-        # CALCULAR EXPIRACIÓN REAL
-        # =========================
-
-        # 24 h por defecto (ACCESS_LINK_EXPIRE_SECONDS) en vez de 180 s: el
-        # enlace es de un solo uso y al entrar se comprueba el acceso, así que
-        # los tres minutos solo dejaban fuera a clientes que ya habían pagado.
-        max_expire = int(time.time()) + max(ACCESS_LINK_EXPIRE_SECONDS, 60)
-
-        if expiration is None:
-
-            expire_timestamp = max_expire
-
-        else:
-
-            subscription_expire = int(
-                expiration.timestamp()
-            )
-
-            expire_timestamp = min(
-                max_expire,
-                subscription_expire
-            )
-
-
-        # =========================
-        # CREAR LINK NUEVO TEMPORAL
-        # =========================
-
-        expire_seconds = max(
-            60,
-            expire_timestamp - int(time.time())
-        )
-
-
-        link = create_telegram_invite_link(
-            TOKEN,
-            get_group_id(),
-            expire_seconds=expire_seconds,
-            member_limit=1
-        )
-
-
-        if not link:
-
-            await query.message.reply_text(
-                "❌ Error creando acceso."
-            )
-
-            return
-
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-
-                INSERT INTO invite_links
-                (user_id, group_id, invite_link)
-
-                VALUES (%s, %s, %s)
-
-            """, (
-
-                user_id,
-                get_group_id(),
-                link
-
-            ))
-
-            conn.commit()
-
-
-        await query.message.reply_text(
-
-            f"🔗 Tu acceso VIP:\n{link}"
-
-        )
+    # Tramo movido a recover_access_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_recover_access_callbacks(
+        update, context, query, user_id, data
+    ) is not RECOVER_ACCESS_NOT_HANDLED:
 
         return
+
+
 
 
     # =========================
@@ -26016,111 +24448,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # VER GRUPOS
     # =========================
 
-    if data == "admin_view_groups":
-
-        try:
-            await query.message.delete()
-        except:
-            pass
-
-        try:
-
-            with conn.cursor() as cur:
-
-                groups = fetch_admin_groups_for_permissions(
-                    user_id,
-                    ["can_manage_groups", "can_manage_plans"]
-                )
-
-            log_event(
-                "admin_view_groups_loaded",
-                category="admin",
-                severity="info",
-                scope="global",
-                actor_user_id=user_id,
-                target_user_id=user_id,
-                message="Listado de grupos cargado desde panel admin.",
-                metadata={
-                    "groups_count": len(groups)
-                }
-            )
-
-        except Exception as e:
-
-            log_event(
-                "admin_view_groups_error",
-                category="admin",
-                severity="error",
-                scope="global",
-                actor_user_id=user_id,
-                target_user_id=user_id,
-                message="Error cargando grupos desde panel admin.",
-                metadata={
-                    "error": str(e)
-                }
-            )
-
-            await query.message.reply_text(
-                f"❌ Error cargando grupos:\n{str(e)}"
-            )
-
-            return
-
-
-        if not groups:
-
-            await query.message.reply_text(
-                "⚠️ No hay grupos registrados."
-            )
-
-            return
-
-
-        texto = "📋 GRUPOS REGISTRADOS\n\n"
-
-
-        try:
-
-            for group_id, name, telegram_id in groups:
-
-                texto += (
-
-                    f"🆔 ID interno: {group_id}\n"
-                    f"📦 Nombre: {name}\n"
-                    f"📡 Telegram ID: {telegram_id}\n\n"
-
-                )
-
-        except Exception as e:
-
-            print("ERROR construyendo texto:", e)
-
-            await query.message.reply_text(
-                f"❌ Error procesando grupos:\n{str(e)}"
-            )
-
-            return
-
-
-        keyboard = [
-
-            [InlineKeyboardButton(
-                "⬅️ Volver",
-                callback_data="menu_groups"
-            )]
-
-        ]
-
-
-        await query.message.reply_text(
-
-            texto,
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
-        )
+    # Tramo movido a admin_view_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_admin_view_callbacks(
+        update, context, query, user_id, data
+    ) is not ADMIN_VIEW_NOT_HANDLED:
 
         return
+
+
 
 
     # =========================
@@ -26670,238 +25006,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data == "admin_guardian_trial_start":
-
-        if not is_super_admin(user_id):
-
-            log_event(
-                "admin_guardian_trial_permission_denied",
-                category="guardian",
-                severity="warning",
-                scope="global",
-                actor_user_id=user_id,
-                message="Usuario no superadmin intentó abrir activación manual Guardian.",
-                metadata={
-                    "callback": data
-                }
-            )
-
-            await query.message.reply_text(
-                "⛔ Solo superadmin puede activar Guardian manualmente.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data.pop("admin_guardian_trial_waiting", None)
-        context.user_data.pop("admin_guardian_trial_search_waiting", None)
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_admin_guardian_trial_groups_text(page=0),
-            reply_markup=build_admin_guardian_trial_groups_keyboard(page=0)
-        )
+    # Tramo movido a admin_guardian_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_admin_guardian_callbacks(
+        update, context, query, user_id, data
+    ) is not ADMIN_GUARDIAN_NOT_HANDLED:
 
         return
 
 
-    if data.startswith("admin_guardian_trial_groups_"):
 
-        if not is_super_admin(user_id):
 
-            await query.message.reply_text(
-                "⛔ Solo superadmin puede activar Guardian manualmente.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
 
-            return
 
 
-        try:
 
-            page = int(data.replace("admin_guardian_trial_groups_", "", 1))
 
-        except Exception:
 
-            page = 0
 
 
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_admin_guardian_trial_groups_text(page=page),
-            reply_markup=build_admin_guardian_trial_groups_keyboard(page=page)
-        )
-
-        return
-
-
-    if data == "admin_guardian_trial_search":
-
-        if not is_super_admin(user_id):
-
-            await query.message.reply_text(
-                "⛔ Solo superadmin puede activar Guardian manualmente.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data.pop("admin_guardian_trial_waiting", None)
-        context.user_data["admin_guardian_trial_search_waiting"] = True
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "🔎 Buscar grupo para Guardian\n\n"
-            "Envía el nombre del grupo, group_id o telegram_group_id.",
-            reply_markup=build_admin_guardian_trial_cancel_keyboard()
-        )
-
-        return
-
-
-    if data == "admin_guardian_trial_manual_input":
-
-        if not is_super_admin(user_id):
-
-            await query.message.reply_text(
-                "⛔ Solo superadmin puede activar Guardian manualmente.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data.pop("admin_guardian_trial_search_waiting", None)
-        context.user_data["admin_guardian_trial_waiting"] = True
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✍️ Introducir IDs manualmente\n\n"
-            "Envía owner_user_id y group_id separados por espacio.\n\n"
-            "Ejemplo:\n"
-            "123456789 1159",
-            reply_markup=build_admin_guardian_trial_cancel_keyboard()
-        )
-
-        return
-
-
-    if data.startswith("admin_guardian_trial_group_"):
-
-        if not is_super_admin(user_id):
-
-            await query.message.reply_text(
-                "⛔ Solo superadmin puede activar Guardian manualmente.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        try:
-
-            group_id = int(data.replace("admin_guardian_trial_group_", "", 1))
-
-        except Exception:
-
-            await query.message.reply_text(
-                "⚠️ Grupo no válido.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        group_row = fetch_admin_guardian_trial_group(group_id)
-
-        if not group_row:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "⚠️ No he encontrado ese grupo.",
-                reply_markup=build_admin_guardian_trial_groups_keyboard(page=0)
-            )
-
-            return
-
-
-        _group_id, group_name, _telegram_group_id, owner_user_id, is_active = group_row
-
-        if not is_active or not owner_user_id:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "⚠️ Este grupo no está activo o no tiene owner asignado.",
-                reply_markup=build_admin_guardian_trial_groups_keyboard(page=0)
-            )
-
-            return
-
-
-        result = activate_owner_addon_manual_trial(
-            owner_user_id,
-            group_id,
-            "guardian",
-            days=30,
-            activated_by_user_id=user_id
-        )
-
-        if not result.get("ok"):
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "⚠️ No he podido activar Guardian manualmente.\n\n"
-                f"Motivo: {result.get('reason') or 'unknown'}",
-                reply_markup=build_admin_guardian_trial_groups_keyboard(page=0)
-            )
-
-            return
-
-
-        context.user_data["selected_group_admin"] = group_id
-        context.user_data["selected_owner_group"] = group_id
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Guardian activado 30 días\n\n"
-            f"Grupo: {group_name or f'Grupo {group_id}'}\n"
-            f"Group ID: {group_id}\n"
-            f"Owner ID: {owner_user_id}\n"
-            f"Hasta: {format_commercial_datetime(result.get('current_period_end'))}\n"
-            f"Subscription ID: {result.get('subscription_id')}",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛡 Abrir Guardian del grupo", callback_data="owner_panel_guardian")],
-                [InlineKeyboardButton("🎁 Activar otro grupo", callback_data="admin_guardian_trial_groups_0")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-
-        return
-
-
-    if data == "admin_guardian_trial_cancel":
-
-        context.user_data.pop("admin_guardian_trial_waiting", None)
-        context.user_data.pop("admin_guardian_trial_search_waiting", None)
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Activación manual de Guardian cancelada.",
-            reply_markup=build_owner_panel_nav_keyboard()
-        )
-
-        return
 
 
     if (
@@ -27475,444 +25598,42 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("guardian_user_warnings_"):
-
-        parsed = parse_community_user_callback(data, "guardian_user_warnings_")
-
-
-        if not parsed:
-
-            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        group_id, target_user_id = parsed
-
-
-        if not user_can_view_guardian_warnings(user_id, group_id):
-
-            await query.message.reply_text("⛔ No tienes permiso para ver warnings Guardian de este usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        allowed, _ = owner_can_use_guardian(user_id, group_id)
-
-        if not allowed:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                build_owner_guardian_addon_required_text(group_id),
-                reply_markup=build_owner_guardian_addon_required_keyboard()
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_guardian_user_warnings_text(group_id, target_user_id),
-            reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
-        )
+    # Tramo movido a guardian_user_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_guardian_user_callbacks(
+        update, context, query, user_id, data
+    ) is not GUARDIAN_USER_NOT_HANDLED:
 
         return
 
 
-    if data.startswith("guardian_user_warn_add_"):
-
-        parsed = parse_community_user_callback(data, "guardian_user_warn_add_")
 
 
-        if not parsed:
-
-            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
 
 
-        group_id, target_user_id = parsed
 
 
-        if not user_can_add_guardian_warning(user_id, group_id):
-
-            await query.message.reply_text("⛔ No tienes permiso para añadir warnings Guardian.", reply_markup=build_owner_panel_nav_keyboard())
-            return
 
 
-        allowed, _ = owner_can_use_guardian(user_id, group_id)
-
-        if not allowed:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                build_owner_guardian_addon_required_text(group_id),
-                reply_markup=build_owner_guardian_addon_required_keyboard()
-            )
-
-            return
-
-
-        try:
-
-            add_guardian_warning(
-                group_id,
-                target_user_id,
-                user_id,
-                reason="Warning manual desde panel",
-                source="manual"
-            )
-
-        except Exception as e:
-
-            try:
-
-                conn.rollback()
-
-            except Exception:
-
-                pass
-
-            await query.message.reply_text(
-                f"❌ No he podido añadir el warning: {str(e)[:300]}",
-                reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            f"{build_guardian_user_warnings_text(group_id, target_user_id)}\n\n✅ Warning manual añadido.",
-            reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
-        )
+    # Tramo movido a community_user_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_community_user_callbacks(
+        update, context, query, user_id, data
+    ) is not COMMUNITY_USER_NOT_HANDLED:
 
         return
 
 
-    if data.startswith("guardian_user_warn_reset_") and not data.startswith("guardian_user_warn_reset_yes_"):
 
-        parsed = parse_community_user_callback(data, "guardian_user_warn_reset_")
 
 
-        if not parsed:
 
-            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
 
 
-        group_id, target_user_id = parsed
 
 
-        if not user_can_reset_guardian_warnings(user_id, group_id):
 
-            await query.message.reply_text("⛔ No tienes permiso para resetear warnings Guardian.", reply_markup=build_owner_panel_nav_keyboard())
-            return
 
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "⚠️ ¿Seguro que quieres resetear los warnings activos de este usuario?",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Sí, resetear warnings", callback_data=f"guardian_user_warn_reset_yes_{group_id}_{target_user_id}")],
-                [InlineKeyboardButton("❌ Cancelar", callback_data=f"guardian_user_warnings_{group_id}_{target_user_id}")]
-            ])
-        )
-
-        return
-
-
-    if data.startswith("guardian_user_warn_reset_yes_"):
-
-        parsed = parse_community_user_callback(data, "guardian_user_warn_reset_yes_")
-
-
-        if not parsed:
-
-            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        group_id, target_user_id = parsed
-
-
-        if not user_can_reset_guardian_warnings(user_id, group_id):
-
-            await query.message.reply_text("⛔ No tienes permiso para resetear warnings Guardian.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        allowed, _ = owner_can_use_guardian(user_id, group_id)
-
-        if not allowed:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                build_owner_guardian_addon_required_text(group_id),
-                reply_markup=build_owner_guardian_addon_required_keyboard()
-            )
-
-            return
-
-
-        try:
-
-            reset_count = reset_guardian_warnings(
-                group_id,
-                target_user_id,
-                user_id,
-                reason="Reset manual desde panel"
-            )
-
-        except Exception as e:
-
-            try:
-
-                conn.rollback()
-
-            except Exception:
-
-                pass
-
-            await query.message.reply_text(
-                f"❌ No he podido resetear los warnings: {str(e)[:300]}",
-                reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            f"{build_guardian_user_warnings_text(group_id, target_user_id)}\n\n✅ Warnings reseteados: {reset_count}.",
-            reply_markup=build_guardian_user_warnings_keyboard(group_id, target_user_id, user_id)
-        )
-
-        return
-
-
-    if data.startswith("community_user_manage_"):
-
-        parsed = parse_community_user_callback(data, "community_user_manage_")
-
-
-        if not parsed:
-
-            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        group_id, target_user_id = parsed
-
-
-        if not user_can_view_community_users(user_id, group_id):
-
-            await query.message.reply_text("⛔ No tienes permiso para ver este usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        text = await build_community_user_detail_text(context, group_id, target_user_id)
-        await send_clean_message(context, query.message.chat_id, text, reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id))
-        return
-
-
-    if data.startswith("community_user_add_days_") or data.startswith("community_user_subtract_days_"):
-
-        is_add = data.startswith("community_user_add_days_")
-        prefix = "community_user_add_days_" if is_add else "community_user_subtract_days_"
-        parsed = parse_community_user_callback(data, prefix, include_days=True)
-
-
-        if not parsed:
-
-            await query.message.reply_text("⚠️ No he podido identificar la acción.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        group_id, target_user_id, days = parsed
-
-
-        if days not in (1, 15, 30) or not user_can_manage_community_user_access(user_id, group_id):
-
-            await query.message.reply_text("⛔ No tienes permiso para modificar este acceso.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        result = adjust_community_user_access_days(group_id, target_user_id, days, "add" if is_add else "subtract")
-
-
-        if not result.get("ok"):
-
-            message = "Este usuario tiene acceso permanente. No se pueden añadir días sin convertir el acceso." if is_add else "Este usuario tiene acceso permanente. No se pueden restar días."
-            await query.message.reply_text(message, reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id))
-            return
-
-
-        group = fetch_group_basic_info(group_id)
-        group_name = group[1] if group else f"Grupo {group_id}"
-        expiration_text = format_commercial_datetime(result.get("expiration"))
-        log_event(
-            "community_user_access_days_added" if is_add else "community_user_access_days_subtracted",
-            category="access",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            target_user_id=target_user_id,
-            message="Acceso de usuario modificado desde panel owner.",
-            metadata={"days": days, "operation": "add" if is_add else "subtract", "new_expiration": expiration_text}
-        )
-        await notify_community_user_access_change(
-            context,
-            target_user_id,
-            f"{'✅' if is_add else '⚠️'} Se te han {'añadido' if is_add else 'restado'} {days} días de suscripción/acceso a la comunidad \"{group_name}\".\nNueva fecha de expiración: {expiration_text}",
-            group_id,
-            user_id
-        )
-        text = await build_community_user_detail_text(context, group_id, target_user_id)
-        await send_clean_message(context, query.message.chat_id, f"{text}\n\n✅ Cambio aplicado. Nueva expiración: {expiration_text}", reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id))
-        return
-
-
-    if data.startswith("community_user_revoke_access_") and not data.startswith("community_user_revoke_access_yes_"):
-
-        parsed = parse_community_user_callback(data, "community_user_revoke_access_")
-
-
-        if not parsed:
-
-            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        group_id, target_user_id = parsed
-
-
-        if not user_can_manage_community_user_access(user_id, group_id):
-
-            await query.message.reply_text("⛔ No tienes permiso para revocar este acceso.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "⚠️ ¿Seguro que quieres revocar el acceso de este usuario?",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Sí, revocar acceso", callback_data=f"community_user_revoke_access_yes_{group_id}_{target_user_id}")],
-                [InlineKeyboardButton("❌ Cancelar", callback_data=f"community_user_manage_{group_id}_{target_user_id}")]
-            ])
-        )
-        return
-
-
-    if data.startswith("community_user_revoke_access_yes_"):
-
-        parsed = parse_community_user_callback(data, "community_user_revoke_access_yes_")
-
-
-        if not parsed:
-
-            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        group_id, target_user_id = parsed
-
-
-        if not user_can_manage_community_user_access(user_id, group_id):
-
-            await query.message.reply_text("⛔ No tienes permiso para revocar este acceso.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        counts = revoke_community_user_access(group_id, target_user_id)
-        group = fetch_group_basic_info(group_id)
-        group_name = group[1] if group else f"Grupo {group_id}"
-        log_event("community_user_access_revoked", category="access", severity="warning", scope="group", group_id=group_id, actor_user_id=user_id, target_user_id=target_user_id, message="Acceso de usuario revocado desde panel owner.", metadata={"updated_counts": counts})
-        await notify_community_user_access_change(context, target_user_id, f"🚫 Tu acceso a la comunidad \"{group_name}\" ha sido revocado.", group_id, user_id)
-        text = await build_community_user_detail_text(context, group_id, target_user_id)
-        await send_clean_message(context, query.message.chat_id, f"{text}\n\n✅ Acceso revocado.", reply_markup=build_community_user_manage_keyboard(group_id, target_user_id, user_id))
-        return
-
-
-    if data.startswith("community_user_delete_") and not data.startswith("community_user_delete_yes_"):
-
-        parsed = parse_community_user_callback(data, "community_user_delete_")
-
-
-        if not parsed:
-
-            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        group_id, target_user_id = parsed
-
-
-        if not user_can_manage_community_user_access(user_id, group_id):
-
-            await query.message.reply_text("⛔ No tienes permiso para eliminar registros de este usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        log_event("community_user_delete_confirmation_opened", category="access", severity="warning", scope="group", group_id=group_id, actor_user_id=user_id, target_user_id=target_user_id, message="Confirmación de eliminación de usuario abierta.", metadata={})
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            (
-                "⚠️ ¿Seguro que quieres eliminar este usuario de la base de datos?\n\n"
-                "Se eliminarán registros locales relacionados con esta comunidad donde sea posible.\n"
-                "No necesariamente banea al usuario en Telegram.\n"
-                "No emite reembolsos.\n"
-                "No cancela suscripciones Stripe/PayPal.\n"
-                "Esta acción es más difícil de recuperar."
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Sí, eliminar de la base de datos", callback_data=f"community_user_delete_yes_{group_id}_{target_user_id}")],
-                [InlineKeyboardButton("❌ Cancelar", callback_data=f"community_user_manage_{group_id}_{target_user_id}")]
-            ])
-        )
-        return
-
-
-    if data.startswith("community_user_delete_yes_"):
-
-        parsed = parse_community_user_callback(data, "community_user_delete_yes_")
-
-
-        if not parsed:
-
-            await query.message.reply_text("⚠️ No he podido identificar al usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        group_id, target_user_id = parsed
-
-
-        if not user_can_manage_community_user_access(user_id, group_id):
-
-            await query.message.reply_text("⛔ No tienes permiso para eliminar registros de este usuario.", reply_markup=build_owner_panel_nav_keyboard())
-            return
-
-
-        deleted_counts = delete_community_user_records(group_id, target_user_id)
-        log_event("community_user_deleted_from_db", category="access", severity="warning", scope="group", group_id=group_id, actor_user_id=user_id, target_user_id=target_user_id, message="Registros locales de usuario eliminados para una comunidad.", metadata={"deleted_counts": deleted_counts})
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Usuario eliminado de los registros locales de esta comunidad.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👥 Volver a usuarios activos", callback_data=f"community_users_{group_id}_active_0")],
-                [InlineKeyboardButton("⚠️ Ver inactivos/expirados", callback_data=f"community_users_{group_id}_inactive_0")],
-                [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
-            ])
-        )
-        return
 
 
 
@@ -28025,79 +25746,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data.startswith("owner_location_reviews_"):
-
-        group_id = extract_commercial_request_id(
-            data,
-            "owner_location_reviews_"
-        )
-
-
-        if not group_id or not user_can_manage_location_manual_review(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para ver estas revisiones.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data["selected_owner_group"] = group_id
-        reviews = fetch_owner_location_manual_reviews(group_id)
-        counts = fetch_location_manual_review_status_counts(group_id)
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_owner_location_reviews_text(group_id, reviews, counts),
-            reply_markup=build_owner_location_reviews_keyboard(group_id, reviews)
-        )
-
-        return
-
-
-    if data.startswith("owner_location_review_detail_"):
-
-        review_id = extract_commercial_request_id(
-            data,
-            "owner_location_review_detail_"
-        )
-        review = fetch_location_manual_review(review_id)
-
-
-        if not review:
-
-            await query.message.reply_text(
-                "❌ Revisión de ubicación no encontrada.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        group_id = review.get("group_id")
-
-
-        if not user_can_manage_location_manual_review(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para ver estas revisiones.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        context.user_data["selected_owner_group"] = group_id
-        ticket = fetch_support_ticket(review.get("support_ticket_id")) if review.get("support_ticket_id") else None
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_owner_location_review_detail_text(review, ticket=ticket),
-            reply_markup=build_owner_location_review_detail_keyboard(review)
-        )
+    # Tramo movido a owner_location_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_owner_location_callbacks(
+        update, context, query, user_id, data
+    ) is not OWNER_LOCATION_NOT_HANDLED:
 
         return
 
@@ -28116,203 +25769,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if data.startswith("owner_location_regions_"):
-
-        group_id = extract_commercial_request_id(
-            data,
-            "owner_location_regions_"
-        )
 
 
-        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para cambiar ubicación en esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
 
 
-        context.user_data["selected_owner_group"] = group_id
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "📂 Elegir comunidad autónoma\n\nSelecciona la región permitida para esta comunidad.",
-            reply_markup=build_owner_location_regions_keyboard(group_id)
-        )
-
-        return
 
 
-    if data.startswith("owner_location_enable_") or data.startswith("owner_location_disable_"):
-
-        enabled = data.startswith("owner_location_enable_")
-        prefix = "owner_location_enable_" if enabled else "owner_location_disable_"
-        group_id = extract_commercial_request_id(data, prefix)
 
 
-        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para cambiar ubicación en esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
 
 
-        set_group_location_rule(group_id, enabled=enabled)
-        context.user_data["selected_owner_group"] = group_id
-
-        log_event(
-            "owner_location_gate_updated",
-            category="security",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            message="Owner actualizó el estado de restricción por ubicación.",
-            metadata={"enabled": enabled}
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Restricción por ubicación actualizada.\n\n" + build_owner_location_management_text(group_id),
-            reply_markup=build_owner_location_management_keyboard(group_id)
-        )
-
-        return
-
-
-    if data.startswith("owner_location_country_set_"):
-
-        payload = data.replace("owner_location_country_set_", "", 1)
-        parts = payload.split("_", 1)
-
-
-        if len(parts) != 2 or not parts[0].isdigit():
-
-            await query.message.reply_text(
-                "⚠️ No he podido identificar la comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        group_id = int(parts[0])
-        country_code = parts[1]
-
-
-        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para cambiar ubicación en esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        set_group_location_rule(
-            group_id,
-            enabled=True,
-            region_type=LOCATION_REGION_TYPE_COUNTRY,
-            allowed_region=country_code
-        )
-        context.user_data["selected_owner_group"] = group_id
-
-        log_event(
-            "owner_location_gate_updated",
-            category="security",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            message="Owner actualizó país permitido por ubicación.",
-            metadata={"allowed_region": country_code, "region_type": LOCATION_REGION_TYPE_COUNTRY}
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Región permitida actualizada.\n\n" + build_owner_location_management_text(group_id),
-            reply_markup=build_owner_location_management_keyboard(group_id)
-        )
-
-        return
-
-
-    if data.startswith("owner_location_region_set_"):
-
-        payload = data.replace("owner_location_region_set_", "", 1)
-        parts = payload.split("_", 1)
-
-
-        if len(parts) != 2 or not parts[0].isdigit():
-
-            await query.message.reply_text(
-                "⚠️ No he podido identificar la comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        group_id = int(parts[0])
-        region_slug = parts[1]
-
-
-        if region_slug not in SPANISH_AUTONOMOUS_COMMUNITY_LABELS:
-
-            await query.message.reply_text(
-                "⚠️ Región no válida.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        if not user_can_view_group_panel(user_id, group_id, ["can_manage_groups"]):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para cambiar ubicación en esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        set_group_location_rule(
-            group_id,
-            enabled=True,
-            region_type=LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY,
-            allowed_region=region_slug
-        )
-        context.user_data["selected_owner_group"] = group_id
-
-        log_event(
-            "owner_location_gate_updated",
-            category="security",
-            severity="info",
-            scope="group",
-            group_id=group_id,
-            actor_user_id=user_id,
-            message="Owner actualizó comunidad autónoma permitida por ubicación.",
-            metadata={"allowed_region": region_slug, "region_type": LOCATION_REGION_TYPE_SPANISH_AUTONOMOUS_COMMUNITY}
-        )
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            "✅ Región permitida actualizada.\n\n" + build_owner_location_management_text(group_id),
-            reply_markup=build_owner_location_management_keyboard(group_id)
-        )
-
-        return
 
 
 
@@ -29118,33 +26584,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data == "admin_resend_access":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_resend_links", "can_recover_access", "can_manage_users"]
-        )
-
-
-        if not group_id or not user_can_recover_community_access_links(user_id, group_id):
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para reenviar o recuperar links de esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_community_links_recover_menu_text(group_id),
-            reply_markup=build_community_links_recover_menu_keyboard(group_id)
-        )
+    # Tramo movido a admin_resend_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_admin_resend_callbacks(
+        update, context, query, user_id, data
+    ) is not ADMIN_RESEND_NOT_HANDLED:
 
         return
+
+
 
 
     if data in (
@@ -29179,101 +26627,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data == "admin_view_payments":
-
-        group_ids = get_admin_group_ids(
-            user_id,
-            ["can_view_payments", "can_manage_payments"]
-        )
-
-
-        try:
-
-            with conn.cursor() as cur:
-
-                if group_ids is None:
-
-                    cur.execute("""
-
-                        SELECT p.user_id,
-                               g.name,
-                               p.amount,
-                               p.currency,
-                               p.status,
-                               p.payment_date
-                        FROM payments p
-                        LEFT JOIN groups g
-                        ON p.group_id = g.id
-                        ORDER BY p.payment_date DESC
-                        LIMIT 20
-
-                    """)
-
-                elif not group_ids:
-
-                    payments = []
-
-                else:
-
-                    cur.execute("""
-
-                        SELECT p.user_id,
-                               g.name,
-                               p.amount,
-                               p.currency,
-                               p.status,
-                               p.payment_date
-                        FROM payments p
-                        LEFT JOIN groups g
-                        ON p.group_id = g.id
-                        WHERE p.group_id = ANY(%s)
-                        ORDER BY p.payment_date DESC
-                        LIMIT 20
-
-                    """, (group_ids,))
-
-
-                if group_ids is None or group_ids:
-
-                    payments = cur.fetchall()
-
-        except Exception as e:
-
-            print("Error cargando pagos admin:", e)
-
-            await query.message.reply_text(
-                "❌ Error cargando pagos."
-            )
-
-            return
-
-
-        if not payments:
-
-            await query.message.reply_text(
-                "⚠️ No hay pagos registrados."
-            )
-
-            return
-
-
-        text = "💳 Últimos pagos\n\n"
-
-
-        for payment_user_id, group_name, amount, currency, status, payment_date in payments:
-
-            text += (
-                f"Usuario: {payment_user_id}\n"
-                f"Grupo: {group_name or '-'}\n"
-                f"Importe: {amount or '-'} {currency or ''}\n"
-                f"Estado: {status or '-'}\n"
-                f"Fecha: {payment_date or '-'}\n\n"
-            )
-
-
-        await query.message.reply_text(text)
-
-        return
 
 
     if data == "admin_search_payment":
@@ -29566,145 +26919,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("admin_beta_cycle"):
+    # Tramo movido a admin_beta_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_admin_beta_callbacks(
+        update, context, query, user_id, data
+    ) is not ADMIN_BETA_NOT_HANDLED:
 
-        if not is_super_admin(user_id):
-
-            await query.message.reply_text(
-                "⛔ Esta acción solo está disponible para el propietario principal."
-            )
-
-            return
+        return
 
 
-        if data in (
-            "admin_beta_cycle",
-            "admin_beta_cycle_status"
-        ):
-
-            await query.message.reply_text(
-                format_beta_cycle_status_text(),
-                reply_markup=build_beta_monitor_keyboard()
-            )
-
-            return
-
-
-        if data in (
-            "admin_beta_cycle_start_beta_1",
-            "admin_beta_cycle_start_beta_2"
-        ):
-
-            complete_expired_beta_cycles()
-
-            phase = (
-                "beta_2"
-                if data == "admin_beta_cycle_start_beta_2"
-                else "beta_1"
-            )
-
-            cycle, active_cycle = create_beta_cycle(
-                created_by=user_id,
-                phase=phase,
-                duration_days=7
-            )
-
-            if active_cycle:
-
-                await query.message.reply_text(
-                    (
-                        "⚠️ Ya hay un ciclo beta activo.\n\n"
-                        f"{format_beta_cycle_row(active_cycle)}"
-                    ),
-                    reply_markup=build_beta_monitor_keyboard()
-                )
-
-                return
-
-
-            if not cycle:
-
-                await query.message.reply_text(
-                    "⚠️ No se pudo iniciar el ciclo beta.",
-                    reply_markup=build_beta_monitor_keyboard()
-                )
-
-                return
-
-
-            phase_label = "Beta 2.0" if phase == "beta_2" else "Beta cerrada"
-
-            log_event(
-                "beta_cycle_started",
-                category="beta",
-                severity="info",
-                message=f"{phase_label} iniciada",
-                actor_user_id=user_id,
-                metadata={
-                    "cycle_id": cycle[0],
-                    "phase": phase,
-                    "ends_at": str(cycle[5])
-                }
-            )
-
-            await query.message.reply_text(
-                (
-                    f"✅ {phase_label} iniciada hasta {cycle[5]}.\n\n"
-                    f"{format_beta_cycle_row(cycle)}"
-                ),
-                reply_markup=build_beta_monitor_keyboard()
-            )
-
-            return
-
-
-        if data == "admin_beta_cycle_finish":
-
-            cycle = complete_active_beta_cycle(
-                notes="Finalizada manualmente desde el panel beta."
-            )
-
-            if not cycle:
-
-                await query.message.reply_text(
-                    "⚠️ No hay una beta activa para finalizar.",
-                    reply_markup=build_beta_monitor_keyboard()
-                )
-
-                return
-
-
-            log_event(
-                "beta_cycle_completed",
-                category="beta",
-                severity="info",
-                message="Ciclo beta finalizado manualmente",
-                actor_user_id=user_id,
-                metadata={
-                    "cycle_id": cycle[0],
-                    "phase": cycle[3]
-                }
-            )
-
-            await query.message.reply_text(
-                (
-                    "✅ Beta finalizada.\n\n"
-                    f"{format_beta_cycle_row(cycle)}"
-                ),
-                reply_markup=build_beta_monitor_keyboard()
-            )
-
-            return
-
-
-        if data == "admin_beta_cycle_final_review":
-
-            await query.message.reply_text(
-                format_final_launch_checklist(),
-                reply_markup=build_beta_monitor_keyboard()
-            )
-
-            return
 
 
     if data.startswith("admin_smoke"):
@@ -29946,97 +27169,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("admin_beta_monitor"):
-
-        if not is_super_admin(user_id):
-
-            await query.message.reply_text(
-                "⛔ Esta acción solo está disponible para el propietario principal."
-            )
-
-            return
-
-
-        if data == "admin_beta_monitor_resolve_all":
-
-            affected = mark_beta_monitor_events_resolved(hours=24)
-
-            await query.message.reply_text(
-                f"✅ Eventos marcados como resueltos: {affected}",
-                reply_markup=build_beta_monitor_keyboard()
-            )
-
-            return
-
-
-        title = "📊 Monitor beta"
-        severity = None
-        event_types = None
-
-
-        if data == "admin_beta_monitor_critical":
-
-            title = "🚨 Monitor beta · Críticos"
-            severity = "critical"
-
-        elif data == "admin_beta_monitor_warning":
-
-            title = "⚠️ Monitor beta · Warnings"
-            severity = "warning"
-
-        elif data == "admin_beta_monitor_payments":
-
-            title = "💳 Monitor beta · Pagos/accesos"
-            event_types = [
-                "payment_confirmed",
-                "payment_failed",
-                "invite_link_created",
-                "invite_link_failed",
-                "access_allowed",
-                "unauthorized_access"
-            ]
-
-        elif data == "admin_beta_monitor_codes":
-
-            title = "🎟 Monitor beta · Códigos"
-            event_types = [
-                "group_code_redeemed",
-                "group_code_failed"
-            ]
-
-        elif data == "admin_beta_monitor_backups":
-
-            title = "🛡 Monitor beta · Backups"
-            event_types = [
-                "backup_message_failed",
-                "backup_permission_error"
-            ]
-
-
-        if data == "admin_beta_monitor":
-
-            text = summarize_beta_monitor_events(hours=6)
-
-        else:
-
-            rows = list_beta_monitor_events(
-                hours=24,
-                severity=severity,
-                event_types=event_types,
-                limit=50
-            )
-            text = format_beta_monitor_events_text(
-                title,
-                rows
-            )
-
-
-        await query.message.reply_text(
-            text,
-            reply_markup=build_beta_monitor_keyboard()
-        )
-
-        return
 
 
     if data in (
@@ -30219,164 +27351,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # REENVIAR LINKS NUEVOS
     # =========================
 
-    if data == "admin_resend_links":
-
-        if not is_super_admin(query.from_user.id):
-            return
-
-        try:
-
-            with conn.cursor() as cur:
-
-                cur.execute("""
-
-                    SELECT user_id
-                    FROM users
-
-                    WHERE
-                    (
-                        expiration IS NULL
-                        OR expiration > NOW()
-                    )
-
-                    AND user_id NOT IN (
-
-                        SELECT user_id
-                        FROM banned_users
-
-                    )
-
-                """)
-
-                users = cur.fetchall()
-
-
-            enviados = 0
-
-            for (user_id,) in users:
-
-                try:
-
-                    # =========================
-                    # OBTENER TELEGRAM_GROUP_ID REAL
-                    # =========================
-
-                    with conn.cursor() as cur2:
-
-                        cur2.execute("""
-
-                            SELECT telegram_group_id,
-                                   COALESCE(community_type, 'group')
-
-                            FROM groups
-
-                            WHERE id=(
-
-                                SELECT group_id
-                                FROM users
-                                WHERE user_id=%s
-                                LIMIT 1
-
-                            )
-
-                        """, (user_id,))
-
-                        group_row = cur2.fetchone()
-
-
-                    if not group_row:
-                        continue
-
-
-                    telegram_group_id = group_row[0]
-                    community_type = normalize_community_type(group_row[1])
-
-
-                    link = create_telegram_invite_link(
-                        TOKEN,
-                        telegram_group_id,
-                        expire_seconds=ACCESS_LINK_EXPIRE_SECONDS,
-                        member_limit=1,
-                        community_type=community_type
-                    )
-
-
-                    if not link:
-
-                        print(
-                            "Error creando link para usuario:",
-                            user_id
-                        )
-
-                        continue
-
-
-                    with conn.cursor() as cur:
-
-                        cur.execute("""
-
-                            DELETE FROM invite_links
-                            WHERE user_id=%s
-
-                        """, (user_id,))
-
-
-                        cur.execute("""
-
-                            INSERT INTO invite_links
-                            (user_id, group_id, telegram_group_id, invite_link)
-
-                            VALUES (%s, %s, %s, %s)
-
-                        """, (
-
-                            user_id,
-                            get_group_id(),
-                            telegram_group_id,
-                            link
-
-                        ))
-
-                        conn.commit()
-
-
-                    requests.post(
-
-                        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-
-                        json={
-                            "chat_id": user_id,
-                            "text": (
-                                "🔗 Nuevo acceso VIP\n\n"
-                                f"{link}\n\n"
-                                f"{build_link_validity_line()}"
-                            )
-                        }
-
-                    )
-
-                    enviados += 1
-
-                except Exception as e:
-
-                    print("Error enviando link:", e)
-
-
-            await query.message.reply_text(
-
-                f"📩 {enviados} nuevos links enviados."
-
-            )
-
-        except Exception as e:
-
-            print("Error reenviando:", e)
-
-            await query.message.reply_text(
-                "❌ Error reenviando links"
-            )
-
-        return
 
 
 
@@ -30911,191 +27885,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    if (
-        data.startswith("creator_dynamic_preview_enable_")
-        or data.startswith("creator_dynamic_preview_disable_")
-        or data.startswith("creator_dynamic_preview_videos_")
-        or data.startswith("creator_dynamic_preview_delete_")
-    ):
+    # Tramo movido a creator_dynamic_callbacks.py. El despacho va AQUÍ y no arriba: las
+    # puertas de permisos de encima caen hacia estas ramas.
+    if await handle_creator_dynamic_callbacks(
+        update, context, query, user_id, data
+    ) is not CREATOR_DYNAMIC_NOT_HANDLED:
 
-        if data.startswith("creator_dynamic_preview_enable_"):
-
-            request_id = extract_commercial_request_id(
-                data,
-                "creator_dynamic_preview_enable_"
-            )
-            action = "enable"
-
-        elif data.startswith("creator_dynamic_preview_disable_"):
-
-            request_id = extract_commercial_request_id(
-                data,
-                "creator_dynamic_preview_disable_"
-            )
-            action = "disable"
-
-        elif data.startswith("creator_dynamic_preview_videos_"):
-
-            request_id = extract_commercial_request_id(
-                data,
-                "creator_dynamic_preview_videos_"
-            )
-            action = "videos"
-
-        elif data.startswith("creator_dynamic_preview_delete_video_"):
-
-            payload = data.replace(
-                "creator_dynamic_preview_delete_video_",
-                "",
-                1
-            )
-
-            try:
-
-                request_id_text, video_id_text = payload.rsplit("_", 1)
-                request_id = int(request_id_text)
-                video_id = int(video_id_text)
-
-            except Exception:
-
-                await send_clean_message(
-                    context,
-                    query.message.chat_id,
-                    "❌ Vídeo no válido."
-                )
-
-                return
-
-            action = "delete_video"
-
-        else:
-
-            request_id = extract_commercial_request_id(
-                data,
-                "creator_dynamic_preview_delete_"
-            )
-            action = "delete"
+        return
 
 
-        request_row = fetch_commercial_request(request_id)
-
-
-        if not can_edit_marketplace_preview(request_row, user_id):
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "⛔ Esta solicitud no pertenece a tu usuario."
-            )
-
-            return
-
-
-        group_id = get_marketplace_group_id_for_request(request_row)
-
-
-        if not group_id:
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "👁 Preview marketplace\n\nPrimero vincula un grupo/canal real para gestionar el preview dinámico.",
-                reply_markup=InlineKeyboardMarkup(
-                    build_creator_marketplace_keyboard(request_id)
-                )
-            )
-
-            return
-
-
-        if action == "enable":
-
-            set_group_preview_mode(group_id, "dynamic")
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "✅ Preview dinámico activado.\n\n"
-                "A partir de ahora se guardarán los vídeos que se publiquen en el grupo mientras el bot los reciba.",
-                reply_markup=InlineKeyboardMarkup(
-                    build_creator_marketplace_keyboard(request_id)
-                )
-            )
-
-            return
-
-
-        if action == "disable":
-
-            set_group_preview_mode(group_id, "manual")
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                "✅ Preview dinámico desactivado.\n\n"
-                "Los vídeos guardados no se borran, pero ya no se capturarán nuevos vídeos para el preview dinámico.",
-                reply_markup=InlineKeyboardMarkup(
-                    build_creator_marketplace_keyboard(request_id)
-                )
-            )
-
-            return
-
-
-        if action == "videos":
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                format_owner_dynamic_videos_text(group_id),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "⬅️ Volver",
-                        callback_data=f"creator_setup_marketplace_{request_id}"
-                    )]
-                ])
-            )
-
-            return
-
-
-        if action == "delete":
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                format_owner_dynamic_videos_text(group_id),
-                reply_markup=build_dynamic_video_delete_keyboard(
-                    request_id,
-                    group_id
-                )
-            )
-
-            return
-
-
-        if action == "delete_video":
-
-            deleted = deactivate_dynamic_preview_video(
-                video_id,
-                group_id
-            )
-
-            await send_clean_message(
-                context,
-                query.message.chat_id,
-                (
-                    "✅ Vídeo eliminado del preview."
-                    if deleted
-                    else "❌ Vídeo no encontrado."
-                ),
-                reply_markup=build_dynamic_video_delete_keyboard(
-                    request_id,
-                    group_id
-                )
-            )
-
-            return
 
 
     # Tramo movido a creator_preview_callbacks.py. El despacho va AQUÍ y no arriba: las
