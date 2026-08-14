@@ -23,6 +23,10 @@ from group_subscription_service import (
     fetch_renewal_state,
     set_renewal_enabled,
 )
+from paypal_subscription_controls import (
+    cancel_paypal_renewal,
+    fetch_paypal_renewal_state,
+)
 from group_service import (
     format_community_kind,
     normalize_community_type,
@@ -264,6 +268,85 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                 [InlineKeyboardButton(
                     "Sí, desactivar",
                     callback_data=f"mysub_stoprenew_yes_{ref}"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data=f"mysub_{ref}"
+                )],
+            ])
+        )
+
+        return
+
+
+    if data.startswith("mysub_pprenewoff_yes_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_pprenewoff_yes_"):]
+
+        if ref.lstrip("-").isdigit():
+
+            grupo = _resolver_grupo_por_ref(int(ref))
+
+            if grupo and cancel_paypal_renewal(user_id, grupo[0]):
+
+                await query.answer("Renovación desactivada ✅", show_alert=False)
+
+                await query.message.reply_text(
+                    "🔕 Hecho: no se te volverá a cobrar.\n\n"
+                    "Tu acceso sigue activo hasta el final del periodo ya "
+                    "pagado. En PayPal la cancelación es definitiva: si más "
+                    "adelante quieres volver, suscríbete de nuevo.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton(
+                            "⬅️ Volver a mi acceso",
+                            callback_data=f"mysub_{ref}"
+                        )
+                    ]])
+                )
+
+                return
+
+        await query.message.reply_text(
+            "❌ No he podido desactivar la renovación ahora mismo. "
+            "Inténtalo de nuevo en un momento.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "⬅️ Volver a mi acceso",
+                    callback_data=f"mysub_{ref}"
+                )
+            ]])
+        )
+
+        return
+
+
+    if data.startswith("mysub_pprenewoff_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_pprenewoff_"):]
+
+        await query.message.reply_text(
+
+            "🔕 ¿Desactivar la renovación automática?\n\n"
+            "El periodo que ya has pagado no se toca: tu acceso sigue hasta "
+            "su final y no habrá más cobros.\n\n"
+            "⚠️ En PayPal la cancelación es definitiva: no se puede "
+            "reactivar. Si más adelante quieres volver, tendrás que "
+            "suscribirte de nuevo.",
+
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "Sí, desactivar",
+                    callback_data=f"mysub_pprenewoff_yes_{ref}"
                 )],
                 [InlineKeyboardButton(
                     "⬅️ Volver",
@@ -798,6 +881,35 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                         callback_data=f"mysub_stoprenew_{telegram_group_id}"
                     )
                 ])
+
+        else:
+
+            # PayPal: sus planes de grupo siempre fueron suscripciones. La
+            # diferencia con Stripe es que allí cancelar es DEFINITIVO (PayPal
+            # no reactiva canceladas), así que no hay botón de reactivar.
+            renovacion_pp = fetch_paypal_renewal_state(user_id, real_group_id)
+
+            if renovacion_pp and renovacion_pp["activa"]:
+
+                linea_renovacion = (
+                    "🔁 Renovación automática (PayPal): activa. Se renueva "
+                    "sola al final de cada periodo.\n\n"
+                )
+
+                keyboard.insert(1, [
+                    InlineKeyboardButton(
+                        "🔕 Desactivar renovación",
+                        callback_data=f"mysub_pprenewoff_{telegram_group_id}"
+                    )
+                ])
+
+            elif renovacion_pp and renovacion_pp["cancelada"]:
+
+                linea_renovacion = (
+                    "🔕 Renovación automática: desactivada. Tu acceso llega "
+                    "hasta el final del periodo ya pagado; para volver "
+                    "después, suscríbete de nuevo.\n\n"
+                )
 
 
         mensaje = (

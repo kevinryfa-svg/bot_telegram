@@ -1249,6 +1249,60 @@ def process_paypal_group_subscription_payment(transaction, payment_context):
     }
 
 
+def avisar_comprador_renovacion(transaction, clave, **valores):
+    """
+    Un aviso de ciclo de vida al COMPRADOR de acceso a comunidad.
+
+    Antes estos eventos eran pura contabilidad: la suscripción se cancelaba,
+    se suspendía o fallaba el cobro y el comprador no se enteraba hasta que un
+    día no podía entrar. Solo avisa en compras de acceso a grupo: las
+    suscripciones comerciales de plataforma tienen sus propios canales.
+    """
+
+    if transaction.get("purchase_type") != PURCHASE_TYPE_GROUP_ACCESS:
+        return
+
+    user_id = transaction.get("user_id")
+    group_id = transaction.get("group_id")
+
+    if not user_id:
+        return
+
+    try:
+
+        from bot_config import TOKEN
+        from i18n_service import load_user_language, t
+        from notification_service import send_telegram_message
+
+        with conn.cursor() as cur:
+
+            cur.execute("SELECT name FROM groups WHERE id=%s", (group_id,))
+            fila = cur.fetchone()
+            nombre = (fila[0] if fila else None) or f"Comunidad {group_id}"
+
+            cur.execute("""
+                SELECT expiration FROM users
+                WHERE user_id=%s AND group_id=%s
+            """, (user_id, group_id))
+            fila = cur.fetchone()
+            expiracion = fila[0] if fila else None
+
+        try:
+            hasta = expiracion.strftime("%d/%m/%Y")
+        except Exception:
+            hasta = "el final de tu periodo pagado"
+
+        language = load_user_language(user_id)
+
+        send_telegram_message(TOKEN, user_id, t(
+            clave, language, group=nombre, until=hasta, **valores
+        ))
+
+    except Exception as e:
+
+        print("PayPal renovación: no se pudo avisar al comprador:", str(e)[:200])
+
+
 def process_paypal_group_subscription_lifecycle(transaction, lifecycle_context):
 
     event_type = lifecycle_context.get("event_type")
@@ -1338,6 +1392,27 @@ def process_paypal_group_subscription_lifecycle(transaction, lifecycle_context):
             "payment_status": status
         }
     )
+
+
+    # El comprador se entera, con el texto que corresponde a lo que ha pasado.
+    # El acceso del periodo ya pagado NUNCA se toca aquí: lo gobierna
+    # users.expiration y caduca solo.
+    if event_type == "BILLING.SUBSCRIPTION.CANCELLED":
+
+        avisar_comprador_renovacion(transaction, "renewal.cancelled_paypal")
+
+    elif event_type == "BILLING.SUBSCRIPTION.EXPIRED":
+
+        avisar_comprador_renovacion(transaction, "renewal.ended")
+
+    elif event_type == "BILLING.SUBSCRIPTION.SUSPENDED":
+
+        avisar_comprador_renovacion(transaction, "renewal.paused")
+
+    elif event_type == "BILLING.SUBSCRIPTION.PAYMENT.FAILED":
+
+        avisar_comprador_renovacion(transaction, "renewal.payment_failed")
+
 
     return {
         "ok": True,

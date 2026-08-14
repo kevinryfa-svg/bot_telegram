@@ -593,6 +593,36 @@ TRANSLATIONS = {
         ),
     },
 
+    "renewal.cancelled_paypal": {
+        "es": (
+            "🔕 Renovación automática desactivada.\n\n"
+            "Tu acceso a {group} sigue activo hasta el {until}: ese periodo ya "
+            "está pagado y no se toca. No se te volverá a cobrar.\n\n"
+            "En PayPal la cancelación es definitiva: si más adelante quieres "
+            "volver, solo tienes que suscribirte de nuevo."
+        ),
+        "en": (
+            "🔕 Auto-renewal turned off.\n\n"
+            "Your access to {group} stays active until {until}: that period is "
+            "already paid and stays yours. You will not be charged again.\n\n"
+            "With PayPal, cancelling is final: if you want to come back later, "
+            "just subscribe again."
+        ),
+    },
+
+    "renewal.paused": {
+        "es": (
+            "⏸ Tu renovación de {group} está en pausa.\n\n"
+            "Tu acceso sigue activo hasta el {until}. Revisa tu cuenta de "
+            "PayPal para reanudarla si quieres seguir después de esa fecha."
+        ),
+        "en": (
+            "⏸ Your renewal for {group} is paused.\n\n"
+            "Your access is active until {until}. Check your PayPal account to "
+            "resume it if you want to continue past that date."
+        ),
+    },
+
     "renewal.ended": {
         "es": (
             "👋 Tu suscripción a {group} ha terminado.\n\n"
