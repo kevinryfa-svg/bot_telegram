@@ -1133,6 +1133,53 @@ def schedule_stripe_webhook_config_check(application):
     return True
 
 
+# El mismo seguro para PayPal: un webhook sin los eventos BILLING.* pierde
+# renovaciones y bajas en silencio. En Stripe esta comprobación destapó que
+# faltaban 8 de 9 eventos en producción.
+
+async def paypal_webhook_config_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        from paypal_webhook_config_service import verify_paypal_webhook_events
+
+        verify_paypal_webhook_events(notify=True, token_bot=TOKEN)
+
+    except Exception as e:
+
+        print(
+            "Webhook de PayPal: error comprobando la configuración:",
+            f"{type(e).__name__}: {sanitize_error_text(e)}"
+        )
+
+
+def schedule_paypal_webhook_config_check(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Webhook de PayPal: JobQueue no disponible. "
+            "No se comprobará qué eventos manda PayPal."
+        )
+
+        return False
+
+
+    # Después del de Stripe, con margen entre ambos.
+    job_queue.run_once(
+        paypal_webhook_config_job,
+        when=180,
+        name="paypal_webhook_config"
+    )
+
+    print("Comprobación de los eventos del webhook de PayPal programada.")
+
+    return True
+
+
 # =========================
 # COPIA DE SEGURIDAD DE LA BASE DE DATOS
 # =========================
@@ -3130,6 +3177,7 @@ def main():
     schedule_interest_followup_job(telegram_app)
     schedule_group_delivery_health_job(telegram_app)
     schedule_stripe_webhook_config_check(telegram_app)
+    schedule_paypal_webhook_config_check(telegram_app)
     schedule_database_backup_job(telegram_app)
     schedule_persistence_cleanup_job(telegram_app)
 

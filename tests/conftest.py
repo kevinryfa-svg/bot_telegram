@@ -96,6 +96,7 @@ def clean_db(db_module):
         "group_delivery_health",
         "payment_incidents",
         "interest_followups",
+        "group_payment_provider_configs",
         "users",
         "plans",
         "banned_users",
