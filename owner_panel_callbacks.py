@@ -43,7 +43,7 @@ from owner_group_callbacks import (
     OWNER_PAYMENT_PROVIDER_PAYPAL,
     OWNER_PAYMENT_PROVIDER_REVOLUT,
 )
-from owner_revenue_service import build_owner_revenue_text
+from owner_revenue_service import build_owner_revenue_text, build_payments_csv
 from rbac_helpers import (
     get_group_owner_user_id,
     is_super_admin,
@@ -1167,7 +1167,9 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
         group_name = (info[1] if info else None) or f"Comunidad {group_id}"
 
         teclado = [
-            [InlineKeyboardButton("🔄 Actualizar", callback_data="owner_panel_revenue")]
+            [InlineKeyboardButton("🔄 Actualizar", callback_data="owner_panel_revenue")],
+            [InlineKeyboardButton("📥 Exportar pagos (CSV)",
+                                  callback_data="owner_panel_revenue_csv")],
         ]
         teclado.extend(build_owner_panel_nav_keyboard().inline_keyboard)
 
@@ -1177,6 +1179,60 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
             build_owner_revenue_text(group_id, group_name),
             reply_markup=InlineKeyboardMarkup(teclado)
         )
+
+        return
+
+
+    if data == "owner_panel_revenue_csv":
+
+        # Mismos permisos que la pantalla de ingresos: el CSV es la misma
+        # información, en un formato que se lleva a una hoja de cálculo.
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\n"
+                "Ábrela primero en «🏪 Mis comunidades» y repite la acción.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        info = fetch_group_basic_info(group_id)
+        group_name = (info[1] if info else None) or f"Comunidad {group_id}"
+
+        import io
+
+        # BOM (utf-8-sig) para que Excel en español lo abra sin pelearse.
+        archivo = io.BytesIO(build_payments_csv(group_id).encode("utf-8-sig"))
+        archivo.name = f"pagos_{group_id}.csv"
+
+        try:
+
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=archivo,
+                filename=archivo.name,
+                caption=f"📥 Pagos de {group_name} — importes en unidades "
+                        "mayores (15.00), separados por ';'."
+            )
+
+        except Exception as e:
+
+            print("Ingresos: error enviando el CSV:", str(e)[:200])
+
+            await query.message.reply_text(
+                "❌ No he podido generar el CSV ahora mismo. "
+                "Inténtalo de nuevo en un momento.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
 
         return
 

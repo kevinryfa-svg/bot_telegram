@@ -200,6 +200,185 @@ def fetch_problem_snapshot(group_id):
     return datos
 
 
+def fetch_month_comparison(group_id):
+    """
+    Este mes contra el anterior, por moneda: [(currency, actual, anterior)].
+    El mes anterior COMPLETO, no "hace 30 días": comparar un mes a medias con
+    una ventana móvil da porcentajes que no significan nada.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(NULLIF(UPPER(currency), ''), 'EUR'),
+                       COALESCE(SUM(amount) FILTER (
+                           WHERE payment_date >= date_trunc('month', NOW())
+                       ), 0),
+                       COALESCE(SUM(amount) FILTER (
+                           WHERE payment_date >= date_trunc('month', NOW()) - INTERVAL '1 month'
+                             AND payment_date < date_trunc('month', NOW())
+                       ), 0)
+                FROM payments
+                WHERE group_id = %s
+                  AND LOWER(COALESCE(status, '')) IN %s
+                  AND payment_date >= date_trunc('month', NOW()) - INTERVAL '1 month'
+                GROUP BY 1
+                ORDER BY 2 DESC
+
+            """, (group_id, PAID_STATUSES))
+
+            return cur.fetchall() or []
+
+    except Exception as e:
+
+        print("Ingresos: error comparando meses:", e)
+
+        return []
+
+
+def fetch_autorenew_summary(group_id):
+    """
+    La renovación automática en números: cuántos socios tienen una suscripción
+    viva anclada, y cuántas renovaciones se han cobrado en 30 días. Una
+    renovación es el pago de alguien que YA había pagado antes en la misma
+    comunidad — la definición vale para todos los proveedores.
+    """
+
+    datos = {"suscriptores": 0, "renovaciones_30d": 0}
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM users u
+                WHERE u.group_id = %s
+                  AND COALESCE(u.subscription_active, FALSE) = TRUE
+                  AND (
+                      u.stripe_subscription_id IS NOT NULL
+                      OR EXISTS (
+                          SELECT 1 FROM payment_transactions pt
+                          WHERE pt.provider = 'paypal'
+                            AND pt.user_id = u.user_id
+                            AND pt.group_id = u.group_id
+                            AND pt.purchase_type = 'group_access'
+                            AND pt.status = 'paid'
+                            AND pt.external_checkout_id IS NOT NULL
+                      )
+                  )
+
+            """, (group_id,))
+
+            datos["suscriptores"] = (cur.fetchone() or [0])[0]
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM payments p
+                WHERE p.group_id = %s
+                  AND LOWER(COALESCE(p.status, '')) IN %s
+                  AND p.payment_date >= NOW() - INTERVAL '30 days'
+                  AND EXISTS (
+                      SELECT 1 FROM payments antes
+                      WHERE antes.user_id = p.user_id
+                        AND antes.group_id = p.group_id
+                        AND antes.id < p.id
+                        AND LOWER(COALESCE(antes.status, '')) IN %s
+                  )
+
+            """, (group_id, PAID_STATUSES, PAID_STATUSES))
+
+            datos["renovaciones_30d"] = (cur.fetchone() or [0])[0]
+
+    except Exception as e:
+
+        print("Ingresos: error leyendo la renovación automática:", e)
+
+
+    return datos
+
+
+def formato_comparativa(filas):
+    """'45.00 EUR (mes anterior: 30.00 EUR, +50%)' — por moneda."""
+
+    if not filas:
+
+        return None
+
+
+    partes = []
+
+    for currency, actual, anterior in filas:
+
+        trozo = formato_importe(actual, currency)
+
+        if anterior:
+
+            delta = (int(actual) - int(anterior)) * 100 // int(anterior)
+            signo = "+" if delta >= 0 else ""
+            trozo += (f" (mes anterior: {formato_importe(anterior, currency)}, "
+                      f"{signo}{delta}%)")
+
+        partes.append(trozo)
+
+
+    return " · ".join(partes)
+
+
+def build_payments_csv(group_id):
+    """
+    Todos los pagos de la comunidad como CSV, con los importes en unidades
+    mayores (15.00, no 1500): el destinatario es una hoja de cálculo, no
+    nuestra base. Separador ';' y BOM: lo que Excel en español abre bien.
+    """
+
+    lineas = ["fecha;usuario;importe;moneda;estado;plan"]
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT payment_date, user_id, amount, currency, status, plan
+                FROM payments
+                WHERE group_id = %s
+                ORDER BY payment_date DESC NULLS LAST, id DESC
+
+            """, (group_id,))
+
+            for fecha, user_id, amount, currency, status, plan in cur.fetchall():
+
+                try:
+                    fecha_txt = fecha.strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    fecha_txt = ""
+
+                try:
+                    importe = f"{int(amount) / 100:.2f}"
+                except Exception:
+                    importe = ""
+
+                plan_txt = (plan or "").replace(";", ",").replace("\n", " ")
+
+                lineas.append(
+                    f"{fecha_txt};{user_id};{importe};"
+                    f"{(currency or 'EUR').upper()};{status or ''};{plan_txt}"
+                )
+
+    except Exception as e:
+
+        print("Ingresos: error exportando pagos:", e)
+
+
+    return "\n".join(lineas)
+
+
 def formato_ventana(filas):
     """Una ventana de ingresos como texto: '15.00 EUR (3 pagos)'."""
 
@@ -229,11 +408,20 @@ def build_owner_revenue_text(group_id, group_name):
     clientes = fetch_customer_summary(group_id)
     top = fetch_top_plan(group_id)
     problemas = fetch_problem_snapshot(group_id)
+    comparativa = formato_comparativa(fetch_month_comparison(group_id))
+    renovacion = fetch_autorenew_summary(group_id)
+
+    linea_mes = f"Este mes: {formato_ventana(ingresos['mes_actual'])}"
+
+    if comparativa:
+
+        linea_mes = f"Este mes: {comparativa}"
+
 
     lineas = [
         f"💰 Ingresos de {group_name}",
         "",
-        f"Este mes: {formato_ventana(ingresos['mes_actual'])}",
+        linea_mes,
         f"Últimos 30 días: {formato_ventana(ingresos['dias_30'])}",
         f"Total histórico: {formato_ventana(ingresos['historico'])}",
         "",
@@ -241,6 +429,10 @@ def build_owner_revenue_text(group_id, group_name):
         f"Activos ahora: {clientes['activos']}",
         f"Altas (30 días): {clientes['altas_30']}",
         f"Caducados sin volver (30 días): {clientes['caducados_30']}",
+        "",
+        "🔁 Renovación automática",
+        f"Suscriptores activos: {renovacion['suscriptores']}",
+        f"Renovaciones cobradas (30 días): {renovacion['renovaciones_30d']}",
     ]
 
 
