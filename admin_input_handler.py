@@ -1012,17 +1012,80 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
         # =========================
-        # PASO 5 — MONEDA Y GUARDAR
+        # PASO 5 — MONEDA (Y GUARDAR, SALVO STRIPE AUTOCREADO)
         # =========================
 
         if step == 5:
 
             currency = text.upper()
+            context.user_data["new_plan"]["currency"] = currency
 
             plan = context.user_data["new_plan"]
             provider = normalize_plan_payment_provider(
                 plan.get("payment_provider")
             )
+
+            # Para Stripe autocreado queda UNA decisión más: ¿pago único o
+            # renovación automática? Se pregunta en un paso 6. El resto de
+            # proveedores guarda aquí, como siempre.
+            if (
+                provider == PLAN_PAYMENT_PROVIDER_STRIPE
+                and plan.get("stripe_autocreate")
+                and not plan.get("stripe_price_id")
+            ):
+
+                context.user_data["add_plan_step"] = 6
+
+                await update.message.reply_text(
+
+                    "Paso 6️⃣\n\n"
+                    "¿RENOVACIÓN AUTOMÁTICA?\n\n"
+                    "SÍ — suscripción: se cobra sola cada periodo hasta que "
+                    "el cliente la cancele. Quien ya esté suscrito conserva "
+                    "su precio aunque luego lo cambies.\n\n"
+                    "NO — pago único: el acceso caduca y el cliente decide "
+                    "si vuelve a pagar.\n\n"
+                    "Responde SÍ o NO."
+
+                )
+
+                return
+
+
+        # =========================
+        # PASO 5 (RESTO) / PASO 6 (STRIPE) — GUARDAR
+        # =========================
+
+        if step in (5, 6):
+
+            plan = context.user_data["new_plan"]
+            provider = normalize_plan_payment_provider(
+                plan.get("payment_provider")
+            )
+            currency = plan.get("currency") or text.upper()
+
+            is_recurring = False
+
+            if step == 6:
+
+                respuesta = text.strip().lower()
+
+                if respuesta in ("sí", "si", "s", "yes", "y"):
+
+                    is_recurring = True
+
+                elif respuesta in ("no", "n"):
+
+                    is_recurring = False
+
+                else:
+
+                    await update.message.reply_text(
+                        "Responde SÍ o NO."
+                    )
+
+                    return
+
             provider_price_id = plan.get("provider_price_id")
             stripe_price_id = plan.get("stripe_price_id")
             stripe_product_id = plan.get("stripe_product_id")
@@ -1048,8 +1111,12 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                         metadata={
                             "group_id": group_id,
                             "plan_name": plan.get("name"),
-                            "duration_days": plan.get("duration_days")
-                        }
+                            "duration_days": plan.get("duration_days"),
+                            "is_recurring": is_recurring
+                        },
+                        recurring_interval_days=(
+                            plan.get("duration_days") if is_recurring else None
+                        )
                     )
 
                 except Exception as e:
@@ -1090,10 +1157,11 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                             provider_price_id,
                             duration_days,
                             amount,
-                            currency
+                            currency,
+                            is_recurring
                         )
 
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
 
                     """, (
@@ -1108,7 +1176,8 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                         provider_price_id,
                         plan["duration_days"],
                         plan["amount"],
-                        currency
+                        currency,
+                        is_recurring
 
                     ))
 
@@ -1162,11 +1231,23 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
                 if plan.get("stripe_autocreate"):
 
-                    success_message += (
-                        "\n\nEl bot ha creado el producto y el precio en "
-                        "Stripe automáticamente. Cada usuario recibirá su "
-                        "enlace de pago único al comprar este plan."
-                    )
+                    if is_recurring:
+
+                        success_message += (
+                            "\n\n🔁 Renovación automática ACTIVADA: el bot ha "
+                            "creado el precio como suscripción. Se cobrará "
+                            "solo cada periodo hasta que el cliente cancele, "
+                            "y quien se suscriba conserva su precio aunque "
+                            "luego lo cambies."
+                        )
+
+                    else:
+
+                        success_message += (
+                            "\n\nEl bot ha creado el producto y el precio en "
+                            "Stripe automáticamente. Cada usuario recibirá su "
+                            "enlace de pago único al comprar este plan."
+                        )
 
             await update.message.reply_text(success_message)
 

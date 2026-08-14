@@ -88,11 +88,23 @@ def stripe_env(clean_db, monkeypatch):
 
 
 def run_webhook(sh, event):
-    """Ejecuta el webhook real dentro de un contexto de petición Flask."""
+    """
+    Ejecuta el webhook real dentro de un contexto de petición Flask.
+
+    El evento viaja como CUERPO de la petición, igual que en producción: desde
+    la frontera del SDK 15.x, el webhook verifica la firma y luego trabaja con
+    el JSON crudo del payload (los StripeObjects no tienen .get()). Mandar b"{}"
+    y colar el evento por el doble de construct_event era un doble permisivo:
+    probaba un camino que producción ya no recorre.
+    """
+
+    import json as json_mod
 
     app = flask.Flask(__name__)
 
-    with app.test_request_context("/webhook", method="POST", data=b"{}"):
+    with app.test_request_context(
+        "/webhook", method="POST", data=json_mod.dumps(event).encode()
+    ):
         flask.g.fake_event = event
         return sh.stripe_webhook()
 

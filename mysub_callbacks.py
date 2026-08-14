@@ -19,6 +19,10 @@ from commercial_catalog import CALLBACK_SUBSCRIPTIONS_HELP
 from db import conn
 from formatters import format_tiempo_restante
 from group_delivery_health_service import recheck_group_delivery_live
+from group_subscription_service import (
+    fetch_renewal_state,
+    set_renewal_enabled,
+)
 from group_service import (
     format_community_kind,
     normalize_community_type,
@@ -166,7 +170,154 @@ async def report_access_link_unavailable(context, query, user_id, group_id,
 NOT_HANDLED = object()
 
 
+def _resolver_grupo_por_ref(ref):
+    """(group_id, name, telegram_group_id) desde un id interno o de Telegram."""
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT id, name, telegram_group_id
+            FROM groups
+            WHERE telegram_group_id=%s OR id=%s
+            LIMIT 1
+
+        """, (ref, ref))
+
+        return cur.fetchone()
+
+
 async def handle_mysub_callbacks(update, context, query, user_id, data):
+
+    # =========================
+    # EL INTERRUPTOR DE LA RENOVACIÓN
+    # =========================
+    # Estas ramas van ANTES que la genérica mysub_: comparten su prefijo y la
+    # genérica esperaría un número donde aquí hay un verbo. Y dentro de ellas,
+    # el "yes" antes que su confirmación: también comparten prefijo.
+
+    if data.startswith("mysub_stoprenew_yes_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_stoprenew_yes_"):]
+
+        if ref.lstrip("-").isdigit():
+
+            grupo = _resolver_grupo_por_ref(int(ref))
+
+            if grupo and set_renewal_enabled(user_id, grupo[0], False):
+
+                # El webhook de Stripe (subscription.updated) manda la
+                # confirmación completa con la fecha; esto es el acuse
+                # inmediato del botón.
+                await query.answer("Renovación desactivada ✅", show_alert=False)
+
+                await query.message.reply_text(
+                    "🔕 Hecho: no se te volverá a cobrar.\n\n"
+                    "Tu acceso sigue activo hasta el final del periodo ya "
+                    "pagado, y puedes reactivar la renovación desde esta "
+                    "misma pantalla hasta el último día.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton(
+                            "⬅️ Volver a mi acceso",
+                            callback_data=f"mysub_{ref}"
+                        )
+                    ]])
+                )
+
+                return
+
+        await query.message.reply_text(
+            "❌ No he podido desactivar la renovación ahora mismo. "
+            "Inténtalo de nuevo en un momento.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "⬅️ Volver a mi acceso",
+                    callback_data=f"mysub_{ref}"
+                )
+            ]])
+        )
+
+        return
+
+
+    if data.startswith("mysub_stoprenew_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_stoprenew_"):]
+
+        await query.message.reply_text(
+
+            "🔕 ¿Desactivar la renovación automática?\n\n"
+            "El periodo que ya has pagado no se toca: tu acceso sigue hasta "
+            "su final. Simplemente no habrá más cobros.",
+
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "Sí, desactivar",
+                    callback_data=f"mysub_stoprenew_yes_{ref}"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data=f"mysub_{ref}"
+                )],
+            ])
+        )
+
+        return
+
+
+    if data.startswith("mysub_renewon_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_renewon_"):]
+
+        if ref.lstrip("-").isdigit():
+
+            grupo = _resolver_grupo_por_ref(int(ref))
+
+            if grupo and set_renewal_enabled(user_id, grupo[0], True):
+
+                await query.answer("Renovación reactivada ✅", show_alert=False)
+
+                await query.message.reply_text(
+                    "🔔 Hecho: tu acceso volverá a renovarse solo al final "
+                    "de cada periodo.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton(
+                            "⬅️ Volver a mi acceso",
+                            callback_data=f"mysub_{ref}"
+                        )
+                    ]])
+                )
+
+                return
+
+        await query.message.reply_text(
+            "❌ No he podido reactivar la renovación ahora mismo. "
+            "Inténtalo de nuevo en un momento.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "⬅️ Volver a mi acceso",
+                    callback_data=f"mysub_{ref}"
+                )
+            ]])
+        )
+
+        return
+
 
     if data.startswith("mysub_"):
 
@@ -612,6 +763,43 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
         )
 
 
+        # Renovación automática: si este acceso es una suscripción, la
+        # pantalla lo dice y ofrece el interruptor. Cancelar nunca corta el
+        # periodo ya pagado; solo apaga los cobros siguientes.
+        renovacion = fetch_renewal_state(user_id, real_group_id)
+        linea_renovacion = ""
+
+        if renovacion:
+
+            if renovacion["cancel_at_period_end"]:
+
+                linea_renovacion = (
+                    "🔕 Renovación automática: desactivada. Tu acceso termina "
+                    "al final del periodo ya pagado.\n\n"
+                )
+
+                keyboard.insert(1, [
+                    InlineKeyboardButton(
+                        "🔔 Reactivar renovación",
+                        callback_data=f"mysub_renewon_{telegram_group_id}"
+                    )
+                ])
+
+            else:
+
+                linea_renovacion = (
+                    "🔁 Renovación automática: activa. Se renueva sola al "
+                    "final de cada periodo.\n\n"
+                )
+
+                keyboard.insert(1, [
+                    InlineKeyboardButton(
+                        "🔕 Desactivar renovación",
+                        callback_data=f"mysub_stoprenew_{telegram_group_id}"
+                    )
+                ])
+
+
         mensaje = (
 
             f"📦 {group_name}\n\n"
@@ -620,6 +808,8 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
             f"⏳ Tiempo restante:\n"
             f"{tiempo_texto}\n\n"
+
+            f"{linea_renovacion}"
 
             f"⏱ El enlace vale {format_access_link_validity(expire_seconds, load_user_language(user_id))} "
             "y solo lo puedes usar tú, una vez.\n"
