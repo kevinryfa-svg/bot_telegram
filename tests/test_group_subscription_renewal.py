@@ -189,6 +189,73 @@ def test_a_failed_charge_keeps_access_and_warns_the_buyer(suscriptor):
     assert "tarjeta" in al_comprador[0].lower()
 
 
+def test_the_failure_notice_carries_the_update_card_button(suscriptor, monkeypatch):
+    """
+    "Revisa tu tarjeta" sin un sitio donde hacerlo es un callejón. El aviso
+    lleva el portal de facturación de Stripe en un botón, creado con el
+    customer de la propia factura.
+    """
+
+    capturas = []
+
+    def portal(**kwargs):
+        capturas.append(kwargs)
+        return stripe.billing_portal.Session.construct_from(
+            {"id": "bps_1", "url": "https://billing.stripe.com/p/sesion_1"},
+            "sk_test",
+        )
+
+    monkeypatch.setattr(gss.stripe.billing_portal.Session, "create", portal)
+
+    teclados = []
+    monkeypatch.setattr(
+        gss, "send_telegram_message",
+        lambda token, chat, text, reply_markup=None:
+            teclados.append((chat, text, reply_markup))
+    )
+
+    factura_fallida = factura(invoice_id="in_fail_btn")
+    factura_fallida["customer"] = "cus_95"
+
+    gss.process_group_subscription_lifecycle_event(
+        evento("invoice.payment_failed", factura_fallida)
+    )
+
+    assert capturas and capturas[0]["customer"] == "cus_95"
+
+    chat, texto, teclado = teclados[0]
+    assert chat == 9501
+    assert teclado is not None, "el aviso salió sin el botón de la tarjeta"
+
+    boton = teclado["inline_keyboard"][0][0]
+    assert boton["url"] == "https://billing.stripe.com/p/sesion_1"
+    assert "tarjeta" in boton["text"].lower()
+
+
+def test_without_portal_the_notice_still_goes_out(suscriptor, monkeypatch):
+    """El portal hay que activarlo una vez en Stripe: hasta entonces, el
+    aviso de siempre. La degradación nunca es el silencio."""
+
+    def portal_roto(**kwargs):
+        raise RuntimeError("billing portal no configurado")
+
+    monkeypatch.setattr(gss.stripe.billing_portal.Session, "create", portal_roto)
+
+    teclados = []
+    monkeypatch.setattr(
+        gss, "send_telegram_message",
+        lambda token, chat, text, reply_markup=None:
+            teclados.append((chat, text, reply_markup))
+    )
+
+    gss.process_group_subscription_lifecycle_event(
+        evento("invoice.payment_failed", factura(invoice_id="in_fail_np"))
+    )
+
+    assert teclados, "sin portal también hay que avisar"
+    assert teclados[0][2] is None
+
+
 # =========================
 # DECISIÓN 2: CANCELAR = HASTA EL FIN DEL PERIODO
 # =========================
