@@ -593,6 +593,247 @@ TRANSLATIONS = {
         ),
     },
 
+    # =========================
+    # «MIS ACCESOS» — el camino del comprador, en su idioma.
+    # Los textos en español son BYTE A BYTE los literales que había: el golden
+    # master con 0 diferencias es la prueba de que ningún usuario español nota
+    # el cambio.
+    # =========================
+
+    "mysub.screen": {
+        "es": (
+            "📦 {group}\n\n"
+            "{intro}"
+            "⏳ Tiempo restante:\n"
+            "{remaining}\n\n"
+            "{renewal}"
+            "⏱ El enlace vale {validity} "
+            "y solo lo puedes usar tú, una vez.\n"
+            "Si caduca, pide otro con el botón de abajo.\n\n"
+            "🔗 Tu nuevo acceso:\n"
+            "{link}"
+        ),
+        "en": (
+            "📦 {group}\n\n"
+            "{intro}"
+            "⏳ Time left:\n"
+            "{remaining}\n\n"
+            "{renewal}"
+            "⏱ The link is valid for {validity} "
+            "and only you can use it, once.\n"
+            "If it expires, ask for another with the button below.\n\n"
+            "🔗 Your new access:\n"
+            "{link}"
+        ),
+    },
+
+    "mysub.permanent_intro": {
+        "es": "✅ Tienes acceso permanente activo a este {kind}.\n\n",
+        "en": "✅ You have permanent active access to this {kind}.\n\n",
+    },
+
+    "mysub.renewal_active": {
+        "es": (
+            "🔁 Renovación automática: activa. Se renueva sola al "
+            "final de cada periodo.\n\n"
+        ),
+        "en": (
+            "🔁 Auto-renewal: on. It renews itself at the end of each "
+            "period.\n\n"
+        ),
+    },
+
+    "mysub.renewal_off": {
+        "es": (
+            "🔕 Renovación automática: desactivada. Tu acceso termina "
+            "al final del periodo ya pagado.\n\n"
+        ),
+        "en": (
+            "🔕 Auto-renewal: off. Your access ends when the period you "
+            "already paid finishes.\n\n"
+        ),
+    },
+
+    "mysub.renewal_pp_active": {
+        "es": (
+            "🔁 Renovación automática (PayPal): activa. Se renueva "
+            "sola al final de cada periodo.\n\n"
+        ),
+        "en": (
+            "🔁 Auto-renewal (PayPal): on. It renews itself at the end of "
+            "each period.\n\n"
+        ),
+    },
+
+    "mysub.renewal_pp_off": {
+        "es": (
+            "🔕 Renovación automática: desactivada. Tu acceso llega "
+            "hasta el final del periodo ya pagado; para volver "
+            "después, suscríbete de nuevo.\n\n"
+        ),
+        "en": (
+            "🔕 Auto-renewal: off. Your access runs until the end of the "
+            "period you already paid; to come back later, subscribe "
+            "again.\n\n"
+        ),
+    },
+
+    "mysub.btn_another_link": {
+        "es": "🔄 Enviarme otro enlace",
+        "en": "🔄 Send me another link",
+    },
+
+    "mysub.btn_help": {
+        "es": "💬 Ayuda sobre este menú",
+        "en": "💬 Help with this menu",
+    },
+
+    "mysub.btn_back": {
+        "es": "⬅️ Volver",
+        "en": "⬅️ Back",
+    },
+
+    "mysub.btn_back_access": {
+        "es": "⬅️ Volver a mi acceso",
+        "en": "⬅️ Back to my access",
+    },
+
+    "mysub.btn_renew_on": {
+        "es": "🔔 Reactivar renovación",
+        "en": "🔔 Turn auto-renewal back on",
+    },
+
+    "mysub.btn_renew_off": {
+        "es": "🔕 Desactivar renovación",
+        "en": "🔕 Turn off auto-renewal",
+    },
+
+    "mysub.btn_yes_off": {
+        "es": "Sí, desactivar",
+        "en": "Yes, turn it off",
+    },
+
+    "mysub.stoprenew_confirm": {
+        "es": (
+            "🔕 ¿Desactivar la renovación automática?\n\n"
+            "El periodo que ya has pagado no se toca: tu acceso sigue hasta "
+            "su final. Simplemente no habrá más cobros."
+        ),
+        "en": (
+            "🔕 Turn off auto-renewal?\n\n"
+            "The period you already paid is untouched: your access runs to "
+            "its end. There simply will be no more charges."
+        ),
+    },
+
+    "mysub.stoprenew_done": {
+        "es": (
+            "🔕 Hecho: no se te volverá a cobrar.\n\n"
+            "Tu acceso sigue activo hasta el final del periodo ya "
+            "pagado, y puedes reactivar la renovación desde esta "
+            "misma pantalla hasta el último día."
+        ),
+        "en": (
+            "🔕 Done: you will not be charged again.\n\n"
+            "Your access stays active until the end of the period you "
+            "already paid, and you can turn renewal back on from this same "
+            "screen until the last day."
+        ),
+    },
+
+    "mysub.renewon_done": {
+        "es": (
+            "🔔 Hecho: tu acceso volverá a renovarse solo al final "
+            "de cada periodo."
+        ),
+        "en": (
+            "🔔 Done: your access will renew itself again at the end of "
+            "each period."
+        ),
+    },
+
+    "mysub.pp_confirm": {
+        "es": (
+            "🔕 ¿Desactivar la renovación automática?\n\n"
+            "El periodo que ya has pagado no se toca: tu acceso sigue hasta "
+            "su final y no habrá más cobros.\n\n"
+            "⚠️ En PayPal la cancelación es definitiva: no se puede "
+            "reactivar. Si más adelante quieres volver, tendrás que "
+            "suscribirte de nuevo."
+        ),
+        "en": (
+            "🔕 Turn off auto-renewal?\n\n"
+            "The period you already paid is untouched: your access runs to "
+            "its end and there will be no more charges.\n\n"
+            "⚠️ With PayPal, cancelling is final: it cannot be turned back "
+            "on. If you want to come back later, you will have to subscribe "
+            "again."
+        ),
+    },
+
+    "mysub.pp_done": {
+        "es": (
+            "🔕 Hecho: no se te volverá a cobrar.\n\n"
+            "Tu acceso sigue activo hasta el final del periodo ya "
+            "pagado. En PayPal la cancelación es definitiva: si más "
+            "adelante quieres volver, suscríbete de nuevo."
+        ),
+        "en": (
+            "🔕 Done: you will not be charged again.\n\n"
+            "Your access stays active until the end of the period you "
+            "already paid. With PayPal, cancelling is final: if you want to "
+            "come back later, subscribe again."
+        ),
+    },
+
+    "mysub.toggle_error_off": {
+        "es": (
+            "❌ No he podido desactivar la renovación ahora mismo. "
+            "Inténtalo de nuevo en un momento."
+        ),
+        "en": (
+            "❌ I could not turn off the renewal right now. "
+            "Please try again in a moment."
+        ),
+    },
+
+    "mysub.toggle_error_on": {
+        "es": (
+            "❌ No he podido reactivar la renovación ahora mismo. "
+            "Inténtalo de nuevo en un momento."
+        ),
+        "en": (
+            "❌ I could not turn the renewal back on right now. "
+            "Please try again in a moment."
+        ),
+    },
+
+    "mysub.unavailable": {
+        "es": "⚠️ Esta opción ya no está disponible o no está configurada.",
+        "en": "⚠️ This option is no longer available or not configured.",
+    },
+
+    "mysub.not_found": {
+        "es": "❌ No encuentro esa comunidad.",
+        "en": "❌ I cannot find that community.",
+    },
+
+    "mysub.no_active": {
+        "es": "No tienes una suscripción activa para este {kind}.",
+        "en": "You do not have an active subscription for this {kind}.",
+    },
+
+    "mysub.load_error": {
+        "es": (
+            "❌ No he podido cargar tu acceso ahora mismo.\n\n"
+            "Inténtalo otra vez en un momento. Si sigue igual, escríbenos."
+        ),
+        "en": (
+            "❌ I could not load your access right now.\n\n"
+            "Try again in a moment. If it keeps happening, write to us."
+        ),
+    },
+
     "renewal.upcoming_priced": {
         "es": (
             "🔔 Aviso de renovación\n\n"

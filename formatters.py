@@ -68,11 +68,14 @@ def format_datetime(value):
 # FORMATTERS — REMAINING TIME
 # =========================
 
-def format_tiempo_restante(expiration):
+def format_tiempo_restante(expiration, language="es"):
+
+    # El "3d 4h 5m" es neutro; solo estas dos palabras cambian de idioma.
+    # El español queda byte a byte como siempre: nadie que ya lo veía nota nada.
 
     if expiration is None:
 
-        return "♾️ Permanente"
+        return "♾️ Permanent" if language == "en" else "♾️ Permanente"
 
 
     tiempo_restante = expiration - datetime.now()
@@ -83,7 +86,7 @@ def format_tiempo_restante(expiration):
 
     if total_segundos <= 0:
 
-        return "Expirado"
+        return "Expired" if language == "en" else "Expirado"
 
 
     dias = total_segundos // 86400

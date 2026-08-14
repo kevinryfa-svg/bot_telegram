@@ -251,3 +251,72 @@ def test_a_broken_telegram_does_not_break_the_screen(comprador_dentro, monkeypat
     )
 
     assert query.message.enviados, "el cliente se quedó sin mensaje por un fallo interno"
+
+
+# =========================
+# EL CAMINO DEL COMPRADOR, EN SU IDIOMA
+# =========================
+# La pantalla estaba en español fijo aunque el sistema i18n existía: un
+# comprador inglés que no entiende el aviso es un comprador que no renueva.
+
+def test_the_screen_speaks_the_buyers_language():
+    from i18n_service import t
+
+    es = t("mysub.screen", "es", group="VIP", intro="", remaining="3d 0h 1m",
+           renewal="", validity="24 horas", link="https://t.me/+x")
+    en = t("mysub.screen", "en", group="VIP", intro="", remaining="3d 0h 1m",
+           renewal="", validity="24 hours", link="https://t.me/+x")
+
+    assert es != en
+    assert "Tiempo restante" in es
+    assert "Time left" in en
+
+
+def test_every_mysub_key_exists_in_both_languages():
+    from i18n_service import TRANSLATIONS
+
+    claves = [k for k in TRANSLATIONS if k.startswith("mysub.")]
+
+    assert len(claves) >= 18, "faltan claves del camino del comprador"
+
+    for clave in claves:
+
+        assert TRANSLATIONS[clave].get("es"), f"{clave} sin español"
+        assert TRANSLATIONS[clave].get("en"), f"{clave} sin inglés"
+        assert TRANSLATIONS[clave]["es"] != TRANSLATIONS[clave]["en"], (
+            f"{clave}: el inglés es una copia del español"
+        )
+
+
+def test_no_hardcoded_buyer_spanish_remains_in_the_screen():
+    """Las frases largas del comprador ya no viven como literales."""
+
+    source = open(mc.__file__, encoding="utf-8").read()
+
+    for frase in (
+        "Tiempo restante:",
+        "Enviarme otro enlace",
+        "No encuentro esa comunidad",
+        "¿Desactivar la renovación",
+        "no se te volverá a cobrar",
+    ):
+        assert frase not in source, (
+            f"'{frase}' sigue como literal en vez de clave i18n"
+        )
+
+
+def test_the_time_formatter_translates_only_its_two_words():
+    from datetime import datetime, timedelta
+    from formatters import format_tiempo_restante
+
+    assert format_tiempo_restante(None) == "♾️ Permanente"
+    assert format_tiempo_restante(None, language="en") == "♾️ Permanent"
+
+    pasado = datetime.now() - timedelta(days=1)
+    assert format_tiempo_restante(pasado) == "Expirado"
+    assert format_tiempo_restante(pasado, language="en") == "Expired"
+
+    futuro = datetime.now() + timedelta(days=2, hours=3, minutes=10)
+    assert format_tiempo_restante(futuro) == format_tiempo_restante(
+        futuro, language="en"
+    ), "el '2d 3h 10m' es neutro: no cambia de idioma"

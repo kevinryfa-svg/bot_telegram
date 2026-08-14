@@ -326,6 +326,13 @@ def test_the_screen_branches_dodge_the_prefix_traps():
     assert source.index("mysub_pprenewoff_yes_") < \
         source.index('data.startswith("mysub_")')
 
-    # La confirmación avisa de que en PayPal no hay vuelta atrás.
+    # La confirmación avisa de que en PayPal no hay vuelta atrás. El texto
+    # vive en i18n (el comprador lo ve en su idioma): se fija la clave y que
+    # la rama la use.
+    from i18n_service import t
+
+    assert "definitiva" in t("mysub.pp_confirm", "es")
+    assert "final" in t("mysub.pp_confirm", "en")
+
     pos = source.index('data.startswith("mysub_pprenewoff_")')
-    assert "definitiva" in source[pos:pos + 2200]
+    assert 't("mysub.pp_confirm"' in source[pos:pos + 1200]
