@@ -630,6 +630,11 @@ TRANSLATIONS = {
         "en": "⚙️ Manage my subscription",
     },
 
+    "renewal.update_card_button": {
+        "es": "💳 Actualizar tarjeta",
+        "en": "💳 Update card",
+    },
+
     "renewal.cancelled_paypal": {
         "es": (
             "🔕 Renovación automática desactivada.\n\n"

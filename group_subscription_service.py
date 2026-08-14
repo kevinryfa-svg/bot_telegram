@@ -257,14 +257,71 @@ def invoice_period_end(invoice, stripe_subscription_id):
     return None
 
 
-def avisar_comprador(user_id, texto):
+def avisar_comprador(user_id, texto, reply_markup=None):
     try:
 
-        send_telegram_message(TOKEN, user_id, texto)
+        send_telegram_message(TOKEN, user_id, texto, reply_markup=reply_markup)
 
     except Exception as e:
 
         print("Renovación: no se pudo avisar al comprador:", str(e)[:200])
+
+
+# A dónde vuelve el comprador al salir del portal de pago de Stripe: el bot.
+BOT_RETURN_URL = "https://t.me/TheStarVipBOT"
+
+
+def crear_url_portal_pago(stripe_customer_id):
+    """
+    Una sesión del portal de facturación de Stripe: la página donde el
+    comprador cambia su tarjeta sin salir del flujo. Es EL punto donde se
+    pierde a un suscriptor que quería quedarse: el aviso de "revisa tu
+    tarjeta" sin un sitio donde hacerlo es un callejón.
+
+    Si el portal no está configurado en la cuenta de Stripe (hay que
+    activarlo una vez en el panel), devuelve None y el aviso sale sin botón:
+    la degradación es el mensaje de siempre, nunca el silencio.
+    """
+
+    if not stripe_customer_id:
+        return None
+
+    try:
+
+        sesion = recurso_plano(stripe.billing_portal.Session.create(
+            customer=stripe_customer_id,
+            return_url=BOT_RETURN_URL,
+        ))
+
+        return (sesion or {}).get("url")
+
+    except Exception as e:
+
+        print("Renovación: no se pudo crear el portal de pago:", str(e)[:200])
+
+        return None
+
+
+def fetch_member_customer_id(user_id, group_id):
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT stripe_customer_id
+                FROM users
+                WHERE user_id=%s AND group_id=%s
+
+            """, (user_id, group_id))
+
+            row = cur.fetchone()
+
+        return row[0] if row else None
+
+    except Exception:
+
+        return None
 
 
 def formato_fecha(valor):
@@ -406,10 +463,25 @@ def process_group_subscription_invoice_failed(invoice, event_type):
 
     language = load_user_language(user_id)
 
+    # El botón que salva la suscripción: cambiar la tarjeta en un toque. La
+    # factura trae el customer; si no viniera, está guardado en el socio.
+    url_portal = crear_url_portal_pago(
+        invoice.get("customer") or fetch_member_customer_id(user_id, group_id)
+    )
+
+    teclado = None
+
+    if url_portal:
+
+        teclado = {"inline_keyboard": [[{
+            "text": t("renewal.update_card_button", language),
+            "url": url_portal
+        }]]}
+
     avisar_comprador(user_id, t(
         "renewal.payment_failed", language,
         group=group_name
-    ))
+    ), reply_markup=teclado)
 
     return True
 
