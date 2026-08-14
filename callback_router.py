@@ -12694,7 +12694,8 @@ def build_owner_section_keyboard(user_id, group_id, section):
                 [InlineKeyboardButton("🏦 Revolut", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_REVOLUT}")],
                 [InlineKeyboardButton("💱 ChangeNOW.io / Cripto", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_CHANGENOW}")],
                 [InlineKeyboardButton("💳 Tarjeta EUR → USDT / Guardarian", callback_data=f"owner_group_payment_provider_{group_id}_{OWNER_PAYMENT_PROVIDER_GUARDARIAN}")],
-                [InlineKeyboardButton("🎟 Códigos y promociones", callback_data="owner_panel_codes")]
+                [InlineKeyboardButton("🎟 Códigos y promociones", callback_data="owner_panel_codes")],
+                [InlineKeyboardButton("🏷 Cupones de descuento (Stripe)", callback_data="owner_stripe_coupons")]
             ])
 
 

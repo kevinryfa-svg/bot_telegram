@@ -4158,6 +4158,42 @@ def create_tables():
         # =========================
         # TABLA INCIDENCIAS DE PAGO
         # =========================
+        # CUPONES DE DESCUENTO (Stripe)
+        # =========================
+        # El registro local de qué cupón es de qué comunidad: Stripe no
+        # permite listar promotion codes por grupo. El cupón real vive en
+        # Stripe, acotado a los productos de la comunidad.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS group_stripe_coupons (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER,
+
+            code TEXT,
+
+            percent_off INTEGER,
+
+            stripe_coupon_id TEXT,
+
+            stripe_promotion_code_id TEXT,
+
+            is_active BOOLEAN DEFAULT TRUE,
+
+            created_by BIGINT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            deactivated_at TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # Cuando el cobro sale bien pero el acceso no se puede conceder —el plan
         # ya no existe, o falla el guardado— el comprador no recibía nada: solo
         # quedaba una línea en el registro. Y el proveedor reintenta el webhook,

@@ -195,6 +195,11 @@ def register_checkout_routes(app):
                 # ancla users.stripe_subscription_id.
                 mode="subscription" if plan_es_recurrente else "payment",
 
+                # El campo "¿Tienes un código?" del checkout. Los cupones se
+                # crean acotados a los productos de cada comunidad, así que el
+                # código de un propietario no descuenta los planes de otro.
+                allow_promotion_codes=True,
+
                 success_url="https://t.me/TheStarVipBOT",
                 cancel_url="https://t.me/TheStarVipBOT",
 

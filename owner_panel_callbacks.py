@@ -842,6 +842,26 @@ def build_owner_panel_audit_keyboard():
 NOT_HANDLED = object()
 
 
+def _teclado_cupones(group_id):
+    """La pantalla de cupones: crear, apagar los vivos, y volver."""
+
+    from stripe_coupon_service import list_group_coupons
+
+    teclado = [[InlineKeyboardButton("➕ Crear cupón",
+                                     callback_data="owner_stripe_coupon_new")]]
+
+    for fila_id, code, percent, _creado in list_group_coupons(group_id):
+
+        teclado.append([InlineKeyboardButton(
+            f"🚫 Desactivar {code} ({percent}%)",
+            callback_data=f"owner_stripe_coupon_off_{fila_id}"
+        )])
+
+    teclado.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+    return teclado
+
+
 async def handle_owner_panel_callbacks(update, context, query, user_id, data):
 
     if data == "owner_panel_satisfaction":
@@ -1140,6 +1160,122 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
         )
 
         return
+
+    # =========================
+    # CUPONES DE DESCUENTO (Stripe)
+    # =========================
+    # Solo el propietario (o super admin): los cupones tocan el cobro real.
+    # El "off" va antes que la pantalla por la trampa de prefijos de siempre.
+
+    if data.startswith("owner_stripe_coupon_off_"):
+
+        from stripe_coupon_service import build_coupons_text, deactivate_group_coupon
+
+        group_id = get_selected_group_for_permissions(
+            context, user_id, ["can_manage_plans", "can_manage_payments"]
+        )
+
+        if not group_id or not (
+            is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id
+        ):
+
+            await query.message.reply_text(
+                "⛔ Solo el propietario puede gestionar los cupones.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+        fila = data[len("owner_stripe_coupon_off_"):]
+
+        if fila.isdigit() and deactivate_group_coupon(group_id, int(fila),
+                                                      actor_user_id=user_id):
+
+            await query.answer("Cupón desactivado ✅", show_alert=False)
+
+        else:
+
+            await query.answer("No se pudo desactivar", show_alert=True)
+
+        info = fetch_group_basic_info(group_id)
+        group_name = (info[1] if info else None) or f"Comunidad {group_id}"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_coupons_text(group_id, group_name),
+            reply_markup=InlineKeyboardMarkup(
+                _teclado_cupones(group_id)
+            )
+        )
+
+        return
+
+
+    if data == "owner_stripe_coupon_new":
+
+        group_id = get_selected_group_for_permissions(
+            context, user_id, ["can_manage_plans", "can_manage_payments"]
+        )
+
+        if not group_id or not (
+            is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id
+        ):
+
+            await query.message.reply_text(
+                "⛔ Solo el propietario puede crear cupones.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+        context.user_data["creating_stripe_coupon"] = {
+            "group_id": group_id,
+            "step": 1,
+        }
+
+        await query.message.reply_text(
+            "🏷 Nuevo cupón de descuento\n\n"
+            "Paso 1️⃣ — Escribe el CÓDIGO que tecleará el comprador "
+            "(3-30 caracteres, letras/números/guiones; p. ej. VERANO20)."
+        )
+
+        return
+
+
+    if data == "owner_stripe_coupons":
+
+        from stripe_coupon_service import build_coupons_text
+
+        group_id = get_selected_group_for_permissions(
+            context, user_id, ["can_manage_plans", "can_manage_payments"]
+        )
+
+        if not group_id or not (
+            is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id
+        ):
+
+            await query.message.reply_text(
+                "⛔ Solo el propietario puede gestionar los cupones.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+        info = fetch_group_basic_info(group_id)
+        group_name = (info[1] if info else None) or f"Comunidad {group_id}"
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_coupons_text(group_id, group_name),
+            reply_markup=InlineKeyboardMarkup(
+                _teclado_cupones(group_id)
+            )
+        )
+
+        return
+
 
     if data == "owner_panel_revenue":
 
