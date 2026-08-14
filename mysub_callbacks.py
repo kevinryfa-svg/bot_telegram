@@ -220,14 +220,13 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                 # inmediato del botón.
                 await query.answer("Renovación desactivada ✅", show_alert=False)
 
+                language = load_user_language(user_id)
+
                 await query.message.reply_text(
-                    "🔕 Hecho: no se te volverá a cobrar.\n\n"
-                    "Tu acceso sigue activo hasta el final del periodo ya "
-                    "pagado, y puedes reactivar la renovación desde esta "
-                    "misma pantalla hasta el último día.",
+                    t("mysub.stoprenew_done", language),
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton(
-                            "⬅️ Volver a mi acceso",
+                            t("mysub.btn_back_access", language),
                             callback_data=f"mysub_{ref}"
                         )
                     ]])
@@ -235,12 +234,13 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                 return
 
+        language = load_user_language(user_id)
+
         await query.message.reply_text(
-            "❌ No he podido desactivar la renovación ahora mismo. "
-            "Inténtalo de nuevo en un momento.",
+            t("mysub.toggle_error_off", language),
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton(
-                    "⬅️ Volver a mi acceso",
+                    t("mysub.btn_back_access", language),
                     callback_data=f"mysub_{ref}"
                 )
             ]])
@@ -257,20 +257,19 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
             pass
 
         ref = data[len("mysub_stoprenew_"):]
+        language = load_user_language(user_id)
 
         await query.message.reply_text(
 
-            "🔕 ¿Desactivar la renovación automática?\n\n"
-            "El periodo que ya has pagado no se toca: tu acceso sigue hasta "
-            "su final. Simplemente no habrá más cobros.",
+            t("mysub.stoprenew_confirm", language),
 
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
-                    "Sí, desactivar",
+                    t("mysub.btn_yes_off", language),
                     callback_data=f"mysub_stoprenew_yes_{ref}"
                 )],
                 [InlineKeyboardButton(
-                    "⬅️ Volver",
+                    t("mysub.btn_back", language),
                     callback_data=f"mysub_{ref}"
                 )],
             ])
@@ -296,14 +295,13 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                 await query.answer("Renovación desactivada ✅", show_alert=False)
 
+                language = load_user_language(user_id)
+
                 await query.message.reply_text(
-                    "🔕 Hecho: no se te volverá a cobrar.\n\n"
-                    "Tu acceso sigue activo hasta el final del periodo ya "
-                    "pagado. En PayPal la cancelación es definitiva: si más "
-                    "adelante quieres volver, suscríbete de nuevo.",
+                    t("mysub.pp_done", language),
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton(
-                            "⬅️ Volver a mi acceso",
+                            t("mysub.btn_back_access", language),
                             callback_data=f"mysub_{ref}"
                         )
                     ]])
@@ -311,12 +309,13 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                 return
 
+        language = load_user_language(user_id)
+
         await query.message.reply_text(
-            "❌ No he podido desactivar la renovación ahora mismo. "
-            "Inténtalo de nuevo en un momento.",
+            t("mysub.toggle_error_off", language),
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton(
-                    "⬅️ Volver a mi acceso",
+                    t("mysub.btn_back_access", language),
                     callback_data=f"mysub_{ref}"
                 )
             ]])
@@ -333,23 +332,19 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
             pass
 
         ref = data[len("mysub_pprenewoff_"):]
+        language = load_user_language(user_id)
 
         await query.message.reply_text(
 
-            "🔕 ¿Desactivar la renovación automática?\n\n"
-            "El periodo que ya has pagado no se toca: tu acceso sigue hasta "
-            "su final y no habrá más cobros.\n\n"
-            "⚠️ En PayPal la cancelación es definitiva: no se puede "
-            "reactivar. Si más adelante quieres volver, tendrás que "
-            "suscribirte de nuevo.",
+            t("mysub.pp_confirm", language),
 
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
-                    "Sí, desactivar",
+                    t("mysub.btn_yes_off", language),
                     callback_data=f"mysub_pprenewoff_yes_{ref}"
                 )],
                 [InlineKeyboardButton(
-                    "⬅️ Volver",
+                    t("mysub.btn_back", language),
                     callback_data=f"mysub_{ref}"
                 )],
             ])
@@ -375,12 +370,13 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                 await query.answer("Renovación reactivada ✅", show_alert=False)
 
+                language = load_user_language(user_id)
+
                 await query.message.reply_text(
-                    "🔔 Hecho: tu acceso volverá a renovarse solo al final "
-                    "de cada periodo.",
+                    t("mysub.renewon_done", language),
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton(
-                            "⬅️ Volver a mi acceso",
+                            t("mysub.btn_back_access", language),
                             callback_data=f"mysub_{ref}"
                         )
                     ]])
@@ -388,12 +384,13 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                 return
 
+        language = load_user_language(user_id)
+
         await query.message.reply_text(
-            "❌ No he podido reactivar la renovación ahora mismo. "
-            "Inténtalo de nuevo en un momento.",
+            t("mysub.toggle_error_on", language),
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton(
-                    "⬅️ Volver a mi acceso",
+                    t("mysub.btn_back_access", language),
                     callback_data=f"mysub_{ref}"
                 )
             ]])
@@ -414,6 +411,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
 
         user_id = query.from_user.id
+        language = load_user_language(user_id)
         mysub_parts = data.split("_")
 
 
@@ -421,7 +419,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
             await reply_with_recover_navigation(
                 query,
-                "⚠️ Esta opción ya no está disponible o no está configurada."
+                t("mysub.unavailable", language)
             )
 
             return
@@ -466,7 +464,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                     # justo la que se le ofrece a quien acaba de pagar.
                     await reply_with_recover_navigation(
                         query,
-                        "❌ No encuentro esa comunidad."
+                        t("mysub.not_found", language)
                     )
 
                     return
@@ -538,7 +536,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                     await reply_with_recover_navigation(
                         query,
-                        f"No tienes una suscripción activa para este {community_kind}."
+                        t("mysub.no_active", language, kind=community_kind)
                     )
 
                     return
@@ -608,8 +606,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
             await reply_with_recover_navigation(
                 query,
-                "❌ No he podido cargar tu acceso ahora mismo.\n\n"
-                "Inténtalo otra vez en un momento. Si sigue igual, escríbenos."
+                t("mysub.load_error", language)
             )
 
             return
@@ -620,7 +617,8 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
         # =========================
 
         tiempo_texto = format_tiempo_restante(
-            expiration
+            expiration,
+            language=language
         )
 
 
@@ -804,7 +802,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                 # pagado se ha quedado fuera.
                 InlineKeyboardButton(
 
-                    "🔄 Enviarme otro enlace",
+                    t("mysub.btn_another_link", language),
 
                     callback_data=f"mysub_{telegram_group_id}"
 
@@ -816,7 +814,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                 InlineKeyboardButton(
 
-                    "💬 Ayuda sobre este menú",
+                    t("mysub.btn_help", language),
 
                     callback_data=CALLBACK_SUBSCRIPTIONS_HELP
 
@@ -828,7 +826,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                 InlineKeyboardButton(
 
-                    "⬅️ Volver",
+                    t("mysub.btn_back", language),
 
                     callback_data="mis_subs"
 
@@ -840,7 +838,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
 
         access_intro = (
-            f"✅ Tienes acceso permanente activo a este {community_kind}.\n\n"
+            t("mysub.permanent_intro", language, kind=community_kind)
             if expiration is None
             else ""
         )
@@ -856,28 +854,22 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
             if renovacion["cancel_at_period_end"]:
 
-                linea_renovacion = (
-                    "🔕 Renovación automática: desactivada. Tu acceso termina "
-                    "al final del periodo ya pagado.\n\n"
-                )
+                linea_renovacion = t("mysub.renewal_off", language)
 
                 keyboard.insert(1, [
                     InlineKeyboardButton(
-                        "🔔 Reactivar renovación",
+                        t("mysub.btn_renew_on", language),
                         callback_data=f"mysub_renewon_{telegram_group_id}"
                     )
                 ])
 
             else:
 
-                linea_renovacion = (
-                    "🔁 Renovación automática: activa. Se renueva sola al "
-                    "final de cada periodo.\n\n"
-                )
+                linea_renovacion = t("mysub.renewal_active", language)
 
                 keyboard.insert(1, [
                     InlineKeyboardButton(
-                        "🔕 Desactivar renovación",
+                        t("mysub.btn_renew_off", language),
                         callback_data=f"mysub_stoprenew_{telegram_group_id}"
                     )
                 ])
@@ -891,45 +883,29 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
             if renovacion_pp and renovacion_pp["activa"]:
 
-                linea_renovacion = (
-                    "🔁 Renovación automática (PayPal): activa. Se renueva "
-                    "sola al final de cada periodo.\n\n"
-                )
+                linea_renovacion = t("mysub.renewal_pp_active", language)
 
                 keyboard.insert(1, [
                     InlineKeyboardButton(
-                        "🔕 Desactivar renovación",
+                        t("mysub.btn_renew_off", language),
                         callback_data=f"mysub_pprenewoff_{telegram_group_id}"
                     )
                 ])
 
             elif renovacion_pp and renovacion_pp["cancelada"]:
 
-                linea_renovacion = (
-                    "🔕 Renovación automática: desactivada. Tu acceso llega "
-                    "hasta el final del periodo ya pagado; para volver "
-                    "después, suscríbete de nuevo.\n\n"
-                )
+                linea_renovacion = t("mysub.renewal_pp_off", language)
 
 
-        mensaje = (
-
-            f"📦 {group_name}\n\n"
-
-            f"{access_intro}"
-
-            f"⏳ Tiempo restante:\n"
-            f"{tiempo_texto}\n\n"
-
-            f"{linea_renovacion}"
-
-            f"⏱ El enlace vale {format_access_link_validity(expire_seconds, load_user_language(user_id))} "
-            "y solo lo puedes usar tú, una vez.\n"
-            "Si caduca, pide otro con el botón de abajo.\n\n"
-
-            f"🔗 Tu nuevo acceso:\n"
-            f"{link}"
-
+        mensaje = t(
+            "mysub.screen",
+            language,
+            group=group_name,
+            intro=access_intro,
+            remaining=tiempo_texto,
+            renewal=linea_renovacion,
+            validity=format_access_link_validity(expire_seconds, language),
+            link=link,
         )
 
 

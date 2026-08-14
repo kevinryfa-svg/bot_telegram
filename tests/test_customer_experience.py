@@ -245,9 +245,15 @@ def test_the_access_screen_lets_them_ask_for_another_link():
     """
     Antes, si el enlace caducaba, había que volver atrás y entrar otra vez en la
     comunidad. Dos toques de más justo cuando alguien no puede entrar.
+
+    El texto del botón vive ahora en i18n (el comprador lo ve en su idioma);
+    lo que se fija es que el botón exista y la pantalla lo use.
     """
 
-    assert "🔄 Enviarme otro enlace" in _fuente_router_y_tramos()
+    from i18n_service import t
+
+    assert t("mysub.btn_another_link", "es") == "🔄 Enviarme otro enlace"
+    assert 't("mysub.btn_another_link"' in _fuente_router_y_tramos()
 
 
 def test_the_access_screen_no_longer_hardcodes_three_minutes():
