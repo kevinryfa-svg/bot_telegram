@@ -39,6 +39,7 @@ from payment_incident_service import (
     resolve_incidents_for
 )
 from group_subscription_service import (
+    align_expiration_with_trial,
     attach_subscription_to_member,
     extraer_subscription_id,
     process_group_subscription_lifecycle_event,
@@ -1422,6 +1423,11 @@ def stripe_webhook():
                 suscripcion_creada,
                 stripe_customer_id=session.get("customer")
             )
+
+            # Si la suscripción arranca en PRUEBA, lo cubierto es la prueba,
+            # no la duración entera del plan: la expiración se recorta al fin
+            # del trial y el primer invoice.paid real la extiende.
+            align_expiration_with_trial(user_id, group_id, suscripcion_creada)
 
 
         log_event(

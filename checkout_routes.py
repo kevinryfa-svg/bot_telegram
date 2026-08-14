@@ -122,7 +122,8 @@ def register_checkout_routes(app):
                 cur.execute("""
 
                     SELECT COALESCE(stripe_price_id, price_id),
-                           COALESCE(is_recurring, FALSE)
+                           COALESCE(is_recurring, FALSE),
+                           COALESCE(trial_days, 0)
 
                     FROM plans
 
@@ -146,6 +147,7 @@ def register_checkout_routes(app):
 
             price_id = row[0]
             plan_es_recurrente = bool(row[1])
+            plan_trial_days = int(row[2] or 0)
 
         except Exception as e:
 
@@ -215,6 +217,15 @@ def register_checkout_routes(app):
                         "purpose": "group_access"
                     }
                 }
+
+                # Prueba gratis: tarjeta por delante, primer cobro al acabar.
+                # Solo tiene sentido en suscripciones, que es como la modela
+                # Stripe. Cancelar durante la prueba = cobro cero.
+                if plan_trial_days > 0:
+
+                    session_kwargs["subscription_data"]["trial_period_days"] = (
+                        plan_trial_days
+                    )
 
             session = stripe.checkout.Session.create(**session_kwargs)
 
