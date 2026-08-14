@@ -184,6 +184,115 @@ def test_open_incidents_show_up(comunidad):
 
 
 # =========================
+# V2: COMPARATIVA, RENOVACIÓN Y CSV
+# =========================
+
+def test_month_comparison_uses_whole_months_not_rolling_windows(comunidad):
+    db = comunidad
+
+    with db.conn.cursor() as cur:
+        # Mes actual y mes anterior COMPLETO, sin depender del día de hoy.
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, status, "
+            "plan, payment_date) VALUES "
+            "(1, 98, 3000, 'EUR', 'paid', 'Mensual', date_trunc('month', NOW()) + INTERVAL '1 hour'), "
+            "(2, 98, 2000, 'EUR', 'paid', 'Mensual', date_trunc('month', NOW()) - INTERVAL '10 days')"
+        )
+
+    filas = ors.fetch_month_comparison(98)
+
+    assert filas == [("EUR", 3000, 2000)]
+
+    texto = ors.formato_comparativa(filas)
+
+    assert "30.00 EUR" in texto
+    assert "mes anterior: 20.00 EUR" in texto
+    assert "+50%" in texto
+
+
+def test_renewals_are_second_payments_of_the_same_person(comunidad):
+    """La definición vale para todos los proveedores: renovar es volver a
+    pagar donde ya pagaste."""
+
+    pago(comunidad, 1, 1500, hace_dias=40)   # primera compra, vieja
+    pago(comunidad, 1, 1500, hace_dias=5)    # renovación (2º pago) ✓
+    pago(comunidad, 2, 1500, hace_dias=5)    # primera compra: NO es renovación
+
+    r = ors.fetch_autorenew_summary(98)
+
+    assert r["renovaciones_30d"] == 1
+
+
+def test_subscribers_are_counted_by_their_anchors(comunidad):
+    db = comunidad
+
+    with db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active, "
+            "stripe_subscription_id) "
+            "VALUES (21, 98, NOW() + INTERVAL '20 days', TRUE, 'sub_21')"
+        )
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (22, 98, NOW() + INTERVAL '20 days', TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO payment_transactions (provider, status, payment_scope, "
+            "purchase_type, user_id, group_id, external_checkout_id) "
+            "VALUES ('paypal', 'paid', 'platform', 'group_access', 22, 98, 'I-22')"
+        )
+        # Con ancla pero inactivo: no cuenta.
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active, "
+            "stripe_subscription_id) "
+            "VALUES (23, 98, NOW() - INTERVAL '1 day', FALSE, 'sub_23')"
+        )
+
+    r = ors.fetch_autorenew_summary(98)
+
+    assert r["suscriptores"] == 2
+
+
+def test_the_csv_is_for_a_spreadsheet_not_for_our_database(comunidad):
+    pago(comunidad, 1, 1500, plan="Mensual; con punto y coma")
+
+    csv = ors.build_payments_csv(98)
+    lineas = csv.splitlines()
+
+    assert lineas[0] == "fecha;usuario;importe;moneda;estado;plan"
+    assert ";15.00;EUR;paid;" in lineas[1], (
+        "importes en unidades mayores: el destinatario es una hoja de cálculo"
+    )
+    assert "punto y coma" in lineas[1]
+    assert lineas[1].count(";") == 5, "el ';' del nombre del plan iba a romper la columna"
+
+
+def test_the_screen_now_shows_autorenewal_and_comparison(comunidad):
+    pago(comunidad, 1, 1500, hace_dias=1)
+
+    texto = ors.build_owner_revenue_text(98, "VIP Ingresos")
+
+    assert "🔁 Renovación automática" in texto
+    assert "Suscriptores activos: 0" in texto
+    assert "Renovaciones cobradas (30 días): 0" in texto
+
+
+def test_the_csv_button_lives_in_the_revenue_screen_with_the_same_gates():
+    source = open("owner_panel_callbacks.py", encoding="utf-8").read()
+
+    assert '"owner_panel_revenue_csv"' in source
+    assert "build_payments_csv" in source
+
+    # El CSV comprueba los MISMOS permisos que la pantalla: es la misma
+    # información en otro formato.
+    pos = source.index('if data == "owner_panel_revenue_csv":')
+    trozo = source[pos:pos + 800]
+
+    assert "get_selected_group_for_permissions" in trozo
+    assert "can_view_payments" in trozo
+
+
+# =========================
 # LA PANTALLA ENTERA
 # =========================
 
