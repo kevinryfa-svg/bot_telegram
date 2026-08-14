@@ -416,6 +416,10 @@ from recover_access_callbacks import (
     NOT_HANDLED as RECOVER_ACCESS_NOT_HANDLED,
     handle_recover_access_callbacks
 )
+from platform_revenue_service import (
+    build_platform_revenue_text,
+    build_scoped_income_text,
+)
 from owner_payment_callbacks import (
     OWNER_PAYMENT_CALLBACK_PREFIXES,
     handle_owner_payment_callbacks
@@ -26849,73 +26853,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_income":
 
+        # La versión vieja de esta pantalla tenía tres mentiras de dinero:
+        # contaba devoluciones como ingreso, mezclaba monedas bajo
+        # MAX(currency) y mostraba céntimos como si fueran unidades
+        # ("1500 EUR" por 15 euros). Vive ahora en platform_revenue_service
+        # con las mismas reglas que el panel del propietario.
         group_ids = get_admin_group_ids(
             user_id,
             ["can_view_payments", "can_view_stats"]
         )
 
 
-        with conn.cursor() as cur:
+        if group_ids is None:
 
-            if group_ids is None:
+            # Alcance total: la foto global de la plataforma, que no existía
+            # en ningún sitio — ventanas con comparativa, proveedores, top de
+            # comunidades y suscriptores.
+            texto = build_platform_revenue_text()
 
-                cur.execute("""
+        elif not group_ids:
 
-                    SELECT g.name,
-                           COALESCE(SUM(p.amount), 0),
-                           MAX(p.currency)
-                    FROM payments p
-                    LEFT JOIN groups g
-                    ON p.group_id = g.id
-                    GROUP BY g.name
-                    ORDER BY g.name ASC
+            texto = "💰 No hay ingresos registrados en tus comunidades."
 
-                """)
+        else:
 
-            elif not group_ids:
-
-                rows = []
-
-            else:
-
-                cur.execute("""
-
-                    SELECT g.name,
-                           COALESCE(SUM(p.amount), 0),
-                           MAX(p.currency)
-                    FROM payments p
-                    LEFT JOIN groups g
-                    ON p.group_id = g.id
-                    WHERE p.group_id = ANY(%s)
-                    GROUP BY g.name
-                    ORDER BY g.name ASC
-
-                """, (group_ids,))
+            texto = build_scoped_income_text(group_ids)
 
 
-            if group_ids is None or group_ids:
-
-                rows = cur.fetchall()
-
-
-        if not rows:
-
-            await query.message.reply_text(
-                "💰 No hay ingresos registrados."
-            )
-
-            return
-
-
-        text = "💰 Ingresos por grupo\n\n"
-
-
-        for group_name, amount, currency in rows:
-
-            text += f"{group_name or '-'}: {amount or 0} {currency or ''}\n"
-
-
-        await query.message.reply_text(text)
+        await query.message.reply_text(texto)
 
         return
 
