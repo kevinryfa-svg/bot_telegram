@@ -6,6 +6,7 @@ import traceback
 from flask import request, jsonify, redirect
 
 from db import conn
+from stripe_connect_service import connect_checkout_kwargs
 from payment_gateway_config import (
     PAYMENT_PROVIDER_CHANGENOW,
     PAYMENT_PROVIDER_GUARDARIAN,
@@ -123,7 +124,9 @@ def register_checkout_routes(app):
 
                     SELECT COALESCE(stripe_price_id, price_id),
                            COALESCE(is_recurring, FALSE),
-                           COALESCE(trial_days, 0)
+                           COALESCE(trial_days, 0),
+                           amount,
+                           currency
 
                     FROM plans
 
@@ -148,6 +151,8 @@ def register_checkout_routes(app):
             price_id = row[0]
             plan_es_recurrente = bool(row[1])
             plan_trial_days = int(row[2] or 0)
+            plan_amount_major = row[3]
+            plan_currency = row[4]
 
         except Exception as e:
 
@@ -226,6 +231,29 @@ def register_checkout_routes(app):
                     session_kwargs["subscription_data"]["trial_period_days"] = (
                         plan_trial_days
                     )
+
+
+            # Stripe Connect: si la comunidad tiene cuenta de creador ACTIVA,
+            # el neto viaja a su cuenta y la plataforma retiene su comisión.
+            # Sin cuenta (o sin verificar), esto devuelve {} y el checkout es
+            # el de siempre, byte a byte.
+            extra_connect = connect_checkout_kwargs(
+                group_id,
+                plan_es_recurrente,
+                plan_amount_major,
+                plan_currency,
+            )
+
+            if "subscription_data" in extra_connect:
+
+                session_kwargs["subscription_data"].update(
+                    extra_connect["subscription_data"]
+                )
+
+            else:
+
+                session_kwargs.update(extra_connect)
+
 
             session = stripe.checkout.Session.create(**session_kwargs)
 
