@@ -851,6 +851,89 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
     # =========================
+    # CUPÓN DE DESCUENTO — WIZARD
+    # =========================
+
+    if context.user_data.get("creating_stripe_coupon"):
+
+        from stripe_coupon_service import create_group_coupon, normalizar_codigo
+
+        estado = context.user_data["creating_stripe_coupon"]
+        texto = update.message.text.strip()
+
+        if estado.get("step") == 1:
+
+            codigo = normalizar_codigo(texto)
+
+            if not codigo:
+
+                await update.message.reply_text(
+                    "❌ Código inválido. 3-30 caracteres: letras, números, "
+                    "guiones. Prueba otra vez (p. ej. VERANO20)."
+                )
+
+                return
+
+            estado["code"] = codigo
+            estado["step"] = 2
+
+            await update.message.reply_text(
+                f"Paso 2️⃣ — ¿Qué DESCUENTO aplica {codigo}?\n\n"
+                "Escribe el porcentaje (1-100). Se descuenta el primer "
+                "cobro; en suscripciones, el primer ciclo."
+            )
+
+            return
+
+
+        if estado.get("step") == 2:
+
+            resultado = create_group_coupon(
+                estado["group_id"],
+                estado.get("code"),
+                texto,
+                created_by=update.effective_user.id,
+            )
+
+            if not resultado.get("ok"):
+
+                errores = {
+                    "porcentaje_invalido": "❌ Porcentaje inválido: escribe un número del 1 al 100.",
+                    "codigo_repetido": "❌ Ya existe un cupón activo con ese código. Empieza de nuevo desde «Cupones de descuento».",
+                    "sin_planes_stripe": "❌ Esta comunidad no tiene planes de Stripe activos: el cupón no tendría dónde aplicarse.",
+                    "stripe": "❌ Stripe no aceptó el cupón. Inténtalo de nuevo en un momento.",
+                }
+
+                await update.message.reply_text(
+                    errores.get(resultado.get("error"), "❌ No se pudo crear el cupón.")
+                )
+
+                # El porcentaje inválido se reintenta; el resto termina aquí.
+                if resultado.get("error") != "porcentaje_invalido":
+
+                    context.user_data.pop("creating_stripe_coupon", None)
+
+                return
+
+
+            context.user_data.pop("creating_stripe_coupon", None)
+
+            await update.message.reply_text(
+                f"✅ Cupón {resultado['code']} creado: {resultado['percent_off']}% "
+                "de descuento en el primer cobro.\n\n"
+                "El comprador solo tiene que teclearlo en el checkout de "
+                "Stripe. Solo vale para los planes de Stripe de esta "
+                "comunidad, y puedes desactivarlo cuando quieras desde "
+                "«Cupones de descuento»."
+            )
+
+            return
+
+
+        return
+
+
+    # =========================
     # AÑADIR PLAN — WIZARD
     # =========================
 
