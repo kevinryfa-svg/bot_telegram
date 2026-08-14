@@ -550,7 +550,10 @@ def create_tables():
             ("provider_price_id", "TEXT"),
             # Renovación automática (solo Stripe): el precio se crea recurrente
             # y el acceso se renueva solo hasta que el comprador cancele.
-            ("is_recurring", "BOOLEAN DEFAULT FALSE")
+            ("is_recurring", "BOOLEAN DEFAULT FALSE"),
+            # Prueba gratis (solo suscripciones): tarjeta por delante, primer
+            # cobro al acabar la prueba, cancelar antes = cero.
+            ("trial_days", "INTEGER DEFAULT 0")
         ]:
 
             try:

@@ -176,6 +176,67 @@ def attach_subscription_to_member(user_id, group_id, stripe_subscription_id,
         return False
 
 
+def align_expiration_with_trial(user_id, group_id, stripe_subscription_id):
+    """
+    Si la suscripción arranca EN PRUEBA, el alta del checkout habrá concedido
+    la duración entera del plan (30 días) cuando lo cubierto es la prueba
+    (p. ej. 7): la expiración se recorta al fin de la prueba. Si el cliente
+    paga al acabar, invoice.paid la extiende; si cancela o falla el cobro,
+    caduca sola — sin sobre-regalo que reclamar.
+    """
+
+    try:
+
+        suscripcion = recurso_plano(
+            stripe.Subscription.retrieve(stripe_subscription_id)
+        ) or {}
+
+        if suscripcion.get("status") != "trialing":
+            return False
+
+        fin = suscripcion.get("trial_end") or suscripcion.get("current_period_end")
+
+        if not fin:
+            return False
+
+        fin_prueba = datetime.fromtimestamp(int(fin))
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                UPDATE users
+                SET expiration = %s
+                WHERE user_id = %s AND group_id = %s
+
+            """, (fin_prueba, user_id, group_id))
+
+            conn.commit()
+
+        log_event(
+            "group_subscription_trial_started",
+            category="payment",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Suscripción iniciada en periodo de prueba.",
+            metadata={
+                "stripe_subscription_id": stripe_subscription_id,
+                "trial_end": str(fin_prueba),
+            }
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Renovación: error alineando la prueba:", str(e)[:200])
+
+        return False
+
+
 def fetch_group_name(group_id):
     try:
 

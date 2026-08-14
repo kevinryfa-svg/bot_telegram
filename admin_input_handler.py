@@ -1136,10 +1136,71 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
         # =========================
-        # PASO 5 (RESTO) / PASO 6 (STRIPE) — GUARDAR
+        # PASO 5 (RESTO) / PASO 6-7 (STRIPE) — GUARDAR
         # =========================
 
-        if step in (5, 6):
+        # El paso 6 decide la renovación automática. Con SÍ queda UNA pregunta
+        # más: los días de prueba gratis (paso 7) — la prueba solo existe en
+        # suscripciones, que es como la modela Stripe (trial_period_days, con
+        # tarjeta por delante: cancela durante la prueba y el cobro es cero).
+        if step == 6:
+
+            respuesta = text.strip().lower()
+
+            if respuesta in ("sí", "si", "s", "yes", "y"):
+
+                context.user_data["new_plan"]["is_recurring"] = True
+                context.user_data["add_plan_step"] = 7
+
+                await update.message.reply_text(
+
+                    "Paso 7️⃣\n\n"
+                    "¿DÍAS DE PRUEBA GRATIS?\n\n"
+                    "El cliente pone la tarjeta al suscribirse, prueba gratis "
+                    "esos días y el primer cobro sale al terminar. Si cancela "
+                    "durante la prueba, no paga nada.\n\n"
+                    "Escribe un número de 1 a 30, o 0 si no hay prueba."
+
+                )
+
+                return
+
+            elif respuesta in ("no", "n"):
+
+                context.user_data["new_plan"]["is_recurring"] = False
+
+            else:
+
+                await update.message.reply_text(
+                    "Responde SÍ o NO."
+                )
+
+                return
+
+
+        if step == 7:
+
+            try:
+
+                trial_days = int(text.strip())
+
+            except Exception:
+
+                trial_days = -1
+
+
+            if not 0 <= trial_days <= 30:
+
+                await update.message.reply_text(
+                    "Escribe un número de 0 a 30 (0 = sin prueba)."
+                )
+
+                return
+
+            context.user_data["new_plan"]["trial_days"] = trial_days
+
+
+        if step in (5, 6, 7):
 
             plan = context.user_data["new_plan"]
             provider = normalize_plan_payment_provider(
@@ -1147,27 +1208,8 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             currency = plan.get("currency") or text.upper()
 
-            is_recurring = False
-
-            if step == 6:
-
-                respuesta = text.strip().lower()
-
-                if respuesta in ("sí", "si", "s", "yes", "y"):
-
-                    is_recurring = True
-
-                elif respuesta in ("no", "n"):
-
-                    is_recurring = False
-
-                else:
-
-                    await update.message.reply_text(
-                        "Responde SÍ o NO."
-                    )
-
-                    return
+            is_recurring = bool(plan.get("is_recurring"))
+            trial_days = int(plan.get("trial_days") or 0)
 
             provider_price_id = plan.get("provider_price_id")
             stripe_price_id = plan.get("stripe_price_id")
@@ -1241,10 +1283,11 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                             duration_days,
                             amount,
                             currency,
-                            is_recurring
+                            is_recurring,
+                            trial_days
                         )
 
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
 
                     """, (
@@ -1260,7 +1303,8 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                         plan["duration_days"],
                         plan["amount"],
                         currency,
-                        is_recurring
+                        is_recurring,
+                        trial_days
 
                     ))
 
@@ -1323,6 +1367,15 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                             "y quien se suscriba conserva su precio aunque "
                             "luego lo cambies."
                         )
+
+                        if trial_days:
+
+                            success_message += (
+                                f"\n\n🎁 Prueba gratis de {trial_days} días: "
+                                "el cliente pone la tarjeta al suscribirse y "
+                                "el primer cobro sale al acabar la prueba. Si "
+                                "cancela antes, no paga nada."
+                            )
 
                     else:
 
