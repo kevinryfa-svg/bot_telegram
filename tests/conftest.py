@@ -99,6 +99,7 @@ def clean_db(db_module):
         "interest_followups",
         "group_payment_provider_configs",
         "group_stripe_coupons",
+        "creator_connect_accounts",
         "users",
         "plans",
         "banned_users",

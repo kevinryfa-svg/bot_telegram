@@ -1162,6 +1162,124 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
         return
 
     # =========================
+    # STRIPE CONNECT (cobrar en la cuenta del creador)
+    # =========================
+    # Solo el propietario: es SU cuenta bancaria la que se conecta.
+
+    if data in ("owner_stripe_connect", "owner_stripe_connect_start",
+                "owner_stripe_connect_check"):
+
+        from stripe_connect_service import (
+            describe_connect_status,
+            fetch_connect_account,
+            refresh_connect_status,
+            start_connect_onboarding,
+        )
+
+        group_id = get_selected_group_for_permissions(
+            context, user_id, ["can_manage_payments", "can_manage_plans"]
+        )
+
+        if not group_id or not (
+            is_super_admin(user_id) or get_group_owner_user_id(group_id) == user_id
+        ):
+
+            await query.message.reply_text(
+                "⛔ Solo el propietario puede conectar su cuenta de Stripe.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        if data == "owner_stripe_connect_start":
+
+            resultado = start_connect_onboarding(group_id, user_id)
+
+            if resultado.get("ok"):
+
+                await query.message.reply_text(
+                    "🚀 Alta de tu cuenta de Stripe\n\n"
+                    "Completa el formulario de Stripe con el botón de abajo. "
+                    "Al terminar, vuelve aquí y pulsa «Comprobar estado».",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton(
+                            "📝 Abrir el formulario de Stripe",
+                            url=resultado["url"]
+                        )],
+                        [InlineKeyboardButton(
+                            "🔄 Comprobar estado",
+                            callback_data="owner_stripe_connect_check"
+                        )],
+                    ])
+                )
+
+            else:
+
+                await query.message.reply_text(
+                    "❌ Ahora mismo no se puede empezar el alta.\n\n"
+                    "Lo más probable es que Stripe Connect no esté activado "
+                    "aún en la cuenta de Stripe de la plataforma (se activa "
+                    "una vez, en el panel de Stripe → Connect). Avisa al "
+                    "administrador de la plataforma.",
+                    reply_markup=build_owner_panel_nav_keyboard()
+                )
+
+            return
+
+
+        if data == "owner_stripe_connect_check":
+
+            refresh_connect_status(group_id)
+
+
+        # La pantalla de estado (también tras comprobar).
+        info = fetch_group_basic_info(group_id)
+        group_name = (info[1] if info else None) or f"Comunidad {group_id}"
+
+        cuenta = fetch_connect_account(group_id)
+
+        teclado = []
+
+        if not cuenta:
+
+            teclado.append([InlineKeyboardButton(
+                "🚀 Conectar mi cuenta de Stripe",
+                callback_data="owner_stripe_connect_start"
+            )])
+
+        elif not cuenta["charges_enabled"]:
+
+            teclado.append([InlineKeyboardButton(
+                "📝 Continuar el alta",
+                callback_data="owner_stripe_connect_start"
+            )])
+            teclado.append([InlineKeyboardButton(
+                "🔄 Comprobar estado",
+                callback_data="owner_stripe_connect_check"
+            )])
+
+        else:
+
+            teclado.append([InlineKeyboardButton(
+                "🔄 Comprobar estado",
+                callback_data="owner_stripe_connect_check"
+            )])
+
+        teclado.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"🏦 Stripe Connect — {group_name}\n\n"
+            f"{describe_connect_status(group_id)}",
+            reply_markup=InlineKeyboardMarkup(teclado)
+        )
+
+        return
+
+
+    # =========================
     # CUPONES DE DESCUENTO (Stripe)
     # =========================
     # Solo el propietario (o super admin): los cupones tocan el cobro real.

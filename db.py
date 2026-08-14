@@ -4161,6 +4161,36 @@ def create_tables():
         # =========================
         # TABLA INCIDENCIAS DE PAGO
         # =========================
+        # STRIPE CONNECT (cuentas de creadores)
+        # =========================
+        # Cada creador puede cobrar en SU cuenta de Stripe (Express); la
+        # plataforma retiene su comisión en el momento del cobro. Sin fila
+        # aquí (o sin charges_enabled) el checkout es el de siempre.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS creator_connect_accounts (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER UNIQUE,
+
+            owner_user_id BIGINT,
+
+            stripe_account_id TEXT,
+
+            charges_enabled BOOLEAN DEFAULT FALSE,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # SEGUNDO TOQUE CON DESCUENTO (recuperación de carrito)
         # =========================
         # El primer recordatorio va a las 2 horas sin descuento; este registro
