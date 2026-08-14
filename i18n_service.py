@@ -593,6 +593,28 @@ TRANSLATIONS = {
         ),
     },
 
+    "abandoned.discount_title": {
+        "es": "🎁 Un empujón para terminar",
+        "en": "🎁 A little push to finish",
+    },
+
+    "abandoned.discount_body": {
+        "es": (
+            "Dejaste a medias tu compra de {group}. Termínala hoy con un "
+            "{percent}% de descuento: teclea el código {code} en el pago "
+            "con tarjeta."
+        ),
+        "en": (
+            "You left your purchase of {group} halfway. Finish it today with "
+            "{percent}% off: type the code {code} at the card checkout."
+        ),
+    },
+
+    "abandoned.discount_expiry": {
+        "es": "El código es solo tuyo y caduca en 24 horas.",
+        "en": "The code is yours alone and expires in 24 hours.",
+    },
+
     # =========================
     # «MIS ACCESOS» — el camino del comprador, en su idioma.
     # Los textos en español son BYTE A BYTE los literales que había: el golden

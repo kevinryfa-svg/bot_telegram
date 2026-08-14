@@ -91,6 +91,7 @@ def clean_db(db_module):
         "payments",
         "payment_transactions",
         "abandoned_checkout_reminders",
+        "abandoned_discount_reminders",
         "access_renewal_reminders",
         "user_reengagement",
         "group_delivery_health",

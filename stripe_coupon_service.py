@@ -168,6 +168,56 @@ def create_group_coupon(group_id, code_text, percent_off, created_by=None):
         return {"ok": False, "error": "stripe", "detalle": str(e)[:200]}
 
 
+def create_recovery_promotion_code(group_id, transaction_id, percent_off=20,
+                                   valid_hours=24):
+    """
+    Un cupón PERSONAL de recuperación de carrito: un solo uso, caduca en
+    {valid_hours} horas, acotado a los productos de la comunidad. El código es
+    legible y único por intento (REGRESA + id de la transacción): si se
+    comparte no sirve (max_redemptions=1) y muere solo (redeem_by).
+
+    Devuelve el código o None — quien llama decide si sin cupón hay mensaje
+    (no lo hay: un segundo aviso sin descuento es ruido).
+    """
+
+    productos = fetch_group_stripe_products(group_id)
+
+    if not productos:
+
+        return None
+
+
+    try:
+
+        import time as time_mod
+
+        limite = int(time_mod.time()) + int(valid_hours) * 3600
+        code = f"REGRESA{int(transaction_id)}"
+
+        cupon = recurso_plano(stripe.Coupon.create(
+            percent_off=int(percent_off),
+            duration="once",
+            redeem_by=limite,
+            name=f"{code} · recuperación comunidad {group_id}",
+            applies_to={"products": productos},
+        ))
+
+        recurso_plano(stripe.PromotionCode.create(
+            coupon=cupon["id"],
+            code=code,
+            max_redemptions=1,
+            expires_at=limite,
+        ))
+
+        return code
+
+    except Exception as e:
+
+        print("Cupones: error creando el de recuperación:", str(e)[:200])
+
+        return None
+
+
 def deactivate_group_coupon(group_id, coupon_row_id, actor_user_id=None):
     """
     Apaga el código en Stripe (nadie más puede teclearlo) y lo marca local.

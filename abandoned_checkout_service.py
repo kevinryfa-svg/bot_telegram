@@ -39,6 +39,28 @@ ABANDONED_ENABLED = os.environ.get(
 ).strip().lower() not in ("0", "false", "no", "off")
 
 
+# =========================
+# SEGUNDO TOQUE: EL DESCUENTO
+# =========================
+# Si 24 horas después del recordatorio sigue sin pagar, un empujón con
+# dientes: cupón personal (un solo uso, caduca en 24 h) del 20%. Solo en
+# comunidades con planes de Stripe — sin cupón posible, un segundo aviso
+# sin nada nuevo que ofrecer es ruido, y no se manda.
+
+ABANDONED_DISCOUNT_AFTER_HOURS = float(
+    os.environ.get("ABANDONED_DISCOUNT_AFTER_HOURS", "24")
+)
+
+ABANDONED_DISCOUNT_PERCENT = int(
+    os.environ.get("ABANDONED_DISCOUNT_PERCENT", "20")
+)
+
+ABANDONED_DISCOUNT_ENABLED = os.environ.get(
+    "ABANDONED_DISCOUNT_ENABLED",
+    "true"
+).strip().lower() not in ("0", "false", "no", "off")
+
+
 PAID_STATUSES = ("paid", "completed", "succeeded")
 
 
@@ -166,6 +188,126 @@ def mark_abandoned_reminder_sent(transaction_id, user_id, group_id):
         return False
 
 
+def fetch_discount_candidates(limit=None):
+    """
+    Intentos que ya recibieron el primer recordatorio hace 24 h y siguen sin
+    pagar. Mismas exclusiones que el primero, más: la comunidad tiene que
+    tener planes de Stripe (sin cupón posible no hay segundo aviso) y el
+    descuento solo se ofrece una vez por intento.
+    """
+
+    limit = int(limit or ABANDONED_BATCH_SIZE)
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT t.id,
+                   t.user_id,
+                   t.group_id,
+                   COALESCE(g.name, 'la comunidad')
+            FROM payment_transactions t
+            JOIN groups g ON g.id = t.group_id
+            WHERE LOWER(COALESCE(t.status, '')) = 'pending'
+              AND t.user_id IS NOT NULL
+              AND t.group_id IS NOT NULL
+              AND COALESCE(g.is_active, TRUE) = TRUE
+
+              AND t.created_at >= NOW() - (%(days)s || ' days')::interval
+
+              AND EXISTS (
+                  SELECT 1
+                  FROM abandoned_checkout_reminders a
+                  WHERE a.transaction_id = t.id
+                    AND a.sent_at <= NOW() - (%(hours)s || ' hours')::interval
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM abandoned_discount_reminders d
+                  WHERE d.transaction_id = t.id
+              )
+
+              AND EXISTS (
+                  SELECT 1
+                  FROM plans pl
+                  WHERE pl.group_id = t.group_id
+                    AND COALESCE(pl.is_active, TRUE) = TRUE
+                    AND COALESCE(NULLIF(pl.payment_provider, ''), 'stripe') = 'stripe'
+                    AND pl.stripe_product_id IS NOT NULL
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_transactions p2
+                  WHERE p2.user_id = t.user_id
+                    AND p2.group_id = t.group_id
+                    AND LOWER(COALESCE(p2.status, '')) = ANY(%(paid)s)
+                    AND p2.created_at >= t.created_at
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM users u
+                  WHERE u.user_id = t.user_id
+                    AND u.group_id = t.group_id
+                    AND (
+                        COALESCE(u.subscription_active, FALSE) = TRUE
+                        OR (u.expiration IS NOT NULL AND u.expiration > NOW())
+                    )
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM banned_users b WHERE b.user_id = t.user_id
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM user_reengagement r
+                  WHERE r.user_id = t.user_id
+                    AND (
+                        COALESCE(r.opted_out, FALSE) = TRUE
+                        OR COALESCE(r.is_blocked, FALSE) = TRUE
+                    )
+              )
+
+            ORDER BY t.created_at DESC
+            LIMIT %(limit)s
+
+        """, {
+            "hours": ABANDONED_DISCOUNT_AFTER_HOURS,
+            "days": ABANDONED_MAX_AGE_DAYS,
+            "paid": list(PAID_STATUSES),
+            "limit": limit
+        })
+
+        return cur.fetchall() or []
+
+
+def mark_abandoned_discount_sent(transaction_id, user_id, group_id, code):
+    """True si quedó registrado (y por tanto toca enviarlo)."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO abandoned_discount_reminders
+                    (transaction_id, user_id, group_id, code)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (transaction_id) DO NOTHING
+
+            """, (transaction_id, user_id, group_id, code))
+
+            return cur.rowcount > 0
+
+    except Exception as e:
+
+        print("Descuento de recuperación: error registrando:", e)
+        return False
+
+
 # =========================
 # MENSAJE
 # =========================
@@ -209,6 +351,115 @@ def build_abandoned_keyboard(group_id, language=DEFAULT_LANGUAGE):
             callback_data="public_support"
         )]
     ])
+
+
+def build_discount_text(group_name, code, percent, language=DEFAULT_LANGUAGE):
+
+    return "\n".join([
+        t("abandoned.discount_title", language),
+        "",
+        t("abandoned.discount_body", language,
+          group=group_name, percent=percent, code=code),
+        "",
+        t("abandoned.discount_expiry", language),
+    ])
+
+
+async def process_abandoned_discounts(context):
+    """El segundo toque, con el cupón personal. Si el cupón no se puede crear
+    NO se marca ni se manda nada: se reintenta en la siguiente pasada."""
+
+    summary = {"targets": 0, "sent": 0, "skipped": 0, "failed": 0}
+
+    if not ABANDONED_DISCOUNT_ENABLED:
+
+        return summary
+
+
+    try:
+
+        rows = fetch_discount_candidates()
+
+    except Exception as e:
+
+        print("Descuento de recuperación: error seleccionando:", e)
+        return summary
+
+
+    summary["targets"] = len(rows)
+
+
+    from stripe_coupon_service import create_recovery_promotion_code
+
+    for transaction_id, user_id, group_id, group_name in rows:
+
+        code = create_recovery_promotion_code(
+            group_id,
+            transaction_id,
+            percent_off=ABANDONED_DISCOUNT_PERCENT,
+        )
+
+        if not code:
+
+            summary["skipped"] += 1
+            continue
+
+
+        if not mark_abandoned_discount_sent(transaction_id, user_id,
+                                            group_id, code):
+
+            summary["skipped"] += 1
+            continue
+
+
+        language = load_user_language(user_id)
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=build_discount_text(
+                    group_name,
+                    code,
+                    ABANDONED_DISCOUNT_PERCENT,
+                    language=language
+                ),
+                reply_markup=build_abandoned_keyboard(
+                    group_id,
+                    language=language
+                )
+            )
+
+            summary["sent"] += 1
+
+        except Exception as e:
+
+            summary["failed"] += 1
+
+            if not is_unreachable_error(e):
+
+                print(
+                    f"Descuento de recuperación: no se pudo avisar a {user_id}:",
+                    str(e)[:200]
+                )
+
+
+        await asyncio.sleep(ABANDONED_SEND_DELAY_SECONDS)
+
+
+    if summary["sent"] or summary["failed"]:
+
+        log_event(
+            "abandoned_discount_reminders_sent",
+            category="billing",
+            severity="info",
+            scope="global",
+            message="Segundos avisos con descuento de recuperación.",
+            metadata=summary
+        )
+
+
+    return summary
 
 
 # =========================
@@ -298,5 +549,11 @@ async def process_abandoned_checkouts(context):
             metadata=summary
         )
 
+
+    # El segundo toque (24 h, con cupón) viaja en el mismo job.
+    descuentos = await process_abandoned_discounts(context)
+
+    summary["sent"] += descuentos["sent"]
+    summary["failed"] += descuentos["failed"]
 
     return summary

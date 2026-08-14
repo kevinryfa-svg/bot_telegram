@@ -4161,6 +4161,33 @@ def create_tables():
         # =========================
         # TABLA INCIDENCIAS DE PAGO
         # =========================
+        # SEGUNDO TOQUE CON DESCUENTO (recuperación de carrito)
+        # =========================
+        # El primer recordatorio va a las 2 horas sin descuento; este registro
+        # garantiza que el del descuento (24 h) salga UNA vez por intento.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS abandoned_discount_reminders (
+
+            id SERIAL PRIMARY KEY,
+
+            transaction_id INTEGER UNIQUE,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            code TEXT,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # CUPONES DE DESCUENTO (Stripe)
         # =========================
         # El registro local de qué cupón es de qué comunidad: Stripe no
