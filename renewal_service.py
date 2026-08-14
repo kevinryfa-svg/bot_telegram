@@ -69,6 +69,68 @@ RENEWAL_ENABLED = os.environ.get(
 
 
 # =========================
+# AVISO PRE-RENOVACIÓN (suscripciones)
+# =========================
+# Con la renovación automática, "tu acceso caduca, renueva" es el aviso
+# EQUIVOCADO: a ese cliente se le va a cobrar solo. Lo correcto —y lo que
+# reduce disputas y chargebacks, y es obligatorio en varios países— es avisar
+# ANTES del cobro: cuánto, cuándo, y dónde cancelar si no quiere seguir.
+#
+# Vive aquí por lo mismo que el reenganche: reutiliza la tabla de avisos con
+# su clave única, el marcador idempotente y el bucle de envío.
+
+PRERENEWAL_STAGE = "prerenewal"
+
+PRERENEWAL_DAYS = int(os.environ.get("PRERENEWAL_DAYS", "3"))
+
+PRERENEWAL_ENABLED = os.environ.get(
+    "PRERENEWAL_ENABLED",
+    "true"
+).strip().lower() not in ("0", "false", "no", "off")
+
+
+def renewal_is_really_active(user_id, group_id):
+    """
+    ¿Este socio tiene una renovación automática QUE VA A COBRAR? Se pregunta a
+    la fuente (Stripe/PayPal) solo para los pocos candidatos en ventana: si el
+    socio la canceló, avisarle del cobro sería mentirle.
+
+    Imports diferidos para no atar este módulo a los proveedores en el
+    arranque.
+    """
+
+    try:
+
+        from group_subscription_service import fetch_renewal_state
+
+        estado = fetch_renewal_state(user_id, group_id)
+
+        if estado is not None:
+            return not estado.get("cancel_at_period_end")
+
+    except Exception as e:
+
+        print("Pre-renovación: error leyendo estado Stripe:", str(e)[:200])
+
+
+    try:
+
+        from paypal_subscription_controls import fetch_paypal_renewal_state
+
+        estado = fetch_paypal_renewal_state(user_id, group_id)
+
+        if estado is not None:
+            return bool(estado.get("activa"))
+
+    except Exception as e:
+
+        print("Pre-renovación: error leyendo estado PayPal:", str(e)[:200])
+
+
+    return False
+
+
+# =========================
 # CONSULTAS
 # =========================
 
@@ -153,6 +215,23 @@ def fetch_accesses_expiring(stage, limit=None):
 
               AND NOT EXISTS (
                   SELECT 1 FROM banned_users b WHERE b.user_id = u.user_id
+              )
+
+              -- Renovación automática: a estos NO se les pide renovar a mano
+              -- (se les va a cobrar solo); tienen su propio aviso pre-cobro.
+              -- El ancla de Stripe se limpia cuando la suscripción muere, y la
+              -- transacción de PayPal deja de estar 'paid' al cancelarse, así
+              -- que quien apagó la renovación vuelve a recibir estos avisos.
+              AND u.stripe_subscription_id IS NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_transactions pt
+                  WHERE pt.provider = 'paypal'
+                    AND pt.user_id = u.user_id
+                    AND pt.group_id = u.group_id
+                    AND pt.purchase_type = 'group_access'
+                    AND pt.status = 'paid'
+                    AND pt.external_checkout_id IS NOT NULL
               )
 
             ORDER BY u.expiration ASC
@@ -642,6 +721,196 @@ async def send_renewal_stage(context, stage):
     return summary
 
 
+def fetch_upcoming_autorenewals(limit=None):
+    """
+    Socios con renovación automática cuyo próximo cobro cae dentro de la
+    ventana de aviso. La expiración ES la fecha de cobro: cada ciclo cobrado la
+    mueve al final del periodo siguiente.
+    """
+
+    limit = int(limit or RENEWAL_BATCH_SIZE)
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT u.user_id,
+                   u.group_id,
+                   u.expiration,
+                   COALESCE(g.name, 'la comunidad'),
+                   g.telegram_group_id
+            FROM users u
+            JOIN groups g ON g.id = u.group_id
+            WHERE u.expiration IS NOT NULL
+              AND u.expiration > NOW()
+              AND u.expiration <= NOW() + (%(days)s || ' days')::interval
+              AND COALESCE(u.subscription_active, TRUE) = TRUE
+              AND COALESCE(g.is_active, TRUE) = TRUE
+
+              AND (
+                  u.stripe_subscription_id IS NOT NULL
+                  OR EXISTS (
+                      SELECT 1
+                      FROM payment_transactions pt
+                      WHERE pt.provider = 'paypal'
+                        AND pt.user_id = u.user_id
+                        AND pt.group_id = u.group_id
+                        AND pt.purchase_type = 'group_access'
+                        AND pt.status = 'paid'
+                        AND pt.external_checkout_id IS NOT NULL
+                  )
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM access_renewal_reminders r
+                  WHERE r.user_id = u.user_id
+                    AND r.group_id = u.group_id
+                    AND r.stage = %(stage)s
+                    AND r.expiration = u.expiration
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM banned_users b WHERE b.user_id = u.user_id
+              )
+
+            ORDER BY u.expiration ASC
+            LIMIT %(limit)s
+
+        """, {"days": PRERENEWAL_DAYS, "stage": PRERENEWAL_STAGE,
+              "limit": limit})
+
+        return cur.fetchall() or []
+
+
+def fetch_member_last_price(user_id, group_id):
+    """Lo que este socio paga de verdad (su último cobro), no el precio de
+    lista: quien se suscribió antes de una subida conserva el suyo."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT amount, currency
+                FROM payments
+                WHERE user_id=%s AND group_id=%s
+                  AND LOWER(COALESCE(status, '')) IN ('paid', 'completed')
+                ORDER BY payment_date DESC NULLS LAST, id DESC
+                LIMIT 1
+
+            """, (user_id, group_id))
+
+            row = cur.fetchone()
+
+        if not row or row[0] is None:
+            return None
+
+        return f"{int(row[0]) / 100:.2f} {(row[1] or 'EUR').upper()}"
+
+    except Exception as e:
+
+        print("Pre-renovación: error leyendo el último cobro:", e)
+
+        return None
+
+
+def build_prerenewal_text(group_name, expiration, price, language=DEFAULT_LANGUAGE):
+
+    try:
+        fecha = expiration.strftime("%d/%m/%Y")
+    except Exception:
+        fecha = "-"
+
+    if price:
+
+        return t("renewal.upcoming_priced", language,
+                 group=group_name, until=fecha, price=price)
+
+    return t("renewal.upcoming", language, group=group_name, until=fecha)
+
+
+def build_prerenewal_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
+    """Directo a «Mis suscripciones», donde vive el interruptor."""
+
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            t("renewal.upcoming_button", language),
+            callback_data=f"mysub_{telegram_group_id}"
+        )
+    ]])
+
+
+async def send_prerenewal_stage(context):
+
+    summary = {"targets": 0, "sent": 0, "skipped": 0, "failed": 0}
+
+    if not PRERENEWAL_ENABLED:
+
+        return summary
+
+
+    try:
+
+        rows = fetch_upcoming_autorenewals()
+
+    except Exception as e:
+
+        print("Pre-renovación: error seleccionando socios:", e)
+        return summary
+
+
+    summary["targets"] = len(rows)
+
+
+    for user_id, group_id, expiration, group_name, telegram_group_id in rows:
+
+        # Si el socio ya canceló, avisarle del cobro sería mentirle. NO se
+        # marca: si reactiva antes de la fecha, el aviso saldrá entonces.
+        if not renewal_is_really_active(user_id, group_id):
+
+            summary["skipped"] += 1
+            continue
+
+
+        if not mark_renewal_reminder_sent(
+            user_id, group_id, PRERENEWAL_STAGE, expiration
+        ):
+
+            summary["skipped"] += 1
+            continue
+
+
+        language = load_user_language(user_id)
+        price = fetch_member_last_price(user_id, group_id)
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=build_prerenewal_text(
+                    group_name, expiration, price, language=language
+                ),
+                reply_markup=build_prerenewal_keyboard(
+                    telegram_group_id, language=language
+                )
+            )
+
+            summary["sent"] += 1
+
+        except Exception as e:
+
+            print(f"Pre-renovación: fallo avisando a {user_id}:", str(e)[:200])
+            summary["failed"] += 1
+
+
+        await asyncio.sleep(RENEWAL_SEND_DELAY_SECONDS)
+
+
+    return summary
+
+
 async def process_renewal_reminders(context):
     """Job programado: avisa primero a los más urgentes."""
 
@@ -651,6 +920,13 @@ async def process_renewal_reminders(context):
     if not RENEWAL_ENABLED:
 
         return total
+
+
+    # El aviso pre-cobro va el primero: es el único con fecha límite dura (el
+    # cobro sale igual) y el único que evita disputas en vez de perseguirlas.
+    prerenewal = await send_prerenewal_stage(context)
+    total["sent"] += prerenewal["sent"]
+    total["failed"] += prerenewal["failed"]
 
 
     etapas = [RENEWAL_STAGE_LAST, RENEWAL_STAGE_EARLY]

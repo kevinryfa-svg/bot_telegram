@@ -593,6 +593,43 @@ TRANSLATIONS = {
         ),
     },
 
+    "renewal.upcoming_priced": {
+        "es": (
+            "🔔 Aviso de renovación\n\n"
+            "Tu suscripción a {group} se renovará el {until} por {price}.\n\n"
+            "No tienes que hacer nada para seguir. Si no quieres continuar, "
+            "desactiva la renovación antes de esa fecha con el botón de abajo: "
+            "conservarás el acceso hasta el final del periodo ya pagado."
+        ),
+        "en": (
+            "🔔 Renewal notice\n\n"
+            "Your subscription to {group} will renew on {until} for {price}.\n\n"
+            "Nothing to do if you want to stay. If not, turn off auto-renewal "
+            "before that date with the button below: you keep access until the "
+            "end of the period you already paid."
+        ),
+    },
+
+    "renewal.upcoming": {
+        "es": (
+            "🔔 Aviso de renovación\n\n"
+            "Tu suscripción a {group} se renovará el {until}.\n\n"
+            "No tienes que hacer nada para seguir. Si no quieres continuar, "
+            "desactiva la renovación antes de esa fecha con el botón de abajo."
+        ),
+        "en": (
+            "🔔 Renewal notice\n\n"
+            "Your subscription to {group} will renew on {until}.\n\n"
+            "Nothing to do if you want to stay. If not, turn off auto-renewal "
+            "before that date with the button below."
+        ),
+    },
+
+    "renewal.upcoming_button": {
+        "es": "⚙️ Gestionar mi suscripción",
+        "en": "⚙️ Manage my subscription",
+    },
+
     "renewal.cancelled_paypal": {
         "es": (
             "🔕 Renovación automática desactivada.\n\n"
