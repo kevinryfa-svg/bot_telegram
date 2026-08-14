@@ -533,6 +533,79 @@ TRANSLATIONS = {
     # Recuperar al que se fue. Va a alguien que ya NO es cliente, así que el tono
     # es distinto del aviso de renovación: sin urgencia falsa, sin reprocharle
     # nada, y con la puerta abierta para decir que no quiere más mensajes.
+    "renewal.renewed": {
+        "es": (
+            "✅ Suscripción renovada\n\n"
+            "Tu acceso a {group} sigue activo hasta el {until}.\n\n"
+            "No tienes que hacer nada: se renovará solo. Puedes desactivar la "
+            "renovación cuando quieras desde «Mis suscripciones»."
+        ),
+        "en": (
+            "✅ Subscription renewed\n\n"
+            "Your access to {group} is active until {until}.\n\n"
+            "Nothing to do on your side: it renews itself. You can turn "
+            "auto-renewal off any time from \"My subscriptions\"."
+        ),
+    },
+
+    "renewal.payment_failed": {
+        "es": (
+            "⚠️ No hemos podido cobrar tu renovación de {group}.\n\n"
+            "Tu acceso sigue activo y lo reintentaremos automáticamente en los "
+            "próximos días. Lo más habitual es que la tarjeta haya caducado o "
+            "no tenga saldo: revísala para no perder el acceso."
+        ),
+        "en": (
+            "⚠️ We could not charge your renewal for {group}.\n\n"
+            "Your access is still active and we will retry automatically over "
+            "the next few days. Usually the card expired or has no funds: "
+            "please check it so you do not lose access."
+        ),
+    },
+
+    "renewal.cancelled_at_period_end": {
+        "es": (
+            "🔕 Renovación automática desactivada.\n\n"
+            "Tu acceso a {group} sigue activo hasta el {until}: ese periodo ya "
+            "está pagado y no se toca. No se te volverá a cobrar.\n\n"
+            "Si cambias de idea, puedes reactivarla desde «Mis suscripciones» "
+            "hasta el último día."
+        ),
+        "en": (
+            "🔕 Auto-renewal turned off.\n\n"
+            "Your access to {group} stays active until {until}: that period is "
+            "already paid and stays yours. You will not be charged again.\n\n"
+            "If you change your mind you can turn it back on from "
+            "\"My subscriptions\" until the last day."
+        ),
+    },
+
+    "renewal.reactivated": {
+        "es": (
+            "🔔 Renovación automática reactivada.\n\n"
+            "Tu acceso a {group} se renovará solo al final de cada periodo, "
+            "como antes."
+        ),
+        "en": (
+            "🔔 Auto-renewal turned back on.\n\n"
+            "Your access to {group} will renew itself at the end of each "
+            "period, as before."
+        ),
+    },
+
+    "renewal.ended": {
+        "es": (
+            "👋 Tu suscripción a {group} ha terminado.\n\n"
+            "Puedes volver cuando quieras: la comunidad sigue ahí y entrar de "
+            "nuevo es un toque."
+        ),
+        "en": (
+            "👋 Your subscription to {group} has ended.\n\n"
+            "You can come back any time: the community is still there and "
+            "rejoining takes one tap."
+        ),
+    },
+
     "winback.title": {
         "es": "👋 Te dejamos la puerta abierta",
         "en": "👋 The door is still open",

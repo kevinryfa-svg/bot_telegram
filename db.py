@@ -547,7 +547,10 @@ def create_tables():
             ("stripe_price_id", "TEXT"),
             ("stripe_product_id", "TEXT"),
             ("paypal_plan_id", "TEXT"),
-            ("provider_price_id", "TEXT")
+            ("provider_price_id", "TEXT"),
+            # Renovación automática (solo Stripe): el precio se crea recurrente
+            # y el acceso se renueva solo hasta que el comprador cancele.
+            ("is_recurring", "BOOLEAN DEFAULT FALSE")
         ]:
 
             try:

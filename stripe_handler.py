@@ -1,3 +1,4 @@
+import json
 import time
 import stripe
 
@@ -36,6 +37,12 @@ from payment_incident_service import (
     INCIDENT_STORAGE_FAILED,
     report_payment_incident,
     resolve_incidents_for
+)
+from group_subscription_service import (
+    attach_subscription_to_member,
+    extraer_subscription_id,
+    process_group_subscription_lifecycle_event,
+    recurso_plano
 )
 from purchase_message_service import build_buyer_message
 from refund_service import (
@@ -281,7 +288,9 @@ def process_owner_addon_checkout_completed(session):
 
             try:
 
-                subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+                subscription = recurso_plano(
+            stripe.Subscription.retrieve(stripe_subscription_id)
+        )
                 subscription_retrieved = True
                 payload = extract_owner_addon_subscription_payload(subscription)
                 subscription_status = payload.get("status")
@@ -510,7 +519,9 @@ def process_owner_addon_invoice_paid(invoice, event_type):
 
     try:
 
-        subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+        subscription = recurso_plano(
+            stripe.Subscription.retrieve(stripe_subscription_id)
+        )
         payload.update(extract_owner_addon_subscription_payload(subscription))
 
     except Exception as e:
@@ -567,7 +578,9 @@ def process_owner_addon_invoice_payment_failed(invoice, event_type):
 
     try:
 
-        subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+        subscription = recurso_plano(
+            stripe.Subscription.retrieve(stripe_subscription_id)
+        )
         payload.update(extract_owner_addon_subscription_payload(subscription))
         payload["status"] = payload.get("status") or "past_due"
 
@@ -690,7 +703,7 @@ def stripe_webhook():
 
     try:
 
-        event = stripe.Webhook.construct_event(
+        stripe.Webhook.construct_event(
             payload,
             sig_header,
             STRIPE_WEBHOOK_SECRET
@@ -702,6 +715,16 @@ def stripe_webhook():
         return "Error", 400
 
 
+    # LA FRONTERA. construct_event verifica la firma, pero en stripe 15.x
+    # devuelve StripeObjects que NO son diccionarios: no tienen .get(), y todo
+    # este fichero (y los procesadores de extras) usa .get() a cada paso — el
+    # primer evento real habría reventado el cobro con "AttributeError: get",
+    # el mismo fallo que ya tumbó la autoconfiguración del webhook en
+    # producción. La firma ya está verificada, así que se trabaja con el JSON
+    # verificado en crudo, que es un dict de verdad.
+    event = json.loads(payload)
+
+
     if event["type"] in (
         "customer.subscription.updated",
         "customer.subscription.deleted",
@@ -710,6 +733,13 @@ def stripe_webhook():
     ):
 
         if process_owner_addon_lifecycle_event(event):
+
+            return "OK"
+
+        # Renovación automática del acceso a comunidades: cada despacho
+        # reconoce solo lo suyo por su propia ancla, así que el orden entre
+        # este y el de extras no importa.
+        if process_group_subscription_lifecycle_event(event):
 
             return "OK"
 
@@ -1377,6 +1407,21 @@ def stripe_webhook():
         # El acceso ha quedado guardado: si había una incidencia abierta de un
         # intento anterior, se cierra para no perseguir un problema resuelto.
         resolve_incidents_for(user_id, group_id)
+
+
+        # Si el checkout era una SUSCRIPCIÓN (renovación automática), anclarla
+        # al socio: sin este ancla, ningún evento posterior de Stripe
+        # (renovación, fallo de cobro, baja) sería atribuible a esta persona.
+        suscripcion_creada = extraer_subscription_id(session.get("subscription"))
+
+        if suscripcion_creada:
+
+            attach_subscription_to_member(
+                user_id,
+                group_id,
+                suscripcion_creada,
+                stripe_customer_id=session.get("customer")
+            )
 
 
         log_event(

@@ -21,9 +21,15 @@ def to_stripe_unit_amount(amount_major, currency):
     return amount_to_minor_units(amount_major, currency)
 
 
-def create_stripe_product_and_price(name, amount_major, currency, metadata=None):
+def create_stripe_product_and_price(name, amount_major, currency, metadata=None,
+                                    recurring_interval_days=None):
     """
-    Crea un Producto y un Precio (pago único) en Stripe vía API.
+    Crea un Producto y un Precio en Stripe vía API.
+
+    Sin recurring_interval_days es un precio de pago único (lo de siempre).
+    Con él, el precio es RECURRENTE: Stripe cobrará solo cada periodo y el plan
+    se convierte en renovación automática. La duración en días se traduce al
+    intervalo que el comprador espera ver en su extracto (30 días → mensual).
 
     Devuelve una tupla (product_id, price_id). Propaga la excepción de Stripe
     si la creación falla, para que quien llame decida cómo avisar.
@@ -41,11 +47,23 @@ def create_stripe_product_and_price(name, amount_major, currency, metadata=None)
         metadata=safe_metadata
     )
 
-    price = stripe.Price.create(
+    price_kwargs = dict(
         product=product["id"],
         unit_amount=to_stripe_unit_amount(amount_major, currency),
         currency=currency,
         metadata=safe_metadata
     )
+
+    if recurring_interval_days:
+
+        from group_subscription_service import stripe_recurring_interval
+
+        interval, interval_count = stripe_recurring_interval(recurring_interval_days)
+        price_kwargs["recurring"] = {
+            "interval": interval,
+            "interval_count": interval_count
+        }
+
+    price = stripe.Price.create(**price_kwargs)
 
     return product["id"], price["id"]

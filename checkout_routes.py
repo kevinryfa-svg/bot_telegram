@@ -121,7 +121,8 @@ def register_checkout_routes(app):
 
                 cur.execute("""
 
-                    SELECT COALESCE(stripe_price_id, price_id)
+                    SELECT COALESCE(stripe_price_id, price_id),
+                           COALESCE(is_recurring, FALSE)
 
                     FROM plans
 
@@ -144,6 +145,7 @@ def register_checkout_routes(app):
                 return jsonify({"error": "Plan inválido"}), 400
 
             price_id = row[0]
+            plan_es_recurrente = bool(row[1])
 
         except Exception as e:
 
@@ -170,7 +172,14 @@ def register_checkout_routes(app):
 
         try:
 
-            session = stripe.checkout.Session.create(
+            metadata_session = {
+                "telegram_id": str(telegram_id),
+                "group_id": str(group_id),
+                "price_id": price_id,
+                "community_type": community_type
+            }
+
+            session_kwargs = dict(
 
                 payment_method_types=["card"],
 
@@ -179,19 +188,30 @@ def register_checkout_routes(app):
                     "quantity": 1,
                 }],
 
-                mode="payment",
+                # Un precio recurrente exige mode="subscription": es lo que
+                # convierte el plan en renovación automática. La metadata se
+                # copia también a la suscripción para poder reconocerla en el
+                # panel de Stripe; la atribución real de los webhooks es por el
+                # ancla users.stripe_subscription_id.
+                mode="subscription" if plan_es_recurrente else "payment",
 
                 success_url="https://t.me/TheStarVipBOT",
                 cancel_url="https://t.me/TheStarVipBOT",
 
-                metadata={
-                    "telegram_id": str(telegram_id),
-                    "group_id": str(group_id),
-                    "price_id": price_id,
-                    "community_type": community_type
-                }
+                metadata=metadata_session
 
             )
+
+            if plan_es_recurrente:
+
+                session_kwargs["subscription_data"] = {
+                    "metadata": {
+                        **metadata_session,
+                        "purpose": "group_access"
+                    }
+                }
+
+            session = stripe.checkout.Session.create(**session_kwargs)
 
         except Exception as e:
 
