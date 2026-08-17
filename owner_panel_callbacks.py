@@ -1438,6 +1438,10 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
                                   callback_data="owner_panel_ready")],
             [InlineKeyboardButton("📥 Exportar pagos (CSV)",
                                   callback_data="owner_panel_revenue_csv")],
+            # Los pagos son las transacciones; esto es la gente, que es lo
+            # que hace falta para decidir a quién escribir.
+            [InlineKeyboardButton("📥 Exportar socios (CSV)",
+                                  callback_data="owner_panel_members_csv")],
         ]
         teclado.extend(build_owner_panel_nav_keyboard().inline_keyboard)
 
@@ -1582,6 +1586,62 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
             build_owner_subscribers_text(group_id, group_name),
             reply_markup=InlineKeyboardMarkup(teclado)
         )
+
+        return
+
+
+    if data == "owner_panel_members_csv":
+
+        from owner_revenue_service import build_members_csv
+
+        # Mismos permisos que los pagos: son los mismos datos de negocio,
+        # vistos por persona en vez de por transacción.
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\n"
+                "Ábrela primero en «🏪 Mis comunidades» y repite la acción.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        info = fetch_group_basic_info(group_id)
+        group_name = (info[1] if info else None) or f"Comunidad {group_id}"
+
+        import io
+
+        # BOM (utf-8-sig) para que Excel en español lo abra sin pelearse.
+        archivo = io.BytesIO(build_members_csv(group_id).encode("utf-8-sig"))
+        archivo.name = f"socios_{group_id}.csv"
+
+        try:
+
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=archivo,
+                filename=archivo.name,
+                caption=f"📥 Socios de {group_name} — activos, caducados y "
+                        "permanentes, con lo que ha pagado cada uno."
+            )
+
+        except Exception as e:
+
+            print("Socios: error enviando el CSV:", str(e)[:200])
+
+            await query.message.reply_text(
+                "❌ No he podido generar el CSV ahora mismo. "
+                "Inténtalo de nuevo en un momento.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
 
         return
 
