@@ -593,6 +593,45 @@ TRANSLATIONS = {
         ),
     },
 
+    "start.paid_landing": {
+        "es": (
+            "✅ Pago recibido — bienvenido a {group}.\n\n"
+            "Tu enlace de acceso te está esperando: pulsa el botón y entra."
+        ),
+        "en": (
+            "✅ Payment received — welcome to {group}.\n\n"
+            "Your access link is waiting: tap the button and come in."
+        ),
+    },
+
+    "start.paid_button": {
+        "es": "🔗 Recibir mi acceso",
+        "en": "🔗 Get my access",
+    },
+
+    "start.cancelled_landing": {
+        "es": (
+            "El pago de {group} se quedó a medias.\n\n"
+            "Si fue un despiste, lo retomas en un toque. Y si algo falló, "
+            "cuéntanoslo y lo miramos."
+        ),
+        "en": (
+            "Your payment for {group} was left halfway.\n\n"
+            "If it was an accident, you can pick it up in one tap. And if "
+            "something went wrong, tell us and we will look into it."
+        ),
+    },
+
+    "start.retry_button": {
+        "es": "💳 Retomar el pago",
+        "en": "💳 Resume payment",
+    },
+
+    "start.problem_button": {
+        "es": "💬 Tuve un problema",
+        "en": "💬 I had a problem",
+    },
+
     "abandoned.discount_title": {
         "es": "🎁 Un empujón para terminar",
         "en": "🎁 A little push to finish",
