@@ -1744,6 +1744,21 @@ async def process_guardian_left_chat_member(update, context):
             }
         )
 
+
+        # Al propietario ya se le ha contado. Al que se ha quedado fuera, no:
+        # y si su acceso sigue pagado, acaba de perder lo que está pagando.
+        # Un enlace nuevo aquí mismo evita la devolución de la semana que
+        # viene. Nunca puede tumbar la detección: va en su propio try.
+        try:
+
+            from member_recovery_service import offer_return_link
+
+            await offer_return_link(context, left_member.id, group_id)
+
+        except Exception as e:
+
+            print("guardian_left_return_offer_error:", str(e)[:200])
+
     except Exception as e:
 
         try:

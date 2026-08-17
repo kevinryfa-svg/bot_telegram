@@ -4186,6 +4186,29 @@ def create_tables():
 
 
         # =========================
+        # ENLACES DE VUELTA A QUIEN SE QUEDÓ FUERA PAGANDO
+        # =========================
+        # Una fila por socio y comunidad que se actualiza: interesa cuándo fue
+        # la última vez (enfriamiento), no un histórico que nadie lee.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS member_return_offers (
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (user_id, group_id)
+
+        );
+
+        """)
+
+
+        # =========================
         # AVISOS DE COBRO FALLIDO (serie de recuperación)
         # =========================
         # Stripe manda un evento por cada reintento y reenvía los webhooks.
