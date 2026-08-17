@@ -107,6 +107,7 @@ def clean_db(db_module):
         "member_return_offers",
         "delivery_recovery_notices",
         "refund_requests",
+        "bot_user_events",
         "referrals",
         "upsell_offers",
         "admins",

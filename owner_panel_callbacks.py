@@ -1436,6 +1436,10 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
             # Y cuando no entra nada, lo primero es saber si se PUEDE vender.
             [InlineKeyboardButton("🚦 ¿Puedo vender?",
                                   callback_data="owner_panel_ready")],
+            # Y si se puede vender y aun así no entra: ¿falta gente, espanta
+            # el precio, o se rompe el pago?
+            [InlineKeyboardButton("🔻 Embudo",
+                                  callback_data="owner_panel_funnel")],
             [InlineKeyboardButton("📥 Exportar pagos (CSV)",
                                   callback_data="owner_panel_revenue_csv")],
             # Los pagos son las transacciones; esto es la gente, que es lo
@@ -1449,6 +1453,52 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
             context,
             query.message.chat_id,
             build_owner_revenue_text(group_id, group_name),
+            reply_markup=InlineKeyboardMarkup(teclado)
+        )
+
+        return
+
+
+    if data == "owner_panel_funnel":
+
+        from owner_funnel_service import build_owner_funnel_text
+
+        # Mismos permisos que el resto del panel de negocio.
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\n"
+                "Ábrela primero en «🏪 Mis comunidades» y repite la acción.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        info = fetch_group_basic_info(group_id)
+        group_name = (info[1] if info else None) or f"Comunidad {group_id}"
+
+        teclado = [
+            [InlineKeyboardButton("🔄 Actualizar",
+                                  callback_data="owner_panel_funnel")],
+            [InlineKeyboardButton("🚦 ¿Puedo vender?",
+                                  callback_data="owner_panel_ready")],
+            [InlineKeyboardButton("💰 Panel de ingresos",
+                                  callback_data="owner_panel_revenue")],
+        ]
+        teclado.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_funnel_text(group_id, group_name),
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
