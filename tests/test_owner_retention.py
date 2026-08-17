@@ -135,3 +135,55 @@ def test_the_panel_has_the_button_and_the_same_permissions():
         assert permiso in trozo, (
             "la retención se calcula con los mismos pagos: mismos permisos"
         )
+
+
+# =========================
+# EL COSTE DE LOS REFERIDOS
+# =========================
+# El programa de referidos regala días de acceso: coste de adquisición real,
+# pagado en producto. El propietario lo estaba pagando sin verlo en ninguna
+# pantalla, y un coste invisible es un coste que nadie decide.
+
+def test_the_referral_cost_counts_both_sides(comunidad):
+    with comunidad.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO referrals (referrer_user_id, invited_user_id, group_id, "
+            "status, days_awarded) VALUES "
+            "(9301, 9401, 93, 'converted', 7), "
+            "(9301, 9402, 93, 'converted', 7), "
+            "(9301, 9403, 93, 'pending', 0)"
+        )
+
+    numeros = ors.fetch_referral_cost(93)
+
+    assert numeros["invitados"] == 3
+    assert numeros["convertidos"] == 2
+    assert numeros["dias"] == 28, (
+        "cada referido convertido cuesta el doble: cobran los dos lados"
+    )
+
+
+def test_the_screen_frames_it_as_acquisition_cost(comunidad):
+    with comunidad.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO referrals (referrer_user_id, invited_user_id, group_id, "
+            "status, days_awarded) VALUES (9301, 9401, 93, 'converted', 7)"
+        )
+
+    texto = ors.build_owner_retention_text(93, "VIP Retención")
+
+    assert "🎁 Referidos" in texto
+    assert "Invitados: 1 · han pagado: 1" in texto
+    assert "Días de acceso regalados: 14" in texto
+    assert "coste de adquisición pagado en producto" in texto, (
+        "el número solo sirve si se puede comparar con lo que paga un cliente"
+    )
+
+
+def test_a_community_without_referrals_gets_no_empty_section(comunidad):
+    texto = ors.build_owner_retention_text(93, "VIP Retención")
+
+    assert "🎁 Referidos" not in texto, (
+        "una sección que dice '0 invitados' en toda comunidad que no usa el "
+        "programa es ruido"
+    )

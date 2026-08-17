@@ -200,12 +200,59 @@ def fetch_repeat_numbers(group_id):
         return vacio
 
 
+def fetch_referral_cost(group_id):
+    """{'invitados', 'convertidos', 'dias'} — lo que cuestan los referidos.
+
+    El programa de referidos regala días de acceso: es coste de adquisición
+    real, pagado en producto en vez de en dinero. El propietario lo estaba
+    pagando sin poder verlo en ninguna pantalla, y un coste invisible es un
+    coste que nadie decide.
+
+    Los días se cuentan por los dos lados: el que invita y el invitado cobran
+    lo mismo, así que el coste de un referido convertido es el doble de lo que
+    dice days_awarded en su fila.
+    """
+
+    vacio = {"invitados": 0, "convertidos": 0, "dias": 0}
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*),
+                       COUNT(*) FILTER (WHERE status = 'converted'),
+                       COALESCE(SUM(days_awarded) FILTER (
+                           WHERE status = 'converted'
+                       ), 0) * 2
+                FROM referrals
+                WHERE group_id = %s
+
+            """, (group_id,))
+
+            fila = cur.fetchone() or (0, 0, 0)
+
+        return {
+            "invitados": int(fila[0] or 0),
+            "convertidos": int(fila[1] or 0),
+            "dias": int(fila[2] or 0),
+        }
+
+    except Exception as e:
+
+        print("Retención: error leyendo el coste de los referidos:", e)
+
+        return vacio
+
+
 def build_owner_retention_text(group_id, group_name):
     """La pantalla. En español, como el resto del panel del propietario."""
 
     bajas = fetch_churn_numbers(group_id)
     vida = fetch_lifetime_numbers(group_id)
     repite = fetch_repeat_numbers(group_id)
+    referidos = fetch_referral_cost(group_id)
 
     lineas = [
         f"🔄 Retención de {group_name}",
@@ -276,6 +323,29 @@ def build_owner_retention_text(group_id, group_name):
             lineas.append(
                 "Menos de un tercio llega al segundo pago: casi todo el "
                 "ingreso viene de altas nuevas, no de la comunidad."
+            )
+
+
+    # Los referidos solo se cuentan si ha habido alguno: una sección que dice
+    # "0 invitados" en toda comunidad que no usa el programa es ruido.
+    if referidos["invitados"]:
+
+        lineas.extend(["", "🎁 Referidos"])
+
+        lineas.append(
+            f"Invitados: {referidos['invitados']} · "
+            f"han pagado: {referidos['convertidos']}"
+        )
+
+        if referidos["dias"]:
+
+            lineas.append(
+                f"Días de acceso regalados: {referidos['dias']} "
+                "(contando los dos lados de cada referido)"
+            )
+            lineas.append(
+                "Es coste de adquisición pagado en producto: compáralo con lo "
+                "que ha pagado de media un cliente."
             )
 
 
