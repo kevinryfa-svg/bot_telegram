@@ -166,6 +166,79 @@ def fetch_group_entry_price(group_id):
         return None
 
 
+def fetch_same_plan_for_member(user_id, group_id):
+    """El plan que esta persona compró la última vez, si sigue activo.
+
+    Renovar costaba tres toques: aviso → tarjeta de la comunidad → lista de
+    planes → pagar. Con esto es uno: el botón lleva directo al plan de
+    siempre, al precio de siempre.
+
+    La atadura es el NOMBRE del plan guardado en payments (es lo que hay), y
+    se exige coincidencia exacta con un plan activo: mandar a alguien a un
+    plan que no es el suyo —otro precio, otra duración— es peor que
+    enseñarle el menú. Sin coincidencia, devuelve None y el aviso lleva los
+    botones de siempre.
+
+    Devuelve (plan_id, nombre, amount, currency, price_id, provider).
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT pl.id,
+                       pl.name,
+                       pl.amount,
+                       COALESCE(NULLIF(pl.currency, ''), 'EUR'),
+                       pl.price_id,
+                       COALESCE(NULLIF(pl.payment_provider, ''), 'stripe')
+                FROM payments p
+                JOIN plans pl
+                  ON pl.group_id = p.group_id
+                 AND pl.name = p.plan
+                 AND COALESCE(pl.is_active, TRUE) = TRUE
+                 AND pl.amount IS NOT NULL
+                 AND pl.amount > 0
+                WHERE p.user_id = %s
+                  AND p.group_id = %s
+                  AND LOWER(COALESCE(p.status, '')) IN ('paid', 'completed')
+                ORDER BY p.payment_date DESC NULLS LAST, p.id DESC
+                LIMIT 1
+
+            """, (user_id, group_id))
+
+            return cur.fetchone()
+
+    except Exception as e:
+
+        print("Renovación: error buscando el plan de siempre:", e)
+
+        return None
+
+
+def same_plan_callback(group_id, plan_id, price_id, provider):
+    """El callback exacto que pulsaría esa persona en la lista de planes.
+
+    Stripe usa el price_id como callback (así está el resto del bot); los
+    demás proveedores tienen su propio prefijo. Si faltara el dato que hace
+    falta, None: mejor el menú que un botón muerto.
+    """
+
+    proveedor = (provider or "stripe").strip().lower()
+
+    if proveedor == "stripe":
+
+        return price_id or None
+
+    if proveedor in ("paypal", "revolut", "changenow", "guardarian"):
+
+        return f"{proveedor}_group_plan_{group_id}_{plan_id}"
+
+    return None
+
+
 def fetch_accesses_expiring(stage, limit=None):
     """
     Accesos activos que entran en la ventana de aviso y a los que todavía no
@@ -598,7 +671,7 @@ def build_winback_keyboard(group_id, language=DEFAULT_LANGUAGE):
 
 
 def build_renewal_keyboard(group_id, stage=RENEWAL_STAGE_EARLY,
-                           language=DEFAULT_LANGUAGE):
+                           language=DEFAULT_LANGUAGE, user_id=None):
 
     if stage in WINBACK_STAGES:
 
@@ -611,7 +684,33 @@ def build_renewal_keyboard(group_id, stage=RENEWAL_STAGE_EARLY,
         language
     )
 
-    return InlineKeyboardMarkup([
+    filas = []
+
+    # UN TOQUE: si se sabe qué plan compró y sigue activo, el primer botón
+    # va directo a pagarlo, con nombre y precio en la etiqueta. Cada
+    # pantalla intermedia es gente que se cae por el camino.
+    if user_id:
+
+        plan = fetch_same_plan_for_member(user_id, group_id)
+
+        if plan:
+
+            plan_id, nombre, amount, currency, price_id, provider = plan
+            callback = same_plan_callback(group_id, plan_id, price_id, provider)
+
+            if callback:
+
+                filas.append([InlineKeyboardButton(
+                    t(
+                        "button.renew_same_plan", language,
+                        plan=nombre,
+                        price=f"{amount} {currency}"
+                    ),
+                    callback_data=callback
+                )])
+
+
+    return InlineKeyboardMarkup(filas + [
         [InlineKeyboardButton(
             label,
             callback_data=f"marketplace_group_{group_id}"
@@ -700,7 +799,8 @@ async def send_renewal_stage(context, stage):
                 reply_markup=build_renewal_keyboard(
                     group_id,
                     stage=stage,
-                    language=language
+                    language=language,
+                    user_id=user_id
                 )
             )
 
@@ -1177,8 +1277,13 @@ async def process_renewal_reminders(context):
 # AVISO AL CADUCAR
 # =========================
 
-def build_expired_notice(group_id, group_name, language=DEFAULT_LANGUAGE):
-    """Mensaje y teclado para quien acaba de perder el acceso."""
+def build_expired_notice(group_id, group_name, language=DEFAULT_LANGUAGE,
+                         user_id=None):
+    """Mensaje y teclado para quien acaba de perder el acceso.
+
+    Con user_id, el teclado lleva el botón directo a su plan de siempre: es
+    el momento de más intención de volver que va a haber.
+    """
 
     price = fetch_group_entry_price(group_id)
 
@@ -1193,6 +1298,7 @@ def build_expired_notice(group_id, group_name, language=DEFAULT_LANGUAGE):
         build_renewal_keyboard(
             group_id,
             stage=RENEWAL_STAGE_EXPIRED,
-            language=language
+            language=language,
+            user_id=user_id
         )
     )

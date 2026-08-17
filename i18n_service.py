@@ -1440,6 +1440,11 @@ TRANSLATIONS = {
         "en": "💳 Renew my access",
     },
 
+    "button.renew_same_plan": {
+        "es": "⚡ Renovar {plan} — {price}",
+        "en": "⚡ Renew {plan} — {price}",
+    },
+
     "button.join_again": {
         "es": "🔓 Volver a entrar",
         "en": "🔓 Join again",
