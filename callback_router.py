@@ -19786,12 +19786,18 @@ async def group_delivery_blocks_purchase(context, chat_id, user_id, group_id):
     return True
 
 
-async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id):
+async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id,
+                                   plan_switch=False):
 
     access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
-    if should_block_new_group_purchase(access_state):
+    # plan_switch solo llega desde la rama switchplan_, que ya ha validado
+    # contra la base de datos que el socio tiene acceso a ESA comunidad y que
+    # el plan destino es de ella. El bloqueo existe para evitar el doble cobro
+    # ACCIDENTAL; un cambio de plan pedido a propósito es justo el caso en el
+    # que ese bloqueo estorba. El servidor lo vuelve a comprobar por su lado.
+    if not plan_switch and should_block_new_group_purchase(access_state):
 
         await send_existing_group_access_notice(
             context,
@@ -19834,7 +19840,8 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
                 "telegram_id": user_id,
                 "plan": price_id,
-                "group_id": group_id
+                "group_id": group_id,
+                "plan_switch": bool(plan_switch)
 
             }
 
@@ -21278,6 +21285,94 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "start_explore_groups",
                 user_id=user_id
             )
+        )
+
+        return
+
+
+    # CAMBIO DE PLAN: el único caso en que un socio con acceso activo puede
+    # pagar otra vez a propósito. Va antes que cualquier prefijo de compra y
+    # se valida contra la base de datos (un callback se escribe a mano, la
+    # consulta no): acceso activo a ESA comunidad, plan activo de ESA
+    # comunidad, y renovación que no sea de PayPal — la salvaguarda que apaga
+    # la anterior al anclar la nueva es de Stripe.
+    if data.startswith("switchplan_"):
+
+        from plan_switch_service import plan_is_switchable_target, switch_is_allowed
+
+        partes = data[len("switchplan_"):].split("_")
+
+        if len(partes) != 2 or not all(p.lstrip("-").isdigit() for p in partes):
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        group_id, plan_id = int(partes[0]), int(partes[1])
+
+        permitido, motivo = switch_is_allowed(user_id, group_id, plan_id=plan_id)
+
+        if not permitido:
+
+            log_event(
+                "plan_switch_rejected",
+                category="payment",
+                severity="info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Cambio de plan rechazado.",
+                metadata={"reason": motivo, "plan_id": plan_id}
+            )
+
+            await query.message.reply_text(
+                "⚠️ Ese cambio de plan no está disponible para tu acceso.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        destino = plan_is_switchable_target(group_id, plan_id)
+        price_id, provider = destino[0], destino[1]
+
+        if (provider or "stripe").lower() != "stripe" or not price_id:
+
+            await query.message.reply_text(
+                "⚠️ Ese plan no admite el cambio automático. Escríbenos y lo "
+                "hacemos a mano.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        log_event(
+            "plan_switch_started",
+            category="payment",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Cambio de plan iniciado por el comprador.",
+            metadata={"plan_id": plan_id, "price_id": price_id}
+        )
+
+        context.user_data["selected_group"] = group_id
+
+        await create_checkout_for_user(
+            context,
+            query.message.chat_id,
+            user_id,
+            group_id,
+            price_id,
+            plan_switch=True
         )
 
         return

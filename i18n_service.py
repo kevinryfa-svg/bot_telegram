@@ -601,6 +601,57 @@ TRANSLATIONS = {
         "en": "🎁 Invite a friend, both win days",
     },
 
+    "mysub.btn_switch": {
+        "es": "🔀 Cambiar de plan",
+        "en": "🔀 Switch plan",
+    },
+
+    "mysub.switch_empty": {
+        "es": (
+            "🔀 En {group} no hay ahora mismo otro plan al que cambiarte.\n\n"
+            "Si te interesa una duración distinta, dínoslo: se la pedimos a "
+            "quien lleva la comunidad."
+        ),
+        "en": (
+            "🔀 There's no other plan to switch to in {group} right now.\n\n"
+            "If you'd like a different duration, tell us and we'll ask the "
+            "community owner."
+        ),
+    },
+
+    "mysub.switch_paypal": {
+        "es": (
+            "🔀 Tu suscripción de {group} se cobra por PayPal, y ahí el "
+            "cambio de plan no puede ser automático: quedarían dos "
+            "suscripciones cobrando a la vez.\n\n"
+            "Hazlo en este orden y no pierdes nada: primero apaga la "
+            "renovación desde esta misma pantalla —tu acceso sigue hasta el "
+            "final del periodo pagado— y después elige el plan nuevo."
+        ),
+        "en": (
+            "🔀 Your {group} subscription is charged through PayPal, where "
+            "switching plans can't be automatic: you'd end up with two "
+            "subscriptions charging at once.\n\n"
+            "Do it in this order and you lose nothing: first turn off "
+            "renewal on this screen — your access runs to the end of the "
+            "period you already paid for — then pick the new plan."
+        ),
+    },
+
+    "mysub.switch_no_access": {
+        "es": (
+            "🔀 El cambio de plan es para quien ya tiene acceso a {group}.\n\n"
+            "Si tu acceso ha caducado, entra como una compra normal: ahí "
+            "eliges el plan que quieras."
+        ),
+        "en": (
+            "🔀 Switching plans is for members who already have access to "
+            "{group}.\n\n"
+            "If your access has expired, come in as a normal purchase — "
+            "you'll pick whichever plan you want there."
+        ),
+    },
+
     "mysub.invite_text": {
         "es": (
             "🎁 Invita a {group} y ganáis días los dos\n\n"

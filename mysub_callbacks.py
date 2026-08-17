@@ -275,6 +275,97 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
         return
 
 
+    if data.startswith("mysub_switch_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_switch_"):]
+        language = load_user_language(user_id)
+
+        grupo = _resolver_grupo_por_ref(int(ref)) if ref.lstrip("-").isdigit() else None
+
+        if not grupo:
+
+            await reply_with_recover_navigation(
+                query,
+                t("mysub.not_found", language)
+            )
+
+            return
+
+        from plan_switch_service import (
+            build_switch_text,
+            fetch_current_plan_name,
+            fetch_switch_options,
+            switch_is_allowed,
+        )
+
+        permitido, motivo = switch_is_allowed(user_id, grupo[0])
+
+        if not permitido:
+
+            # PayPal no puede apagar la anterior al anclar la nueva: se le
+            # dice qué hacer y en qué orden, en vez de dejarle pulsar hacia
+            # dos suscripciones cobrando.
+            clave = ("mysub.switch_paypal" if motivo == "paypal"
+                     else "mysub.switch_no_access")
+
+            await query.message.reply_text(
+                t(clave, language, group=grupo[1] or ""),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        t("mysub.btn_back_access", language),
+                        callback_data=f"mysub_{ref}"
+                    )
+                ]])
+            )
+
+            return
+
+        opciones = fetch_switch_options(user_id, grupo[0])
+
+        if not opciones:
+
+            await query.message.reply_text(
+                t("mysub.switch_empty", language, group=grupo[1] or ""),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        t("mysub.btn_back_access", language),
+                        callback_data=f"mysub_{ref}"
+                    )
+                ]])
+            )
+
+            return
+
+        teclado = [
+            [InlineKeyboardButton(
+                f"{nombre} — {amount} {currency}",
+                callback_data=f"switchplan_{grupo[0]}_{plan_id}"
+            )]
+            for plan_id, nombre, amount, currency, _dias, _price, _prov in opciones
+        ]
+
+        teclado.append([InlineKeyboardButton(
+            t("mysub.btn_back_access", language),
+            callback_data=f"mysub_{ref}"
+        )])
+
+        await query.message.reply_text(
+            build_switch_text(
+                grupo[1] or "",
+                opciones,
+                current_plan=fetch_current_plan_name(user_id, grupo[0])
+            ),
+            reply_markup=InlineKeyboardMarkup(teclado)
+        )
+
+        return
+
+
     if data.startswith("mysub_invite_"):
 
         try:
@@ -1212,6 +1303,20 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                     t("mysub.btn_invite", language),
 
                     callback_data=f"mysub_invite_{telegram_group_id}"
+
+                )
+
+            ],
+
+            [
+
+                # Cambiar de plan sin pasar por «ya tienes acceso»: el
+                # camino que faltaba para el que quiere pagar MÁS.
+                InlineKeyboardButton(
+
+                    t("mysub.btn_switch", language),
+
+                    callback_data=f"mysub_switch_{telegram_group_id}"
 
                 )
 

@@ -1122,10 +1122,13 @@ async def send_annual_upsell_stage(context):
                 chat_id=user_id,
                 text=t("renewal.upsell_annual", language,
                        group=nombre, price=precio_anual, saving=ahorro),
+                # Al cambio de plan, NO a la tarjeta de la comunidad: quien
+                # ya tiene acceso aterrizaba en «ya tienes acceso a esta
+                # comunidad» y el upsell no se podía completar.
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton(
                         t("renewal.upsell_annual_button", language),
-                        callback_data=f"marketplace_group_{group_id}"
+                        callback_data=f"mysub_switch_{group_id}"
                     )
                 ]])
             )
