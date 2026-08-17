@@ -685,6 +685,56 @@ TRANSLATIONS = {
               "solved faster and without disputes.",
     },
 
+    "renewal.payment_failed_retry": {
+        "es": (
+            "⚠️ Seguimos sin poder cobrar tu renovación de {group}.\n\n"
+            "Tu acceso está activo, pero el próximo intento es el {date} y "
+            "los intentos se acaban. Cambia la tarjeta con el botón y lo "
+            "resolvemos hoy."
+        ),
+        "en": (
+            "⚠️ We still cannot charge your renewal for {group}.\n\n"
+            "Your access is active, but the next attempt is on {date} and the "
+            "attempts run out. Update your card with the button and let's fix "
+            "this today."
+        ),
+    },
+
+    "renewal.payment_failed_last": {
+        "es": (
+            "🚨 Último aviso: no hemos podido cobrar tu renovación de {group} "
+            "y ya no habrá más intentos.\n\n"
+            "Si no actualizas la tarjeta, perderás el acceso al terminar el "
+            "periodo que ya tenías pagado. Se arregla en un toque."
+        ),
+        "en": (
+            "🚨 Final notice: we could not charge your renewal for {group} "
+            "and there will be no further attempts.\n\n"
+            "If you don't update your card you'll lose access when the period "
+            "you already paid for ends. It takes one tap to fix."
+        ),
+    },
+
+    "renewal.ended_unpaid": {
+        "es": (
+            "😔 Tu suscripción a {group} se ha cerrado porque no pudimos "
+            "cobrar la renovación.\n\n"
+            "No hace falta escribirle a nadie: puedes volver cuando quieras "
+            "desde el botón, con la tarjeta que prefieras."
+        ),
+        "en": (
+            "😔 Your subscription to {group} has closed because we couldn't "
+            "charge the renewal.\n\n"
+            "No need to contact anyone: come back whenever you like using the "
+            "button, with whichever card you prefer."
+        ),
+    },
+
+    "renewal.ended_unpaid_button": {
+        "es": "🔄 Volver a suscribirme",
+        "en": "🔄 Subscribe again",
+    },
+
     "renewal.payment_failed": {
         "es": (
             "⚠️ No hemos podido cobrar tu renovación de {group}.\n\n"

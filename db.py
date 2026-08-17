@@ -4186,6 +4186,30 @@ def create_tables():
 
 
         # =========================
+        # AVISOS DE COBRO FALLIDO (serie de recuperación)
+        # =========================
+        # Stripe manda un evento por cada reintento y reenvía los webhooks.
+        # La clave única factura+intento hace que cada intento avise UNA vez:
+        # ni silencio en el segundo intento ni tres copias del primero.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS dunning_notices (
+
+            invoice_id TEXT,
+
+            attempt INTEGER DEFAULT 0,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (invoice_id, attempt)
+
+        );
+
+        """)
+
+
+        # =========================
         # REFERIDOS (invita y ganáis días los dos)
         # =========================
         # La clave única invitado+comunidad fija la atribución al PRIMER
