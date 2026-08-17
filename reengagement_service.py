@@ -498,7 +498,7 @@ def describe_examples(offer, max_items=3):
     return lines
 
 
-def build_reengagement_text(offer=None, variant=0):
+def build_reengagement_text(offer=None, variant=0, con_ofertas=False):
     """
     Texto del aviso. Rota entre variantes según cuántos avisos ha recibido ya
     la persona: repetir seis veces el mismo mensaje quema al usuario y hace que
@@ -623,27 +623,118 @@ def build_reengagement_text(offer=None, variant=0):
 
 
     lines.append("")
-    lines.append("Mira lo que hay disponible 👇")
+
+    if con_ofertas:
+
+        # Debajo hay botones de COMPRA con su precio, no un catálogo: mandar a
+        # «mirar lo disponible» después de ponerle el precio delante es pedirle
+        # que empiece de nuevo la búsqueda que ya has hecho tú por él.
+        lines.append("Elige la tuya y entras en cuanto se confirme el pago 👇")
+
+    else:
+
+        lines.append("Mira lo que hay disponible 👇")
 
     return "\n".join(lines)
 
 
-def build_reengagement_keyboard():
+# Cuántas ofertas caben en un aviso: tres. Un aviso con seis botones de compra
+# no es una oferta, es un catálogo, y un catálogo no se lee en una notificación.
+REENGAGEMENT_MAX_OFFERS = int(
+    os.environ.get("REENGAGEMENT_MAX_OFFERS", "3")
+)
 
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
+
+def fetch_reengagement_offers(user_id):
+    """Lo que se le puede VENDER a esta persona, de lo más barato a lo más caro.
+
+    Se le quitan dos cosas a la lista de /start: las comunidades en las que ya
+    está dentro (ofrecerle comprar lo que tiene es la forma más rápida de
+    perder credibilidad) y las que no tienen precio legible, porque un botón
+    de compra sin precio es el problema que este cambio viene a arreglar.
+
+    Ante cualquier error, lista vacía: el aviso se envía con el botón del
+    catálogo de siempre. Un aviso sin salida sería peor que un aviso genérico.
+    """
+
+    if not user_id:
+        return []
+
+    try:
+
+        from start_offer_service import fetch_sellable_communities
+
+        return [
+            oferta
+            for oferta in fetch_sellable_communities(
+                user_id, limit=REENGAGEMENT_MAX_OFFERS
+            )
+            if not oferta["ya_dentro"] and oferta["precio"]
+        ][:REENGAGEMENT_MAX_OFFERS]
+
+    except Exception as e:
+
+        print("Reenganche: error montando la oferta, se usa el listado:", e)
+
+        return []
+
+
+def build_reengagement_keyboard(user_id=None, ofertas=None):
+    """Los botones del aviso: la compra primero, con su precio.
+
+    El texto del aviso ya decía «desde 15 EUR» y el botón llevaba a un
+    LISTADO: después de leer el precio quedaban tres toques más hasta pagar.
+    Ahora cada comunidad vendible es un botón con su precio y, con un solo
+    plan, lleva directo al enlace de pago.
+
+    Sin user_id o sin nada que ofrecer, los botones de siempre: un aviso sin
+    salida sería peor que el listado.
+
+    El botón de no recibir más avisos está SIEMPRE, en cualquier variante:
+    quitarlo para dejar hueco a otra oferta es cómo se gana un bloqueo.
+    """
+
+    filas = []
+
+    if ofertas is None:
+        ofertas = fetch_reengagement_offers(user_id)
+
+    try:
+
+        from start_offer_service import callback_de_oferta, etiqueta_de_oferta
+
+        for oferta in ofertas:
+
+            filas.append([InlineKeyboardButton(
+                etiqueta_de_oferta(oferta),
+                callback_data=callback_de_oferta(oferta)
+            )])
+
+    except Exception as e:
+
+        print("Reenganche: error montando los botones de compra:", e)
+        filas = []
+
+
+    if not filas:
+
+        filas.append([InlineKeyboardButton(
             "🔎 Ver comunidades disponibles",
             callback_data="start_explore_groups"
-        )],
-        [InlineKeyboardButton(
-            "🛟 Tengo una duda",
-            callback_data="public_support"
-        )],
-        [InlineKeyboardButton(
-            "🔔 No quiero más avisos",
-            callback_data=CALLBACK_REENGAGEMENT_STOP
-        )]
-    ])
+        )])
+
+
+    filas.append([InlineKeyboardButton(
+        "🛟 Tengo una duda",
+        callback_data="public_support"
+    )])
+
+    filas.append([InlineKeyboardButton(
+        "🔔 No quiero más avisos",
+        callback_data=CALLBACK_REENGAGEMENT_STOP
+    )])
+
+    return InlineKeyboardMarkup(filas)
 
 
 # =========================
@@ -724,24 +815,35 @@ async def process_reengagement_batch(context):
 
         offer = None
 
-    keyboard = build_reengagement_keyboard()
     texts_by_variant = {}
 
     for user_id, already_sent in targets:
 
+        # La oferta se lee POR PERSONA, no una vez para toda la tanda: excluye
+        # las comunidades en las que ya está dentro, así que una lista
+        # compartida le ofrecería a alguien comprar lo que ya tiene.
+        ofertas = fetch_reengagement_offers(user_id)
+        keyboard = build_reengagement_keyboard(user_id=user_id, ofertas=ofertas)
+
         # Cada persona recibe una variante distinta según los avisos previos.
         variant = int(already_sent or 0) % 4
 
-        if variant not in texts_by_variant:
+        # La clave lleva el flag porque el texto CIERRA distinto según lo que
+        # tenga debajo: con botones de compra no se le manda a mirar nada.
+        clave = (variant, bool(ofertas))
 
-            texts_by_variant[variant] = build_reengagement_text(offer, variant)
+        if clave not in texts_by_variant:
+
+            texts_by_variant[clave] = build_reengagement_text(
+                offer, variant, con_ofertas=bool(ofertas)
+            )
 
 
         try:
 
             await context.bot.send_message(
                 chat_id=user_id,
-                text=texts_by_variant[variant],
+                text=texts_by_variant[clave],
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )

@@ -307,3 +307,203 @@ def test_a_forged_one_tap_button_cannot_charge_for_another_community(catalogo):
     assert context.user_data.get("selected_group") is None, (
         "un plan de otra comunidad no puede fijar grupo ni cobrar"
     )
+
+
+# =========================
+# EL AVISO DE REENGANCHE TAMBIÉN VENDE
+# =========================
+# El texto del aviso ya decía «desde 15 EUR» y su botón llevaba a un LISTADO:
+# después de leer el precio quedaban tres toques más hasta pagar. Los 297
+# candidatos de producción habían recibido hasta seis de esos avisos.
+
+def test_the_follow_up_carries_the_priced_offer(catalogo):
+    import reengagement_service as res
+
+    teclado = res.build_reengagement_keyboard(user_id=7001)
+    botones = [(b.text, b.callback_data)
+               for fila in teclado.inline_keyboard for b in fila]
+
+    etiquetas = [t for t, _c in botones]
+    callbacks = [c for _t, c in botones]
+
+    assert any("15 EUR/mes" in t for t in etiquetas), (
+        "el precio va en el botón, no solo en el texto"
+    )
+    assert any(c.startswith("startbuy_") for c in callbacks), (
+        "el botón lleva a pagar, no a un listado"
+    )
+    assert "start_explore_groups" not in callbacks, (
+        "con oferta real, el listado genérico sobra"
+    )
+
+
+def test_the_opt_out_button_survives_every_variant(catalogo):
+    import reengagement_service as res
+
+    for user_id in (7001, None):
+
+        teclado = res.build_reengagement_keyboard(user_id=user_id)
+        callbacks = [b.callback_data
+                     for fila in teclado.inline_keyboard for b in fila]
+
+        assert res.CALLBACK_REENGAGEMENT_STOP in callbacks, (
+            "quitar el «no quiero más avisos» para hacer sitio a otra oferta "
+            "es cómo se gana un bloqueo"
+        )
+        assert "public_support" in callbacks
+
+
+def test_without_anything_to_sell_the_follow_up_keeps_its_exit(clean_db):
+    import reengagement_service as res
+
+    teclado = res.build_reengagement_keyboard(user_id=999999)
+    callbacks = [b.callback_data
+                 for fila in teclado.inline_keyboard for b in fila]
+
+    assert "start_explore_groups" in callbacks, (
+        "un aviso sin salida sería peor que el listado"
+    )
+
+
+def test_the_follow_up_never_offers_what_the_person_already_has(catalogo):
+    import reengagement_service as res
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (7002, 51, NOW() + INTERVAL '10 days', TRUE)"
+        )
+
+    teclado = res.build_reengagement_keyboard(user_id=7002)
+    callbacks = [b.callback_data
+                 for fila in teclado.inline_keyboard for b in fila]
+
+    assert not any(c.startswith("startbuy_51_") for c in callbacks), (
+        "ofrecerle comprar lo que ya tiene es el aviso que hace desconfiar "
+        "del bot entero"
+    )
+
+
+def test_the_batch_builds_one_keyboard_per_person(catalogo, monkeypatch):
+    """El fallo que tuve al escribirlo: el teclado se montaba FUERA del bucle.
+
+    Allí user_id no existe todavía, y un teclado compartido por toda la tanda
+    le ofrecería a alguien comprar lo que ya tiene.
+    """
+
+    import asyncio
+
+    import reengagement_service as res
+
+    with catalogo.conn.cursor() as cur:
+        # 7002 ya está dentro de la 51; 7003 no está en ninguna.
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (7002, 51, NOW() + INTERVAL '10 days', TRUE)"
+        )
+
+    # La suite tiene el reenganche apagado a propósito (nadie quiere que una
+    # prueba escriba a nadie): aquí se enciende solo para este caso.
+    monkeypatch.setattr(res, "REENGAGEMENT_ENABLED", True)
+    monkeypatch.setattr(
+        res, "fetch_reengagement_targets",
+        lambda limit=None: [(7002, 0), (7003, 0)]
+    )
+    monkeypatch.setattr(res, "REENGAGEMENT_SEND_DELAY_SECONDS", 0)
+
+    enviados = []
+
+    class FakeBot:
+        async def send_message(self, chat_id=None, text=None, reply_markup=None,
+                               **kwargs):
+            enviados.append((chat_id, reply_markup))
+            return True
+
+    class FakeContext:
+        def __init__(self):
+            self.bot = FakeBot()
+
+    resumen = asyncio.run(res.process_reengagement_batch(FakeContext()))
+
+    assert resumen["sent"] == 2
+
+    por_usuario = {chat: [b.callback_data
+                          for fila in markup.inline_keyboard for b in fila]
+                   for chat, markup in enviados}
+
+    assert not any(c.startswith("startbuy_51_") for c in por_usuario[7002]), (
+        "al que ya está dentro de la 51 no se le ofrece comprarla"
+    )
+    assert any(c.startswith("startbuy_51_") for c in por_usuario[7003]), (
+        "al que no está dentro sí, y con su botón de compra"
+    )
+
+
+def test_the_closing_line_matches_what_is_under_it(catalogo, monkeypatch):
+    """Debajo hay botones de compra: el texto no puede cerrar mandándole a mirar.
+
+    «Mira lo que hay disponible 👇» encima de tres botones que ya dicen el
+    precio le pide que empiece de nuevo la búsqueda que ya has hecho tú por
+    él. Y al revés: cuando no hay nada que ofrecerle y el botón vuelve a ser
+    el catálogo, esa frase es la correcta y tiene que volver.
+    """
+
+    import asyncio
+
+    import reengagement_service as res
+
+    with catalogo.conn.cursor() as cur:
+        # 7002 está dentro de la única comunidad vendible: para él no queda
+        # oferta ninguna. 7003 está fuera de todo.
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (7002, 51, NOW() + INTERVAL '10 days', TRUE)"
+        )
+
+    monkeypatch.setattr(res, "REENGAGEMENT_ENABLED", True)
+    monkeypatch.setattr(
+        res, "fetch_reengagement_targets",
+        lambda limit=None: [(7002, 0), (7003, 0)]
+    )
+    monkeypatch.setattr(res, "REENGAGEMENT_SEND_DELAY_SECONDS", 0)
+
+    textos = {}
+
+    class FakeBot:
+        async def send_message(self, chat_id=None, text=None, **kwargs):
+            textos[chat_id] = text
+            return True
+
+    class FakeContext:
+        def __init__(self):
+            self.bot = FakeBot()
+
+    asyncio.run(res.process_reengagement_batch(FakeContext()))
+
+    assert "Elige la tuya" in textos[7003]
+    assert "Mira lo que hay disponible" not in textos[7003]
+
+    assert "Mira lo que hay disponible" in textos[7002], (
+        "sin oferta el botón es el catálogo, y la frase de siempre encaja"
+    )
+    assert "Elige la tuya" not in textos[7002], (
+        "no se le dice «elige la tuya» a quien no tiene ninguna debajo"
+    )
+
+
+def test_the_same_variant_does_not_reuse_the_wrong_text(catalogo, monkeypatch):
+    """Los textos se cachean por variante para no reconstruirlos por persona.
+
+    Si la clave del caché fuera solo la variante, el primero de la tanda
+    decidiría el cierre de todos los demás: el que tiene oferta recibiría la
+    frase del catálogo, o el que no la tiene recibiría «elige la tuya» sobre
+    un botón que no es ninguna. Los dos de esta prueba comparten variante 0.
+    """
+
+    import reengagement_service as res
+
+    con = res.build_reengagement_text(variant=0, con_ofertas=True)
+    sin = res.build_reengagement_text(variant=0, con_ofertas=False)
+
+    assert con != sin
+    assert "Elige la tuya" in con and "Elige la tuya" not in sin
