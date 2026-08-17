@@ -211,6 +211,42 @@ def detect_cancellation_spike(group_id):
         return 0
 
 
+def detect_paying_members_locked_out(group_id):
+    """Socios con acceso pagado que se quedaron fuera y no se les pudo avisar.
+
+    Cuando alguien sale de la comunidad —o lo saca otro administrador— el bot
+    le manda un enlace nuevo si su acceso sigue vivo. A quien nunca abrió el
+    bot no se le puede escribir, y eso queda registrado... donde nadie mira.
+
+    Esa persona está pagando y fuera. El propietario es el único que puede
+    hacer algo: reconocerla, levantarle un veto puesto por error, o volver a
+    meterla a mano. Devuelve el recuento de los últimos 7 días.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(DISTINCT target_user_id)
+                FROM audit_logs
+                WHERE group_id = %s
+                  AND event_type = 'member_return_offer_failed'
+                  AND created_at >= NOW() - INTERVAL '7 days'
+                  AND target_user_id IS NOT NULL
+
+            """, (group_id,))
+
+            return int((cur.fetchone() or [0])[0] or 0)
+
+    except Exception as e:
+
+        print("Alertas de negocio: error contando socios fuera:", e)
+
+        return 0
+
+
 def mark_alert_sent(group_id, owner_user_id, alert_key, period_key):
     """True si quedó registrado: entonces toca enviar (y solo entonces)."""
 
@@ -291,6 +327,24 @@ def collect_group_alerts(group_id, group_name):
             "Cuando las bajas vienen en grupo suelen compartir motivo: "
             "una subida de precio, contenido parado, o un competidor. "
             "Preguntar a uno de ellos vale oro."
+        ))
+
+
+    fuera = detect_paying_members_locked_out(group_id)
+
+    if fuera:
+
+        personas = "persona" if fuera == 1 else "personas"
+        pronombre = "Está" if fuera == 1 else "Están"
+
+        alertas.append((
+            "locked_out", clave_semana(),
+            f"🚪 {fuera} {personas} con acceso pagado a {group_name} se han "
+            "quedado fuera de la comunidad y no hemos podido avisarles "
+            "(nunca abrieron el bot).\n\n"
+            f"{pronombre} pagando y sin poder entrar, y es el peor sitio "
+            "donde puede estar un cliente. Si reconoces a alguien, "
+            "vuelve a invitarle o revisa si tiene un veto puesto por error."
         ))
 
 
