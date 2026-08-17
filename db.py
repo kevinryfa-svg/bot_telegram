@@ -4186,6 +4186,35 @@ def create_tables():
 
 
         # =========================
+        # ALERTAS DE NEGOCIO AL PROPIETARIO
+        # =========================
+        # La clave única grupo+alerta+periodo hace el aviso idempotente:
+        # una alerta por día (rachas) o por semana ISO (caídas y bajas).
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS business_alerts (
+
+            id SERIAL PRIMARY KEY,
+
+            group_id INTEGER,
+
+            owner_user_id BIGINT,
+
+            alert_key TEXT,
+
+            period_key TEXT,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (group_id, alert_key, period_key)
+
+        );
+
+        """)
+
+
+        # =========================
         # RESÚMENES SEMANALES DEL PROPIETARIO
         # =========================
         # La clave única propietario+grupo+semana hace el envío idempotente:

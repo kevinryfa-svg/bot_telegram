@@ -1152,6 +1152,54 @@ async def owner_weekly_digest_job(context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# Las alertas de negocio no esperan al lunes: racha de cobros fallidos,
+# caída fuerte de ingresos o pico de bajas se avisan el mismo día.
+
+async def business_alerts_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        from business_alert_service import process_business_alerts
+
+        await process_business_alerts(context)
+
+    except Exception as e:
+
+        print(
+            "Alertas de negocio: error en el job:",
+            f"{type(e).__name__}: {sanitize_error_text(e)}"
+        )
+
+
+def schedule_business_alerts_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Alertas de negocio: JobQueue no disponible. "
+            "No se vigilarán rachas ni caídas."
+        )
+
+        return False
+
+
+    job_queue.run_repeating(
+        business_alerts_job,
+        interval=max(int(os.environ.get(
+            "BUSINESS_ALERTS_INTERVAL_SECONDS", "21600"
+        )), 3600),
+        first=420,
+        name="business_alerts"
+    )
+
+    print("Alertas de negocio programadas.")
+
+    return True
+
+
 def schedule_owner_weekly_digest(application):
 
     job_queue = getattr(application, "job_queue", None)
@@ -3229,6 +3277,7 @@ def main():
     schedule_stripe_webhook_config_check(telegram_app)
     schedule_paypal_webhook_config_check(telegram_app)
     schedule_owner_weekly_digest(telegram_app)
+    schedule_business_alerts_job(telegram_app)
     schedule_database_backup_job(telegram_app)
     schedule_persistence_cleanup_job(telegram_app)
 

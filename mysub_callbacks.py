@@ -609,6 +609,20 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                 await query.answer("Renovación desactivada ✅", show_alert=False)
 
+                # El mismo evento que registra Stripe al apagar la renovación:
+                # así el detector de picos de bajas cuenta ambos proveedores.
+                log_event(
+                    "group_subscription_autorenew_off",
+                    category="payment",
+                    severity="info",
+                    scope="group",
+                    group_id=grupo[0],
+                    actor_user_id=user_id,
+                    target_user_id=user_id,
+                    message="Renovación PayPal apagada por el comprador.",
+                    metadata={"provider": "paypal"}
+                )
+
                 language = load_user_language(user_id)
 
                 await query.message.reply_text(
