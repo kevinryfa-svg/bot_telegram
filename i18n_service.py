@@ -723,6 +723,21 @@ TRANSLATIONS = {
         ),
     },
 
+    "recovery.delivery_fixed": {
+        "es": (
+            "✅ Ya puedes entrar en {group}.\n\n"
+            "Hubo un problema para crear tu enlace de acceso y ya está "
+            "resuelto. Tu acceso nunca dejó de estar activo — aquí tienes tu "
+            "enlace, de un solo uso y válido 24 horas."
+        ),
+        "en": (
+            "✅ You can come into {group} now.\n\n"
+            "There was a problem creating your access link and it's now "
+            "fixed. Your access never stopped being active — here's your "
+            "link, single use and valid for 24 hours."
+        ),
+    },
+
     "recovery.return_button": {
         "es": "🔗 Volver a entrar",
         "en": "🔗 Come back in",

@@ -180,3 +180,98 @@ def test_guardian_hooks_it_where_the_departure_is_detected():
     assert "guardian_left_return_offer_error" in trozo, (
         "va en su propio try: no puede tumbar la detección de Guardian"
     )
+
+
+# =========================
+# ENTREGA RECUPERADA: LOS QUE SE QUEDARON FUERA DURANTE LA AVERÍA
+# =========================
+# Al propietario se le decía "las compras vuelven a estar abiertas". A los
+# que se quedaron sin enlace DURANTE la avería, nada: seguían fuera con el
+# acceso pagado.
+
+def registrar_fallo_de_enlace(db, user_id, group_id=98,
+                              event_type="payment_invite_link_error"):
+    from audit_log_service import log_event
+
+    log_event(
+        event_type,
+        category="payment", severity="error", scope="group",
+        group_id=group_id, actor_user_id=user_id, target_user_id=user_id,
+        message="No se pudo crear el enlace.",
+    )
+
+
+def test_the_stranded_buyers_are_found_by_the_events_already_recorded(comunidad):
+    registrar_fallo_de_enlace(comunidad, 9801)
+    registrar_fallo_de_enlace(
+        comunidad, 9802,
+        event_type="access_link_unavailable_for_paid_user"
+    )
+
+    from datetime import datetime, timedelta
+
+    afectados = mrs.fetch_stranded_buyers(98, datetime.now() - timedelta(hours=1))
+
+    assert afectados == [9801], (
+        "9802 tiene el acceso caducado: un enlace no le serviría de nada"
+    )
+
+
+def test_nothing_is_looked_up_without_an_outage_window(comunidad):
+    registrar_fallo_de_enlace(comunidad, 9801)
+
+    assert mrs.fetch_stranded_buyers(98, None) == [], (
+        "sin episodio de avería no hay ventana que repasar"
+    )
+
+
+def test_recovery_sends_a_link_once_per_outage(comunidad, monkeypatch):
+    from datetime import datetime, timedelta
+
+    registrar_fallo_de_enlace(comunidad, 9801)
+
+    enviados = []
+
+    monkeypatch.setattr(
+        "notification_service.send_telegram_message",
+        lambda token, chat, text, reply_markup=None:
+            enviados.append((chat, text, reply_markup)) or {"ok": True}
+    )
+
+    episodio = datetime.now() - timedelta(hours=2)
+
+    resumen = mrs.notify_stranded_buyers_after_recovery(98, "VIP Vuelta", episodio)
+
+    assert resumen["sent"] == 1
+
+    chat, texto, teclado = enviados[0]
+
+    assert chat == 9801
+    assert "Ya puedes entrar en VIP Vuelta" in texto
+    assert "nunca dejó de estar activo" in texto
+    assert teclado["inline_keyboard"][0][0]["url"] == "https://t.me/+enlaceNuevo"
+
+    # La misma avería no avisa dos veces...
+    repetido = mrs.notify_stranded_buyers_after_recovery(98, "VIP Vuelta", episodio)
+    assert repetido["sent"] == 0
+    assert repetido["skipped"] == 1
+
+    # ...pero una avería DISTINTA sí: es otro episodio.
+    otro = mrs.notify_stranded_buyers_after_recovery(
+        98, "VIP Vuelta", datetime.now() - timedelta(minutes=30)
+    )
+    assert otro["sent"] == 1
+
+
+def test_the_health_check_hooks_it_on_recovery():
+    salud = open("group_delivery_health_service.py", encoding="utf-8").read()
+
+    pos = salud.index("group_delivery_recovered")
+    trozo = salud[pos:pos + 1500]
+
+    assert "notify_stranded_buyers_after_recovery" in trozo, (
+        "el momento de avisarles es cuando la entrega vuelve a funcionar"
+    )
+    assert "except Exception" in trozo, (
+        "en su propio try: avisar no puede tumbar la salud de entrega"
+    )

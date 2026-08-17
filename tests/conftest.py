@@ -105,6 +105,7 @@ def clean_db(db_module):
         "business_alerts",
         "dunning_notices",
         "member_return_offers",
+        "delivery_recovery_notices",
         "referrals",
         "upsell_offers",
         "admins",
