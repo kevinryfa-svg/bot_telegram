@@ -735,6 +735,57 @@ TRANSLATIONS = {
         "en": "Yes, turn it off",
     },
 
+    "mysub.save_offer": {
+        "es": (
+            "🎁 Antes de que te vayas…\n\n"
+            "¿Y si te quedas con un {percent}% de descuento en tu PRÓXIMO "
+            "cobro de {group}?\n\n"
+            "Un solo toque, se aplica solo, y los cobros siguientes van a tu "
+            "precio de siempre. Esta oferta solo aparece una vez."
+        ),
+        "en": (
+            "🎁 Before you go…\n\n"
+            "What if you stayed with {percent}% off your NEXT charge for "
+            "{group}?\n\n"
+            "One tap, it applies itself, and later charges stay at your usual "
+            "price. This offer only shows once."
+        ),
+    },
+
+    "mysub.save_offer_btn_take": {
+        "es": "🎁 Quedarme con el descuento",
+        "en": "🎁 Stay with the discount",
+    },
+
+    "mysub.save_offer_btn_leave": {
+        "es": "Seguir con la cancelación",
+        "en": "Continue cancelling",
+    },
+
+    "mysub.save_offer_done": {
+        "es": (
+            "🎉 Hecho: tu próximo cobro de {group} saldrá con un {percent}% "
+            "de descuento.\n\n"
+            "Tu renovación sigue activa y no tienes que hacer nada más."
+        ),
+        "en": (
+            "🎉 Done: your next charge for {group} will carry {percent}% "
+            "off.\n\n"
+            "Your renewal stays active and there is nothing else to do."
+        ),
+    },
+
+    "mysub.save_offer_error": {
+        "es": (
+            "❌ No he podido aplicar el descuento ahora mismo. Tu renovación "
+            "sigue como estaba; puedes intentarlo de nuevo o continuar."
+        ),
+        "en": (
+            "❌ I could not apply the discount right now. Your renewal is "
+            "unchanged; you can try again or continue."
+        ),
+    },
+
     "mysub.stoprenew_confirm": {
         "es": (
             "🔕 ¿Desactivar la renovación automática?\n\n"
