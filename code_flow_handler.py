@@ -137,67 +137,32 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
-        with conn.cursor() as cur:
 
-            if admin_groups is None:
-
-                cur.execute("""
-
-                    SELECT u.expiration,
-                           g.name
-                    FROM users u
-                    LEFT JOIN groups g
-                    ON u.group_id = g.id
-                    WHERE u.user_id=%s
-
-                """, (user_id,))
-
-            else:
-
-                group_ids = [
-                    group_id
-                    for group_id, _telegram_group_id in admin_groups
-                ]
-
-                cur.execute("""
-
-                    SELECT u.expiration,
-                           g.name
-                    FROM users u
-                    LEFT JOIN groups g
-                    ON u.group_id = g.id
-                    WHERE u.user_id=%s
-                    AND u.group_id = ANY(%s)
-
-                """, (
-                    user_id,
-                    group_ids
-                ))
-
-            rows = cur.fetchall()
-
-        if rows:
-
-            lines = [
-                f"👤 Usuario {user_id}"
-            ]
-
-
-            for expiration, group_name in rows:
-
-                lines.append(
-                    f"Grupo: {group_name or '-'}\nExpira: {expiration}"
-                )
+        if not user_id.lstrip("-").isdigit():
 
             await update.message.reply_text(
-                "\n\n".join(lines)
+                "Manda solo el ID numérico del usuario."
             )
 
-        else:
+            context.user_data["search_user"] = False
 
-            await update.message.reply_text(
-                "Usuario no encontrado"
-            )
+            return
+
+
+        # La ficha de soporte: estado del acceso en formato humano, si tiene
+        # renovación y de quién, lo que ha pagado, si está vetado y si tiene
+        # incidencias de cobro abiertas. Antes esto contestaba una fecha en
+        # formato de base de datos, con la que no se puede atender a nadie.
+        from support_lookup_service import build_member_dossier
+
+        group_ids = (
+            None if admin_groups is None
+            else [group_id for group_id, _tgid in admin_groups]
+        )
+
+        await update.message.reply_text(
+            build_member_dossier(int(user_id), group_ids=group_ids)
+        )
 
         context.user_data["search_user"] = False
 
