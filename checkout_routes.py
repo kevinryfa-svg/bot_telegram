@@ -5,6 +5,7 @@ import traceback
 
 from flask import request, jsonify, redirect
 
+from audit_log_service import log_event
 from db import conn
 from stripe_connect_service import connect_checkout_kwargs
 from stripe_tax_service import tax_checkout_kwargs
@@ -166,7 +167,38 @@ def register_checkout_routes(app):
         community_type = access_state.get("community_type") or "group"
 
 
-        if should_block_new_group_purchase(access_state):
+        # CAMBIO DE PLAN: el bot lo pide explícitamente y aquí se vuelve a
+        # comprobar contra la base de datos, no se cree la petición. Solo pasa
+        # si el socio tiene acceso activo a ESA comunidad y su renovación no
+        # es de PayPal (la salvaguarda que apaga la suscripción anterior al
+        # anclar la nueva es de Stripe). El plan ya se validó arriba: la
+        # consulta exige que sea un plan activo de este group_id.
+        cambio_de_plan = False
+
+        if data.get("plan_switch"):
+
+            from plan_switch_service import switch_is_allowed
+
+            cambio_de_plan, motivo_switch = switch_is_allowed(
+                telegram_id, group_id
+            )
+
+            if not cambio_de_plan:
+
+                log_event(
+                    "plan_switch_rejected_server",
+                    category="payment",
+                    severity="warning",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=telegram_id,
+                    target_user_id=telegram_id,
+                    message="Cambio de plan rechazado en el servidor.",
+                    metadata={"reason": motivo_switch, "plan": plan}
+                )
+
+
+        if not cambio_de_plan and should_block_new_group_purchase(access_state):
 
             log_purchase_blocked_existing_access(
                 telegram_id,

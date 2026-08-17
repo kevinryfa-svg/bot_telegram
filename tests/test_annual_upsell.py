@@ -115,7 +115,11 @@ def test_the_offer_says_the_saving_and_shows_once(comunidad):
     )
 
     botones = [b for fila in teclado.inline_keyboard for b in fila]
-    assert any(b.callback_data == "marketplace_group_80" for b in botones)
+
+    # Al cambio de plan, NO a la tarjeta de la comunidad: quien ya tiene
+    # acceso aterrizaba en «ya tienes acceso» y el upsell no se podía
+    # completar. El camino del cambio existe desde el PR del cambio de plan.
+    assert any(b.callback_data == "mysub_switch_80" for b in botones)
 
     # Para siempre: ni en la siguiente pasada ni nunca.
     resumen2 = asyncio.run(rs.send_annual_upsell_stage(FakeContext()))
