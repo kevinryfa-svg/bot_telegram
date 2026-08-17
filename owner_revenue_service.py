@@ -379,6 +379,105 @@ def build_payments_csv(group_id):
     return "\n".join(lineas)
 
 
+def build_members_csv(group_id):
+    """
+    TODOS los socios de la comunidad como CSV, no solo los suscriptores: el
+    propietario que quiere hablar con su gente necesita también a los que
+    pagaron una vez y a los que ya caducaron.
+
+    Una fila por persona con lo que sirve para decidir a quién escribir:
+    hasta cuándo tiene acceso, si renueva sola, cuánto ha pagado en total y
+    cuántas veces. Los importes en unidades mayores (15.00, no 1500): el
+    destinatario es una hoja de cálculo, no nuestra base.
+    """
+
+    lineas = [
+        "usuario;username;estado;acceso_hasta;renovacion;"
+        "pagos;total_pagado;moneda;primer_pago;ultimo_pago"
+    ]
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT u.user_id,
+                       u.username,
+                       CASE
+                           WHEN u.expiration IS NULL THEN 'permanente'
+                           WHEN u.expiration > NOW() THEN 'activo'
+                           ELSE 'caducado'
+                       END,
+                       u.expiration,
+                       CASE WHEN u.stripe_subscription_id IS NOT NULL
+                            THEN 'stripe'
+                            WHEN EXISTS (
+                                SELECT 1 FROM payment_transactions pt
+                                WHERE pt.provider = 'paypal'
+                                  AND pt.user_id = u.user_id
+                                  AND pt.group_id = u.group_id
+                                  AND pt.external_checkout_id IS NOT NULL
+                            ) THEN 'paypal'
+                            ELSE 'no'
+                       END,
+                       COALESCE(hist.veces, 0),
+                       COALESCE(hist.total, 0),
+                       COALESCE(NULLIF(UPPER(hist.currency), ''), 'EUR'),
+                       hist.primero,
+                       hist.ultimo
+                FROM users u
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(*) AS veces,
+                           SUM(p.amount) AS total,
+                           MIN(p.currency) AS currency,
+                           MIN(p.payment_date) AS primero,
+                           MAX(p.payment_date) AS ultimo
+                    FROM payments p
+                    WHERE p.user_id = u.user_id
+                      AND p.group_id = u.group_id
+                      AND LOWER(COALESCE(p.status, '')) IN %s
+                ) hist ON TRUE
+                WHERE u.group_id = %s
+                ORDER BY u.expiration DESC NULLS FIRST, u.user_id ASC
+
+            """, (PAID_STATUSES, group_id))
+
+            for fila in cur.fetchall():
+
+                (user_id, username, estado, expiration, renovacion,
+                 veces, total, currency, primero, ultimo) = fila
+
+                def fecha(valor):
+
+                    try:
+                        return valor.strftime("%Y-%m-%d")
+                    except Exception:
+                        return ""
+
+                try:
+                    total_txt = f"{int(total or 0) / 100:.2f}"
+                except Exception:
+                    total_txt = ""
+
+                # El ';' dentro de un campo rompería la columna, y un @ suelto
+                # no ayuda a nadie: se limpia lo mínimo.
+                usuario_txt = (username or "").replace(";", ",").strip()
+
+                lineas.append(
+                    f"{user_id};{usuario_txt};{estado};{fecha(expiration)};"
+                    f"{renovacion};{int(veces or 0)};{total_txt};"
+                    f"{currency};{fecha(primero)};{fecha(ultimo)}"
+                )
+
+    except Exception as e:
+
+        print("Ingresos: error exportando socios:", e)
+
+
+    return "\n".join(lineas)
+
+
 def fetch_subscriber_rows(group_id, limit=30):
     """
     Los socios con renovación automática, ordenados por próximo cobro. La

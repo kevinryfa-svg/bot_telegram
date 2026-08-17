@@ -454,3 +454,64 @@ def test_the_subscribers_button_lives_in_the_revenue_panel():
     assert "can_view_payments" in trozo, (
         "la lista de quién paga ES información de pagos: mismos permisos"
     )
+
+
+# =========================
+# EXPORTAR SOCIOS (la gente, no las transacciones)
+# =========================
+
+def test_the_members_csv_covers_active_expired_and_permanent(comunidad):
+    """El CSV de pagos son transacciones; este es la gente."""
+
+    db = comunidad
+
+    with db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active, "
+            "username, stripe_subscription_id) VALUES "
+            "(6001, 98, NOW() + INTERVAL '10 days', TRUE, 'activa', 'sub_98'), "
+            "(6002, 98, NOW() - INTERVAL '10 days', FALSE, 'caducado', NULL), "
+            "(6003, 98, NULL, TRUE, 'permanente', NULL) "
+            "ON CONFLICT (user_id, group_id) DO NOTHING"
+        )
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, status, plan, payment_date) VALUES "
+            "(6001, 98, 1500, 'EUR', 'paid', 'Mensual', NOW() - INTERVAL '40 days'), "
+            "(6001, 98, 1500, 'EUR', 'paid', 'Mensual', NOW() - INTERVAL '10 days'), "
+            "(6002, 98, 2000, 'EUR', 'paid', 'Mensual', NOW() - INTERVAL '80 days')"
+        )
+
+    csv = ors.build_members_csv(98)
+    lineas = csv.split("\n")
+
+    assert lineas[0].startswith("usuario;username;estado;acceso_hasta;renovacion")
+
+    filas = {l.split(";")[0]: l.split(";") for l in lineas[1:]}
+
+    assert filas["6001"][2] == "activo"
+    assert filas["6001"][4] == "stripe", "la renovación real, no la de lista"
+    assert filas["6001"][5] == "2", "dos pagos"
+    assert filas["6001"][6] == "30.00", (
+        "el total en unidades mayores: el destinatario es una hoja de cálculo"
+    )
+
+    assert filas["6002"][2] == "caducado"
+    assert filas["6002"][4] == "no"
+    assert filas["6002"][6] == "20.00"
+
+    assert filas["6003"][2] == "permanente"
+    assert filas["6003"][3] == "", "sin fecha de fin, la columna va vacía"
+    assert filas["6003"][5] == "0", "nunca pagó: cero pagos, no una fila falsa"
+
+
+def test_the_members_csv_button_shares_the_payment_permissions():
+    panel = open("owner_panel_callbacks.py", encoding="utf-8").read()
+
+    assert 'callback_data="owner_panel_members_csv"' in panel
+
+    pos = panel.index('if data == "owner_panel_members_csv":')
+    trozo = panel[pos:pos + 900]
+
+    for permiso in ("can_manage_plans", "can_manage_groups",
+                    "can_view_payments", "can_manage_payments"):
+        assert permiso in trozo
