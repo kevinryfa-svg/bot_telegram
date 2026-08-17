@@ -24785,6 +24785,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if is_super_admin(user_id):
 
+            # Cada avería avisa a su propietario, y eso depende de que ese
+            # propietario lea y actúe. Esta pantalla es la foto agregada de
+            # lo que está roto ahora mismo en toda la plataforma.
+            keyboard.append([
+                InlineKeyboardButton("🩺 Salud de comunidades",
+                                     callback_data="admin_health")
+            ])
+
             keyboard.append([
                 InlineKeyboardButton("🔄 Revocar todos links", callback_data="admin_revoke_links")
             ])
@@ -27097,6 +27105,26 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await query.message.reply_text(text)
+
+        return
+
+
+    if data == "admin_health":
+
+        # Solo plataforma: es la foto de TODAS las comunidades, incluidas las
+        # de otros propietarios.
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from platform_health_service import build_platform_health_text
+
+        await query.message.reply_text(build_platform_health_text())
 
         return
 
