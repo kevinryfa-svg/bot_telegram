@@ -386,3 +386,71 @@ def test_the_panel_has_the_button_and_the_router_the_branch():
             return
 
     pytest.fail("no se encontró el bloque de permisos de pagos en el teclado")
+
+
+# =========================
+# EL PANEL DE SUSCRIPTORES
+# =========================
+# La lista humana detrás de los números: quién tiene renovación, cuánto paga
+# de verdad (su último cobro), y cuándo le toca.
+
+def test_subscribers_are_listed_by_next_charge_with_their_real_price(comunidad):
+    db = comunidad
+
+    with db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, username, expiration, "
+            "subscription_active, stripe_subscription_id) VALUES "
+            "(31, 98, 'ana', NOW() + INTERVAL '3 days', TRUE, 'sub_31'), "
+            "(32, 98, NULL, NOW() + INTERVAL '20 days', TRUE, NULL)"
+        )
+        cur.execute(
+            "INSERT INTO payment_transactions (provider, status, payment_scope, "
+            "purchase_type, user_id, group_id, external_checkout_id) "
+            "VALUES ('paypal', 'paid', 'platform', 'group_access', 32, 98, 'I-32')"
+        )
+        # El precio REAL de ana: su último cobro fue con precio antiguo (10).
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, status, plan, payment_date) VALUES "
+            "(31, 98, 1500, 'EUR', 'paid', 'Mensual', NOW() - INTERVAL '60 days'), "
+            "(31, 98, 1000, 'EUR', 'paid', 'Mensual', NOW() - INTERVAL '2 days')"
+        )
+        # Sin renovación: no aparece.
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (33, 98, NOW() + INTERVAL '10 days', TRUE)"
+        )
+
+    filas = ors.fetch_subscriber_rows(98)
+
+    assert [f[0] for f in filas] == [31, 32], (
+        "por próximo cobro, y el 33 (sin renovación) fuera"
+    )
+    assert filas[0][4] == 1000, "el precio es su ÚLTIMO cobro, no el primero"
+
+    texto = ors.build_owner_subscribers_text(98, "VIP Ingresos")
+
+    assert "@ana — 10.00 EUR" in texto
+    assert "id 32" in texto, "sin username se identifica por id"
+    assert "paypal" in texto
+    assert "Cobros en los próximos 7 días: 1" in texto
+    assert "10.00 EUR" in texto
+
+
+def test_an_empty_subscriber_list_explains_itself(comunidad):
+    texto = ors.build_owner_subscribers_text(98, "VIP Ingresos")
+
+    assert "Nadie tiene renovación automática todavía" in texto
+
+
+def test_the_subscribers_button_lives_in_the_revenue_panel():
+    source = open("owner_panel_callbacks.py", encoding="utf-8").read()
+
+    assert '"owner_panel_subscribers"' in source
+
+    pos = source.index('if data == "owner_panel_subscribers":')
+    trozo = source[pos:pos + 700]
+
+    assert "can_view_payments" in trozo, (
+        "la lista de quién paga ES información de pagos: mismos permisos"
+    )
