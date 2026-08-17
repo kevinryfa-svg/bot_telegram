@@ -672,6 +672,20 @@ TRANSLATIONS = {
         ),
     },
 
+    "refund.done": {
+        "es": (
+            "💸 Te hemos devuelto {amount} de tu pago en {group}.\n\n"
+            "El abono aparece en tu método de pago en unos días, según tu "
+            "banco. Si esperabas otra cosa, escríbenos y lo miramos."
+        ),
+        "en": (
+            "💸 We've refunded {amount} from your payment in {group}.\n\n"
+            "The credit shows up on your payment method within a few days, "
+            "depending on your bank. If you expected something else, write to "
+            "us and we'll look into it."
+        ),
+    },
+
     "incident.repaired": {
         "es": (
             "✅ Ya está: tu acceso a {group} está activo.\n\n"

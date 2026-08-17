@@ -327,11 +327,16 @@ def build_staff_incident_text(group_name, kind, user_id, group_id,
     return "\n".join(lineas)
 
 
-def build_staff_incident_keyboard(incident_id):
-    """El botón que convierte el aviso en algo que se puede resolver.
+def build_staff_incident_keyboard(incident_id, kind=None):
+    """Los botones que convierten el aviso en algo que se puede resolver.
 
-    Solo se pinta; el permiso se comprueba AL PULSAR, porque un callback se
+    Solo se pintan; el permiso se comprueba AL PULSAR, porque un callback se
     puede reenviar a cualquiera.
+
+    Al comprador VETADO no se le ofrece conceder acceso: el aviso dice que hay
+    que devolverle el dinero o levantarle el veto, y conceder el acceso a
+    quien está vetado sería saltarse la decisión de alguien. Ahí el botón es
+    el de devolver.
     """
 
     if not incident_id:
@@ -339,10 +344,21 @@ def build_staff_incident_keyboard(incident_id):
 
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-    return InlineKeyboardMarkup([[InlineKeyboardButton(
-        "✅ Conceder el acceso ahora",
-        callback_data=f"incident_fix_{incident_id}"
-    )]]).to_dict()
+    filas = []
+
+    if kind != INCIDENT_BANNED_BUYER:
+
+        filas.append([InlineKeyboardButton(
+            "✅ Conceder el acceso ahora",
+            callback_data=f"incident_fix_{incident_id}"
+        )])
+
+    filas.append([InlineKeyboardButton(
+        "💸 Devolver el pago",
+        callback_data=f"incident_refund_{incident_id}"
+    )])
+
+    return InlineKeyboardMarkup(filas).to_dict()
 
 
 # =========================
@@ -438,7 +454,7 @@ def report_payment_incident(kind, user_id, group_id, provider=None,
         # El aviso llevaba todos los identificadores y ninguna forma de
         # actuar: arreglarlo significaba entrar a la base de datos. Con el
         # botón, quien tiene permiso concede el acceso desde aquí.
-        teclado_arreglo = build_staff_incident_keyboard(incident_id)
+        teclado_arreglo = build_staff_incident_keyboard(incident_id, kind=kind)
 
         try:
 

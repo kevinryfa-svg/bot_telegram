@@ -21295,6 +21295,184 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # lo hace una PERSONA con permiso sobre esa comunidad, y el permiso se
     # comprueba al pulsar, porque un callback se puede reenviar.
 
+    # DEVOLVER UN PAGO: el aviso de comprador vetado terminaba diciendo "hay
+    # que devolverle el pago" y no había forma de hacerlo sin entrar al panel
+    # de Stripe a buscarlo entre todos. Dos pasos a propósito: la pantalla
+    # dice el importe exacto y a quién, y el segundo toque es el que mueve el
+    # dinero.
+
+    if data.startswith("incident_refund_go_"):
+
+        from incident_repair_service import close_incident, fetch_open_incident
+        from refund_request_service import refund_last_payment
+
+        resto = data[len("incident_refund_go_"):]
+
+        if not resto.isdigit():
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        incident_id = int(resto)
+        incidencia = fetch_open_incident(incident_id)
+
+        if not incidencia:
+
+            await query.message.reply_text(
+                "✅ Esa incidencia ya estaba resuelta. No se ha devuelto nada "
+                "otra vez."
+            )
+
+            return
+
+
+        comprador_id, group_id, group_name = (
+            incidencia[2], incidencia[3], incidencia[5]
+        )
+
+        if not (is_super_admin(user_id)
+                or get_group_owner_user_id(group_id) == user_id):
+
+            await query.answer("Solo el propietario puede hacerlo",
+                               show_alert=True)
+
+            return
+
+
+        resultado = refund_last_payment(comprador_id, group_id, user_id)
+
+        if not resultado["ok"]:
+
+            motivos = {
+                "no_payment": "No hay ningún pago cobrado que devolver.",
+                "unsupported": (
+                    "Ese cobro no se puede devolver por API con lo que "
+                    "guardamos. Hazlo en el panel del proveedor y luego "
+                    "marca la incidencia como resuelta."
+                ),
+                "already": "Alguien acaba de devolverlo.",
+                "stripe_error": (
+                    "Stripe ha rechazado la devolución. El pago sigue "
+                    "marcado como cobrado y la incidencia, abierta."
+                ),
+            }
+
+            await query.message.reply_text(
+                "❌ " + motivos.get(resultado["reason"], "No se ha podido "
+                                   "devolver el pago.")
+            )
+
+            return
+
+
+        close_incident(incident_id, user_id)
+
+        # El aviso al comprador y la retirada del acceso NO se hacen aquí: los
+        # hace el webhook de la devolución cuando Stripe la confirma, que es
+        # quien ya sabe revocar enlaces, expulsar y avisar.
+        await query.message.reply_text(
+            f"💸 Devolución de {resultado['importe']} pedida a Stripe para "
+            f"{comprador_id}.\n\n"
+            "Cuando Stripe la confirme, el bot retira el acceso, revoca sus "
+            "enlaces y avisa a la persona: eso ya lo hace el webhook de "
+            "devoluciones, no hace falta tocar nada más."
+        )
+
+        return
+
+
+    if data.startswith("incident_refund_"):
+
+        from incident_repair_service import fetch_open_incident
+        from refund_request_service import describe_refundable
+
+        resto = data[len("incident_refund_"):]
+
+        if not resto.isdigit():
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        incident_id = int(resto)
+        incidencia = fetch_open_incident(incident_id)
+
+        if not incidencia:
+
+            await query.message.reply_text("✅ Esa incidencia ya estaba resuelta.")
+
+            return
+
+
+        comprador_id, group_id, group_name = (
+            incidencia[2], incidencia[3], incidencia[5]
+        )
+
+        if not (is_super_admin(user_id)
+                or get_group_owner_user_id(group_id) == user_id):
+
+            await query.answer("Solo el propietario puede hacerlo",
+                               show_alert=True)
+
+            return
+
+
+        devolvible = describe_refundable(comprador_id, group_id)
+
+        if not devolvible:
+
+            await query.message.reply_text(
+                f"No hay ningún pago cobrado de {comprador_id} en "
+                f"{group_name} que devolver."
+            )
+
+            return
+
+
+        if not devolvible["puede_api"]:
+
+            await query.message.reply_text(
+                f"El último cobro de {comprador_id} ({devolvible['importe']}) "
+                "no se puede devolver desde aquí: la referencia guardada no "
+                f"permite pedirlo por API ({devolvible['referencia']}).\n\n"
+                "Hazlo en el panel del proveedor y resuelve la incidencia "
+                "después."
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            f"¿Devolver {devolvible['importe']} a {comprador_id}?\n\n"
+            f"Comunidad: {group_name}\n"
+            f"Plan cobrado: {devolvible['plan']}\n\n"
+            "Se devuelve el último pago cobrado de esa persona en esta "
+            "comunidad. Cuando Stripe confirme la devolución, el acceso se "
+            "retira solo y se le avisa.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"💸 Sí, devolver {devolvible['importe']}",
+                    callback_data=f"incident_refund_go_{incident_id}"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ No, dejarlo",
+                    callback_data="admin_back_main"
+                )],
+            ])
+        )
+
+        return
+
+
     if data.startswith("incident_fix_go_"):
 
         from incident_repair_service import fetch_open_incident, repair_incident
