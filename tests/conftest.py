@@ -102,6 +102,7 @@ def clean_db(db_module):
         "creator_connect_accounts",
         "retention_offers",
         "owner_weekly_digests",
+        "business_alerts",
         "upsell_offers",
         "admins",
         "users",
