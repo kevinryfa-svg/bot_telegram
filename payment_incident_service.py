@@ -115,6 +115,7 @@ def record_incident(incident_key, kind, user_id, group_id, provider=None,
                     (incident_key, kind, user_id, group_id, provider, detail)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (incident_key) DO NOTHING
+                RETURNING id
 
             """, (
                 incident_key,
@@ -125,7 +126,12 @@ def record_incident(incident_key, kind, user_id, group_id, provider=None,
                 str(detail or "")[:500]
             ))
 
-            return cur.rowcount > 0
+            # Devuelve el id la primera vez y None en los reintentos: el aviso
+            # sale una sola vez, y necesita ese id para llevar botón de
+            # arreglo.
+            fila = cur.fetchone()
+
+            return fila[0] if fila else None
 
     except Exception as e:
 
@@ -321,6 +327,24 @@ def build_staff_incident_text(group_name, kind, user_id, group_id,
     return "\n".join(lineas)
 
 
+def build_staff_incident_keyboard(incident_id):
+    """El botón que convierte el aviso en algo que se puede resolver.
+
+    Solo se pinta; el permiso se comprueba AL PULSAR, porque un callback se
+    puede reenviar a cualquiera.
+    """
+
+    if not incident_id:
+        return None
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup([[InlineKeyboardButton(
+        "✅ Conceder el acceso ahora",
+        callback_data=f"incident_fix_{incident_id}"
+    )]]).to_dict()
+
+
 # =========================
 # EL AVISO COMPLETO
 # =========================
@@ -354,19 +378,22 @@ def report_payment_incident(kind, user_id, group_id, provider=None,
         )
 
         # Registrar primero: es lo que evita repetir el aviso en cada reintento.
-        if not record_incident(
+        incident_id = record_incident(
             incident_key,
             kind,
             user_id,
             group_id,
             provider=provider,
             detail=detail
-        ):
+        )
+
+        if not incident_id:
 
             return summary
 
 
         summary["recorded"] = True
+        summary["incident_id"] = incident_id
 
         group_name = fetch_group_name(group_id)
 
@@ -408,19 +435,26 @@ def report_payment_incident(kind, user_id, group_id, provider=None,
             will_retry=will_retry
         )
 
+        # El aviso llevaba todos los identificadores y ninguna forma de
+        # actuar: arreglarlo significaba entrar a la base de datos. Con el
+        # botón, quien tiene permiso concede el acceso desde aquí.
+        teclado_arreglo = build_staff_incident_keyboard(incident_id)
+
         try:
 
             owner_user_id = get_group_owner_user_id(group_id)
 
             if owner_user_id and int(owner_user_id) != int(ADMIN_ID):
 
-                send_telegram_message(TOKEN, owner_user_id, aviso)
+                send_telegram_message(TOKEN, owner_user_id, aviso,
+                                      reply_markup=teclado_arreglo)
 
 
             enviados = notify_super_admins(
                 TOKEN,
                 aviso,
-                fallback_admin_id=ADMIN_ID
+                fallback_admin_id=ADMIN_ID,
+                reply_markup=teclado_arreglo
             )
 
             summary["staff_notified"] = bool(enviados)

@@ -21290,6 +21290,154 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    # ARREGLAR UN COBRO SIN ACCESO: el aviso de incidencia llevaba todos los
+    # identificadores y ninguna forma de actuar. Aquí se concede el acceso —
+    # lo hace una PERSONA con permiso sobre esa comunidad, y el permiso se
+    # comprueba al pulsar, porque un callback se puede reenviar.
+
+    if data.startswith("incident_fix_go_"):
+
+        from incident_repair_service import fetch_open_incident, repair_incident
+
+        resto = data[len("incident_fix_go_"):].split("_")
+
+        if len(resto) != 2 or not all(p.isdigit() for p in resto):
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        incident_id, duration_days = int(resto[0]), int(resto[1])
+        incidencia = fetch_open_incident(incident_id)
+
+        if not incidencia:
+
+            await query.message.reply_text(
+                "✅ Esa incidencia ya estaba resuelta. No se ha concedido "
+                "nada otra vez."
+            )
+
+            return
+
+
+        group_id = incidencia[3]
+
+        if not (is_super_admin(user_id)
+                or get_group_owner_user_id(group_id) == user_id):
+
+            await query.answer("Solo el propietario puede hacerlo",
+                               show_alert=True)
+
+            return
+
+
+        resultado = await repair_incident(
+            context, incident_id, user_id, duration_days
+        )
+
+        if not resultado["ok"]:
+
+            await query.message.reply_text(
+                "❌ No se ha podido conceder el acceso "
+                f"({resultado['reason']}). El pago sigue registrado y la "
+                "incidencia, abierta."
+            )
+
+            return
+
+
+        entrega = ("Le hemos enviado su enlace de entrada."
+                   if resultado["link_sent"]
+                   else "OJO: no hemos podido escribirle (no ha abierto el "
+                        "bot todavía). El acceso ya está concedido.")
+
+        await query.message.reply_text(
+            f"✅ Acceso concedido a {resultado['user_id']} durante "
+            f"{duration_days} días.\n\n{entrega}\n\n"
+            "No se ha registrado ningún pago nuevo: el cobro original ya "
+            "estaba contado."
+        )
+
+        return
+
+
+    if data.startswith("incident_fix_"):
+
+        from incident_repair_service import (
+            fetch_open_incident,
+            fetch_repair_durations,
+        )
+
+        resto = data[len("incident_fix_"):]
+
+        if not resto.isdigit():
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        incident_id = int(resto)
+        incidencia = fetch_open_incident(incident_id)
+
+        if not incidencia:
+
+            await query.message.reply_text(
+                "✅ Esa incidencia ya estaba resuelta."
+            )
+
+            return
+
+
+        group_id, group_name = incidencia[3], incidencia[5]
+
+        if not (is_super_admin(user_id)
+                or get_group_owner_user_id(group_id) == user_id):
+
+            await query.answer("Solo el propietario puede hacerlo",
+                               show_alert=True)
+
+            return
+
+
+        duraciones = fetch_repair_durations(group_id)
+
+        if not duraciones:
+
+            await query.message.reply_text(
+                f"⚠️ {group_name} no tiene ningún plan activo con duración "
+                "válida, así que no hay duración que conceder. Arregla el "
+                "plan y vuelve a pulsar."
+            )
+
+            return
+
+
+        teclado = [
+            [InlineKeyboardButton(
+                f"{nombre} · {dias} días",
+                callback_data=f"incident_fix_go_{incident_id}_{int(dias)}"
+            )]
+            for dias, nombre in duraciones
+        ]
+
+        await query.message.reply_text(
+            f"¿Cuánto acceso le concedemos en {group_name}?\n\n"
+            "Se le enviará su enlace en el momento. No se registra ningún "
+            "pago nuevo: el cobro original ya está contado.",
+            reply_markup=InlineKeyboardMarkup(teclado)
+        )
+
+        return
+
+
     # CAMBIO DE PLAN: el único caso en que un socio con acceso activo puede
     # pagar otra vez a propósito. Va antes que cualquier prefijo de compra y
     # se valida contra la base de datos (un callback se escribe a mano, la
