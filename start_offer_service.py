@@ -375,3 +375,41 @@ def etiqueta_de_compra_directa(oferta):
         return f"💳 Entrar ahora — {oferta['precio']}"
 
     return "💳 Entrar ahora"
+
+
+def describe_shop_window():
+    """Una línea con el estado del escaparate, para el arranque.
+
+    Es el dato de negocio más importante del sistema y el único que no se
+    puede leer en ninguna pantalla: si no hay ninguna comunidad vendible,
+    /start no tiene nada que vender y da igual lo bien redactado que esté.
+    Un bot que arranca sin escaparate no lo dice por ningún sitio, y ese
+    silencio es el que deja pasar meses sin una sola venta.
+
+    Se pregunta con user_id=0 a propósito: nadie tiene acceso con ese id, así
+    que lo que sale es el escaparate tal y como lo ve un desconocido.
+    """
+
+    try:
+
+        ofertas = fetch_sellable_communities(0, limit=100)
+
+    except Exception as e:
+
+        return f"Escaparate: no se pudo comprobar ({str(e)[:120]})."
+
+    if not ofertas:
+
+        return (
+            "Escaparate: 0 comunidades vendibles — /start no tiene nada que "
+            "vender. Hace falta al menos una comunidad activa, no gratuita, "
+            "con un plan activo con importe y duración, y la entrega sin "
+            "descartar."
+        )
+
+    precios = [o["precio"] for o in ofertas if o["precio"]]
+
+    return (
+        f"Escaparate: {len(ofertas)} comunidad(es) vendible(s)"
+        + (f", la más barata a {precios[0]}." if precios else ".")
+    )

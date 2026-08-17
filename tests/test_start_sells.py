@@ -699,3 +699,66 @@ def test_a_broken_link_is_never_a_dead_end(catalogo):
         assert not any(
             "Entrar ahora" in t for t, _c in botones
         ), f"la carga «{basura}» montó una oferta que nadie ha pedido"
+
+
+# =========================
+# EL ESTADO DEL ESCAPARATE, EN EL ARRANQUE
+# =========================
+# Todo lo anterior da igual si en producción no hay nada vendible, y eso no se
+# podía leer en ninguna parte. Un bot que arranca sin escaparate y no lo dice
+# es un bot que puede pasarse meses sin una sola venta sin que nadie sepa por
+# qué.
+
+def test_the_startup_line_says_when_there_is_nothing_to_sell(clean_db):
+    linea = sos.describe_shop_window()
+
+    assert "0 comunidades vendibles" in linea
+    assert "no tiene nada que vender" in linea, (
+        "el diagnóstico tiene que decir la consecuencia, no solo el número"
+    )
+
+
+def test_the_startup_line_counts_and_prices_the_shop_window(catalogo):
+    linea = sos.describe_shop_window()
+
+    assert "1 comunidad" in linea
+    assert "15 EUR/mes" in linea, (
+        "el precio de entrada más bajo es el dato que dice si el escaparate "
+        "está puesto de verdad"
+    )
+
+    # Las tres que no se pueden vender no se cuentan: un número que exagera
+    # es peor que no tener número.
+    assert "4" not in linea
+
+
+def test_the_startup_line_never_brings_the_bot_down(catalogo, monkeypatch):
+    def explota(*args, **kwargs):
+        raise RuntimeError("base de datos caída")
+
+    monkeypatch.setattr(sos, "fetch_sellable_communities", explota)
+
+    linea = sos.describe_shop_window()
+
+    assert "no se pudo comprobar" in linea, (
+        "una línea de diagnóstico no puede impedir que el bot arranque"
+    )
+
+    fuente = open("main.py", encoding="utf-8").read()
+
+    pos = fuente.index("describe_shop_window")
+    assert "try:" in fuente[pos - 400:pos]
+
+
+def test_the_shop_window_is_described_as_a_stranger_sees_it(catalogo):
+    """Con user_id=0: nadie tiene acceso con ese id."""
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (0, 51, NOW() + INTERVAL '10 days', TRUE)"
+        )
+
+    # Aunque exista una fila con user_id=0, la comunidad sigue contando: lo que
+    # se mide es el escaparate, no el acceso de nadie.
+    assert "1 comunidad" in sos.describe_shop_window()

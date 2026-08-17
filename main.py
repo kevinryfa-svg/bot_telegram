@@ -3340,6 +3340,20 @@ def main():
         daemon=True
     ).start()
 
+    # El estado del escaparate, en el arranque: si no hay nada vendible,
+    # /start no puede vender nada y hasta ahora eso no se decía en ningún
+    # sitio. Nunca puede tumbar el arranque: es una línea de diagnóstico.
+    try:
+
+        from start_offer_service import describe_shop_window
+
+        print(describe_shop_window())
+
+    except Exception as e:
+
+        print("Escaparate: no se pudo comprobar:", str(e)[:200])
+
+
     print("Bot iniciado correctamente")
 
     telegram_app.run_polling()
