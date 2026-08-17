@@ -647,24 +647,6 @@ def process_group_subscription_invoice_failed(invoice, event_type):
 
         return True
 
-    log_event(
-        "group_subscription_payment_failed",
-        category="payment",
-        severity="warning",
-        scope="group",
-        group_id=group_id,
-        actor_user_id=user_id,
-        target_user_id=user_id,
-        message="Cobro de renovación fallido; Stripe reintentará.",
-        metadata={
-            "stripe_subscription_id": stripe_subscription_id,
-            "invoice_id": invoice.get("id"),
-            "attempt_count": invoice.get("attempt_count"),
-            "dunning_stage": clave,
-            "next_attempt": fecha_siguiente
-        }
-    )
-
     language = load_user_language(user_id)
 
     # El botón que salva la suscripción: cambiar la tarjeta en un toque. La
@@ -681,6 +663,28 @@ def process_group_subscription_invoice_failed(invoice, event_type):
             "text": t("renewal.update_card_button", language),
             "url": url_portal
         }]]}
+
+    # El registro va DESPUÉS de saber si había portal, para poder anotarlo:
+    # un aviso de "revisa tu tarjeta" sin botón donde revisarla es un cobro
+    # que se pierde, y hasta ahora ese coste no se medía en ningún sitio.
+    log_event(
+        "group_subscription_payment_failed",
+        category="payment",
+        severity="warning",
+        scope="group",
+        group_id=group_id,
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        message="Cobro de renovación fallido; Stripe reintentará.",
+        metadata={
+            "stripe_subscription_id": stripe_subscription_id,
+            "invoice_id": invoice.get("id"),
+            "attempt_count": invoice.get("attempt_count"),
+            "dunning_stage": clave,
+            "next_attempt": fecha_siguiente,
+            "portal_ok": bool(url_portal)
+        }
+    )
 
     avisar_comprador(user_id, t(
         clave, language,

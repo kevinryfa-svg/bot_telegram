@@ -186,3 +186,81 @@ def test_the_panel_is_platform_only():
         "es la foto de comunidades de OTROS propietarios: solo plataforma"
     )
     assert "build_platform_health_text" in trozo
+
+
+# =========================
+# EL COSTE DE TENER EL PORTAL SIN ACTIVAR
+# =========================
+# Sin el portal de facturación de Stripe, el aviso de cobro fallido sale
+# igual (eso nunca se degrada al silencio) pero SIN el botón que arregla el
+# problema en un toque. Ese coste no se veía en ninguna parte.
+
+def registrar_aviso_fallido(group_id, user_id, portal_ok):
+    from audit_log_service import log_event
+
+    log_event(
+        "group_subscription_payment_failed",
+        category="payment", severity="warning", scope="group",
+        group_id=group_id, actor_user_id=user_id, target_user_id=user_id,
+        message="Cobro de renovación fallido; Stripe reintentará.",
+        metadata={"portal_ok": portal_ok, "invoice_id": f"in_{user_id}"},
+    )
+
+
+def test_the_notices_without_a_card_button_are_counted(plataforma):
+    registrar_aviso_fallido(75, 7501, False)
+    registrar_aviso_fallido(75, 7502, False)
+    registrar_aviso_fallido(75, 7503, True)
+
+    sin_portal, total = phs.count_failed_notices_without_portal()
+
+    assert (sin_portal, total) == (2, 3)
+
+    texto = phs.build_platform_health_text()
+
+    assert "Portal de facturación sin activar (2 de 3 avisos)" in texto
+    assert "SIN botón para cambiar la tarjeta" in texto
+    assert "se activa una vez" in texto.lower()
+
+
+def test_old_notices_without_the_flag_are_not_counted(plataforma):
+    """Los avisos anteriores a medir esto no llevan la marca: no se inventan."""
+
+    from audit_log_service import log_event
+
+    log_event(
+        "group_subscription_payment_failed",
+        category="payment", severity="warning", scope="group",
+        group_id=75, actor_user_id=7599, target_user_id=7599,
+        message="Cobro fallido antiguo.",
+        metadata={"invoice_id": "in_viejo"},
+    )
+
+    assert phs.count_failed_notices_without_portal() == (0, 0), (
+        "sin la marca no se sabe si hubo botón: contarlo como fallo sería "
+        "inventarse un problema"
+    )
+
+
+def test_with_the_portal_active_the_section_disappears(plataforma):
+    registrar_aviso_fallido(75, 7504, True)
+    registrar_aviso_fallido(75, 7505, True)
+
+    texto = phs.build_platform_health_text()
+
+    assert "Portal de facturación sin activar" not in texto
+
+
+def test_the_failure_notice_records_whether_it_had_a_button():
+    """El registro tiene que ir DESPUÉS de saber si había portal."""
+
+    fuente = open("group_subscription_service.py", encoding="utf-8").read()
+
+    pos = fuente.index("def process_group_subscription_invoice_failed")
+    trozo = fuente[pos:pos + 3000]
+
+    assert '"portal_ok": bool(url_portal)' in trozo
+    assert trozo.index("url_portal = crear_url_portal_pago") < \
+        trozo.index('"group_subscription_payment_failed"'), (
+        "si el registro va antes, el dato del botón no se puede anotar"
+    )
