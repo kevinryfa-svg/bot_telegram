@@ -245,3 +245,80 @@ def test_the_kill_switch(comunidad, monkeypatch):
 
     assert rs.record_referral_click(9101, 9199, 91) is False
     assert rs.convert_referral(9199, 91) is None
+
+
+# =========================
+# EL INTERRUPTOR DEL PROPIETARIO
+# =========================
+# Los días los regala el propietario: la decisión de tener programa o no es
+# suya. Mostrarle el coste sin darle el interruptor es media función.
+
+def test_the_owner_can_turn_the_programme_off(comunidad):
+    assert rs.referrals_enabled_for_group(91) is True, (
+        "por defecto encendido, como estaba antes de existir la columna"
+    )
+
+    with comunidad.conn.cursor() as cur:
+        cur.execute("UPDATE groups SET referrals_enabled=FALSE WHERE id=91")
+
+    assert rs.referrals_enabled_for_group(91) is False
+
+    # Y con el programa apagado no se atribuye nada.
+    assert rs.record_referral_click(9101, 9199, 91) is False
+
+
+def test_a_missing_group_does_not_disable_the_programme(comunidad):
+    """Ante la duda, encendido: como funcionaba antes del interruptor."""
+
+    assert rs.referrals_enabled_for_group(999999) is True
+
+
+def test_days_already_earned_are_not_taken_back(comunidad):
+    """Apagar el programa no puede quitar lo que alguien ya ganó."""
+
+    rs.record_referral_click(9101, 9199, 91)
+
+    with comunidad.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (9199, 91, NOW() + INTERVAL '30 days', TRUE)"
+        )
+
+    rs.convert_referral(9199, 91)
+
+    with comunidad.conn.cursor() as cur:
+        cur.execute("SELECT expiration FROM users WHERE user_id=9101")
+        con_dias = cur.fetchone()[0]
+
+        cur.execute("UPDATE groups SET referrals_enabled=FALSE WHERE id=91")
+        cur.execute("SELECT expiration FROM users WHERE user_id=9101")
+
+        assert cur.fetchone()[0] == con_dias, (
+            "quitarle días a quien los ganó sería otra cosa"
+        )
+
+
+def test_the_buyer_screen_and_the_owner_switch_exist():
+    pantalla = open("mysub_callbacks.py", encoding="utf-8").read()
+
+    assert "referrals_enabled_for_group" in pantalla, (
+        "sin esto el socio recibiría un enlace que no atribuye nada: lo peor "
+        "de los dos mundos"
+    )
+    assert 't("mysub.invite_off"' in pantalla
+
+    panel = open("owner_panel_callbacks.py", encoding="utf-8").read()
+
+    assert 'callback_data="owner_panel_referrals_toggle"' in panel
+    assert 'if data == "owner_panel_referrals_toggle":' in panel
+
+    pos = panel.index('if data == "owner_panel_referrals_toggle":')
+    trozo = panel[pos:pos + 2500]
+
+    for permiso in ("can_manage_plans", "can_manage_groups",
+                    "can_view_payments", "can_manage_payments"):
+        assert permiso in trozo
+
+    assert "se quedan como están" in trozo, (
+        "hay que decirle qué pasa con los días ya regalados"
+    )

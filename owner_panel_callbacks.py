@@ -1459,6 +1459,75 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
         return
 
 
+    if data == "owner_panel_referrals_toggle":
+
+        # Mismos permisos que el resto del panel de negocio: quien decide los
+        # precios decide también cuántos días se regalan.
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\n"
+                "Ábrela primero en «🏪 Mis comunidades» y repite la acción.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        from referral_service import referrals_enabled_for_group
+
+        nuevo_estado = not referrals_enabled_for_group(group_id)
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    "UPDATE groups SET referrals_enabled=%s WHERE id=%s",
+                    (nuevo_estado, group_id)
+                )
+                conn.commit()
+
+        except Exception as e:
+
+            conn.rollback()
+
+            print("Referidos: error cambiando el interruptor:", str(e)[:200])
+
+            await query.message.reply_text(
+                "❌ No he podido cambiarlo ahora mismo. Inténtalo otra vez.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🎁 Programa de referidos ACTIVADO.\n\n"
+            "Tus socios verán su enlace personal en «Mis accesos», y cada "
+            "invitado que pague suma días de acceso a los dos. Los días los "
+            "regalas tú: el coste sale en este mismo panel."
+            if nuevo_estado else
+            "🎁 Programa de referidos DESACTIVADO.\n\n"
+            "Los enlaces que ya circulen dejan de atribuir nada, y no se "
+            "regalarán más días. Los que ya se dieron se quedan como están: "
+            "quitarle días a alguien que los ganó sería otra cosa.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Retención",
+                                     callback_data="owner_panel_retention")
+            ]])
+        )
+
+        return
+
+
     if data == "owner_panel_funnel":
 
         from owner_funnel_service import build_owner_funnel_text
@@ -1577,9 +1646,20 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
         info = fetch_group_basic_info(group_id)
         group_name = (info[1] if info else None) or f"Comunidad {group_id}"
 
+        from referral_service import referrals_enabled_for_group
+
+        referidos_on = referrals_enabled_for_group(group_id)
+
         teclado = [
             [InlineKeyboardButton("🔄 Actualizar",
                                   callback_data="owner_panel_retention")],
+            # Los días de los referidos los paga el propietario: el
+            # interruptor va junto al número que dice cuánto le cuestan.
+            [InlineKeyboardButton(
+                "🎁 Referidos: ON — apagar" if referidos_on
+                else "🎁 Referidos: OFF — encender",
+                callback_data="owner_panel_referrals_toggle"
+            )],
             [InlineKeyboardButton("💰 Panel de ingresos",
                                   callback_data="owner_panel_revenue")],
         ]

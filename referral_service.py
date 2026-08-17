@@ -74,6 +74,38 @@ def parse_referral_payload(carga):
         return None
 
 
+def referrals_enabled_for_group(group_id):
+    """¿Esta comunidad tiene el programa de referidos encendido?
+
+    Los días los regala el propietario, así que la decisión es suya. Ante un
+    error de base de datos se responde True, que es como funcionaba antes de
+    que existiera el interruptor: quedarse sin programa por un fallo de
+    lectura sería una avería silenciosa.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(referrals_enabled, TRUE)
+                FROM groups
+                WHERE id=%s
+
+            """, (group_id,))
+
+            fila = cur.fetchone()
+
+            return bool(fila[0]) if fila else True
+
+    except Exception as e:
+
+        print("Referidos: error leyendo el interruptor del grupo:", e)
+
+        return True
+
+
 def member_has_access(user_id, group_id):
     """True si esta persona ya está dentro de esa comunidad (o lo estuvo)."""
 
@@ -120,6 +152,10 @@ def record_referral_click(referrer_user_id, invited_user_id, group_id):
     if not member_has_access(referrer_user_id, group_id):
         # Quien recomienda tiene que ser de la casa: si no está dentro, el
         # enlace es de alguien que solo quiere días gratis.
+        return False
+
+    if not referrals_enabled_for_group(group_id):
+        # El propietario lo ha apagado para su comunidad.
         return False
 
     try:
