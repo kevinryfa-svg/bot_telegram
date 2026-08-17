@@ -523,11 +523,14 @@ def test_nothing_in_the_repo_can_touch_an_existing_subscriptions_price():
 
     for path, trozo in sitios:
 
-        # Tres usos legítimos: el interruptor (cancel_at_period_end), la
-        # oferta de salvamento (discounts=, que solo puede MEJORAR el precio)
-        # y la pausa (pause_collection, que suspende cobros sin tocarlo).
+        # Cuatro usos legítimos: el interruptor (cancel_at_period_end), la
+        # oferta de salvamento (discounts=, que solo puede MEJORAR el
+        # precio), la pausa (pause_collection, que suspende cobros sin
+        # tocarlo) y los días de regalo de un referido (trial_end, que
+        # RETRASA el cargo — es lo que convierte unos días regalados en
+        # días de verdad gratis).
         assert ("cancel_at_period_end" in trozo or "discounts=" in trozo
-                or "pause_collection" in trozo), (
+                or "pause_collection" in trozo or "trial_end" in trozo), (
             f"{path} modifica una suscripción para algo que no es el "
             "interruptor de renovación ni un descuento: eso puede tocar el "
             "precio de un suscriptor existente"

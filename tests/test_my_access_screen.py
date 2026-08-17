@@ -391,3 +391,47 @@ def test_renewal_receipts_carry_the_amount():
 
     source = open("group_subscription_service.py", encoding="utf-8").read()
     assert "renewal.renewed_priced" in source
+
+
+# =========================
+# LA PANTALLA DE INVITAR (referidos)
+# =========================
+
+def test_the_invite_screen_hands_over_the_personal_link(comprador_dentro):
+    """El enlace personal, el premio y el marcador, en una sola pantalla."""
+
+    import asyncio
+
+    import referral_service as rs
+
+    query, context = FakeQuery(), FakeContext()
+
+    asyncio.run(mc.handle_mysub_callbacks(
+        None, context, query, 7101, "mysub_invite_-1071"
+    ))
+
+    texto, teclado = query.message.enviados[0]
+
+    assert "Invita a VIP Fitness" in texto
+    assert f"?start=ref_71_7101" in texto, (
+        "el enlace lleva la comunidad y el socio: sin eso no hay atribución"
+    )
+    assert f"{rs.REFERRAL_DAYS} días" in texto
+    assert "Invitados: 0 · han pagado: 0 · días ganados: 0" in texto
+
+    botones = [b for fila in teclado.inline_keyboard for b in fila]
+    assert any(b.callback_data == "mysub_-1071" for b in botones)
+
+
+def test_the_invite_screen_survives_a_bogus_reference(comprador_dentro):
+    """Una referencia que no existe no puede dejar a nadie en un callejón."""
+
+    import asyncio
+
+    query, context = FakeQuery(), FakeContext()
+
+    asyncio.run(mc.handle_mysub_callbacks(
+        None, context, query, 7101, "mysub_invite_-9999999"
+    ))
+
+    assert query.message.enviados, "siempre se responde algo"

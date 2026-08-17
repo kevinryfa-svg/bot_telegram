@@ -596,6 +596,78 @@ TRANSLATIONS = {
         "en": "🧾 My payments",
     },
 
+    "mysub.btn_invite": {
+        "es": "🎁 Invita y ganáis días",
+        "en": "🎁 Invite a friend, both win days",
+    },
+
+    "mysub.invite_text": {
+        "es": (
+            "🎁 Invita a {group} y ganáis días los dos\n\n"
+            "Comparte tu enlace personal. Cuando quien entre por él pague, "
+            "se os suman {days} días de acceso a cada uno — automáticamente, "
+            "sin códigos ni avisos.\n\n"
+            "{link}\n\n"
+            "Invitados: {invited} · han pagado: {converted} · "
+            "días ganados: {earned}"
+        ),
+        "en": (
+            "🎁 Invite friends to {group} and you both win days\n\n"
+            "Share your personal link. When someone who joins through it "
+            "pays, you each get {days} extra days of access — automatically, "
+            "no codes, no reminders.\n\n"
+            "{link}\n\n"
+            "Invited: {invited} · paid: {converted} · days earned: {earned}"
+        ),
+    },
+
+    "referral.landing": {
+        "es": (
+            "👋 Te han invitado a {group}.\n\n"
+            "Si entras por esta invitación, tú y quien te invitó ganáis días "
+            "de acceso extra en cuanto completes tu suscripción."
+        ),
+        "en": (
+            "👋 You've been invited to {group}.\n\n"
+            "Join through this invitation and both you and your friend get "
+            "extra days of access as soon as your subscription is complete."
+        ),
+    },
+
+    "referral.landing_button": {
+        "es": "👀 Ver la comunidad",
+        "en": "👀 See the community",
+    },
+
+    "referral.referrer_rewarded": {
+        "es": (
+            "🎁 Tu invitación funcionó: alguien acaba de entrar en {group} "
+            "por tu enlace.\n\n"
+            "Te hemos sumado {days} días de acceso. Gracias por traer gente "
+            "buena."
+        ),
+        "en": (
+            "🎁 Your invitation worked: someone just joined {group} through "
+            "your link.\n\n"
+            "We've added {days} days of access to your subscription. Thanks "
+            "for bringing good people in."
+        ),
+    },
+
+    "referral.invited_rewarded": {
+        "es": (
+            "🎁 Por entrar en {group} con la invitación de un miembro, te "
+            "hemos sumado {days} días de acceso extra.\n\n"
+            "Y tú también tienes tu enlace para invitar: está en «Mis "
+            "accesos»."
+        ),
+        "en": (
+            "🎁 For joining {group} through a member's invitation, we've "
+            "added {days} extra days of access.\n\n"
+            "You have your own invite link too — it's in \"My access\"."
+        ),
+    },
+
     "mysub.receipts_title": {
         "es": "🧾 Tus pagos de {group}",
         "en": "🧾 Your payments for {group}",

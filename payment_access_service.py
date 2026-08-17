@@ -1110,6 +1110,26 @@ def grant_group_access_after_payment(
     resolve_incidents_for(user_id, group_id)
 
 
+    # REFERIDOS: si este alta venía de la recomendación de un socio, los dos
+    # cobran sus días aquí — cuando hay pago, no cuando hubo clic. Es
+    # idempotente (el estado 'pending' es la puerta), así que el reintento
+    # de un webhook no regala días dos veces. Y nunca puede tumbar la
+    # entrega del acceso: eso ya está guardado más arriba.
+    try:
+
+        from referral_service import convert_referral, notify_referral_conversion
+
+        conversion = convert_referral(user_id, group_id)
+
+        if conversion:
+
+            notify_referral_conversion(TOKEN, conversion, group_name)
+
+    except Exception as e:
+
+        print("Referidos: error al convertir tras el pago:", str(e)[:200])
+
+
     # 24 h por defecto (ACCESS_LINK_EXPIRE_SECONDS) en vez de 180 s: el
     # enlace es de un solo uso y al entrar se comprueba el acceso, así que
     # los tres minutos solo dejaban fuera a clientes que ya habían pagado.
