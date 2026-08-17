@@ -158,6 +158,49 @@ def attach_subscription_to_member(user_id, group_id, stripe_subscription_id,
 
             cur.execute("""
 
+                SELECT stripe_subscription_id
+                FROM users
+                WHERE user_id=%s AND group_id=%s
+
+            """, (user_id, group_id))
+
+            fila = cur.fetchone()
+            anterior = fila[0] if fila else None
+
+
+        # LA SALVAGUARDA DEL DOBLE COBRO: si ya había OTRA suscripción anclada
+        # (p. ej. compró el plan anual teniendo el mensual), la vieja se apaga
+        # al final de su periodo. Sin esto, las dos cobrarían para siempre y
+        # el ancla solo recordaría la nueva.
+        if anterior and anterior != stripe_subscription_id:
+
+            try:
+
+                stripe.Subscription.modify(anterior, cancel_at_period_end=True)
+
+                log_event(
+                    "group_subscription_replaced",
+                    category="payment",
+                    severity="info",
+                    scope="group",
+                    group_id=group_id,
+                    actor_user_id=user_id,
+                    target_user_id=user_id,
+                    message="Suscripción anterior apagada al anclar una nueva (cambio de plan).",
+                    metadata={"anterior": anterior,
+                              "nueva": stripe_subscription_id},
+                )
+
+            except Exception as e:
+
+                print("Renovación: no se pudo apagar la suscripción anterior:",
+                      str(e)[:200])
+
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
                 UPDATE users
                 SET stripe_subscription_id=%s,
                     stripe_customer_id=COALESCE(%s, stripe_customer_id)
