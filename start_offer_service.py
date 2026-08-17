@@ -85,7 +85,8 @@ def formato_precio(amount, currency, duration_days):
     return f"{importe} {moneda}{formato_periodo(duration_days)}"
 
 
-def fetch_sellable_communities(user_id, limit=MAX_OFERTAS):
+def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
+                               exigir_visibilidad=True):
     """Las comunidades que se pueden ofrecer AHORA, con su mejor precio.
 
     Devuelve una lista de diccionarios con lo que hace falta para vender:
@@ -95,6 +96,16 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS):
 
     El orden es por precio de entrada: la puerta más baja primero, porque es
     la que convierte a un desconocido.
+
+    Con `solo_grupo` se pregunta por UNA comunidad concreta: es el caso del
+    enlace directo de un anuncio, donde no hay escaparate que ordenar.
+
+    Y ahí `exigir_visibilidad=False` tiene sentido: los filtros de visibilidad
+    deciden qué se EXPONE en el escaparate, no a quién se le permite comprar
+    lo que ha venido a comprar. Quien llega con el enlace del anuncio del
+    propietario ya ha sido invitado por él. Lo que NO se relaja es nada de lo
+    que hace falta para entregar: comunidad activa, plan usable, no gratuita y
+    la entrega sin descartar.
     """
 
     try:
@@ -154,8 +165,10 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS):
                   AND g.telegram_group_id <> 0
                   AND COALESCE(g.is_free_group, FALSE) = FALSE
                   AND COALESCE(g.is_free, FALSE) = FALSE
+                  AND (%(solo_grupo)s IS NULL OR g.id = %(solo_grupo)s)
                   AND (
-                      COALESCE(g.is_marketplace_visible, FALSE) = TRUE
+                      %(sin_visibilidad)s
+                      OR COALESCE(g.is_marketplace_visible, FALSE) = TRUE
                       OR COALESCE(g.is_main_menu_visible, FALSE) = TRUE
                       OR COALESCE(g.public_visibility, 'start_home')
                          IN ('start_home', 'explore_only', 'both')
@@ -167,7 +180,12 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS):
                 ORDER BY barato.amount ASC, g.id ASC
                 LIMIT %(limite)s
 
-            """, {"uid": user_id, "limite": int(limit)})
+            """, {
+                "uid": user_id,
+                "limite": int(limit),
+                "solo_grupo": int(solo_grupo) if solo_grupo else None,
+                "sin_visibilidad": not exigir_visibilidad,
+            })
 
             filas = cur.fetchall() or []
 
@@ -292,3 +310,68 @@ def build_offer_intro(ofertas):
         f"🔓 {cuantas} comunidades con acceso inmediato. El precio está en "
         "cada botón; el acceso llega solo en cuanto se confirma el pago:"
     )
+
+
+def fetch_offer_for_group(group_id, user_id):
+    """La oferta de UNA comunidad, la del enlace de un anuncio. None si no hay.
+
+    None significa siempre lo mismo: esa comunidad no se puede vender ahora
+    mismo (no existe, está apagada, es gratuita, no tiene plan usable o la
+    entrega está descartada). Quien llame cae al menú de siempre — un enlace
+    de un anuncio no puede acabar en un callejón, porque el clic ya está
+    pagado.
+    """
+
+    try:
+
+        group_id = int(group_id)
+
+    except (TypeError, ValueError):
+
+        return None
+
+    ofertas = fetch_sellable_communities(
+        user_id, limit=1, solo_grupo=group_id, exigir_visibilidad=False
+    )
+
+    return ofertas[0] if ofertas else None
+
+
+def parse_group_payload(carga):
+    """'group_51' -> 51. None si la carga no es un enlace de comunidad.
+
+    Se valida aquí y no en el sitio de uso porque esta carga viene de fuera:
+    la escribe quien quiera en la barra de direcciones de Telegram.
+    """
+
+    if not carga or not carga.startswith("group_"):
+        return None
+
+    resto = carga[len("group_"):]
+
+    if not resto.isdigit():
+        return None
+
+    try:
+
+        valor = int(resto)
+
+    except (TypeError, ValueError):
+
+        return None
+
+    return valor if valor > 0 else None
+
+
+def etiqueta_de_compra_directa(oferta):
+    """El botón de la pantalla de UNA oferta: el nombre ya está en el texto.
+
+    Repetir ahí el nombre de la comunidad gasta el ancho del botón en algo que
+    la persona acaba de leer dos líneas más arriba. Lo que sí va, siempre, es
+    el precio: un botón de pago sin precio es una trampa.
+    """
+
+    if oferta["precio"]:
+        return f"💳 Entrar ahora — {oferta['precio']}"
+
+    return "💳 Entrar ahora"
