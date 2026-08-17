@@ -555,11 +555,78 @@ def process_group_subscription_invoice_paid(invoice, event_type):
     return True
 
 
+def dunning_notice_already_sent(invoice_id, attempt):
+    """Marca-primero por factura e intento: el reenvío del webhook no repite.
+
+    True si ya estaba marcado (no hay que avisar). Ante un error de base de
+    datos devuelve False: mejor un aviso repetido que un cliente que pierde
+    el acceso sin haber sido avisado.
+    """
+
+    if not invoice_id:
+        return False
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO dunning_notices (invoice_id, attempt)
+                VALUES (%s, %s)
+                ON CONFLICT (invoice_id, attempt) DO NOTHING
+
+            """, (invoice_id, int(attempt or 0)))
+
+            nuevo = cur.rowcount > 0
+            conn.commit()
+
+            return not nuevo
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Renovación: error marcando el aviso de cobro fallido:", e)
+
+        return False
+
+
+def dunning_stage(invoice):
+    """(clave_i18n, fecha_siguiente_intento) según en qué punto va la serie.
+
+    Stripe reintenta varias veces a lo largo de ~2 semanas y manda un evento
+    por intento con attempt_count. Un solo aviso al principio se pierde entre
+    el ruido; lo que recupera cobros es una serie que sube de tono y, sobre
+    todo, un ÚLTIMO aviso que dice la verdad: si este no entra, se acaba.
+
+    next_payment_attempt vacío es la señal de Stripe de que ya no habrá más
+    intentos: ese es el aviso final.
+    """
+
+    siguiente = invoice.get("next_payment_attempt")
+    intento = int(invoice.get("attempt_count") or 1)
+
+    fecha_siguiente = (
+        formato_fecha(datetime.fromtimestamp(int(siguiente)))
+        if siguiente else None
+    )
+
+    if not siguiente:
+        return ("renewal.payment_failed_last", None)
+
+    if intento <= 1:
+        return ("renewal.payment_failed", fecha_siguiente)
+
+    return ("renewal.payment_failed_retry", fecha_siguiente)
+
+
 def process_group_subscription_invoice_failed(invoice, event_type):
     """
     Un cobro de renovación ha fallado. El acceso NO se toca: el periodo pagado
     sigue corriendo y Stripe reintentará solo. Lo único urgente es que el
-    comprador se entere, porque casi siempre es su tarjeta.
+    comprador se entere, porque casi siempre es su tarjeta — y que se entere
+    CADA vez, con el tono que toca: el último intento no es el primero.
     """
 
     stripe_subscription_id = extraer_subscription_id(invoice.get("subscription"))
@@ -571,6 +638,14 @@ def process_group_subscription_invoice_failed(invoice, event_type):
 
     user_id, group_id = socio["user_id"], socio["group_id"]
     group_name = fetch_group_name(group_id)
+
+    clave, fecha_siguiente = dunning_stage(invoice)
+
+    if dunning_notice_already_sent(
+        invoice.get("id"), invoice.get("attempt_count")
+    ):
+
+        return True
 
     log_event(
         "group_subscription_payment_failed",
@@ -584,7 +659,9 @@ def process_group_subscription_invoice_failed(invoice, event_type):
         metadata={
             "stripe_subscription_id": stripe_subscription_id,
             "invoice_id": invoice.get("id"),
-            "attempt_count": invoice.get("attempt_count")
+            "attempt_count": invoice.get("attempt_count"),
+            "dunning_stage": clave,
+            "next_attempt": fecha_siguiente
         }
     )
 
@@ -606,8 +683,9 @@ def process_group_subscription_invoice_failed(invoice, event_type):
         }]]}
 
     avisar_comprador(user_id, t(
-        "renewal.payment_failed", language,
-        group=group_name
+        clave, language,
+        group=group_name,
+        date=fecha_siguiente or ""
     ), reply_markup=teclado)
 
     return True
@@ -738,10 +816,30 @@ def process_group_subscription_deleted(subscription, event_type):
 
     language = load_user_language(user_id)
 
-    avisar_comprador(user_id, t(
-        "renewal.ended", language,
-        group=group_name
-    ))
+    # Si la suscripción muere por impago (past_due agotado), el mensaje no
+    # puede ser el mismo que cuando alguien cancela a propósito: esta persona
+    # NO quería irse, se le rompió la tarjeta. Y necesita el camino de vuelta
+    # en el mismo mensaje, no un "escríbenos".
+    estado = (subscription.get("status") or "").lower()
+    murio_por_impago = estado in ("past_due", "unpaid", "incomplete_expired")
+
+    if murio_por_impago:
+
+        avisar_comprador(
+            user_id,
+            t("renewal.ended_unpaid", language, group=group_name),
+            reply_markup={"inline_keyboard": [[{
+                "text": t("renewal.ended_unpaid_button", language),
+                "callback_data": f"marketplace_group_{group_id}"
+            }]]}
+        )
+
+    else:
+
+        avisar_comprador(user_id, t(
+            "renewal.ended", language,
+            group=group_name
+        ))
 
     return True
 

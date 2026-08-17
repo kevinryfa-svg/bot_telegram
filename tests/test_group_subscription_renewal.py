@@ -43,6 +43,12 @@ def factura(billing_reason="subscription_cycle", invoice_id="in_95",
         "amount_paid": amount_paid,
         "currency": "eur",
         "attempt_count": 1,
+        # Stripe manda esta fecha mientras queden reintentos, y la deja vacía
+        # cuando ya no habrá más: es lo que distingue el primer aviso del
+        # último. La factura de referencia es "aún quedan intentos".
+        "next_payment_attempt": int(
+            (datetime.now() + timedelta(days=3)).timestamp()
+        ),
         "lines": {"data": [{"period": {"end": fin}}]},
     }
 
@@ -585,3 +591,126 @@ def test_the_switch_without_subscription_says_no(suscriptor):
         cur.execute("UPDATE users SET stripe_subscription_id=NULL WHERE user_id=9501")
 
     assert gss.set_renewal_enabled(9501, 95, False) is False
+
+
+# =========================
+# LA SERIE DE RECUPERACIÓN DE COBROS FALLIDOS
+# =========================
+# Stripe reintenta varias veces en ~2 semanas y manda un evento por intento.
+# Un solo aviso al principio se pierde; lo que recupera cobros es una serie
+# que sube de tono y un último aviso que dice la verdad.
+
+def test_the_second_attempt_raises_the_tone_and_gives_the_date(suscriptor):
+    factura_2 = factura(invoice_id="in_dun_2")
+    factura_2["attempt_count"] = 2
+
+    gss.process_group_subscription_lifecycle_event(
+        evento("invoice.payment_failed", factura_2)
+    )
+
+    texto = [t for c, t in suscriptor["avisos"] if c == 9501][0]
+
+    assert "Seguimos sin poder cobrar" in texto
+    assert "los intentos se acaban" in texto
+
+    from datetime import datetime as dt
+
+    fecha = dt.fromtimestamp(factura_2["next_payment_attempt"]).strftime("%d/%m/%Y")
+    assert fecha in texto, "el próximo intento con fecha concreta"
+
+
+def test_the_last_attempt_says_the_truth(suscriptor):
+    """Sin next_payment_attempt, Stripe ya no reintentará: es el aviso final."""
+
+    factura_final = factura(invoice_id="in_dun_last")
+    factura_final["attempt_count"] = 4
+    factura_final["next_payment_attempt"] = None
+
+    gss.process_group_subscription_lifecycle_event(
+        evento("invoice.payment_failed", factura_final)
+    )
+
+    texto = [t for c, t in suscriptor["avisos"] if c == 9501][0]
+
+    assert "Último aviso" in texto
+    assert "no habrá más intentos" in texto
+    assert "perderás el acceso" in texto
+
+    # Y el acceso sigue intacto: el aviso final avisa, no revoca.
+    assert estado(suscriptor["db"])["activo"] is True
+
+
+def test_each_attempt_warns_once_even_if_stripe_resends(suscriptor):
+    factura_1 = factura(invoice_id="in_dun_dedupe")
+
+    gss.process_group_subscription_lifecycle_event(
+        evento("invoice.payment_failed", factura_1)
+    )
+    gss.process_group_subscription_lifecycle_event(
+        evento("invoice.payment_failed", factura_1)
+    )
+
+    al_comprador = [t for c, t in suscriptor["avisos"] if c == 9501]
+    assert len(al_comprador) == 1, "el reenvío del webhook no repite el aviso"
+
+    # Pero el intento SIGUIENTE sí avisa: no es silencio, es no repetir.
+    factura_2 = factura(invoice_id="in_dun_dedupe")
+    factura_2["attempt_count"] = 2
+
+    gss.process_group_subscription_lifecycle_event(
+        evento("invoice.payment_failed", factura_2)
+    )
+
+    al_comprador = [t for c, t in suscriptor["avisos"] if c == 9501]
+    assert len(al_comprador) == 2
+
+
+def test_dying_of_unpaid_is_not_the_same_as_quitting(suscriptor, monkeypatch):
+    """Quien pierde la tarjeta no quería irse: necesita el camino de vuelta."""
+
+    teclados = []
+    monkeypatch.setattr(
+        gss, "send_telegram_message",
+        lambda token, chat, text, reply_markup=None:
+            teclados.append((chat, text, reply_markup))
+    )
+
+    muerta = suscripcion_obj()
+    muerta["status"] = "past_due"
+
+    gss.process_group_subscription_lifecycle_event(
+        evento("customer.subscription.deleted", muerta)
+    )
+
+    chat, texto, teclado = teclados[-1]
+
+    assert "no pudimos cobrar" in texto
+    assert "escribirle a nadie" in texto
+
+    boton = teclado["inline_keyboard"][0][0]
+    assert boton["callback_data"] == "marketplace_group_95", (
+        "el botón lleva a suscribirse de nuevo, no a soporte"
+    )
+
+
+def test_quitting_on_purpose_keeps_the_plain_goodbye(suscriptor, monkeypatch):
+    teclados = []
+    monkeypatch.setattr(
+        gss, "send_telegram_message",
+        lambda token, chat, text, reply_markup=None:
+            teclados.append((chat, text, reply_markup))
+    )
+
+    cancelada = suscripcion_obj()
+    cancelada["status"] = "canceled"
+
+    gss.process_group_subscription_lifecycle_event(
+        evento("customer.subscription.deleted", cancelada)
+    )
+
+    chat, texto, teclado = teclados[-1]
+
+    assert "no pudimos cobrar" not in texto
+    assert teclado is None, (
+        "a quien se va por su propia decisión no se le persigue con un botón"
+    )
