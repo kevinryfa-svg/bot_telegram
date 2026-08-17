@@ -761,11 +761,15 @@ def fetch_renewal_state(user_id, group_id):
 
         cancelada = suscripcion.get("cancel_at_period_end")
         fin = suscripcion.get("current_period_end")
+        pausa = suscripcion.get("pause_collection") or None
+        reanuda = (pausa or {}).get("resumes_at") if isinstance(pausa, dict) else None
 
         return {
             "stripe_subscription_id": stripe_subscription_id,
             "cancel_at_period_end": bool(cancelada),
             "current_period_end": datetime.fromtimestamp(int(fin)) if fin else None,
+            "paused": bool(pausa),
+            "resumes_at": datetime.fromtimestamp(int(reanuda)) if reanuda else None,
         }
 
     except Exception as e:
@@ -773,6 +777,112 @@ def fetch_renewal_state(user_id, group_id):
         print("Renovación: error leyendo el estado de la suscripción:", str(e)[:200])
 
         return None
+
+
+def pause_renewal(user_id, group_id, days=30):
+    """
+    La tercera vía entre pagar y cancelar: pausa de {days} días con vuelta
+    automática. behavior="void": las facturas del periodo en pausa se anulan
+    (no se cobra nada), y resumes_at reanuda los cobros solo — el que se va
+    por saturación o dinero corto no se pierde, se pausa.
+
+    El acceso sigue su curso natural: dura hasta el fin del periodo YA pagado
+    y, al reanudarse el cobro, invoice.paid lo extiende como cualquier
+    renovación. No se paga → no se accede → se vuelve sin hacer nada.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT stripe_subscription_id
+                FROM users
+                WHERE user_id=%s AND group_id=%s
+                AND stripe_subscription_id IS NOT NULL
+
+            """, (user_id, group_id))
+
+            row = cur.fetchone()
+
+        if not row:
+            return False
+
+        import time as time_mod
+
+        stripe.Subscription.modify(
+            row[0],
+            pause_collection={
+                "behavior": "void",
+                "resumes_at": int(time_mod.time()) + int(days) * 86400,
+            },
+        )
+
+        log_event(
+            "group_subscription_paused",
+            category="payment",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message=f"Renovación pausada {days} días por el comprador.",
+            metadata={"stripe_subscription_id": row[0], "days": days},
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Renovación: error pausando:", str(e)[:200])
+
+        return False
+
+
+def resume_renewal(user_id, group_id):
+    """Deshace la pausa: los cobros vuelven en el siguiente ciclo."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT stripe_subscription_id
+                FROM users
+                WHERE user_id=%s AND group_id=%s
+                AND stripe_subscription_id IS NOT NULL
+
+            """, (user_id, group_id))
+
+            row = cur.fetchone()
+
+        if not row:
+            return False
+
+        # La cadena vacía es como Stripe borra pause_collection.
+        stripe.Subscription.modify(row[0], pause_collection="")
+
+        log_event(
+            "group_subscription_resumed",
+            category="payment",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Renovación reanudada por el comprador.",
+            metadata={"stripe_subscription_id": row[0]},
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Renovación: error reanudando:", str(e)[:200])
+
+        return False
 
 
 def set_renewal_enabled(user_id, group_id, enabled):

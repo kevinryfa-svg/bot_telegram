@@ -154,3 +154,76 @@ def test_the_offer_gates_are_in_the_screen():
     assert "stripe_subscription_id IS NOT NULL" in contexto, (
         "sin suscripción de Stripe no hay nada que salvar: PayPal sigue igual"
     )
+
+
+# =========================
+# LA TERCERA VÍA: PAUSAR
+# =========================
+# Entre pagar y cancelar hay una pausa de un mes con vuelta automática: el
+# que se va por saturación o dinero corto no se pierde.
+
+def test_pausing_voids_a_month_and_resumes_alone(suscriptor, monkeypatch):
+    import group_subscription_service as gss
+
+    llamadas = []
+    monkeypatch.setattr(gss.stripe.Subscription, "modify",
+                        lambda sid, **k: llamadas.append((sid, k)) or {"id": sid})
+
+    assert gss.pause_renewal(8401, 84) is True
+
+    sid, cambios = llamadas[0]
+    assert sid == "sub_84"
+    assert cambios["pause_collection"]["behavior"] == "void", (
+        "void: la factura de la pausa se ANULA, no se acumula como deuda"
+    )
+
+    import time as time_mod
+    reanuda = cambios["pause_collection"]["resumes_at"]
+    assert 0 < reanuda - int(time_mod.time()) <= 30 * 86400 + 60, (
+        "la vuelta es automática: pausa sin fecha de vuelta es cancelación"
+    )
+
+
+def test_resuming_clears_the_pause(suscriptor, monkeypatch):
+    import group_subscription_service as gss
+
+    llamadas = []
+    monkeypatch.setattr(gss.stripe.Subscription, "modify",
+                        lambda sid, **k: llamadas.append((sid, k)) or {"id": sid})
+
+    assert gss.resume_renewal(8401, 84) is True
+    assert llamadas[0] == ("sub_84", {"pause_collection": ""}), (
+        "la cadena vacía es como Stripe borra la pausa"
+    )
+
+
+def test_a_paused_subscriber_gets_no_charge_notice(suscriptor, monkeypatch):
+    """El aviso pre-cobro a un pausado sería mentira: su factura se anula."""
+
+    import renewal_service as rs
+
+    monkeypatch.setattr(
+        "group_subscription_service.fetch_renewal_state",
+        lambda u, g: {"cancel_at_period_end": False, "paused": True}
+    )
+
+    assert rs.renewal_is_really_active(8401, 84) is False
+
+
+def test_the_pause_lives_in_both_cancel_screens_and_dodges_traps():
+    source = open("mysub_callbacks.py", encoding="utf-8").read()
+
+    assert source.count('t("mysub.pause_btn", language)') >= 3, (
+        "la pausa tiene que ofrecerse en la oferta de salvamento Y en las "
+        "dos confirmaciones de cancelación"
+    )
+
+    # mysub_pause_ y mysub_resume_ antes que la rama genérica mysub_.
+    assert source.index('data.startswith("mysub_pause_")') < \
+        source.index('if data.startswith("mysub_"):')
+    assert source.index('data.startswith("mysub_resume_")') < \
+        source.index('if data.startswith("mysub_"):')
+
+    # Y la pantalla enseña el estado en pausa con su botón de reanudar.
+    assert 'renovacion.get("paused")' in source
+    assert "mysub_resume_" in source
