@@ -379,6 +379,145 @@ def build_payments_csv(group_id):
     return "\n".join(lineas)
 
 
+def fetch_subscriber_rows(group_id, limit=30):
+    """
+    Los socios con renovación automática, ordenados por próximo cobro. La
+    expiración ES la fecha del próximo cobro: cada ciclo la mueve.
+
+    [(user_id, username, expiration, provider, ultimo_importe, currency)]
+    El importe es el ÚLTIMO cobro de cada socio: su precio real, no el de
+    lista — quien se suscribió antes de una subida conserva el suyo.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT u.user_id,
+                       u.username,
+                       u.expiration,
+                       CASE WHEN u.stripe_subscription_id IS NOT NULL
+                            THEN 'stripe' ELSE 'paypal' END,
+                       ultimo.amount,
+                       ultimo.currency
+                FROM users u
+                LEFT JOIN LATERAL (
+                    SELECT p.amount, p.currency
+                    FROM payments p
+                    WHERE p.user_id = u.user_id
+                      AND p.group_id = u.group_id
+                      AND LOWER(COALESCE(p.status, '')) IN %s
+                    ORDER BY p.payment_date DESC NULLS LAST, p.id DESC
+                    LIMIT 1
+                ) ultimo ON TRUE
+                WHERE u.group_id = %s
+                  AND COALESCE(u.subscription_active, FALSE) = TRUE
+                  AND (
+                      u.stripe_subscription_id IS NOT NULL
+                      OR EXISTS (
+                          SELECT 1 FROM payment_transactions pt
+                          WHERE pt.provider = 'paypal'
+                            AND pt.user_id = u.user_id
+                            AND pt.group_id = u.group_id
+                            AND pt.purchase_type = 'group_access'
+                            AND pt.status = 'paid'
+                            AND pt.external_checkout_id IS NOT NULL
+                      )
+                  )
+                ORDER BY u.expiration ASC NULLS LAST
+                LIMIT %s
+
+            """, (PAID_STATUSES, group_id, int(limit)))
+
+            return cur.fetchall() or []
+
+    except Exception as e:
+
+        print("Suscriptores: error listando:", e)
+
+        return []
+
+
+def build_owner_subscribers_text(group_id, group_name):
+    """La lista humana detrás del panel de ingresos."""
+
+    filas = fetch_subscriber_rows(group_id)
+
+    lineas = [
+        f"👥 Suscriptores de {group_name}",
+        "",
+    ]
+
+    if not filas:
+
+        lineas.append(
+            "Nadie tiene renovación automática todavía. Los planes de "
+            "suscripción de Stripe y PayPal aparecen aquí en cuanto alguien "
+            "se suscribe."
+        )
+
+        return "\n".join(lineas)
+
+
+    proximos_7d = 0
+    total_7d = {}
+
+    for user_id, username, expiration, provider, importe, currency in filas:
+
+        try:
+            fecha = expiration.strftime("%d/%m")
+        except Exception:
+            fecha = "—"
+
+        quien = f"@{username}" if username else f"id {user_id}"
+        precio = formato_importe(importe, currency) if importe else "—"
+
+        lineas.append(f"• {quien} — {precio} · próximo cobro {fecha} · {provider}")
+
+        try:
+
+            from datetime import datetime, timedelta
+
+            if expiration and expiration <= datetime.now() + timedelta(days=7):
+
+                proximos_7d += 1
+
+                if importe:
+
+                    clave = (currency or "EUR").upper()
+                    total_7d[clave] = total_7d.get(clave, 0) + int(importe)
+
+        except Exception:
+
+            pass
+
+
+    lineas.append("")
+    lineas.append(f"Suscriptores listados: {len(filas)}")
+
+    if proximos_7d:
+
+        importes = " · ".join(
+            formato_importe(total, cur_) for cur_, total in total_7d.items()
+        )
+
+        lineas.append(
+            f"📅 Cobros en los próximos 7 días: {proximos_7d}"
+            + (f" (≈ {importes})" if importes else "")
+        )
+
+
+    lineas.extend([
+        "",
+        "El importe es el último cobro de cada socio (su precio real). Si "
+        "alguien canceló, desaparece de aquí cuando su periodo termina.",
+    ])
+
+    return "\n".join(lineas)
+
+
 def formato_ventana(filas):
     """Una ventana de ingresos como texto: '15.00 EUR (3 pagos)'."""
 

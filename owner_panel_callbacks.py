@@ -1422,6 +1422,8 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
 
         teclado = [
             [InlineKeyboardButton("🔄 Actualizar", callback_data="owner_panel_revenue")],
+            [InlineKeyboardButton("👥 Suscriptores",
+                                  callback_data="owner_panel_subscribers")],
             [InlineKeyboardButton("📥 Exportar pagos (CSV)",
                                   callback_data="owner_panel_revenue_csv")],
         ]
@@ -1431,6 +1433,51 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
             context,
             query.message.chat_id,
             build_owner_revenue_text(group_id, group_name),
+            reply_markup=InlineKeyboardMarkup(teclado)
+        )
+
+        return
+
+
+    if data == "owner_panel_subscribers":
+
+        from owner_revenue_service import build_owner_subscribers_text
+
+        # Mismos permisos que los ingresos: la lista de quién paga ES la
+        # información de pagos.
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\n"
+                "Ábrela primero en «🏪 Mis comunidades» y repite la acción.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        info = fetch_group_basic_info(group_id)
+        group_name = (info[1] if info else None) or f"Comunidad {group_id}"
+
+        teclado = [
+            [InlineKeyboardButton("🔄 Actualizar",
+                                  callback_data="owner_panel_subscribers")],
+            [InlineKeyboardButton("💰 Panel de ingresos",
+                                  callback_data="owner_panel_revenue")],
+        ]
+        teclado.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_owner_subscribers_text(group_id, group_name),
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
