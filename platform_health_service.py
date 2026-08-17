@@ -187,6 +187,46 @@ def fetch_failed_charge_streaks():
         return []
 
 
+def count_failed_notices_without_portal(days=30):
+    """Cuántos avisos de "revisa tu tarjeta" salieron SIN botón para revisarla.
+
+    El portal de facturación de Stripe se activa una vez, en el panel de
+    Stripe. Sin él, el aviso de cobro fallido sigue saliendo —eso nunca se
+    degrada al silencio— pero sin el botón que arregla el problema en un
+    toque. Ese coste no se veía en ningún sitio: aquí se cuenta, con datos
+    reales, para que la activación deje de ser una tarea sin dueño.
+
+    Devuelve (sin_portal, total) del periodo.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*) FILTER (
+                           WHERE COALESCE(metadata->>'portal_ok', 'false') != 'true'
+                       ),
+                       COUNT(*)
+                FROM audit_logs
+                WHERE event_type = 'group_subscription_payment_failed'
+                  AND created_at >= NOW() - (%s || ' days')::interval
+                  AND metadata ? 'portal_ok'
+
+            """, (int(days),))
+
+            sin_portal, total = cur.fetchone() or (0, 0)
+
+            return (int(sin_portal or 0), int(total or 0))
+
+    except Exception as e:
+
+        print("Salud de plataforma: error contando avisos sin portal:", e)
+
+        return (0, 0)
+
+
 def _seccion(lineas, titulo, filas, formatear):
     """Añade una sección con tope y, si hay más, dice cuántas se callan."""
 
@@ -251,6 +291,24 @@ def build_platform_health_text():
         fallidos,
         lambda f: f"{f[1]} (id {f[0]}) — {f[2]} fallidos"
     )
+
+    sin_portal, total_fallidos = count_failed_notices_without_portal()
+
+    if sin_portal:
+
+        hay_algo = True
+
+        lineas.extend([
+            f"💳 Portal de facturación sin activar ({sin_portal} de "
+            f"{total_fallidos} avisos)",
+            f"   {sin_portal} compradores recibieron el aviso de cobro "
+            "fallido SIN botón para cambiar la tarjeta (últimos 30 días).",
+            "   Se activa una vez en el panel de Stripe → Configuración del "
+            "portal de cliente. Cada uno de esos avisos es un cobro que se "
+            "puede perder por una tarjeta caducada.",
+            "",
+        ])
+
 
     if not hay_algo:
 
