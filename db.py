@@ -4161,6 +4161,33 @@ def create_tables():
         # =========================
         # TABLA INCIDENCIAS DE PAGO
         # =========================
+        # RESÚMENES SEMANALES DEL PROPIETARIO
+        # =========================
+        # La clave única propietario+grupo+semana hace el envío idempotente:
+        # un redeploy en lunes no puede duplicar el mensaje.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS owner_weekly_digests (
+
+            id SERIAL PRIMARY KEY,
+
+            owner_user_id BIGINT,
+
+            group_id INTEGER,
+
+            week_key TEXT,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (owner_user_id, group_id, week_key)
+
+        );
+
+        """)
+
+
+        # =========================
         # OFERTAS DE SALVAMENTO (retención al cancelar)
         # =========================
         # Una por persona y acceso, registrada AL MOSTRARSE: un descuento que

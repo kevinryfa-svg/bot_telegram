@@ -1133,6 +1133,56 @@ def schedule_stripe_webhook_config_check(application):
     return True
 
 
+# Cada lunes, el resumen semanal a cada propietario: su negocio en un
+# mensaje, sin tener que ir a mirar el panel. Idempotente por semana.
+
+async def owner_weekly_digest_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        from owner_weekly_digest_service import process_weekly_digests
+
+        await process_weekly_digests(context)
+
+    except Exception as e:
+
+        print(
+            "Resumen semanal: error en el job:",
+            f"{type(e).__name__}: {sanitize_error_text(e)}"
+        )
+
+
+def schedule_owner_weekly_digest(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Resumen semanal: JobQueue no disponible. "
+            "No se enviarán resúmenes a propietarios."
+        )
+
+        return False
+
+
+    import datetime as dt
+
+    # Lunes a las 09:00 UTC. La deduplicación por semana hace inocuo
+    # cualquier reinicio del contenedor ese mismo día.
+    job_queue.run_daily(
+        owner_weekly_digest_job,
+        time=dt.time(hour=9, minute=0),
+        days=(1,),
+        name="owner_weekly_digest"
+    )
+
+    print("Resumen semanal a propietarios programado (lunes 09:00 UTC).")
+
+    return True
+
+
 # El mismo seguro para PayPal: un webhook sin los eventos BILLING.* pierde
 # renovaciones y bajas en silencio. En Stripe esta comprobación destapó que
 # faltaban 8 de 9 eventos en producción.
@@ -3178,6 +3228,7 @@ def main():
     schedule_group_delivery_health_job(telegram_app)
     schedule_stripe_webhook_config_check(telegram_app)
     schedule_paypal_webhook_config_check(telegram_app)
+    schedule_owner_weekly_digest(telegram_app)
     schedule_database_backup_job(telegram_app)
     schedule_persistence_cleanup_job(telegram_app)
 
