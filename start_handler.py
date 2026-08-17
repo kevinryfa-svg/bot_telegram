@@ -885,19 +885,82 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         ])
 
 
-    for group_id, group_name in home_groups:
+    # =========================
+    # LA OFERTA, CON SU PRECIO, EN LA PRIMERA PANTALLA
+    # =========================
+    # Antes esto era un botón por comunidad que decía «➡️ Ver comunidad — X»:
+    # sin precio, sin qué es, y con el enlace de pago a cuatro toques. Los
+    # datos de producción no dejaban dudas — 297 personas por el bot y cero
+    # compras—, así que el escaparate ahora lleva precio y el botón va lo más
+    # directo posible a pagar.
+    #
+    # Si algo falla al construir la oferta se cae a los botones de antes: la
+    # primera pantalla del bot no puede quedarse sin salidas.
 
-        keyboard.append([
+    ofertas = []
 
-            InlineKeyboardButton(
+    try:
 
-                f"➡️ Ver comunidad — {group_name}",
+        from start_offer_service import (
+            callback_de_oferta,
+            etiqueta_de_oferta,
+            fetch_sellable_communities,
+        )
 
-                callback_data=f"marketplace_group_{group_id}"
+        ofertas = fetch_sellable_communities(user_id)
 
-            )
+    except Exception as e:
 
-        ])
+        print("Oferta de inicio: error construyéndola, se usa el menú:", e)
+        ofertas = []
+
+
+    if ofertas:
+
+        ofrecidos = set()
+
+        for oferta in ofertas:
+
+            ofrecidos.add(oferta["group_id"])
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    etiqueta_de_oferta(oferta),
+                    callback_data=callback_de_oferta(oferta)
+                )
+            ])
+
+
+        # Una comunidad visible que no se puede ofrecer con precio (sin plan
+        # usable, o con la entrega confirmada como rota) sigue estando: se
+        # enseña como antes, sin fingir que hay algo que comprar.
+        for group_id, group_name in home_groups:
+
+            if group_id in ofrecidos:
+                continue
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"➡️ Ver comunidad — {group_name}",
+                    callback_data=f"marketplace_group_{group_id}"
+                )
+            ])
+
+    else:
+
+        for group_id, group_name in home_groups:
+
+            keyboard.append([
+
+                InlineKeyboardButton(
+
+                    f"➡️ Ver comunidad — {group_name}",
+
+                    callback_data=f"marketplace_group_{group_id}"
+
+                )
+
+            ])
 
 
     # =========================
@@ -1135,7 +1198,37 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     start_text = build_public_start_message()
 
 
-    if suscripciones_texto:
+    # UNA SOLA COSA QUE VENDER, UNA SOLA OFERTA. Con un único acceso a la
+    # venta, un menú de bienvenida es un estorbo: se enseña la oferta —qué es,
+    # cuánto cuesta, qué pasa al pagar— y el botón de comprar debajo. Quien ya
+    # está dentro no entra aquí: a ese no se le vende otra vez.
+    comprables = [o for o in ofertas if not o["ya_dentro"]]
+
+    oferta_unica = None
+
+    if len(ofertas) == 1 and len(comprables) == 1:
+
+        try:
+
+            from start_offer_service import build_single_offer_text
+
+            oferta_unica = build_single_offer_text(comprables[0])
+
+        except Exception as e:
+
+            print("Oferta de inicio: error escribiendo la oferta única:", e)
+            oferta_unica = None
+
+
+    if oferta_unica:
+
+        mensaje = oferta_unica
+
+        if suscripciones_texto:
+
+            mensaje = f"{mensaje}\n\n{suscripciones_texto}"
+
+    elif suscripciones_texto:
 
         mensaje = (
 
