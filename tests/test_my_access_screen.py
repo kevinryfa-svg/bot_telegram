@@ -320,3 +320,74 @@ def test_the_time_formatter_translates_only_its_two_words():
     assert format_tiempo_restante(futuro) == format_tiempo_restante(
         futuro, language="en"
     ), "el '2d 3h 10m' es neutro: no cambia de idioma"
+
+
+# =========================
+# «MIS PAGOS»: EL HISTORIAL DEL COMPRADOR
+# =========================
+# Un cargo que se reconoce no se disputa: el comprador ve sus cobros en el
+# bot, con fechas e importes en dinero de verdad.
+
+def test_the_receipts_screen_shows_real_money(comprador_dentro):
+    import asyncio
+
+    with comprador_dentro.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, status, plan, payment_date) VALUES "
+            "(7101, 71, 1500, 'EUR', 'paid', 'Mensual', NOW() - INTERVAL '40 days'), "
+            "(7101, 71, 1500, 'EUR', 'paid', 'Mensual', NOW() - INTERVAL '10 days'), "
+            "(7101, 71, 1500, 'EUR', 'refunded', 'Mensual', NOW() - INTERVAL '5 days')"
+        )
+
+    query, context = FakeQuery(), FakeContext()
+
+    asyncio.run(mc.handle_mysub_callbacks(
+        None, context, query, 7101, "mysub_receipts_-1071"
+    ))
+
+    texto, teclado = query.message.enviados[0]
+
+    assert "Tus pagos de VIP Fitness" in texto
+    assert texto.count("15.00 EUR") == 3, "importes en dinero, no en céntimos"
+    assert "↩️" in texto, "la devolución se distingue del cobro"
+    assert "escríbenos antes que a tu banco" in texto
+
+    botones = [b for fila in teclado.inline_keyboard for b in fila]
+    assert any(b.callback_data == "mysub_-1071" for b in botones)
+
+
+def test_an_empty_history_explains_itself(comprador_dentro):
+    import asyncio
+
+    query, context = FakeQuery(), FakeContext()
+
+    asyncio.run(mc.handle_mysub_callbacks(
+        None, context, query, 7101, "mysub_receipts_-1071"
+    ))
+
+    texto, _ = query.message.enviados[0]
+    assert "Todavía no hay pagos registrados" in texto
+
+
+def test_the_receipts_button_lives_in_the_access_screen():
+    source = open(mc.__file__, encoding="utf-8").read()
+
+    assert 't("mysub.btn_receipts", language)' in source
+    assert source.index('data.startswith("mysub_receipts_")') < \
+        source.index('if data.startswith("mysub_"):'), (
+        "la rama del historial caería en la genérica"
+    )
+
+
+def test_renewal_receipts_carry_the_amount():
+    """El recibo de renovación dice CUÁNTO: un cargo reconocible no se disputa."""
+
+    from i18n_service import t
+
+    es = t("renewal.renewed_priced", "es", group="VIP", until="01/01/2027",
+           price="15.00 EUR")
+
+    assert "🧾 Cobro: 15.00 EUR" in es
+
+    source = open("group_subscription_service.py", encoding="utf-8").read()
+    assert "renewal.renewed_priced" in source

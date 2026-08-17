@@ -480,11 +480,34 @@ def process_group_subscription_invoice_paid(invoice, event_type):
 
     language = load_user_language(user_id)
 
-    avisar_comprador(user_id, t(
-        "renewal.renewed", language,
-        group=group_name,
-        until=formato_fecha(fin_periodo)
-    ))
+    # Con el importe delante: un cargo que se reconoce no se disputa.
+    if amount_paid:
+
+        try:
+            precio = f"{int(amount_paid) / 100:.2f} {(currency or 'EUR').upper()}"
+        except Exception:
+            precio = None
+
+    else:
+
+        precio = None
+
+    if precio:
+
+        avisar_comprador(user_id, t(
+            "renewal.renewed_priced", language,
+            group=group_name,
+            until=formato_fecha(fin_periodo),
+            price=precio
+        ))
+
+    else:
+
+        avisar_comprador(user_id, t(
+            "renewal.renewed", language,
+            group=group_name,
+            until=formato_fecha(fin_periodo)
+        ))
 
     return True
 

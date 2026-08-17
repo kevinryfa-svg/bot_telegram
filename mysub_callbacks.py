@@ -200,6 +200,81 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
     # genérica esperaría un número donde aquí hay un verbo. Y dentro de ellas,
     # el "yes" antes que su confirmación: también comparten prefijo.
 
+    if data.startswith("mysub_receipts_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_receipts_"):]
+        language = load_user_language(user_id)
+
+        grupo = _resolver_grupo_por_ref(int(ref)) if ref.lstrip("-").isdigit() else None
+
+        if not grupo:
+
+            await reply_with_recover_navigation(
+                query,
+                t("mysub.not_found", language)
+            )
+
+            return
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT payment_date, amount, currency, status, plan
+                FROM payments
+                WHERE user_id=%s AND group_id=%s
+                ORDER BY payment_date DESC NULLS LAST, id DESC
+                LIMIT 10
+
+            """, (user_id, grupo[0]))
+
+            pagos = cur.fetchall()
+
+        lineas = [t("mysub.receipts_title", language,
+                    group=grupo[1] or ""), ""]
+
+        if not pagos:
+
+            lineas.append(t("mysub.receipts_empty", language))
+
+        else:
+
+            for fecha, amount, currency, status, plan in pagos:
+
+                try:
+                    fecha_txt = fecha.strftime("%d/%m/%Y")
+                except Exception:
+                    fecha_txt = "—"
+
+                try:
+                    importe = f"{int(amount) / 100:.2f} {(currency or 'EUR').upper()}"
+                except Exception:
+                    importe = "—"
+
+                sello = "✅" if (status or "").lower() in ("paid", "completed")                     else ("↩️" if (status or "").lower() == "refunded" else "•")
+
+                lineas.append(f"{sello} {fecha_txt} — {importe} · {plan or ''}")
+
+            lineas.extend(["", t("mysub.receipts_footer", language)])
+
+        await query.message.reply_text(
+            "\n".join(lineas),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    t("mysub.btn_back_access", language),
+                    callback_data=f"mysub_{ref}"
+                )
+            ]])
+        )
+
+        return
+
+
     if data.startswith("mysub_pause_"):
 
         try:
@@ -1044,6 +1119,18 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                     t("mysub.btn_another_link", language),
 
                     callback_data=f"mysub_{telegram_group_id}"
+
+                )
+
+            ],
+
+            [
+
+                InlineKeyboardButton(
+
+                    t("mysub.btn_receipts", language),
+
+                    callback_data=f"mysub_receipts_{telegram_group_id}"
 
                 )
 
