@@ -1152,6 +1152,54 @@ async def owner_weekly_digest_job(context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# El repaso con Stripe: si el webhook del alta se perdió, el cliente paga y
+# sus renovaciones no se atribuyen a nadie. Ese hueco no aparece en ningún
+# panel porque nadie está mirando ahí. Una vez al día es de sobra.
+
+async def stripe_reconcile_job(context: ContextTypes.DEFAULT_TYPE):
+
+    try:
+
+        from stripe_reconcile_service import process_stripe_reconciliation
+
+        await process_stripe_reconciliation(context, admin_id=ADMIN_ID)
+
+    except Exception as e:
+
+        print(
+            "Reconciliación con Stripe: error en el job:",
+            f"{type(e).__name__}: {sanitize_error_text(e)}"
+        )
+
+
+def schedule_stripe_reconcile_job(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Reconciliación con Stripe: JobQueue no disponible. "
+            "No se repasarán las suscripciones."
+        )
+
+        return False
+
+
+    import datetime as dt
+
+    job_queue.run_daily(
+        stripe_reconcile_job,
+        time=dt.time(hour=5, minute=30),
+        name="stripe_reconcile"
+    )
+
+    print("Repaso de suscripciones con Stripe programado (05:30 UTC).")
+
+    return True
+
+
 # Las alertas de negocio no esperan al lunes: racha de cobros fallidos,
 # caída fuerte de ingresos o pico de bajas se avisan el mismo día.
 
@@ -3278,6 +3326,7 @@ def main():
     schedule_paypal_webhook_config_check(telegram_app)
     schedule_owner_weekly_digest(telegram_app)
     schedule_business_alerts_job(telegram_app)
+    schedule_stripe_reconcile_job(telegram_app)
     schedule_database_backup_job(telegram_app)
     schedule_persistence_cleanup_job(telegram_app)
 
