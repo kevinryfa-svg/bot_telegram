@@ -473,6 +473,29 @@ def apply_delivery_result(group_id, group_name, can_deliver, bot_status, detail,
                 metadata={"bot_status": bot_status}
             )
 
+            # Al propietario se le decía que las compras vuelven a estar
+            # abiertas. A los que se quedaron sin enlace DURANTE la avería,
+            # nada: seguían fuera con el acceso pagado. Ahora reciben el
+            # suyo. En su propio try: avisar no puede tumbar la salud.
+            try:
+
+                from member_recovery_service import (
+                    notify_stranded_buyers_after_recovery,
+                )
+
+                resumen_socios = notify_stranded_buyers_after_recovery(
+                    group_id,
+                    group_name,
+                    anterior[2] if anterior else None
+                )
+
+                summary["buyers_notified"] = resumen_socios.get("sent", 0)
+
+            except Exception as e:
+
+                print("Salud de entrega: error avisando a los socios que se "
+                      "quedaron fuera:", str(e)[:200])
+
         return summary
 
 

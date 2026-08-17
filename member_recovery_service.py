@@ -120,6 +120,187 @@ def mark_return_offer(user_id, group_id):
         return False
 
 
+def fetch_stranded_buyers(group_id, since):
+    """Quién se quedó sin enlace mientras la entrega estaba averiada.
+
+    Los tres eventos que lo delatan ya se registraban: el enlace que no se
+    pudo crear al pagar, el acceso guardado sin enlace, y el socio que pidió
+    el suyo y no lo recibió. Con la entrega recuperada, esa gente sigue
+    fuera con el acceso pagado — y nadie les avisa de que ya se puede
+    entrar.
+
+    Solo los que TODAVÍA tienen acceso vivo: a quien ya le caducó durante la
+    avería no se le manda un enlace que no serviría.
+    """
+
+    if not since:
+        return []
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT DISTINCT l.target_user_id
+                FROM audit_logs l
+                JOIN users u
+                  ON u.user_id = l.target_user_id
+                 AND u.group_id = l.group_id
+                WHERE l.group_id = %s
+                  AND l.created_at >= %s
+                  AND l.event_type IN (
+                      'payment_invite_link_error',
+                      'payment_access_recorded_invite_link_pending',
+                      'access_link_unavailable_for_paid_user'
+                  )
+                  AND l.target_user_id IS NOT NULL
+                  AND (u.expiration IS NULL OR u.expiration > NOW())
+
+            """, (group_id, since))
+
+            return [fila[0] for fila in cur.fetchall() or []]
+
+    except Exception as e:
+
+        print("Recuperación de socio: error buscando a los que se quedaron "
+              "fuera:", e)
+
+        return []
+
+
+def mark_recovery_notice(group_id, user_id, episode):
+    """True si toca avisar. La clave es el episodio de avería, no el día:
+    dos averías distintas merecen dos avisos, la misma no merece dos."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO delivery_recovery_notices
+                    (group_id, user_id, episode)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (group_id, user_id, episode) DO NOTHING
+
+            """, (group_id, user_id, str(episode)))
+
+            hecho = cur.rowcount > 0
+            conn.commit()
+
+            return hecho
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Recuperación de socio: error marcando el aviso de "
+              "recuperación:", e)
+
+        return False
+
+
+def notify_stranded_buyers_after_recovery(group_id, group_name, since):
+    """Manda enlace nuevo a quien se quedó fuera durante la avería.
+
+    Es síncrono a propósito: se llama desde la comprobación de salud de
+    entrega, que no vive en el bucle de asyncio del bot.
+    """
+
+    resumen = {"targets": 0, "sent": 0, "skipped": 0, "failed": 0}
+
+    if not RETURN_OFFER_ENABLED:
+        return resumen
+
+
+    from i18n_service import load_user_language, t
+    from notification_service import send_telegram_message
+
+    # El id de Telegram se resuelve aquí: quien llama es la comprobación de
+    # salud, que trabaja con el id interno.
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT telegram_group_id FROM groups WHERE id=%s",
+                (group_id,)
+            )
+            fila = cur.fetchone()
+
+        telegram_group_id = fila[0] if fila else None
+
+    except Exception as e:
+
+        print("Recuperación de socio: error resolviendo el grupo:", e)
+
+        return resumen
+
+
+    if not telegram_group_id:
+        return resumen
+
+
+    afectados = fetch_stranded_buyers(group_id, since)
+    resumen["targets"] = len(afectados)
+
+    for user_id in afectados:
+
+        if not mark_recovery_notice(group_id, user_id, since):
+
+            resumen["skipped"] += 1
+            continue
+
+        language = load_user_language(user_id)
+
+        enlace = create_telegram_invite_link(
+            TOKEN,
+            telegram_group_id,
+            expire_seconds=RETURN_LINK_EXPIRE_SECONDS,
+            member_limit=1,
+        )
+
+        teclado = None
+
+        if enlace:
+
+            teclado = {"inline_keyboard": [[{
+                "text": t("recovery.return_button", language),
+                "url": enlace
+            }]]}
+
+        respuesta = send_telegram_message(
+            TOKEN,
+            user_id,
+            t("recovery.delivery_fixed", language, group=group_name),
+            reply_markup=teclado
+        )
+
+        if respuesta and respuesta.get("ok"):
+
+            resumen["sent"] += 1
+
+        else:
+
+            resumen["failed"] += 1
+
+
+    if resumen["sent"] or resumen["failed"]:
+
+        log_event(
+            "delivery_recovery_buyers_notified",
+            category="access",
+            severity="info",
+            scope="group",
+            group_id=group_id,
+            message="Avisados los socios que se quedaron sin enlace.",
+            metadata=resumen
+        )
+
+    return resumen
+
+
 def build_return_message(group_name, expiration, language="es"):
 
     from group_subscription_service import formato_fecha

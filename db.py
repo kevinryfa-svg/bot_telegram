@@ -4186,6 +4186,31 @@ def create_tables():
 
 
         # =========================
+        # AVISOS DE ENTREGA RECUPERADA A LOS QUE SE QUEDARON FUERA
+        # =========================
+        # La clave es el EPISODIO de avería (su broken_since), no el día: dos
+        # averías distintas merecen dos avisos, la misma no merece dos.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS delivery_recovery_notices (
+
+            group_id INTEGER,
+
+            user_id BIGINT,
+
+            episode TEXT,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (group_id, user_id, episode)
+
+        );
+
+        """)
+
+
+        # =========================
         # ENLACES DE VUELTA A QUIEN SE QUEDÓ FUERA PAGANDO
         # =========================
         # Una fila por socio y comunidad que se actualiza: interesa cuándo fue
