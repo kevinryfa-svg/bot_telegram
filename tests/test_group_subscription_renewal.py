@@ -523,10 +523,13 @@ def test_nothing_in_the_repo_can_touch_an_existing_subscriptions_price():
 
     for path, trozo in sitios:
 
-        assert "cancel_at_period_end" in trozo, (
+        # Dos usos legítimos: el interruptor de renovación
+        # (cancel_at_period_end) y la oferta de salvamento (discounts=), que
+        # solo puede MEJORAR el precio del suscriptor, nunca empeorarlo.
+        assert "cancel_at_period_end" in trozo or "discounts=" in trozo, (
             f"{path} modifica una suscripción para algo que no es el "
-            "interruptor de renovación: eso puede tocar el precio de un "
-            "suscriptor existente"
+            "interruptor de renovación ni un descuento: eso puede tocar el "
+            "precio de un suscriptor existente"
         )
         assert "items" not in trozo and "price" not in trozo, (
             f"{path} toca items/price de una suscripción existente: los "

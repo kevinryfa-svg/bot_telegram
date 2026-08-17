@@ -200,6 +200,93 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
     # genérica esperaría un número donde aquí hay un verbo. Y dentro de ellas,
     # el "yes" antes que su confirmación: también comparten prefijo.
 
+    if data.startswith("mysub_saveoffer_yes_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_saveoffer_yes_"):]
+        language = load_user_language(user_id)
+
+        grupo = _resolver_grupo_por_ref(int(ref)) if ref.lstrip("-").isdigit() else None
+
+        from retention_offer_service import (
+            RETENTION_DISCOUNT_PERCENT,
+            apply_save_discount,
+        )
+
+        if grupo and apply_save_discount(user_id, grupo[0]):
+
+            await query.answer("Descuento aplicado 🎉", show_alert=False)
+
+            await query.message.reply_text(
+                t("mysub.save_offer_done", language,
+                  group=grupo[1] or "tu comunidad",
+                  percent=RETENTION_DISCOUNT_PERCENT),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        t("mysub.btn_back_access", language),
+                        callback_data=f"mysub_{ref}"
+                    )
+                ]])
+            )
+
+            return
+
+        await query.message.reply_text(
+            t("mysub.save_offer_error", language),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    t("mysub.save_offer_btn_take", language),
+                    callback_data=f"mysub_saveoffer_yes_{ref}"
+                )],
+                [InlineKeyboardButton(
+                    t("mysub.save_offer_btn_leave", language),
+                    callback_data=f"mysub_stoprenew_go_{ref}"
+                )],
+                [InlineKeyboardButton(
+                    t("mysub.btn_back", language),
+                    callback_data=f"mysub_{ref}"
+                )],
+            ])
+        )
+
+        return
+
+
+    if data.startswith("mysub_stoprenew_go_"):
+
+        # La confirmación clásica, después de haber visto (y rechazado) la
+        # oferta de salvamento.
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_stoprenew_go_"):]
+        language = load_user_language(user_id)
+
+        await query.message.reply_text(
+
+            t("mysub.stoprenew_confirm", language),
+
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    t("mysub.btn_yes_off", language),
+                    callback_data=f"mysub_stoprenew_yes_{ref}"
+                )],
+                [InlineKeyboardButton(
+                    t("mysub.btn_back", language),
+                    callback_data=f"mysub_{ref}"
+                )],
+            ])
+        )
+
+        return
+
+
     if data.startswith("mysub_stoprenew_yes_"):
 
         try:
@@ -258,6 +345,60 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
         ref = data[len("mysub_stoprenew_"):]
         language = load_user_language(user_id)
+
+        # LA OFERTA DE SALVAMENTO, una sola vez por persona y acceso: se
+        # registra al MOSTRARSE (quien la rechazó no la vuelve a ver), y solo
+        # si de verdad hay una suscripción de Stripe que salvar.
+        from retention_offer_service import (
+            RETENTION_DISCOUNT_PERCENT,
+            RETENTION_OFFER_ENABLED,
+            record_offer_shown,
+        )
+
+        grupo_oferta = (_resolver_grupo_por_ref(int(ref))
+                        if ref.lstrip("-").isdigit() else None)
+
+        sub_id = None
+
+        if RETENTION_OFFER_ENABLED and grupo_oferta:
+
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    "SELECT stripe_subscription_id FROM users "
+                    "WHERE user_id=%s AND group_id=%s "
+                    "AND stripe_subscription_id IS NOT NULL",
+                    (user_id, grupo_oferta[0])
+                )
+
+                fila = cur.fetchone()
+                sub_id = fila[0] if fila else None
+
+        if sub_id and record_offer_shown(user_id, grupo_oferta[0], sub_id):
+
+            await query.message.reply_text(
+
+                t("mysub.save_offer", language,
+                  group=grupo_oferta[1] or "tu comunidad",
+                  percent=RETENTION_DISCOUNT_PERCENT),
+
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        t("mysub.save_offer_btn_take", language),
+                        callback_data=f"mysub_saveoffer_yes_{ref}"
+                    )],
+                    [InlineKeyboardButton(
+                        t("mysub.save_offer_btn_leave", language),
+                        callback_data=f"mysub_stoprenew_go_{ref}"
+                    )],
+                    [InlineKeyboardButton(
+                        t("mysub.btn_back", language),
+                        callback_data=f"mysub_{ref}"
+                    )],
+                ])
+            )
+
+            return
 
         await query.message.reply_text(
 

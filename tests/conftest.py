@@ -100,6 +100,7 @@ def clean_db(db_module):
         "group_payment_provider_configs",
         "group_stripe_coupons",
         "creator_connect_accounts",
+        "retention_offers",
         "users",
         "plans",
         "banned_users",

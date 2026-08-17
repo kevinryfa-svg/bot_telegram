@@ -4161,6 +4161,37 @@ def create_tables():
         # =========================
         # TABLA INCIDENCIAS DE PAGO
         # =========================
+        # OFERTAS DE SALVAMENTO (retención al cancelar)
+        # =========================
+        # Una por persona y acceso, registrada AL MOSTRARSE: un descuento que
+        # aparece cada vez que amagas con cancelar enseña a cancelar.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS retention_offers (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            stripe_subscription_id TEXT,
+
+            accepted BOOLEAN DEFAULT FALSE,
+
+            accepted_at TIMESTAMP,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (user_id, group_id)
+
+        );
+
+        """)
+
+
+        # =========================
         # STRIPE CONNECT (cuentas de creadores)
         # =========================
         # Cada creador puede cobrar en SU cuenta de Stripe (Express); la
