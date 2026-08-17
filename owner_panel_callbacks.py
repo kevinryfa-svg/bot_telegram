@@ -1268,11 +1268,17 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
 
         teclado.extend(build_owner_panel_nav_keyboard().inline_keyboard)
 
+        # El IVA automático se cuenta aquí, junto al cobro: es la otra mitad
+        # de "cómo entra el dinero" y el propietario tiene que saber si está
+        # cobrando con impuesto calculado o sin él.
+        from stripe_tax_service import tax_status_line
+
         await send_clean_message(
             context,
             query.message.chat_id,
             f"🏦 Stripe Connect — {group_name}\n\n"
-            f"{describe_connect_status(group_id)}",
+            f"{describe_connect_status(group_id)}\n\n"
+            f"{tax_status_line()}",
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 

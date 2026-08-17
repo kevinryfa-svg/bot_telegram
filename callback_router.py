@@ -11704,6 +11704,12 @@ def create_owner_addon_stripe_checkout_session(
     group_id
 ):
 
+    # Stripe Tax queda FUERA de los extras del propietario a propósito: sus
+    # precios se crean en el panel de Stripe, no con nuestro código, así que
+    # nadie garantiza que tengan tax_behavior. Con automatic_tax activado, un
+    # precio sin esa marca hace fallar el checkout — y el fallo se lo comería
+    # el propietario intentando comprar. El IVA automático se aplica donde
+    # los precios los creamos nosotros: la venta de accesos.
     success_url, cancel_url = build_owner_addon_checkout_urls()
     metadata = {
         "purpose": "owner_addon",

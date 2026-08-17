@@ -54,6 +54,14 @@ def create_stripe_product_and_price(name, amount_major, currency, metadata=None,
         metadata=safe_metadata
     )
 
+    # Marca fiscal del precio (inclusive por defecto): sin ella, el día que
+    # el propietario encienda Stripe Tax el checkout fallaría con "price has
+    # no tax_behavior". Con Tax apagado, Stripe la ignora: nadie paga un
+    # céntimo distinto por esto.
+    from stripe_tax_service import tax_price_kwargs
+
+    price_kwargs.update(tax_price_kwargs())
+
     if recurring_interval_days:
 
         from group_subscription_service import stripe_recurring_interval
