@@ -672,6 +672,42 @@ TRANSLATIONS = {
         ),
     },
 
+    "recovery.left_with_access_until": {
+        "es": (
+            "👋 Ya no estás en {group}, pero tu acceso sigue activo hasta el "
+            "{until}.\n\n"
+            "Si ha sido un error —a veces es un toque de más en el móvil, o "
+            "una limpieza de miembros mal apuntada—, aquí tienes tu enlace de "
+            "entrada. Es de un solo uso y vale 24 horas."
+        ),
+        "en": (
+            "👋 You're no longer in {group}, but your access is still active "
+            "until {until}.\n\n"
+            "If that was a mistake — sometimes it's one tap too many, or a "
+            "member cleanup that hit the wrong person — here's your entry "
+            "link. Single use, valid for 24 hours."
+        ),
+    },
+
+    "recovery.left_with_access": {
+        "es": (
+            "👋 Ya no estás en {group}, pero tu acceso sigue activo.\n\n"
+            "Si ha sido un error, aquí tienes tu enlace de entrada. Es de un "
+            "solo uso y vale 24 horas."
+        ),
+        "en": (
+            "👋 You're no longer in {group}, but your access is still "
+            "active.\n\n"
+            "If that was a mistake, here's your entry link. Single use, valid "
+            "for 24 hours."
+        ),
+    },
+
+    "recovery.return_button": {
+        "es": "🔗 Volver a entrar",
+        "en": "🔗 Come back in",
+    },
+
     "referral.landing": {
         "es": (
             "👋 Te han invitado a {group}.\n\n"
