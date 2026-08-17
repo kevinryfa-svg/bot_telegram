@@ -28495,6 +28495,88 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # PAGOS PAYPAL DE GRUPO
     # =========================
 
+    # COMPRA DE UN TOQUE DESDE /start. El escaparate ofrece la comunidad con
+    # su precio y, cuando solo hay un plan, el botón lleva directo a pagar.
+    #
+    # No se puede usar el callback de Stripe a secas (el price_id) como hacen
+    # los botones de la lista de planes: esa rama lee el grupo de
+    # context.user_data["selected_group"], que en /start NO existe todavía —
+    # el comprador no ha pasado por la pantalla que lo fija—. Así que el
+    # botón lleva el grupo y el plan dentro, se validan contra la base de
+    # datos (un callback se escribe a mano, la consulta no) y desde aquí sí
+    # se fija el grupo antes de cobrar. Los demás proveedores ya llevan su
+    # grupo en el callback y no necesitan esto.
+
+    if data.startswith("startbuy_"):
+
+        partes = data[len("startbuy_"):].split("_")
+
+        if len(partes) != 2 or not all(p.isdigit() for p in partes):
+
+            await query.message.reply_text(
+                "⚠️ Esta opción ya no está disponible o no está configurada.",
+                reply_markup=build_unknown_callback_keyboard()
+            )
+
+            return
+
+
+        group_id, plan_id = int(partes[0]), int(partes[1])
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT COALESCE(NULLIF(stripe_price_id, ''), price_id)
+                    FROM plans
+                    WHERE id=%s
+                      AND group_id=%s
+                      AND COALESCE(is_active, TRUE)=TRUE
+                      AND COALESCE(NULLIF(payment_provider, ''), 'stripe')='stripe'
+
+                """, (plan_id, group_id))
+
+                fila = cur.fetchone()
+
+        except Exception as e:
+
+            print("Compra desde inicio: error leyendo el plan:", str(e)[:200])
+            fila = None
+
+
+        if not fila or not fila[0]:
+
+            await query.message.reply_text(
+                "⚠️ Ese plan ya no está disponible. Mira las opciones de la "
+                "comunidad y elige otra.",
+                reply_markup=build_group_recovery_keyboard(group_id)
+            )
+
+            return
+
+
+        context.user_data["selected_group"] = group_id
+
+        log_user_event_by_ids(
+            user_id,
+            "start_offer_clicked",
+            event_key=f"startbuy_{group_id}_{plan_id}",
+            group_id=group_id
+        )
+
+        await create_checkout_for_user(
+            context,
+            query.message.chat_id,
+            user_id,
+            group_id,
+            fila[0]
+        )
+
+        return
+
+
     if data.startswith("paypal_group_plan_"):
 
         payload = data.replace("paypal_group_plan_", "", 1)
