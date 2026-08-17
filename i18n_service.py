@@ -762,6 +762,67 @@ TRANSLATIONS = {
         "en": "Continue cancelling",
     },
 
+    "mysub.pause_btn": {
+        "es": "⏸ Pausar 1 mes",
+        "en": "⏸ Pause for 1 month",
+    },
+
+    "mysub.pause_done": {
+        "es": (
+            "⏸ Renovación en pausa.\n\n"
+            "Durante un mes no se te cobrará nada. Tu acceso sigue hasta el "
+            "final del periodo ya pagado, y los cobros (y tu acceso) vuelven "
+            "solos al acabar la pausa — sin hacer nada.\n\n"
+            "Si quieres volver antes, reanuda desde esta misma pantalla."
+        ),
+        "en": (
+            "⏸ Renewal paused.\n\n"
+            "For one month you will not be charged. Your access runs until "
+            "the end of the period you already paid, and charges (and your "
+            "access) come back on their own when the pause ends — nothing to "
+            "do.\n\n"
+            "If you want to come back sooner, resume from this same screen."
+        ),
+    },
+
+    "mysub.pause_error": {
+        "es": (
+            "❌ No he podido pausar la renovación ahora mismo. "
+            "Inténtalo de nuevo en un momento."
+        ),
+        "en": (
+            "❌ I could not pause the renewal right now. "
+            "Please try again in a moment."
+        ),
+    },
+
+    "mysub.renewal_paused_line": {
+        "es": (
+            "⏸ Renovación automática: en pausa. No se te cobra nada y los "
+            "cobros vuelven solos el {until}.\n\n"
+        ),
+        "en": (
+            "⏸ Auto-renewal: paused. You are not being charged and billing "
+            "resumes on its own on {until}.\n\n"
+        ),
+    },
+
+    "mysub.resume_btn": {
+        "es": "▶️ Reanudar renovación",
+        "en": "▶️ Resume renewal",
+    },
+
+    "mysub.resume_done": {
+        "es": (
+            "▶️ Renovación reanudada: los cobros vuelven en tu siguiente "
+            "ciclo, como antes de la pausa."
+        ),
+        "en": (
+            "▶️ Renewal resumed: charges return on your next cycle, as "
+            "before the pause."
+        ),
+    },
+
     "mysub.save_offer_done": {
         "es": (
             "🎉 Hecho: tu próximo cobro de {group} saldrá con un {percent}% "

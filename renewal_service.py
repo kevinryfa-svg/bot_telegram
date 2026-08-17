@@ -106,7 +106,10 @@ def renewal_is_really_active(user_id, group_id):
         estado = fetch_renewal_state(user_id, group_id)
 
         if estado is not None:
-            return not estado.get("cancel_at_period_end")
+            # Ni cancelada ni EN PAUSA: a un suscriptor pausado anunciarle un
+            # cobro sería mentirle — su factura se anula sola.
+            return not estado.get("cancel_at_period_end") \
+                and not estado.get("paused")
 
     except Exception as e:
 

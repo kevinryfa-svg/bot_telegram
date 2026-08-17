@@ -200,6 +200,92 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
     # genérica esperaría un número donde aquí hay un verbo. Y dentro de ellas,
     # el "yes" antes que su confirmación: también comparten prefijo.
 
+    if data.startswith("mysub_pause_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_pause_"):]
+        language = load_user_language(user_id)
+
+        grupo = _resolver_grupo_por_ref(int(ref)) if ref.lstrip("-").isdigit() else None
+
+        from group_subscription_service import pause_renewal
+
+        if grupo and pause_renewal(user_id, grupo[0]):
+
+            await query.answer("Renovación pausada ⏸", show_alert=False)
+
+            await query.message.reply_text(
+                t("mysub.pause_done", language),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        t("mysub.btn_back_access", language),
+                        callback_data=f"mysub_{ref}"
+                    )
+                ]])
+            )
+
+            return
+
+        await query.message.reply_text(
+            t("mysub.pause_error", language),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    t("mysub.btn_back_access", language),
+                    callback_data=f"mysub_{ref}"
+                )
+            ]])
+        )
+
+        return
+
+
+    if data.startswith("mysub_resume_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_resume_"):]
+        language = load_user_language(user_id)
+
+        grupo = _resolver_grupo_por_ref(int(ref)) if ref.lstrip("-").isdigit() else None
+
+        from group_subscription_service import resume_renewal
+
+        if grupo and resume_renewal(user_id, grupo[0]):
+
+            await query.answer("Renovación reanudada ▶️", show_alert=False)
+
+            await query.message.reply_text(
+                t("mysub.resume_done", language),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        t("mysub.btn_back_access", language),
+                        callback_data=f"mysub_{ref}"
+                    )
+                ]])
+            )
+
+            return
+
+        await query.message.reply_text(
+            t("mysub.toggle_error_on", language),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    t("mysub.btn_back_access", language),
+                    callback_data=f"mysub_{ref}"
+                )
+            ]])
+        )
+
+        return
+
+
     if data.startswith("mysub_saveoffer_yes_"):
 
         try:
@@ -273,6 +359,10 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
             t("mysub.stoprenew_confirm", language),
 
             reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    t("mysub.pause_btn", language),
+                    callback_data=f"mysub_pause_{ref}"
+                )],
                 [InlineKeyboardButton(
                     t("mysub.btn_yes_off", language),
                     callback_data=f"mysub_stoprenew_yes_{ref}"
@@ -388,6 +478,10 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                         callback_data=f"mysub_saveoffer_yes_{ref}"
                     )],
                     [InlineKeyboardButton(
+                        t("mysub.pause_btn", language),
+                        callback_data=f"mysub_pause_{ref}"
+                    )],
+                    [InlineKeyboardButton(
                         t("mysub.save_offer_btn_leave", language),
                         callback_data=f"mysub_stoprenew_go_{ref}"
                     )],
@@ -405,6 +499,10 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
             t("mysub.stoprenew_confirm", language),
 
             reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    t("mysub.pause_btn", language),
+                    callback_data=f"mysub_pause_{ref}"
+                )],
                 [InlineKeyboardButton(
                     t("mysub.btn_yes_off", language),
                     callback_data=f"mysub_stoprenew_yes_{ref}"
@@ -993,7 +1091,24 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
         if renovacion:
 
-            if renovacion["cancel_at_period_end"]:
+            if renovacion.get("paused"):
+
+                try:
+                    hasta_pausa = renovacion["resumes_at"].strftime("%d/%m/%Y")
+                except Exception:
+                    hasta_pausa = "-"
+
+                linea_renovacion = t("mysub.renewal_paused_line", language,
+                                     until=hasta_pausa)
+
+                keyboard.insert(1, [
+                    InlineKeyboardButton(
+                        t("mysub.resume_btn", language),
+                        callback_data=f"mysub_resume_{telegram_group_id}"
+                    )
+                ])
+
+            elif renovacion["cancel_at_period_end"]:
 
                 linea_renovacion = t("mysub.renewal_off", language)
 
