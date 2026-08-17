@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+import pytest
+
 import renewal_service as rs
 
 
@@ -103,3 +105,99 @@ def test_unreachable_user_detection():
     assert rs.is_unreachable_error("Chat not found") is True
     assert rs.is_unreachable_error("Timed out") is False
     assert rs.is_unreachable_error(None) is False
+
+
+# =========================
+# UN TOQUE: RENOVAR EL PLAN DE SIEMPRE
+# =========================
+# Renovar costaba tres toques (aviso → tarjeta → lista de planes → pagar).
+# Cada pantalla intermedia es gente que se cae por el camino.
+
+@pytest.fixture
+def socio_con_historial(clean_db):
+    """Alguien que compró el plan «Mensual» de la comunidad 77."""
+
+    db = clean_db
+
+    with db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active) "
+            "VALUES (77, 'VIP Toque', -1077, TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO plans (group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, payment_provider, is_active) VALUES "
+            "(77, 'Mensual', 'price_mensual_77', 'price_mensual_77', 30, 15, 'EUR', 'stripe', TRUE), "
+            "(77, 'Anual', 'price_anual_77', 'price_anual_77', 365, 120, 'EUR', 'stripe', TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (7701, 77, NOW() + INTERVAL '2 days', TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, status, plan, payment_date) "
+            "VALUES (7701, 77, 1500, 'EUR', 'paid', 'Mensual', NOW() - INTERVAL '28 days')"
+        )
+
+    return db
+
+
+def test_the_reminder_leads_straight_to_the_plan_they_had(socio_con_historial):
+    filas = rs.build_renewal_keyboard(77, user_id=7701).inline_keyboard
+
+    primero = filas[0][0]
+
+    assert primero.callback_data == "price_mensual_77", (
+        "el callback es el mismo que pulsaría en la lista de planes"
+    )
+    assert "Mensual" in primero.text
+    assert "15 EUR" in primero.text, (
+        "el precio en el botón: nadie pulsa a ciegas para pagar"
+    )
+
+    # Y los botones de siempre siguen debajo: el menú no desaparece.
+    resto = [b.callback_data for fila in filas[1:] for b in fila]
+    assert "marketplace_group_77" in resto
+
+
+def test_without_a_matching_active_plan_there_is_no_shortcut(socio_con_historial):
+    """Mandar a alguien a un plan que no es el suyo es peor que el menú."""
+
+    with socio_con_historial.conn.cursor() as cur:
+        cur.execute("UPDATE plans SET is_active=FALSE WHERE name='Mensual'")
+
+    filas = rs.build_renewal_keyboard(77, user_id=7701).inline_keyboard
+
+    assert filas[0][0].callback_data == "marketplace_group_77", (
+        "sin plan activo que coincida, los botones de siempre"
+    )
+
+
+def test_a_stranger_gets_the_normal_keyboard(socio_con_historial):
+    filas = rs.build_renewal_keyboard(77, user_id=999999).inline_keyboard
+
+    assert filas[0][0].callback_data == "marketplace_group_77"
+
+
+def test_each_provider_gets_its_own_callback():
+    assert rs.same_plan_callback(77, 5, "price_x", "stripe") == "price_x"
+    assert rs.same_plan_callback(77, 5, None, "paypal") == "paypal_group_plan_77_5"
+    assert rs.same_plan_callback(77, 5, None, "revolut") == "revolut_group_plan_77_5"
+
+    # Sin price_id, Stripe no tiene botón: mejor el menú que uno muerto.
+    assert rs.same_plan_callback(77, 5, None, "stripe") is None
+    assert rs.same_plan_callback(77, 5, "price_x", "inventado") is None
+
+
+def test_the_expiry_notice_also_carries_the_shortcut(socio_con_historial):
+    _texto, teclado = rs.build_expired_notice(77, "VIP Toque", user_id=7701)
+
+    assert teclado.inline_keyboard[0][0].callback_data == "price_mensual_77", (
+        "al caducar es cuando más intención de volver hay"
+    )
+
+    worker = open("expiration_worker.py", encoding="utf-8").read()
+    assert "user_id=user_id" in worker[
+        worker.index("build_expired_notice("):
+        worker.index("build_expired_notice(") + 400
+    ], "el trabajador de caducidades pasa quién es, o no hay atajo"

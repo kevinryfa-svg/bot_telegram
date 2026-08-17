@@ -364,7 +364,8 @@ def check_expirations():
                                 notice_text, notice_keyboard = build_expired_notice(
                                     group_id,
                                     group_name_for_notice(group_id),
-                                    language=load_user_language(user_id)
+                                    language=load_user_language(user_id),
+                                    user_id=user_id
                                 )
 
                                 send_telegram_message(
