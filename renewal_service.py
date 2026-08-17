@@ -845,6 +845,204 @@ def build_prerenewal_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
     ]])
 
 
+# =========================
+# UPSELL AL PLAN ANUAL
+# =========================
+# A un suscriptor mensual que ya renovó dos veces (3+ pagos) se le ofrece UNA
+# VEZ el plan anual de su comunidad — solo si existe, es suscripción, está en
+# su misma moneda y de verdad ahorra frente a 12 meses. El cliente que ya
+# demostró que se queda es el momento exacto de subirle el valor; el upsell
+# repetido es spam que devalúa la oferta.
+
+ANNUAL_UPSELL_ENABLED = os.environ.get(
+    "ANNUAL_UPSELL_ENABLED", "true"
+).strip().lower() not in ("0", "false", "no", "off")
+
+ANNUAL_UPSELL_MIN_PAYMENTS = int(
+    os.environ.get("ANNUAL_UPSELL_MIN_PAYMENTS", "3")
+)
+
+
+def fetch_annual_upsell_candidates(limit=None):
+    """
+    [(user_id, group_id, group_name, ultimo_pago_minor, currency,
+      anual_amount_major, anual_minor)]
+    """
+
+    from payment_gateway_config import amount_to_minor_units
+
+    limit = int(limit or RENEWAL_BATCH_SIZE)
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT u.user_id,
+                   u.group_id,
+                   COALESCE(g.name, 'la comunidad'),
+                   ultimo.amount,
+                   COALESCE(NULLIF(UPPER(ultimo.currency), ''), 'EUR'),
+                   anual.amount
+            FROM users u
+            JOIN groups g ON g.id = u.group_id
+            JOIN LATERAL (
+                SELECT p.amount, p.currency
+                FROM payments p
+                WHERE p.user_id = u.user_id
+                  AND p.group_id = u.group_id
+                  AND LOWER(COALESCE(p.status, '')) IN ('paid', 'completed')
+                ORDER BY p.payment_date DESC NULLS LAST, p.id DESC
+                LIMIT 1
+            ) ultimo ON TRUE
+            JOIN LATERAL (
+                SELECT pl.amount, pl.currency
+                FROM plans pl
+                WHERE pl.group_id = u.group_id
+                  AND COALESCE(pl.is_active, TRUE) = TRUE
+                  AND COALESCE(pl.is_recurring, FALSE) = TRUE
+                  AND pl.duration_days IN (365, 366)
+                  AND COALESCE(NULLIF(pl.payment_provider, ''), 'stripe') = 'stripe'
+                  AND UPPER(COALESCE(pl.currency, 'EUR')) =
+                      COALESCE(NULLIF(UPPER(ultimo.currency), ''), 'EUR')
+                ORDER BY pl.amount ASC
+                LIMIT 1
+            ) anual ON TRUE
+            WHERE u.stripe_subscription_id IS NOT NULL
+              AND COALESCE(u.subscription_active, FALSE) = TRUE
+              AND COALESCE(g.is_active, TRUE) = TRUE
+
+              AND (
+                  SELECT COUNT(*) FROM payments p2
+                  WHERE p2.user_id = u.user_id
+                    AND p2.group_id = u.group_id
+                    AND LOWER(COALESCE(p2.status, '')) IN ('paid', 'completed')
+              ) >= %(minimo)s
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM upsell_offers o
+                  WHERE o.user_id = u.user_id AND o.group_id = u.group_id
+              )
+
+              AND NOT EXISTS (
+                  SELECT 1 FROM banned_users b WHERE b.user_id = u.user_id
+              )
+
+            ORDER BY u.user_id
+            LIMIT %(limit)s
+
+        """, {"minimo": ANNUAL_UPSELL_MIN_PAYMENTS, "limit": limit})
+
+        candidatos = []
+
+        for user_id, group_id, nombre, ultimo, currency, anual_major in \
+                cur.fetchall() or []:
+
+            try:
+
+                anual_minor = amount_to_minor_units(anual_major, currency)
+
+            except Exception:
+
+                continue
+
+            # Solo si el anual AHORRA de verdad frente a 12 meses del precio
+            # que este socio paga. Ofrecer un "ahorro" que no existe quema la
+            # confianza que el resto del sistema construye.
+            if ultimo and anual_minor < int(ultimo) * 12:
+
+                candidatos.append((user_id, group_id, nombre, int(ultimo),
+                                   currency, anual_major, anual_minor))
+
+        return candidatos
+
+
+def mark_upsell_sent(user_id, group_id):
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO upsell_offers (user_id, group_id)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id, group_id) DO NOTHING
+
+            """, (user_id, group_id))
+
+            hecho = cur.rowcount > 0
+            conn.commit()
+
+            return hecho
+
+    except Exception as e:
+
+        print("Upsell anual: error registrando:", e)
+
+        return False
+
+
+async def send_annual_upsell_stage(context):
+
+    summary = {"targets": 0, "sent": 0, "skipped": 0, "failed": 0}
+
+    if not ANNUAL_UPSELL_ENABLED:
+
+        return summary
+
+
+    try:
+
+        filas = fetch_annual_upsell_candidates()
+
+    except Exception as e:
+
+        print("Upsell anual: error seleccionando:", e)
+        return summary
+
+
+    summary["targets"] = len(filas)
+
+    for user_id, group_id, nombre, ultimo, currency, anual_major, anual_minor \
+            in filas:
+
+        if not mark_upsell_sent(user_id, group_id):
+
+            summary["skipped"] += 1
+            continue
+
+        language = load_user_language(user_id)
+
+        ahorro = (int(ultimo) * 12 - anual_minor) * 100 // (int(ultimo) * 12)
+        precio_anual = f"{anual_minor / 100:.2f} {currency}"
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=t("renewal.upsell_annual", language,
+                       group=nombre, price=precio_anual, saving=ahorro),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        t("renewal.upsell_annual_button", language),
+                        callback_data=f"marketplace_group_{group_id}"
+                    )
+                ]])
+            )
+
+            summary["sent"] += 1
+
+        except Exception as e:
+
+            print(f"Upsell anual: fallo avisando a {user_id}:", str(e)[:200])
+            summary["failed"] += 1
+
+        await asyncio.sleep(RENEWAL_SEND_DELAY_SECONDS)
+
+
+    return summary
+
+
 async def send_prerenewal_stage(context):
 
     summary = {"targets": 0, "sent": 0, "skipped": 0, "failed": 0}
@@ -930,6 +1128,11 @@ async def process_renewal_reminders(context):
     prerenewal = await send_prerenewal_stage(context)
     total["sent"] += prerenewal["sent"]
     total["failed"] += prerenewal["failed"]
+
+    # Y el upsell anual después: al que ya demostró quedarse, más valor.
+    upsell = await send_annual_upsell_stage(context)
+    total["sent"] += upsell["sent"]
+    total["failed"] += upsell["failed"]
 
 
     etapas = [RENEWAL_STAGE_LAST, RENEWAL_STAGE_EARLY]

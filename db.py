@@ -4161,6 +4161,31 @@ def create_tables():
         # =========================
         # TABLA INCIDENCIAS DE PAGO
         # =========================
+        # OFERTAS DE UPSELL AL PLAN ANUAL
+        # =========================
+        # Una por persona y comunidad, para siempre: el upsell repetido es
+        # spam que devalúa la oferta.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS upsell_offers (
+
+            id SERIAL PRIMARY KEY,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (user_id, group_id)
+
+        );
+
+        """)
+
+
+        # =========================
         # RESÚMENES SEMANALES DEL PROPIETARIO
         # =========================
         # La clave única propietario+grupo+semana hace el envío idempotente:

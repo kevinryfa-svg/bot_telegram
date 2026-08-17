@@ -565,6 +565,32 @@ TRANSLATIONS = {
         ),
     },
 
+    "renewal.upsell_annual": {
+        "es": (
+            "⭐ Un gracias por quedarte\n\n"
+            "Llevas ya varios meses en {group}. Su plan ANUAL sale por "
+            "{price} — un {saving}% menos que pagar 12 meses a tu precio "
+            "actual.\n\n"
+            "Si te pasas, tu suscripción mensual se apaga sola al final del "
+            "periodo ya pagado: sin cobros dobles y sin hacer nada más. Esta "
+            "oferta solo aparece una vez."
+        ),
+        "en": (
+            "⭐ A thank-you for staying\n\n"
+            "You have been in {group} for months now. Its ANNUAL plan costs "
+            "{price} — {saving}% less than paying 12 months at your current "
+            "price.\n\n"
+            "If you switch, your monthly subscription turns itself off at the "
+            "end of the period you already paid: no double charges, nothing "
+            "else to do. This offer only shows once."
+        ),
+    },
+
+    "renewal.upsell_annual_button": {
+        "es": "⭐ Ver el plan anual",
+        "en": "⭐ See the annual plan",
+    },
+
     "mysub.btn_receipts": {
         "es": "🧾 Mis pagos",
         "en": "🧾 My payments",
