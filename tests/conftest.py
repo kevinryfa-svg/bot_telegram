@@ -101,6 +101,8 @@ def clean_db(db_module):
         "group_stripe_coupons",
         "creator_connect_accounts",
         "retention_offers",
+        "owner_weekly_digests",
+        "admins",
         "users",
         "plans",
         "banned_users",
