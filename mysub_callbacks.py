@@ -391,7 +391,25 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
             REFERRAL_DAYS,
             build_referral_link,
             fetch_referral_stats,
+            referrals_enabled_for_group,
         )
+
+        # El propietario puede apagar el programa en su comunidad: los días
+        # los regala él. Sin esto, el socio recibiría un enlace que no
+        # atribuye nada — lo peor de los dos mundos.
+        if not referrals_enabled_for_group(grupo[0]):
+
+            await query.message.reply_text(
+                t("mysub.invite_off", language, group=grupo[1] or ""),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        t("mysub.btn_back_access", language),
+                        callback_data=f"mysub_{ref}"
+                    )
+                ]])
+            )
+
+            return
 
         estadisticas = fetch_referral_stats(user_id, grupo[0])
 

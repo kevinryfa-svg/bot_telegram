@@ -3520,7 +3520,11 @@ def create_tables():
             ("free_invite_link_created_at", "TIMESTAMP"),
             ("location_gate_enabled", "BOOLEAN DEFAULT FALSE"),
             ("allowed_region", "TEXT"),
-            ("allowed_region_type", "TEXT")
+            ("allowed_region_type", "TEXT"),
+            # El programa de referidos regala días de acceso: es coste del
+            # propietario, así que el interruptor es suyo. Por defecto
+            # encendido, como estaba antes de que existiera la columna.
+            ("referrals_enabled", "BOOLEAN DEFAULT TRUE")
 
         ]
 

@@ -652,6 +652,19 @@ TRANSLATIONS = {
         ),
     },
 
+    "mysub.invite_off": {
+        "es": (
+            "🎁 {group} no tiene ahora mismo programa de invitaciones.\n\n"
+            "Si te gusta la comunidad, cuéntaselo a quien creas: se agradece "
+            "igual, aunque de momento no haya días de regalo."
+        ),
+        "en": (
+            "🎁 {group} doesn't have an invite programme right now.\n\n"
+            "If you like the community, tell whoever you think would enjoy "
+            "it: it's appreciated all the same, even without bonus days."
+        ),
+    },
+
     "mysub.invite_text": {
         "es": (
             "🎁 Invita a {group} y ganáis días los dos\n\n"
