@@ -1426,6 +1426,82 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   str(e)[:200])
 
 
+    # DEEP LINK DE UNA COMUNIDAD (?start=group_<grupo>): es el enlace que el
+    # propio bot pone al final de cada anuncio que publica
+    # (build_ad_promo_bot_link), y hasta ahora /start lo IGNORABA: quien
+    # pulsaba un anuncio de una comunidad concreta aterrizaba en la bienvenida
+    # genérica y tenía que volver a buscarla. El clic de un anuncio ya está
+    # pagado; perderlo en la puerta es lo más caro que hace este bot.
+    #
+    # Ahora aterriza en esa comunidad: nombre, lo que el propietario cuenta de
+    # ella, el precio y un botón para pagar. Si la comunidad no se puede
+    # vender ahora mismo, cae al menú de siempre: nunca un callejón.
+    if carga.startswith("group_"):
+
+        try:
+
+            from start_offer_service import (
+                build_single_offer_text,
+                callback_de_compra,
+                etiqueta_de_compra_directa,
+                fetch_offer_for_group,
+                parse_group_payload,
+            )
+
+            group_id = parse_group_payload(carga)
+            oferta = (
+                fetch_offer_for_group(group_id, update.effective_user.id)
+                if group_id else None
+            )
+
+            if oferta:
+
+                log_user_event(update, "start", event_key="/start group")
+
+                if oferta["ya_dentro"]:
+
+                    # Ya es socio: venderle otra vez lo que tiene es la forma
+                    # más rápida de que deje de creer lo que dice el bot.
+                    await update.message.reply_text(
+                        f"🎟 Ya tienes acceso a {oferta['nombre']}.",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton(
+                                "Ver mi acceso",
+                                callback_data=(
+                                    f"mysub_{oferta['telegram_group_id']}"
+                                )
+                            )
+                        ]])
+                    )
+
+                else:
+
+                    await update.message.reply_text(
+                        build_single_offer_text(oferta),
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(
+                                etiqueta_de_compra_directa(oferta),
+                                callback_data=callback_de_compra(oferta)
+                            )],
+                            [InlineKeyboardButton(
+                                "🔎 Ver otras comunidades",
+                                callback_data="start_explore_groups"
+                            )],
+                            [InlineKeyboardButton(
+                                "🛟 Tengo una duda",
+                                callback_data="public_support"
+                            )],
+                        ])
+                    )
+
+                return
+
+        except Exception as e:
+
+            print("Deep link de comunidad: error, cayendo al menú:",
+                  str(e)[:200])
+
+
     log_user_event(
         update,
         "start",

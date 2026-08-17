@@ -507,3 +507,195 @@ def test_the_same_variant_does_not_reuse_the_wrong_text(catalogo, monkeypatch):
 
     assert con != sin
     assert "Elige la tuya" in con and "Elige la tuya" not in sin
+
+
+# =========================
+# EL ENLACE DEL ANUNCIO LLEVA A LA COMUNIDAD DEL ANUNCIO
+# =========================
+# El bot publica anuncios que terminan en «👉 https://t.me/BOT?start=group_51»
+# (build_ad_promo_bot_link, callback_router). Y /start NO tenía ninguna rama
+# para esa carga: quien pulsaba el anuncio de una comunidad concreta aterrizaba
+# en la bienvenida genérica y tenía que volver a buscarla él. El clic de un
+# anuncio ya está pagado; perderlo en la puerta es lo más caro que hace el bot.
+
+
+def _start_con_carga(carga, user_id=7001):
+    """Ejecuta el /start real con la carga del enlace y devuelve lo que dijo."""
+
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import start_handler as sh
+
+    mensaje = MagicMock()
+    mensaje.chat_id = user_id
+    mensaje.chat = MagicMock(id=user_id, type="private", title=None)
+    mensaje.reply_text = AsyncMock()
+
+    usuario = MagicMock(id=user_id, username="cliente", first_name="Cliente",
+                        full_name="Cliente", is_bot=False, language_code="es")
+
+    update = MagicMock()
+    update.message = mensaje
+    update.effective_message = mensaje
+    update.effective_user = usuario
+    update.effective_chat = mensaje.chat
+    update.callback_query = None
+
+    context = MagicMock()
+    context.bot = AsyncMock()
+    context.bot.username = "TheStarVipBOT"
+    context.user_data = {}
+    context.chat_data = {}
+    context.bot_data = {}
+    context.args = [carga] if carga else []
+
+    asyncio.run(sh.start(update, context))
+
+    textos, teclados = [], []
+
+    # Se miran los DOS canales de salida a propósito: las pantallas de deep
+    # link contestan con reply_text y el menú de siempre sale por
+    # send_clean_message -> bot.send_message. Mirar solo uno haría pasar por
+    # «callejón sin salida» justo el camino de vuelta que sí existe.
+    llamadas = list(mensaje.reply_text.call_args_list)
+    llamadas += list(context.bot.send_message.call_args_list)
+
+    for llamada in llamadas:
+
+        if llamada.args:
+            textos.append(str(llamada.args[0]))
+        elif llamada.kwargs.get("text"):
+            textos.append(str(llamada.kwargs["text"]))
+
+        markup = llamada.kwargs.get("reply_markup")
+
+        if markup is not None and hasattr(markup, "inline_keyboard"):
+            teclados.extend(
+                (b.text, b.callback_data)
+                for fila in markup.inline_keyboard for b in fila
+            )
+
+    return " ".join(textos), teclados
+
+
+def test_the_ad_link_lands_on_the_advertised_community(catalogo):
+    texto, botones = _start_con_carga("group_51")
+
+    assert "VIP Fitness" in texto
+    assert "15 EUR/mes" in texto, (
+        "el precio se dice en la pantalla a la que lleva el anuncio"
+    )
+    assert "Entrenos y dieta cada semana." in texto, (
+        "lo que el propietario cuenta de su comunidad es su argumento de venta"
+    )
+
+    etiquetas = [t for t, _c in botones]
+    callbacks = [c for _t, c in botones]
+
+    assert any(c.startswith("startbuy_51_") for c in callbacks), (
+        "con un solo plan, el botón del anuncio ES el enlace de pago"
+    )
+    assert any("15 EUR/mes" in t for t in etiquetas), (
+        "y el precio también va en el botón"
+    )
+    assert "public_support" in callbacks, (
+        "la duda que frena la compra tiene que tener salida aquí también"
+    )
+
+
+def test_the_link_and_the_handler_agree_on_the_payload():
+    """El fallo era exactamente este: el bot generaba una carga que no leía."""
+
+    import callback_router as cr
+
+    enlace = cr.build_ad_promo_bot_link(
+        {"paid_group_id": 51}, bot_username="TheStarVipBOT"
+    )
+
+    assert enlace.endswith("?start=group_51")
+
+    carga = enlace.split("?start=", 1)[1]
+
+    assert sos.parse_group_payload(carga) == 51, (
+        "la carga que escribe el anuncio tiene que ser la que /start entiende"
+    )
+    assert 'carga.startswith("group_")' in open(
+        "start_handler.py", encoding="utf-8"
+    ).read()
+
+
+def test_an_ad_can_sell_a_community_that_is_not_in_the_shop_window(catalogo):
+    """La visibilidad decide qué se EXPONE, no quién puede comprar.
+
+    El propietario que paga un anuncio de su comunidad ya ha decidido
+    invitar a esa gente; que su comunidad no salga en el escaparate no puede
+    dejar sin comprar a quien llega con el enlace que él mismo reparte.
+    """
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE groups SET is_marketplace_visible=FALSE, "
+            "is_main_menu_visible=FALSE, public_visibility='hidden' WHERE id=51"
+        )
+
+    assert sos.fetch_sellable_communities(7001) == [], (
+        "fuera del escaparate no se ofrece sola"
+    )
+
+    oferta = sos.fetch_offer_for_group(51, 7001)
+
+    assert oferta is not None and oferta["precio"] == "15 EUR/mes", (
+        "pero con su enlace directo sí se vende"
+    )
+
+
+def test_what_cannot_be_delivered_is_not_sold_even_through_its_own_link(catalogo):
+    """La entrega descartada no se relaja: el bot ya se niega a cobrar así."""
+
+    assert sos.fetch_offer_for_group(53, 7001) is None, (
+        "entrega confirmada roja: ni por enlace directo"
+    )
+    assert sos.fetch_offer_for_group(52, 7001) is None, "sin plan usable"
+    assert sos.fetch_offer_for_group(54, 7001) is None, "gratuita"
+
+
+def test_a_member_arriving_from_the_ad_gets_their_access_not_a_second_bill(catalogo):
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (7001, 51, NOW() + INTERVAL '10 days', TRUE)"
+        )
+
+    texto, botones = _start_con_carga("group_51")
+
+    callbacks = [c for _t, c in botones]
+
+    assert "Ya tienes acceso" in texto
+    assert "mysub_-1051" in callbacks
+    assert not any(c.startswith("startbuy_") for c in callbacks), (
+        "al socio no se le vuelve a cobrar lo que ya tiene"
+    )
+
+
+def test_a_broken_link_is_never_a_dead_end(catalogo):
+    """La carga la escribe cualquiera en la barra de direcciones de Telegram."""
+
+    for basura in ("group_", "group_abc", "group_0", "group_-5",
+                   "group_99999999", "group_51_extra"):
+
+        assert sos.parse_group_payload(basura) != 51
+
+        texto, botones = _start_con_carga(basura)
+
+        assert texto or botones, (
+            f"la carga «{basura}» dejó al usuario sin nada en pantalla"
+        )
+
+        # Sí puede aparecer un botón de compra: es el escaparate normal de
+        # /start, que ofrece el catálogo con su precio. Lo que no puede
+        # aparecer es la pantalla DEDICADA de una comunidad, porque la carga
+        # no señala ninguna. Su botón («Entrar ahora») solo existe ahí.
+        assert not any(
+            "Entrar ahora" in t for t, _c in botones
+        ), f"la carga «{basura}» montó una oferta que nadie ha pedido"
