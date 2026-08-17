@@ -7,6 +7,7 @@ from flask import request, jsonify, redirect
 
 from db import conn
 from stripe_connect_service import connect_checkout_kwargs
+from stripe_tax_service import tax_checkout_kwargs
 from payment_gateway_config import (
     PAYMENT_PROVIDER_CHANGENOW,
     PAYMENT_PROVIDER_GUARDARIAN,
@@ -257,6 +258,12 @@ def register_checkout_routes(app):
 
                 session_kwargs.update(extra_connect)
 
+
+            # Stripe Tax: si el propietario lo ha activado (en el panel de
+            # Stripe y con STRIPE_TAX_ENABLED), el IVA lo calcula Stripe
+            # según el país del comprador. Apagado, esto devuelve {} y el
+            # checkout es el de siempre, byte a byte.
+            session_kwargs.update(tax_checkout_kwargs())
 
             session = stripe.checkout.Session.create(**session_kwargs)
 
