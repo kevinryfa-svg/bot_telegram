@@ -26544,14 +26544,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # NO BORRAR GRUPO — SOLO INFORMAR
                 # =========================
 
-                if remaining_plans == 0:
-
-                    print(
-                        "Grupo sin planes restantes:",
-                        group_id
-                    )
-
-
                 conn.commit()
 
         except Exception as e:
@@ -26560,6 +26552,64 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "❌ Error eliminando plan."
+            )
+
+            return
+
+
+        # Quitar el ÚLTIMO plan deja la comunidad en el mercado sin nada que
+        # vender: quien entre pulsará «Comprar» y no habrá nada. Antes esto
+        # solo se imprimía en el registro del servidor, así que el único que
+        # se enteraba era quien leyera los logs — nunca el propietario.
+        if remaining_plans == 0:
+
+            from platform_health_service import fetch_unsellable_but_visible
+
+            visible = any(
+                fila[0] == group_id
+                for fila in fetch_unsellable_but_visible()
+            )
+
+            log_event(
+                "group_left_without_plans",
+                category="group",
+                severity="warning" if visible else "info",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="La comunidad se ha quedado sin planes activos.",
+                metadata={"visible_en_venta": visible}
+            )
+
+            aviso = (
+                "🗑 Plan eliminado.\n\n"
+                "⚠️ Era el último plan activo de esta comunidad."
+            )
+
+            if visible:
+
+                aviso += (
+                    "\n\nLa comunidad sigue visible, así que quien entre "
+                    "pulsará «Comprar acceso» y no encontrará nada. Crea otro "
+                    "plan o quítala de la vista mientras lo preparas."
+                )
+
+            else:
+
+                aviso += (
+                    "\n\nNo está visible en el mercado ni en el menú, así que "
+                    "nadie se va a topar con la tienda vacía. Cuando quieras "
+                    "volver a vender, crea un plan primero."
+                )
+
+            await query.message.reply_text(
+                aviso,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "🚦 ¿Puedo vender?",
+                        callback_data="owner_panel_ready"
+                    )
+                ]])
             )
 
             return
