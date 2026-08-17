@@ -101,7 +101,8 @@ def get_super_admin_ids(fallback_admin_id=None):
 
 
 
-def notify_super_admins(token, text, fallback_admin_id=None):
+def notify_super_admins(token, text, fallback_admin_id=None,
+                        reply_markup=None):
 
     admin_ids = get_super_admin_ids(
         fallback_admin_id
@@ -115,7 +116,8 @@ def notify_super_admins(token, text, fallback_admin_id=None):
         response = send_telegram_message(
             token,
             admin_id,
-            text
+            text,
+            reply_markup=reply_markup
         )
 
         if response and response.get("ok"):

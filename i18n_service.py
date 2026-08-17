@@ -672,6 +672,26 @@ TRANSLATIONS = {
         ),
     },
 
+    "incident.repaired": {
+        "es": (
+            "✅ Ya está: tu acceso a {group} está activo.\n\n"
+            "Hubo un problema técnico al entregarlo después de tu pago y ya "
+            "se ha resuelto. Gracias por la paciencia — aquí tienes tu enlace "
+            "de entrada."
+        ),
+        "en": (
+            "✅ All set: your access to {group} is active.\n\n"
+            "There was a technical problem delivering it after your payment "
+            "and it's now resolved. Thanks for your patience — here's your "
+            "entry link."
+        ),
+    },
+
+    "incident.repaired_button": {
+        "es": "🔗 Entrar ahora",
+        "en": "🔗 Come in now",
+    },
+
     "recovery.left_with_access_until": {
         "es": (
             "👋 Ya no estás en {group}, pero tu acceso sigue activo hasta el "
