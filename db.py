@@ -4186,6 +4186,28 @@ def create_tables():
 
 
         # =========================
+        # PETICIONES DE DEVOLUCIÓN PEDIDAS DESDE EL BOT
+        # =========================
+        # Clave única por pago: dos personas pulsando el botón a la vez no
+        # pueden pedir dos veces la misma devolución. Si Stripe rechaza, la
+        # fila se borra para poder reintentar.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS refund_requests (
+
+            payment_id INTEGER PRIMARY KEY,
+
+            actor_user_id BIGINT,
+
+            requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+
+        # =========================
         # AVISOS DE ENTREGA RECUPERADA A LOS QUE SE QUEDARON FUERA
         # =========================
         # La clave es el EPISODIO de avería (su broken_since), no el día: dos
