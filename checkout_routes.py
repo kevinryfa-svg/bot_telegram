@@ -207,8 +207,11 @@ def register_checkout_routes(app):
                 # código de un propietario no descuenta los planes de otro.
                 allow_promotion_codes=True,
 
-                success_url="https://t.me/TheStarVipBOT",
-                cancel_url="https://t.me/TheStarVipBOT",
+                # Vuelta al bot CON CARGA: quien paga aterriza con su acceso a
+                # un toque (deep link → «Mis accesos») y quien cancela, con el
+                # camino de vuelta — en vez de un chat sin contexto.
+                success_url=f"https://t.me/TheStarVipBOT?start=pagado_{group_id}",
+                cancel_url=f"https://t.me/TheStarVipBOT?start=cancelado_{group_id}",
 
                 metadata=metadata_session
 

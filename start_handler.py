@@ -1197,6 +1197,79 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Error quitando teclado de ubicación en /start:", e)
 
 
+    # DEEP LINK POST-PAGO: el checkout de Stripe vuelve al bot con carga
+    # (?start=pagado_<grupo> / cancelado_<grupo>). El que acaba de pagar
+    # aterriza con su acceso a un toque en vez de buscar el mensaje del
+    # webhook entre el historial; el que canceló, con el camino de vuelta.
+    # Cualquier carga rara cae al menú de siempre: nunca un callejón.
+    carga = (context.args[0] if getattr(context, "args", None) else "") or ""
+
+    if carga.startswith(("pagado_", "cancelado_")):
+
+        try:
+
+            from i18n_service import load_user_language, t
+
+            ref = int(carga.split("_", 1)[1])
+            language = load_user_language(update.effective_user.id)
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT id, name, telegram_group_id
+                    FROM groups
+                    WHERE id=%s OR telegram_group_id=%s
+                    LIMIT 1
+
+                """, (ref, ref))
+
+                grupo = cur.fetchone()
+
+            if grupo:
+
+                log_user_event(
+                    update,
+                    "start",
+                    event_key=f"/start {carga.split('_', 1)[0]}"
+                )
+
+                if carga.startswith("pagado_"):
+
+                    await update.message.reply_text(
+                        t("start.paid_landing", language, group=grupo[1] or ""),
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton(
+                                t("start.paid_button", language),
+                                callback_data=f"mysub_{grupo[2]}"
+                            )
+                        ]])
+                    )
+
+                else:
+
+                    await update.message.reply_text(
+                        t("start.cancelled_landing", language,
+                          group=grupo[1] or ""),
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(
+                                t("start.retry_button", language),
+                                callback_data=f"marketplace_group_{grupo[0]}"
+                            )],
+                            [InlineKeyboardButton(
+                                t("start.problem_button", language),
+                                callback_data="public_support"
+                            )],
+                        ])
+                    )
+
+                return
+
+        except Exception as e:
+
+            print("Deep link de pago: error, cayendo al menú:", str(e)[:200])
+
+
     log_user_event(
         update,
         "start",
