@@ -185,3 +185,77 @@ def test_the_kill_switch_and_the_schedule(comunidad, monkeypatch):
     pos = source.index("def schedule_business_alerts_job")
     trozo = source[pos:pos + 900]
     assert "run_repeating" in trozo
+
+
+# =========================
+# SOCIOS PAGANDO Y FUERA
+# =========================
+# Cuando alguien se queda fuera con el acceso vivo, el bot le manda un enlace.
+# A quien nunca abrió el bot no se le puede escribir, y eso quedaba registrado
+# donde nadie mira. Esa persona está pagando y sin poder entrar.
+
+def registrar_fuera(n, group_id=87):
+    for i in range(n):
+        log_event(
+            "member_return_offer_failed",
+            category="access", severity="warning", scope="group",
+            group_id=group_id, actor_user_id=9200 + i, target_user_id=9200 + i,
+            message="Socio con acceso vivo fuera del grupo y sin poder avisarle.",
+        )
+
+
+def test_a_paying_member_locked_out_reaches_the_owner(comunidad):
+    registrar_fuera(1)
+
+    contexto = FakeContext()
+    resumen = asyncio.run(bas.process_business_alerts(contexto))
+
+    assert resumen["sent"] == 1
+
+    _chat, texto, _teclado = contexto.bot.enviados[0]
+
+    assert "1 persona con acceso pagado" in texto
+    assert "no hemos podido avisarles" in texto
+    assert "veto puesto por error" in texto, (
+        "el propietario es el único que puede arreglarlo: hay que decirle cómo"
+    )
+
+
+def test_the_wording_holds_up_in_plural(comunidad):
+    registrar_fuera(3)
+
+    contexto = FakeContext()
+    asyncio.run(bas.process_business_alerts(contexto))
+
+    texto = contexto.bot.enviados[0][1]
+
+    assert "3 personas con acceso pagado" in texto
+    assert "Están pagando" in texto
+
+
+def test_the_same_week_does_not_repeat_it(comunidad):
+    registrar_fuera(2)
+
+    contexto = FakeContext()
+    asyncio.run(bas.process_business_alerts(contexto))
+
+    contexto2 = FakeContext()
+    resumen = asyncio.run(bas.process_business_alerts(contexto2))
+
+    assert resumen["sent"] == 0, (
+        "es una alerta semanal: repetirla cada seis horas la vuelve ruido"
+    )
+
+
+def test_one_person_counts_once_however_many_attempts(comunidad):
+    """Varios intentos fallidos con la misma persona son una persona."""
+
+    for _ in range(4):
+        log_event(
+            "member_return_offer_failed",
+            category="access", severity="warning", scope="group",
+            group_id=87, actor_user_id=9299, target_user_id=9299,
+            message="Sin poder avisarle.",
+        )
+
+    assert bas.detect_paying_members_locked_out(87) == 1
