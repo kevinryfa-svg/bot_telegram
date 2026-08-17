@@ -4186,6 +4186,41 @@ def create_tables():
 
 
         # =========================
+        # REFERIDOS (invita y ganáis días los dos)
+        # =========================
+        # La clave única invitado+comunidad fija la atribución al PRIMER
+        # enlace que trajo a esa persona: sin peleas por el último clic ni
+        # doble pago por la misma alta. El estado 'pending'→'converted' es
+        # también la puerta de idempotencia del pago.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS referrals (
+
+            id SERIAL PRIMARY KEY,
+
+            referrer_user_id BIGINT,
+
+            invited_user_id BIGINT,
+
+            group_id INTEGER,
+
+            status TEXT DEFAULT 'pending',
+
+            days_awarded INTEGER DEFAULT 0,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            converted_at TIMESTAMP,
+
+            UNIQUE (invited_user_id, group_id)
+
+        );
+
+        """)
+
+
+        # =========================
         # ALERTAS DE NEGOCIO AL PROPIETARIO
         # =========================
         # La clave única grupo+alerta+periodo hace el aviso idempotente:

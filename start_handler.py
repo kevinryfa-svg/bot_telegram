@@ -1270,6 +1270,69 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Deep link de pago: error, cayendo al menú:", str(e)[:200])
 
 
+    # DEEP LINK DE REFERIDO (?start=ref_<grupo>_<socio>): el invitado
+    # aterriza directamente en la comunidad que le recomendaron, con la
+    # atribución ya guardada. Si la carga no da para nada (autorreferido,
+    # invitado que ya está dentro, grupo inexistente), cae al menú: el
+    # enlace de un amigo nunca puede ser un callejón.
+    if carga.startswith("ref_"):
+
+        try:
+
+            from i18n_service import load_user_language, t
+            from referral_service import (
+                parse_referral_payload,
+                record_referral_click,
+            )
+
+            datos = parse_referral_payload(carga)
+
+            if datos:
+
+                group_id, referrer_user_id = datos
+                invited_user_id = update.effective_user.id
+                language = load_user_language(invited_user_id)
+
+                with conn.cursor() as cur:
+
+                    cur.execute("""
+
+                        SELECT id, name
+                        FROM groups
+                        WHERE id=%s
+                        LIMIT 1
+
+                    """, (group_id,))
+
+                    grupo = cur.fetchone()
+
+                if grupo:
+
+                    record_referral_click(
+                        referrer_user_id, invited_user_id, grupo[0]
+                    )
+
+                    log_user_event(update, "start", event_key="/start ref")
+
+                    await update.message.reply_text(
+                        t("referral.landing", language,
+                          group=grupo[1] or ""),
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton(
+                                t("referral.landing_button", language),
+                                callback_data=f"marketplace_group_{grupo[0]}"
+                            )
+                        ]])
+                    )
+
+                    return
+
+        except Exception as e:
+
+            print("Deep link de referido: error, cayendo al menú:",
+                  str(e)[:200])
+
+
     log_user_event(
         update,
         "start",

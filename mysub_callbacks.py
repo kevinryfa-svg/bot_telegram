@@ -275,6 +275,59 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
         return
 
 
+    if data.startswith("mysub_invite_"):
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        ref = data[len("mysub_invite_"):]
+        language = load_user_language(user_id)
+
+        grupo = _resolver_grupo_por_ref(int(ref)) if ref.lstrip("-").isdigit() else None
+
+        if not grupo:
+
+            await reply_with_recover_navigation(
+                query,
+                t("mysub.not_found", language)
+            )
+
+            return
+
+        from referral_service import (
+            REFERRAL_DAYS,
+            build_referral_link,
+            fetch_referral_stats,
+        )
+
+        estadisticas = fetch_referral_stats(user_id, grupo[0])
+
+        texto = t(
+            "mysub.invite_text", language,
+            group=grupo[1] or "",
+            days=REFERRAL_DAYS,
+            link=build_referral_link(user_id, grupo[0]),
+            invited=estadisticas["invitados"],
+            converted=estadisticas["convertidos"],
+            earned=estadisticas["dias"],
+        )
+
+        await query.message.reply_text(
+            texto,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    t("mysub.btn_back_access", language),
+                    callback_data=f"mysub_{ref}"
+                )
+            ]]),
+            disable_web_page_preview=True
+        )
+
+        return
+
+
     if data.startswith("mysub_pause_"):
 
         try:
@@ -1145,6 +1198,20 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                     t("mysub.btn_receipts", language),
 
                     callback_data=f"mysub_receipts_{telegram_group_id}"
+
+                )
+
+            ],
+
+            [
+
+                # El canal de venta más barato: un socio contento con un
+                # enlace en la mano.
+                InlineKeyboardButton(
+
+                    t("mysub.btn_invite", language),
+
+                    callback_data=f"mysub_invite_{telegram_group_id}"
 
                 )
 
