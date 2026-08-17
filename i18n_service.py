@@ -548,6 +548,45 @@ TRANSLATIONS = {
         ),
     },
 
+    "renewal.renewed_priced": {
+        "es": (
+            "✅ Suscripción renovada\n\n"
+            "🧾 Cobro: {price}\n"
+            "Tu acceso a {group} sigue activo hasta el {until}.\n\n"
+            "No tienes que hacer nada: se renovará solo. Puedes desactivar la "
+            "renovación cuando quieras desde «Mis suscripciones»."
+        ),
+        "en": (
+            "✅ Subscription renewed\n\n"
+            "🧾 Charged: {price}\n"
+            "Your access to {group} is active until {until}.\n\n"
+            "Nothing to do on your side: it renews itself. You can turn "
+            "auto-renewal off any time from \"My subscriptions\"."
+        ),
+    },
+
+    "mysub.btn_receipts": {
+        "es": "🧾 Mis pagos",
+        "en": "🧾 My payments",
+    },
+
+    "mysub.receipts_title": {
+        "es": "🧾 Tus pagos de {group}",
+        "en": "🧾 Your payments for {group}",
+    },
+
+    "mysub.receipts_empty": {
+        "es": "Todavía no hay pagos registrados aquí.",
+        "en": "No payments recorded here yet.",
+    },
+
+    "mysub.receipts_footer": {
+        "es": "Si algo no cuadra, escríbenos antes que a tu banco: se "
+              "resuelve más rápido y sin disputas.",
+        "en": "If something looks off, write to us before your bank: it gets "
+              "solved faster and without disputes.",
+    },
+
     "renewal.payment_failed": {
         "es": (
             "⚠️ No hemos podido cobrar tu renovación de {group}.\n\n"
