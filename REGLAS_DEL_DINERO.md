@@ -193,3 +193,35 @@ hacer la activación no degrada: **rompe**.
 El coste de tener el portal apagado se mide solo: el panel de salud de
 comunidades cuenta cuántos avisos de cobro fallido salieron sin botón para
 cambiar la tarjeta.
+
+---
+
+## 11. Las tres herramientas del arnés
+
+Mover código en un bot de cientos de botones sin romper pantallas no se hace
+con cuidado: se hace con instrumentos.
+
+| Herramienta | Dónde | Cuándo |
+|---|---|---|
+| Barrido de botones | `tests/test_button_sweep.py` | en cada PR, automático |
+| Ramas inalcanzables | `tests/test_unreachable_branches.py` | en cada PR, automático |
+| Retrato de pantallas (golden master) | `tools/snapshot.py` + `tools/snapshot_diff.py` | a mano, antes y después de un cambio grande |
+
+Las dos primeras son tests porque no necesitan mantenimiento. La tercera **no
+lo es a propósito**: exigiría un retrato de referencia versionado, que habría
+que regenerar en cada cambio intencionado de texto, y esa fricción acaba en
+alguien regenerándolo sin mirar — lo contrario de para lo que sirve.
+
+Uso del retrato:
+
+```bash
+TEST_DATABASE_URL=... python tools/snapshot.py /tmp/antes.json
+# ...el cambio...
+TEST_DATABASE_URL=... python tools/snapshot.py /tmp/despues.json
+python tools/snapshot_diff.py /tmp/antes.json /tmp/despues.json
+```
+
+**La única regla al leer el diff:** cada diferencia tiene que ser una que
+esperabas. La que no esperabas es el fallo que ibas a desplegar. Con estas
+tres se troceó una función de 24.000 líneas en 36 módulos sin mover una sola
+pantalla.
