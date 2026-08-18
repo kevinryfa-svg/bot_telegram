@@ -236,3 +236,198 @@ def test_the_startup_actually_calls_it(tienda):
     assert "try:" in fuente[pos - 400:pos], (
         "una llamada a Stripe en el arranque va envuelta o puede tumbar el bot"
     )
+
+
+# =========================
+# QUE ALGUIEN SE ENTERE DE QUE EXISTE
+# =========================
+# Una tienda con existencias y sin nadie que le diga el precio a un propietario
+# vende lo mismo que una vacía. El sitio donde un propietario SÍ lee es su
+# resumen semanal. Y lo que convierte una oferta en una insistencia es
+# repetirla: se paga con que dejen de leer el resumen entero.
+
+@pytest.fixture
+def comunidad_con_dueno(tienda):
+    """Comunidad 71 vendible, con dueño 771 y la tienda sembrada."""
+
+    db = tienda["db"]
+
+    with db.conn.cursor() as cur:
+        cur.execute("DELETE FROM group_delivery_health WHERE group_id=71")
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active, "
+            "is_marketplace_visible, preview_text) VALUES "
+            "(71, 'VIP Pádel', -1071, TRUE, TRUE, 'Partidos y clases.')"
+        )
+        cur.execute(
+            "INSERT INTO admins (user_id, group_id, role, is_active) "
+            "VALUES (771, 71, 'GROUP_OWNER', TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO plans (group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active) VALUES "
+            "(71, 'Mensual', 'price_71m', 'price_71m', 30, 20, 'EUR', TRUE)"
+        )
+        # Un socio activo: el resumen semanal solo se manda de comunidades
+        # VIVAS, y eso está bien — a un grupo muerto no se le resume nada.
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (7101, 71, NOW() + INTERVAL '20 days', TRUE)"
+        )
+
+    oas.ensure_owner_addon_products_seeded()
+
+    return tienda
+
+
+def test_a_community_with_no_new_members_gets_the_offer_with_its_price(
+    comunidad_con_dueno
+):
+    sugerencia = oas.fetch_addon_suggestion(71, 771, 0)
+
+    assert sugerencia is not None
+    assert sugerencia["code"] == "ad_promo"
+    assert oas.format_addon_monthly_price(sugerencia) == "19,99 EUR/mes"
+
+
+def test_a_community_that_is_growing_is_left_alone(comunidad_con_dueno):
+    assert oas.fetch_addon_suggestion(71, 771, 25) is None, (
+        "a quien le entran 25 personas por semana no hay que venderle "
+        "publicidad: es ruido"
+    )
+
+
+def test_nothing_is_offered_to_someone_who_already_pays_for_it(
+    comunidad_con_dueno
+):
+    with comunidad_con_dueno["db"].conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO owner_addon_subscriptions "
+            "(owner_user_id, group_id, addon_code, status) "
+            "VALUES (771, 71, 'ad_promo', 'active')"
+        )
+
+    assert oas.fetch_addon_suggestion(71, 771, 0) is None
+
+
+def test_the_bundle_counts_as_having_it(comunidad_con_dueno):
+    """Quien paga el pack de 24,99 ya tiene la publicidad dentro."""
+
+    with comunidad_con_dueno["db"].conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO owner_addon_subscriptions "
+            "(owner_user_id, group_id, addon_code, status) "
+            "VALUES (771, 71, 'bundle_ads_backups', 'active')"
+        )
+
+    assert oas.fetch_addon_suggestion(71, 771, 0) is None, (
+        "cobrarle por separado lo que ya tiene en el pack sería venderle dos "
+        "veces lo mismo"
+    )
+
+
+def test_promotion_is_not_sold_for_a_community_that_cannot_be_bought(
+    comunidad_con_dueno
+):
+    """Traer tráfico a una puerta cerrada no es un servicio, es un gasto."""
+
+    with comunidad_con_dueno["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET is_active=FALSE WHERE group_id=71")
+
+    assert oas.fetch_addon_suggestion(71, 771, 0) is None
+
+
+def test_it_is_offered_once_a_month_not_every_week(comunidad_con_dueno):
+    primera = oas.fetch_addon_suggestion(71, 771, 0, period_key="2026-08")
+    segunda = oas.fetch_addon_suggestion(71, 771, 0, period_key="2026-08")
+
+    assert primera is not None
+    assert segunda is None, (
+        "la misma oferta cada semana deja de ser una oferta"
+    )
+
+    # Al mes siguiente vuelve a tocar.
+    assert oas.fetch_addon_suggestion(71, 771, 0, period_key="2026-09")
+
+
+def test_the_digest_carries_the_offer_in_the_text_and_in_a_button(
+    comunidad_con_dueno
+):
+    import owner_weekly_digest_service as owd
+
+    sugerencia = oas.fetch_addon_suggestion(71, 771, 0)
+
+    texto = owd.build_weekly_digest_text(71, "VIP Pádel", sugerencia=sugerencia)
+    teclado = owd.build_digest_keyboard(sugerencia=sugerencia)
+
+    assert "19,99 EUR/mes" in texto, (
+        "una sugerencia sin precio obliga a entrar para saber cuánto cuesta: "
+        "eso es un anzuelo, no una oferta"
+    )
+    assert "Se cancela cuando quieras" in texto
+
+    callbacks = [b.callback_data
+                 for fila in teclado.inline_keyboard for b in fila]
+
+    assert "owner_panel_revenue" in callbacks, "el resumen no pierde lo suyo"
+    assert "owner_addons_menu" in callbacks
+
+
+def test_without_a_suggestion_the_digest_is_exactly_what_it_was(
+    comunidad_con_dueno
+):
+    import owner_weekly_digest_service as owd
+
+    texto = owd.build_weekly_digest_text(71, "VIP Pádel")
+    teclado = owd.build_digest_keyboard()
+
+    assert "19,99" not in texto
+    assert "publica tu comunidad" not in texto
+    assert len(teclado.inline_keyboard) == 1
+
+
+def test_the_batch_asks_for_the_suggestion_only_once(comunidad_con_dueno,
+                                                     monkeypatch):
+    """Pedirla dos veces gastaría la marca y descuadraría texto y botón.
+
+    Es el mismo fallo que ya tuve con el teclado del reenganche: la segunda
+    llamada vuelve vacía, así que el texto ofrecería un servicio que el teclado
+    no tiene, o al revés.
+    """
+
+    import asyncio
+
+    import owner_weekly_digest_service as owd
+
+    monkeypatch.setattr(owd, "DIGEST_ENABLED", True)
+    monkeypatch.setattr(owd, "DIGEST_SEND_DELAY_SECONDS", 0)
+
+    enviados = []
+
+    class FakeBot:
+        async def send_message(self, chat_id=None, text=None,
+                               reply_markup=None, **kwargs):
+            enviados.append((chat_id, text, reply_markup))
+            return True
+
+    class FakeContext:
+        def __init__(self):
+            self.bot = FakeBot()
+
+    resumen = asyncio.run(owd.process_weekly_digests(FakeContext()))
+
+    assert resumen["sent"] == 1
+
+    _chat, texto, markup = enviados[0]
+
+    callbacks = [b.callback_data
+                 for fila in markup.inline_keyboard for b in fila]
+
+    tiene_texto = "19,99 EUR/mes" in texto
+    tiene_boton = "owner_addons_menu" in callbacks
+
+    assert tiene_texto == tiene_boton, (
+        "el texto y el botón tienen que decir lo mismo: uno sin el otro es el "
+        "síntoma de haber pedido la sugerencia dos veces"
+    )
+    assert tiene_texto, "con 0 altas y sin el servicio, toca ofrecerlo"
