@@ -235,3 +235,131 @@ def test_every_event_the_processor_handles_is_in_the_required_list():
     assert not faltan, (
         f"el procesador atiende {faltan} pero el webhook no los suscribe"
     )
+
+
+# =========================
+# EL WEBHOOK_ID CON LA FORMA EQUIVOCADA
+# =========================
+# El fallo que había en producción: la casilla del webhook_id guardaba un valor
+# con forma de client_id. Solo se comprobaba que NO estuviera vacía. Con eso el
+# cobro salía, PayPal lo aceptaba, y la verificación de la firma del webhook
+# contestaba HTTP 400: dinero cobrado, acceso no entregado, y ninguna traza que
+# lo dijera. Los dos extremos del arreglo son negarse a cobrar y decir cuál es
+# el campo.
+
+CLIENT_ID_DE_VERDAD = (
+    "AeA1QIZXlYRHqCv1cE-3Xy9pQ_kM7bNvB2wTqLsRfGhJkLmNoPqRsTuVwXyZ1234567890abcd"
+)
+
+
+def test_a_real_webhook_id_is_accepted():
+    """Lo primero que hay que probar es que NO se rechaza lo bueno.
+
+    Un filtro que deja a un propietario sin poder cobrar hace más daño que el
+    fallo que evita, así que se aceptan las formas que PayPal usa y también el
+    guion, que no puedo afirmar que no use nunca.
+    """
+
+    for bueno in ("0EH40505U7160970P", "1JE4291016473214C",
+                  "5ML55555XX555555L", "WH-1", "WH_TEST_1"):
+
+        assert pp.parece_webhook_id_de_paypal(bueno) is True, bueno
+
+
+def test_what_cannot_be_a_webhook_id_is_rejected():
+    for malo in (CLIENT_ID_DE_VERDAD,
+                 "https://api.paypal.com/v1/notifications/webhooks/X",
+                 "WH-1 WH-2", "correo@ejemplo.com", "", "   ", None):
+
+        assert pp.parece_webhook_id_de_paypal(malo) is False, repr(malo)
+
+
+def test_the_check_names_the_field_instead_of_blaming_the_credentials(red):
+    """«No se ha podido leer la configuración» manda a revisar TODO.
+
+    El problema es un campo y se sabe cuál: decirlo es la diferencia entre un
+    arreglo de un minuto y una tarde revisando credenciales que están bien.
+    """
+
+    r = pwc.revisar_webhook(
+        "https://api.test", "tok", CLIENT_ID_DE_VERDAD, "prueba"
+    )
+
+    assert r["estado"] == "forma_invalida"
+    assert not red["patches"], (
+        "con un webhook_id imposible no se gasta ni una llamada a PayPal"
+    )
+
+
+def test_the_owner_is_told_it_would_charge_without_delivering(red, monkeypatch):
+    avisos = []
+
+    monkeypatch.setattr(
+        pwc, "log_event", lambda *a, **k: avisos.append(("log", a, k))
+    )
+
+    import notification_service
+
+    monkeypatch.setattr(
+        notification_service, "send_telegram_message",
+        lambda token, chat_id, texto, **k: avisos.append(("aviso", texto))
+    )
+
+    pwc.notificar_resultado(
+        {"etiqueta": "grupo 7", "estado": "forma_invalida", "faltaban": []},
+        owner_user_id=99, token_bot="T"
+    )
+
+    textos = [t for tipo, t in ((a[0], a[1]) for a in avisos) if tipo == "aviso"]
+
+    assert textos, "el propietario tiene que enterarse"
+    assert "no se entregaría" in textos[0], (
+        "hay que decir la consecuencia en dinero, no solo que hay un error"
+    )
+    assert "Webhooks" in textos[0], "y dónde está el valor correcto"
+
+    severidades = [
+        k.get("severity") for tipo, a, k in
+        ((x[0], x[1], x[2]) for x in avisos if x[0] == "log")
+    ]
+
+    assert "critical" in severidades, (
+        "cobrar sin entregar no es un warning"
+    )
+
+
+def test_the_charge_is_refused_before_taking_the_money():
+    """El extremo que de verdad protege el dinero: no cobrar."""
+
+    fuente = open("payment_providers/paypal_provider.py", encoding="utf-8").read()
+
+    pos = fuente.index("parece_webhook_id_de_paypal(credentials.get")
+    trozo = fuente[pos:pos + 1500]
+
+    assert "PaymentProviderUnavailable" in trozo, (
+        "sin excepción aquí, el cobro sigue adelante y el acceso no llega"
+    )
+    assert "no se cobra" in trozo
+
+
+def test_the_wizard_refuses_to_save_it():
+    """Y el sitio donde se comete el error es la casilla del asistente."""
+
+    fuente = open("owner_payment_callbacks.py", encoding="utf-8").read()
+
+    assert "parece_webhook_id_de_paypal" in fuente
+
+    pos = fuente.index("if payload.get(\"webhook_id\") and not parece_webhook_id_de_paypal")
+
+    # Se busca el cifrado que viene DESPUÉS de la comprobación: el fichero
+    # guarda también Stripe y Revolut, y su encrypt_provider_config aparece
+    # antes en el texto sin tener nada que ver con esto.
+    assert pos < fuente.index("encrypt_provider_config", pos), (
+        "la comprobación va ANTES de guardar: guardarlo y avisar después deja "
+        "el valor malo dentro"
+    )
+
+    trozo = fuente[pos:pos + 1800]
+
+    assert "0EH40505U7160970P" in trozo, "hay que enseñarle un ejemplo bueno"
+    assert "Webhooks" in trozo, "y dónde encontrarlo"
