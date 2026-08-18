@@ -39,6 +39,7 @@ Lo que hace este módulo:
 """
 
 from db import conn
+from payment_access_service import MAX_PLAN_DURATION_DAYS
 
 
 # Cuántas ofertas caben en la primera pantalla. Más que esto no es catálogo,
@@ -47,9 +48,18 @@ MAX_OFERTAS = 6
 
 
 def formato_periodo(duration_days):
-    """'/mes', '/año', '/30 días' — lo que el comprador espera leer."""
+    """'/mes', '/año', '/30 días' — lo que el comprador espera leer.
+
+    El 0 no es «sin periodo»: en plans significa acceso permanente, y así lo
+    entrega el cobro (expiration = None). Decir «7 EUR» a secas donde el
+    comprador espera un periodo es la diferencia entre parecer una cuota y ser
+    lo que es: un pago único.
+    """
 
     dias = int(duration_days or 0)
+
+    if dias == 0:
+        return " para siempre"
 
     if dias in (28, 29, 30, 31):
         return "/mes"
@@ -63,7 +73,7 @@ def formato_periodo(duration_days):
     if dias in (90, 91, 92):
         return "/trimestre"
 
-    if dias <= 0:
+    if dias < 0:
         return ""
 
     return f"/{dias} días"
@@ -147,7 +157,23 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                     WHERE p.group_id = g.id
                       AND COALESCE(p.is_active, TRUE) = TRUE
                       AND p.amount IS NOT NULL AND p.amount > 0
-                      AND p.duration_days IS NOT NULL AND p.duration_days > 0
+                      AND p.duration_days IS NOT NULL
+                      AND p.duration_days > 0
+                      -- El techo es el mismo que usa la concesión de acceso:
+                      -- por encima, el cobro se NIEGA a convertir el pago en
+                      -- acceso, así que ofrecerlo es cobrar sin entregar. En
+                      -- producción la ÚNICA comunidad vendible tenía un plan
+                      -- de 1.300.000 días.
+                      --
+                      -- El 0 (acceso permanente para la concesión) se queda
+                      -- fuera a propósito: ningún asistente del bot puede
+                      -- crear un plan con 0 —todos exigen entre 1 y el
+                      -- techo—, así que un 0 en la tabla no es una decisión,
+                      -- es un dato anómalo. Venderlo como acceso permanente
+                      -- regalaría acceso de por vida al precio de un mes, y
+                      -- eso no se puede deshacer; no venderlo solo deja un
+                      -- plan sin usar, y el panel del propietario lo señala.
+                      AND p.duration_days <= %(max_dias)s
                     ORDER BY p.amount ASC, p.id ASC
                     LIMIT 1
                 ) barato ON TRUE
@@ -157,7 +183,9 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                     WHERE p.group_id = g.id
                       AND COALESCE(p.is_active, TRUE) = TRUE
                       AND p.amount IS NOT NULL AND p.amount > 0
-                      AND p.duration_days IS NOT NULL AND p.duration_days > 0
+                      AND p.duration_days IS NOT NULL
+                      AND p.duration_days > 0
+                      AND p.duration_days <= %(max_dias)s
                 ) cuantos ON TRUE
                 LEFT JOIN group_delivery_health h ON h.group_id = g.id
                 WHERE COALESCE(g.is_active, TRUE) = TRUE
@@ -183,6 +211,7 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
             """, {
                 "uid": user_id,
                 "limite": int(limit),
+                "max_dias": MAX_PLAN_DURATION_DAYS,
                 "solo_grupo": int(solo_grupo) if solo_grupo else None,
                 "sin_visibilidad": not exigir_visibilidad,
             })
@@ -398,13 +427,31 @@ def describe_shop_window():
 
         return f"Escaparate: no se pudo comprobar ({str(e)[:120]})."
 
+    # Un escaparate vacío puede estar vacío por falta de comunidades o porque
+    # las que hay tienen planes que el cobro se niega a entregar. Son dos
+    # problemas distintos con arreglos distintos, así que se distinguen: si no,
+    # el arreglo del segundo se busca en el sitio del primero.
+    imposibles = contar_planes_no_entregables()
+
+    aviso = ""
+
+    if imposibles:
+
+        aviso = (
+            f" Además hay {imposibles} plan(es) activo(s) con una duración de "
+            f"más de {MAX_PLAN_DURATION_DAYS} días: no se ofrecen porque el "
+            "cobro no los puede convertir en acceso. Se corrigen poniendo los "
+            "días reales, o 0 para acceso permanente."
+        )
+
+
     if not ofertas:
 
         return (
             "Escaparate: 0 comunidades vendibles — /start no tiene nada que "
             "vender. Hace falta al menos una comunidad activa, no gratuita, "
-            "con un plan activo con importe y duración, y la entrega sin "
-            "descartar."
+            "con un plan activo con importe y una duración entregable, y la "
+            "entrega sin descartar." + aviso
         )
 
     precios = [o["precio"] for o in ofertas if o["precio"]]
@@ -412,4 +459,39 @@ def describe_shop_window():
     return (
         f"Escaparate: {len(ofertas)} comunidad(es) vendible(s)"
         + (f", la más barata a {precios[0]}." if precios else ".")
+        + aviso
     )
+
+
+def contar_planes_no_entregables():
+    """Planes activos cuya duración el cobro se niega a convertir en acceso.
+
+    Son el peor estado posible de un catálogo: se pueden enseñar, se pueden
+    cobrar, y el acceso no sale. Desde este cambio no se enseñan, y este
+    contador es lo que evita que dejar de enseñarlos los haga invisibles
+    también para quien tiene que corregirlos.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM plans
+                WHERE COALESCE(is_active, TRUE) = TRUE
+                  AND duration_days IS NOT NULL
+                  AND duration_days > %s
+
+            """, (MAX_PLAN_DURATION_DAYS,))
+
+            fila = cur.fetchone()
+
+            return int(fila[0] or 0) if fila else 0
+
+    except Exception as e:
+
+        print("Escaparate: error contando planes no entregables:", e)
+
+        return 0

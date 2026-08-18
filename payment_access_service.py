@@ -934,6 +934,18 @@ def get_group_plan_for_access(group_id, plan_id):
     }
 
 
+# El techo de lo que este sistema sabe ENTREGAR. Un plan de más días que esto
+# no se puede convertir en acceso: calculate_group_access_expiration se niega,
+# el pago queda cobrado y sin entregar, y solo lo salva el botón de reparación
+# del propietario. Vive aquí, junto a la función que decide el acceso, porque
+# quien ofrezca un plan tiene que preguntar por el MISMO número: ofrecer algo
+# que el cobro va a rechazar es la peor combinación posible.
+#
+# El 0 es aparte: significa acceso permanente y sí se puede entregar
+# (expiration = None).
+MAX_PLAN_DURATION_DAYS = 3650
+
+
 def calculate_group_access_expiration(duration_days):
 
     if duration_days is None or duration_days == 0:
@@ -944,7 +956,7 @@ def calculate_group_access_expiration(duration_days):
     duration_value = int(duration_days)
 
 
-    if duration_value < 1 or duration_value > 3650:
+    if duration_value < 1 or duration_value > MAX_PLAN_DURATION_DAYS:
 
         raise ValueError("Duración de plan fuera de rango.")
 

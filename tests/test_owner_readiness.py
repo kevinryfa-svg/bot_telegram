@@ -95,7 +95,10 @@ def test_a_plan_without_duration_counts_as_no_plan(comunidad):
         "un plan sin duración aparece y no se puede conceder: es peor que "
         "ninguno"
     )
-    assert "precio y duración" in texto
+    # La frase cambió al aparecer una segunda forma de no ser vendible (una
+    # duración que el cobro se niega a entregar): «precio y duración» ya no
+    # cubría las dos, y el panel dice ahora lo que de verdad importa.
+    assert "que se pueda entregar" in texto
 
 
 def test_a_broken_plan_next_to_a_good_one_is_flagged_without_blocking(comunidad):

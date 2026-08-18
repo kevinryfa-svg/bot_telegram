@@ -24,6 +24,7 @@ from owner_addon_service import (
     mark_owner_addon_subscription_payment_failed,
     update_owner_addon_subscription_from_stripe
 )
+from payment_access_service import MAX_PLAN_DURATION_DAYS
 from payment_gateway_config import (
     PAYMENT_PROVIDER_STRIPE,
     PAYMENT_SCOPE_PLATFORM,
@@ -1032,7 +1033,8 @@ def stripe_webhook():
 
                     duration_value = int(duration_days)
 
-                    if duration_value < 1 or duration_value > 3650:
+                    if (duration_value < 1
+                            or duration_value > MAX_PLAN_DURATION_DAYS):
 
                         print(
                             "ERROR: duración de plan fuera de rango:",
