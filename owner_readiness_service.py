@@ -32,6 +32,7 @@ el checkout dirá "no".
 """
 
 from db import conn
+from payment_access_service import MAX_PLAN_DURATION_DAYS
 
 
 def check_delivery(group_id):
@@ -94,7 +95,9 @@ def check_plans(group_id):
                     COUNT(*) FILTER (
                         WHERE COALESCE(is_active, TRUE) = TRUE
                           AND amount IS NOT NULL AND amount > 0
-                          AND duration_days IS NOT NULL AND duration_days > 0
+                          AND duration_days IS NOT NULL
+                          AND duration_days > 0
+                          AND duration_days <= %(max_dias)s
                     ),
                     COUNT(*) FILTER (
                         WHERE COALESCE(is_active, TRUE) = TRUE
@@ -102,13 +105,22 @@ def check_plans(group_id):
                               amount IS NULL OR amount <= 0
                               OR duration_days IS NULL OR duration_days <= 0
                           )
+                    ),
+                    -- Aparte de los rotos «normales»: el plan cuya duración el
+                    -- cobro se NIEGA a convertir en acceso. Este panel lo
+                    -- contaba como bueno y le decía al propietario que podía
+                    -- vender, cuando ese plan cobra y no entrega.
+                    COUNT(*) FILTER (
+                        WHERE COALESCE(is_active, TRUE) = TRUE
+                          AND duration_days IS NOT NULL
+                          AND duration_days > %(max_dias)s
                     )
                 FROM plans
-                WHERE group_id = %s
+                WHERE group_id = %(gid)s
 
-            """, (group_id,))
+            """, {"gid": group_id, "max_dias": MAX_PLAN_DURATION_DAYS})
 
-            buenos, rotos = cur.fetchone() or (0, 0)
+            buenos, rotos, imposibles = cur.fetchone() or (0, 0, 0)
 
     except Exception as e:
 
@@ -117,14 +129,32 @@ def check_plans(group_id):
         return (False, "No se pudieron comprobar los planes.")
 
 
-    buenos, rotos = int(buenos or 0), int(rotos or 0)
+    buenos = int(buenos or 0)
+    rotos = int(rotos or 0)
+    imposibles = int(imposibles or 0)
+
+    aviso_imposibles = ""
+
+    if imposibles:
+
+        # Se dice el número exacto y qué hacer: «duración inválida» manda a
+        # adivinar. Y el 0 se nombra, porque es justo lo que querían poner los
+        # que escriben un número enorme para decir «para siempre».
+        aviso_imposibles = (
+            f" 🚨 {imposibles} con una duración de más de "
+            f"{MAX_PLAN_DURATION_DAYS} días: el bot COBRA y no puede entregar "
+            "el acceso. Ponle los días reales, o 0 si querías acceso "
+            "permanente."
+        )
+
 
     if not buenos:
 
         return (
             False,
-            "No hay ningún plan activo con precio y duración. Crea uno en "
+            "No hay ningún plan activo que se pueda entregar. Crea uno en "
             "«Planes»: es lo que se le enseña a quien quiere comprar."
+            + aviso_imposibles
         )
 
     etiqueta = "plan activo" if buenos == 1 else "planes activos"
@@ -139,7 +169,7 @@ def check_plans(group_id):
             "pueden entregar."
         )
 
-    return (True, texto)
+    return (True, texto + aviso_imposibles)
 
 
 def check_payment_methods(group_id):

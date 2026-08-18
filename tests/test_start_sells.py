@@ -762,3 +762,167 @@ def test_the_shop_window_is_described_as_a_stranger_sees_it(catalogo):
     # Aunque exista una fila con user_id=0, la comunidad sigue contando: lo que
     # se mide es el escaparate, no el acceso de nadie.
     assert "1 comunidad" in sos.describe_shop_window()
+
+
+# =========================
+# NO SE OFRECE LO QUE EL COBRO SE NIEGA A ENTREGAR
+# =========================
+# Esto lo encontré con la línea de arranque, en la primera lectura de
+# producción que hizo: la ÚNICA comunidad vendible de todo el sistema tenía un
+# plan de 1.300.000 días (unos 3.500 años), y decía «7 EUR/1300000 días».
+#
+# No era solo una etiqueta fea. calculate_group_access_expiration se NIEGA a
+# convertir en acceso cualquier duración por encima del techo: el pago se
+# cobra, el acceso no se concede y solo lo salva el botón de reparación del
+# propietario. O sea que lo único que el bot podía vender era justo lo que no
+# podía entregar.
+#
+# Y el otro extremo estaba igual de mal al revés: el 0 significa acceso
+# permanente y SÍ se entrega, y el escaparate lo excluía por «no positivo».
+
+def test_a_plan_the_charge_would_refuse_is_never_offered(catalogo):
+    from payment_access_service import MAX_PLAN_DURATION_DAYS
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET duration_days=%s WHERE group_id=51",
+            (MAX_PLAN_DURATION_DAYS + 1,)
+        )
+
+    assert sos.fetch_sellable_communities(7001) == [], (
+        "ofrecer lo que el cobro va a rechazar es cobrar y no entregar"
+    )
+    assert sos.fetch_offer_for_group(51, 7001) is None, (
+        "tampoco por el enlace directo de un anuncio"
+    )
+
+
+def test_the_offer_and_the_charge_use_the_same_ceiling(catalogo):
+    """El límite vive en un solo sitio a propósito.
+
+    Si el escaparate y la concesión de acceso usaran números distintos, la
+    diferencia entre los dos sería exactamente el hueco por el que se cobra
+    sin entregar.
+    """
+
+    from payment_access_service import (
+        MAX_PLAN_DURATION_DAYS,
+        calculate_group_access_expiration,
+    )
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET duration_days=%s WHERE group_id=51",
+            (MAX_PLAN_DURATION_DAYS,)
+        )
+
+    # En el límite exacto: se ofrece Y se entrega.
+    assert sos.fetch_sellable_communities(7001), "el límite exacto se vende"
+    assert calculate_group_access_expiration(MAX_PLAN_DURATION_DAYS) is not None
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET duration_days=%s WHERE group_id=51",
+            (MAX_PLAN_DURATION_DAYS + 1,)
+        )
+
+    # Un día más: ni se ofrece ni se entrega.
+    assert sos.fetch_sellable_communities(7001) == []
+
+    with pytest.raises(ValueError):
+        calculate_group_access_expiration(MAX_PLAN_DURATION_DAYS + 1)
+
+    fuente = open("start_offer_service.py", encoding="utf-8").read()
+
+    assert "MAX_PLAN_DURATION_DAYS" in fuente, (
+        "el número no se copia: se importa de donde se decide el acceso"
+    )
+    assert "3650" not in fuente
+
+
+def test_a_zero_duration_plan_is_not_sold_as_lifetime_access(catalogo):
+    """El 0 NO se vende, y esta es la decisión más discutible del cambio.
+
+    Para la concesión de acceso, 0 significa permanente
+    (calculate_group_access_expiration(0) es None), y mi primera versión lo
+    puso a la venta por eso. Pero ningún asistente del bot puede crear un plan
+    con 0 —todos exigen entre 1 y el techo—, así que un 0 en la tabla no es una
+    decisión de nadie: es un dato anómalo, de una importación o de un UPDATE a
+    mano.
+
+    Y los dos errores no cuestan lo mismo. Venderlo creyendo que es permanente
+    regala acceso de por vida al precio de un mes, y eso no se puede deshacer.
+    No venderlo deja un plan sin usar y el panel del propietario lo señala.
+    Con esa asimetría, la respuesta es no venderlo.
+    """
+
+    from payment_access_service import calculate_group_access_expiration
+
+    assert calculate_group_access_expiration(0) is None, (
+        "para la concesión sigue siendo permanente: eso no se toca"
+    )
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute("UPDATE plans SET duration_days=0 WHERE group_id=51")
+
+    assert sos.fetch_sellable_communities(7001) == []
+
+
+def test_a_permanent_duration_reads_like_one_wherever_it_is_shown(catalogo):
+    """El formato sí lo dice bien: «15 EUR» a secas se lee como una cuota."""
+
+    assert sos.formato_precio(15, "EUR", 0) == "15 EUR para siempre"
+    assert sos.formato_periodo(0) == " para siempre"
+
+
+def test_the_startup_line_explains_an_empty_window_it_caused(catalogo):
+    """Dejar de enseñar el plan roto no puede esconderlo del que lo arregla."""
+
+    from payment_access_service import MAX_PLAN_DURATION_DAYS
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET duration_days=%s WHERE group_id=51",
+            (1300000,)
+        )
+
+    linea = sos.describe_shop_window()
+
+    assert "0 comunidades vendibles" in linea
+    assert str(MAX_PLAN_DURATION_DAYS) in linea, (
+        "hay que decir cuál es el techo, no solo que se ha pasado"
+    )
+    assert "0 para acceso permanente" in linea, (
+        "quien escribe 1.300.000 días quería decir «para siempre»: hay que "
+        "decirle cómo se dice eso"
+    )
+
+
+def test_the_readiness_panel_stops_calling_it_ready(catalogo):
+    """El panel «¿Puedo vender?» contaba ese plan como bueno."""
+
+    import owner_readiness_service as ors
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute("UPDATE plans SET duration_days=1300000 WHERE group_id=51")
+
+    ok, texto = ors.check_plans(51)
+
+    assert ok is False, (
+        "decirle que está listo para vender con el único plan que no se puede "
+        "entregar es peor que no tener panel"
+    )
+    assert "COBRA y no puede entregar" in texto
+    assert "o 0 si querías acceso permanente" in texto, (
+        "el arreglo concreto, no «duración inválida»"
+    )
+
+
+def test_the_readiness_panel_still_passes_a_healthy_catalogue(catalogo):
+    import owner_readiness_service as ors
+
+    ok, texto = ors.check_plans(51)
+
+    assert ok is True
+    assert "1 plan activo" in texto
+    assert "COBRA" not in texto
