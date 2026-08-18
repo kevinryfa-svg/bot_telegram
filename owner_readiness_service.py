@@ -114,13 +114,23 @@ def check_plans(group_id):
                         WHERE COALESCE(is_active, TRUE) = TRUE
                           AND duration_days IS NOT NULL
                           AND duration_days > %(max_dias)s
+                    ),
+                    -- Y la moneda que no es un código de tres letras. En
+                    -- producción había un plan con la moneda escrita «EURO».
+                    -- Con Stripe no rompe el cobro (el price_id lleva su propia
+                    -- moneda), pero PayPal y los demás mandan este código tal
+                    -- cual y lo rechazan.
+                    COUNT(*) FILTER (
+                        WHERE COALESCE(is_active, TRUE) = TRUE
+                          AND currency IS NOT NULL
+                          AND currency !~ '^[A-Za-z]{3}$'
                     )
                 FROM plans
                 WHERE group_id = %(gid)s
 
             """, {"gid": group_id, "max_dias": MAX_PLAN_DURATION_DAYS})
 
-            buenos, rotos, imposibles = cur.fetchone() or (0, 0, 0)
+            buenos, rotos, imposibles, monedas = cur.fetchone() or (0, 0, 0, 0)
 
     except Exception as e:
 
@@ -132,20 +142,39 @@ def check_plans(group_id):
     buenos = int(buenos or 0)
     rotos = int(rotos or 0)
     imposibles = int(imposibles or 0)
+    monedas = int(monedas or 0)
 
-    aviso_imposibles = ""
+    # Los avisos se ACUMULAN, y el orden es por gravedad: primero el que
+    # impide vender, después el que solo se lee mal. Escritos con «=» en vez de
+    # «+=», el segundo borraría al primero y el propietario arreglaría la
+    # moneda sin enterarse de que su plan no se puede entregar.
+    avisos = []
 
     if imposibles:
 
         # Se dice el número exacto y qué hacer: «duración inválida» manda a
         # adivinar. Y el 0 se nombra, porque es justo lo que querían poner los
         # que escriben un número enorme para decir «para siempre».
-        aviso_imposibles = (
-            f" 🚨 {imposibles} con una duración de más de "
+        avisos.append(
+            f"🚨 {imposibles} con una duración de más de "
             f"{MAX_PLAN_DURATION_DAYS} días: el bot COBRA y no puede entregar "
             "el acceso. Ponle los días reales, o 0 si querías acceso "
             "permanente."
         )
+
+    if monedas:
+
+        # No tumba la condición: con Stripe se cobra igual, porque el precio de
+        # Stripe lleva su propia moneda. Pero se dice, porque el comprador lee
+        # ese texto en el botón y los demás proveedores lo rechazan.
+        avisos.append(
+            f"💱 {monedas} con la moneda escrita en un formato que no es un "
+            "código de tres letras (EUR, USD...). Al comprador se le enseña "
+            "corregida cuando se puede, pero PayPal y los demás la rechazan "
+            "tal cual: arréglala en «Planes»."
+        )
+
+    aviso_imposibles = ("" if not avisos else " " + " ".join(avisos))
 
 
     if not buenos:

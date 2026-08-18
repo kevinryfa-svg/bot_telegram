@@ -926,3 +926,104 @@ def test_the_readiness_panel_still_passes_a_healthy_catalogue(catalogo):
     assert ok is True
     assert "1 plan activo" in texto
     assert "COBRA" not in texto
+
+
+# =========================
+# LA MONEDA QUE NO ES UN CÓDIGO DE MONEDA
+# =========================
+# El segundo hallazgo de la línea de arranque en producción: el único plan
+# vendible decía «7 EURO/360 días». La moneda estaba escrita «EURO».
+#
+# Con Stripe eso no rompe el cobro —el price_id lleva su propia moneda—, así
+# que negarse a vender por esto sería tirar la única venta que funciona por un
+# problema de texto. Pero es lo último que lee alguien antes de dar su tarjeta,
+# y PayPal y los demás sí mandan este código tal cual y lo rechazan.
+
+def test_an_unmistakable_currency_alias_is_shown_right(catalogo):
+    assert sos.formato_precio(7, "EURO", 360) == "7 EUR/360 días"
+    assert sos.formato_precio(7, "euros", 30) == "7 EUR/mes"
+    assert sos.formato_precio(7, "€", 30) == "7 EUR/mes"
+    assert sos.formato_precio(7, " eur ", 30) == "7 EUR/mes"
+
+
+def test_an_ambiguous_currency_is_never_guessed(catalogo):
+    """«$» son al menos cinco monedas: adivinar cuál es adivinar el precio."""
+
+    assert "$" in sos.formato_precio(7, "$", 30)
+    assert "USD" not in sos.formato_precio(7, "$", 30)
+
+    # Y lo que no se reconoce se enseña tal cual, sin inventar nada.
+    assert sos.formato_precio(7, "ZZZ", 30) == "7 ZZZ/mes"
+
+
+def test_the_stored_currency_is_not_rewritten(catalogo):
+    """Normalizar para mostrar no es corregir el dato: eso es de su dueño."""
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute("UPDATE plans SET currency='EURO' WHERE group_id=51")
+
+    oferta = sos.fetch_sellable_communities(7001)[0]
+
+    assert oferta["precio"] == "15 EUR/mes", "se enseña corregida"
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute("SELECT currency FROM plans WHERE group_id=51")
+
+        assert cur.fetchone()[0] == "EURO", (
+            "el dato de dinero guardado no se toca por una suposición mía"
+        )
+
+
+def test_a_bad_currency_still_sells(catalogo):
+    """Lo que NO se hace: dejar de vender por un problema de texto."""
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute("UPDATE plans SET currency='EURO' WHERE group_id=51")
+
+    assert sos.fetch_sellable_communities(7001), (
+        "con Stripe el cobro funciona: negarse a vender sería el arreglo peor "
+        "que el problema"
+    )
+
+
+def test_the_owner_is_told_about_the_currency_without_being_blocked(catalogo):
+    import owner_readiness_service as ors
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute("UPDATE plans SET currency='EURO' WHERE group_id=51")
+
+    ok, texto = ors.check_plans(51)
+
+    assert ok is True, "no bloquea: con Stripe se vende"
+    assert "código de tres letras" in texto
+    assert "PayPal y los demás la rechazan" in texto, (
+        "hay que decir dónde SÍ rompe, o suena a manía de estilo"
+    )
+
+
+def test_both_problems_at_once_are_both_reported(catalogo):
+    """El fallo que tuve al escribirlo: el segundo aviso borraba el primero.
+
+    Con «=» en vez de «+=», el propietario habría arreglado la moneda sin
+    enterarse de que su plan no se puede entregar — que es el problema que le
+    impide vender.
+    """
+
+    import owner_readiness_service as ors
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO plans (group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active) VALUES "
+            "(51, 'Eterno', 'price_51e', 'price_51e', 1300000, 7, 'EURO', TRUE)"
+        )
+        cur.execute("UPDATE plans SET currency='EURO' WHERE group_id=51")
+
+    _ok, texto = ors.check_plans(51)
+
+    assert "COBRA y no puede entregar" in texto
+    assert "código de tres letras" in texto
+
+    assert texto.index("COBRA") < texto.index("código de tres letras"), (
+        "primero lo que impide vender, después lo que solo se lee mal"
+    )

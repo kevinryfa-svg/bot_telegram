@@ -79,6 +79,36 @@ def formato_periodo(duration_days):
     return f"/{dias} días"
 
 
+# Alias de moneda que se ven en los datos reales y no son códigos ISO. Solo
+# están los INEQUÍVOCOS: «€» y «EURO» no pueden ser otra cosa que EUR. «$» no
+# está a propósito, porque son al menos cinco monedas distintas, y adivinar cuál
+# es adivinar el precio.
+ALIAS_DE_MONEDA = {
+    "EURO": "EUR",
+    "EUROS": "EUR",
+    "€": "EUR",
+}
+
+
+def normaliza_moneda_para_mostrar(currency):
+    """El código como se le ENSEÑA al comprador. No toca el dato guardado.
+
+    En producción el plan vendible tenía la moneda escrita «EURO», y el botón
+    decía «7 EURO/360 días». No rompía el cobro —el price_id de Stripe lleva su
+    propia moneda—, pero un precio con la moneda mal escrita es lo último que
+    quiere leer alguien antes de dar su tarjeta.
+
+    Normalizar aquí y no en la base de datos es deliberado: reescribir el campo
+    de moneda de un plan es cambiar un dato de dinero por una suposición mía. Lo
+    que se arregla es cómo se lee; que el dato esté bien se le pide a su dueño,
+    y el panel «¿Puedo vender?» se lo dice.
+    """
+
+    moneda = str(currency or "EUR").strip().upper()
+
+    return ALIAS_DE_MONEDA.get(moneda, moneda)
+
+
 def formato_precio(amount, currency, duration_days):
     """'15.00 EUR/mes'. amount de plans va en unidades mayores, no céntimos."""
 
@@ -90,7 +120,7 @@ def formato_precio(amount, currency, duration_days):
 
         return None
 
-    moneda = (currency or "EUR").upper()
+    moneda = normaliza_moneda_para_mostrar(currency)
 
     return f"{importe} {moneda}{formato_periodo(duration_days)}"
 
