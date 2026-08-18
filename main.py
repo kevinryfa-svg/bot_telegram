@@ -695,6 +695,24 @@ def verify_telegram_token():
 
 
 # =========================
+# CATÁLOGO PÚBLICO
+# =========================
+# La única puerta de este negocio era conocerse el usuario del bot en Telegram.
+# /comunidades es una dirección que se puede compartir, indexar y pegar en un
+# mensaje, y que lleva a cada comunidad por su enlace directo.
+
+try:
+
+    from public_catalog_page import register_public_catalog_routes
+
+    register_public_catalog_routes(app)
+
+except Exception as e:
+
+    print("Catálogo público: no se pudo montar la ruta:", str(e)[:200])
+
+
+# =========================
 # HOME TEST
 # =========================
 
