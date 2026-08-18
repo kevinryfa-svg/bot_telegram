@@ -6392,6 +6392,8 @@ def build_admin_global_marketplace_keyboard():
 def build_admin_global_commercial_plans_keyboard():
 
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 Precio de publicar comunidad",
+                              callback_data="admin_platform_plan_prices")],
         [InlineKeyboardButton("👥 Propietarios / solicitudes", callback_data="admin_owners_panel")],
         [InlineKeyboardButton("💳 Suscripciones comerciales", callback_data="admin_commercial_subscriptions")],
         [InlineKeyboardButton("🎟 Códigos comerciales globales", callback_data="admin_commercial_promo_codes")],
@@ -22318,17 +22320,65 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "commercial_direct_activate":
 
-        plans = fetch_active_commercial_plans(PRODUCT_SHARED_BOT_SPACE)
+        from platform_plan_service import (
+            describe_plan_period,
+            fetch_purchasable_platform_plans,
+            format_plan_amount,
+        )
+
+        # Solo los planes que SE PUEDEN cobrar. Antes se listaban todos, con
+        # «pendiente de precio» al lado, y al pulsarlos el bot contestaba que el
+        # pago estaba pendiente de conectar: una lista de botones que no podían
+        # llevar a ningún sitio.
+        planes = fetch_purchasable_platform_plans()
+
+        if not planes:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                "💳 Activar directamente\n\n"
+                "Todavía no hay ninguna duración con precio publicado. "
+                "Escríbenos y te decimos las condiciones.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📩 Hablar con un asesor",
+                        callback_data=CALLBACK_COMMERCIAL_CONTACT
+                    )],
+                    [InlineKeyboardButton(
+                        "⬅️ Volver",
+                        callback_data=CALLBACK_SHARED_BOT_SPACE
+                    )],
+                ])
+            )
+
+            return
+
+
+        filas = []
+
+        for plan in planes:
+
+            filas.append([InlineKeyboardButton(
+                f"{plan['name']} · {format_plan_amount(plan)} "
+                f"{describe_plan_period(plan)}",
+                callback_data=f"commercial_direct_plan_{plan['id']}"
+            )])
+
+        filas.append([InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data=CALLBACK_SHARED_BOT_SPACE
+        )])
 
         await send_clean_message(
             context,
             query.message.chat_id,
-            "💳 Activar directamente sin prueba\n\n"
-            "Elige la duración comercial para publicar tu comunidad sin prueba.\n\n"
-            "Si el plan no tiene pago automático configurado, un administrador debe añadir el price_id de Stripe.",
-            reply_markup=InlineKeyboardMarkup(
-                build_direct_activation_plan_keyboard(plans)
-            )
+            "💳 Publicar mi comunidad\n\n"
+            "Elige la duración. Se paga con tarjeta y se renueva sola; puedes "
+            "cancelarla cuando quieras.\n\n"
+            "En cuanto se confirma el pago puedes publicar tu comunidad y "
+            "empezar a cobrar suscripciones con acceso automático.",
+            reply_markup=InlineKeyboardMarkup(filas)
         )
 
         return
@@ -22336,43 +22386,92 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("commercial_direct_plan_"):
 
+        from platform_plan_service import (
+            create_platform_plan_checkout,
+            describe_plan_period,
+            fetch_platform_plan,
+            format_plan_amount,
+        )
+
         plan_id = extract_commercial_request_id(
             data,
             "commercial_direct_plan_"
         )
-        plan = fetch_commercial_plan(plan_id)
 
+        # Se relee de la base y no del callback: un callback se puede reenviar,
+        # y con él se elegiría un plan apagado o sin precio.
+        plan = fetch_platform_plan(plan_id) if plan_id else None
 
         if not plan:
 
             await query.message.reply_text(
-                "❌ Plan comercial no encontrado."
+                "Esa duración ya no está disponible.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                    "⬅️ Ver las duraciones",
+                    callback_data="commercial_direct_activate"
+                )]])
             )
 
             return
 
 
-        if not plan.get("stripe_price_id"):
+        try:
+
+            session = create_platform_plan_checkout(user_id, plan)
+
+        except Exception as e:
+
+            log_event(
+                "platform_plan_checkout_failed",
+                category="billing",
+                severity="error",
+                scope="global",
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Error creando el checkout del plan de publicación.",
+                metadata={"plan_id": plan.get("id"), "error": str(e)[:300]}
+            )
 
             await query.message.reply_text(
-                "Este plan todavía no tiene pago automático configurado. Un administrador debe añadir el price_id de Stripe."
-            )
-
-            await notify_commercial_admin(
-                context,
-                (
-                    "💳 Activación directa solicitada\n\n"
-                    f"Usuario: {user_id}\n"
-                    f"Plan: {plan.get('name') or '-'}\n"
-                    "Falta stripe_price_id."
-                )
+                "No he podido abrir el pago ahora mismo. Inténtalo en un "
+                "momento o escríbenos y lo resolvemos.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                    "📩 Hablar con un asesor",
+                    callback_data=CALLBACK_COMMERCIAL_CONTACT
+                )]])
             )
 
             return
 
 
-        await query.message.reply_text(
-            "El pago automático comercial todavía está pendiente de conectar."
+        log_event(
+            "platform_plan_checkout_created",
+            category="billing",
+            severity="info",
+            scope="global",
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="Checkout del plan de publicación creado.",
+            metadata={
+                "plan_id": plan.get("id"),
+                "stripe_session_id": session.get("id"),
+            }
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"💳 {plan.get('name')} · {format_plan_amount(plan)} "
+            f"{describe_plan_period(plan)}\n\n"
+            "Completa el pago y el bot te avisa aquí mismo en cuanto se "
+            "confirme. Entonces ya puedes publicar tu comunidad.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💳 Pagar", url=session.get("url"))],
+                [InlineKeyboardButton(
+                    "⬅️ Volver",
+                    callback_data="commercial_direct_activate"
+                )],
+            ])
         )
 
         return
@@ -22890,6 +22989,118 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.message.chat_id,
             build_user_tracking_events_text("🎟 Códigos canjeados", event_type="code_redeemed"),
             reply_markup=build_user_tracking_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_platform_plan_prices":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Solo el super admin puede tocar los precios de la plataforma."
+            )
+
+            return
+
+
+        from platform_plan_service import (
+            PLATFORM_PLAN_PRODUCT,
+            describe_plan_period,
+            format_plan_amount,
+        )
+
+        # Se listan TODOS los planes, con precio o sin él: el que no lo tiene es
+        # justo el que hay que arreglar, y esconderlo sería esconder el motivo de
+        # que nadie pueda pagar.
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id, name, duration_days, amount, COALESCE(currency, 'EUR')
+                FROM commercial_plans
+                WHERE product_type=%s
+                ORDER BY duration_days ASC, id ASC
+
+            """, (PLATFORM_PLAN_PRODUCT,))
+
+            filas = cur.fetchall() or []
+
+
+        lineas = [
+            "💰 Precio de publicar comunidad",
+            "",
+            "Esto es lo que paga un creador por publicar su comunidad en el "
+            "bot. Mientras ninguna duración tenga precio, nadie puede pagar: "
+            "solo puede dejar una solicitud para que la revises a mano.",
+        ]
+
+        filas_teclado = []
+
+        for plan_id, nombre, dias, importe, moneda in filas:
+
+            plan = {"amount": importe, "currency": moneda,
+                    "duration_days": dias}
+            precio = format_plan_amount(plan) or "sin precio"
+
+            lineas.append("")
+            lineas.append(
+                f"• {nombre}: {precio} {describe_plan_period(plan)}".rstrip()
+            )
+
+            filas_teclado.append([InlineKeyboardButton(
+                f"✏️ {nombre} · {precio}",
+                callback_data=f"admin_platform_plan_price_{plan_id}"
+            )])
+
+
+        filas_teclado.append([InlineKeyboardButton(
+            "⬅️ Volver",
+            callback_data="admin_global_commercial_plans"
+        )])
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            "\n".join(lineas),
+            reply_markup=InlineKeyboardMarkup(filas_teclado)
+        )
+
+        return
+
+
+    if data.startswith("admin_platform_plan_price_"):
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Solo el super admin puede tocar los precios de la plataforma."
+            )
+
+            return
+
+
+        plan_id = data[len("admin_platform_plan_price_"):]
+
+        if not plan_id.isdigit():
+
+            await query.message.reply_text("❌ Plan no válido.")
+
+            return
+
+
+        context.user_data["setting_platform_plan_price_id"] = int(plan_id)
+
+        await query.message.reply_text(
+            "Escribe el precio EN EUROS (por ejemplo 29 o 29,50).\n\n"
+            "Se cobrará con tarjeta y se renovará cada periodo del plan. Si "
+            "cambias un precio ya publicado, solo afecta a las altas nuevas: "
+            "quien ya esté suscrito conserva el suyo.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "⬅️ Cancelar",
+                callback_data="admin_platform_plan_prices"
+            )]])
         )
 
         return
@@ -28454,16 +28665,32 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         update_commercial_request_plan(request_id, plan_id, "pending")
 
-        if not plan.get("stripe_price_id"):
+        # Este era el segundo callejón: el mismo cobro sin conectar, en el
+        # camino que recorre quien ya tiene una solicitud. Ahora los dos caminos
+        # pasan por el mismo sitio, que es lo que evita que uno se arregle y el
+        # otro se quede muerto.
+        from platform_plan_service import (
+            create_platform_plan_checkout,
+            describe_plan_period,
+            fetch_platform_plan,
+            format_plan_amount,
+        )
 
+        plan_cobrable = fetch_platform_plan(plan_id)
+
+        if not plan_cobrable:
+
+            # Sin precio no se puede cobrar: se avisa al admin, que es quien
+            # puede ponerlo, y al usuario se le dice algo que se entienda.
             await notify_commercial_admin(
                 context,
                 (
-                    "📅 Plan comercial seleccionado\n\n"
+                    "📅 Plan comercial seleccionado sin precio\n\n"
                     f"Solicitud #{request_id}\n"
                     f"Usuario: {user_id}\n"
                     f"Plan: {plan.get('name') or '-'}\n"
-                    "Falta stripe_price_id."
+                    "Ponle precio en «Planes comerciales del bot → Precio de "
+                    "publicar comunidad» y podrá pagarlo solo."
                 ),
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(
@@ -28474,30 +28701,51 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             await query.message.reply_text(
-                "Este plan todavía no tiene pago automático configurado. Un administrador debe añadir el price_id de Stripe."
+                "Esa duración todavía no tiene precio publicado. Ya hemos "
+                "avisado y te escribimos con las condiciones."
             )
 
             return
 
-        await notify_commercial_admin(
-            context,
-            (
-                "📅 Plan comercial seleccionado\n\n"
-                f"Solicitud #{request_id}\n"
-                f"Usuario: {user_id}\n"
-                f"Plan: {plan.get('name') or '-'}\n"
-                "El pago automático comercial todavía está pendiente de conectar."
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    f"👁 Ver estado #{request_id}",
-                    callback_data=f"admin_commercial_review_{request_id}"
-                )]
-            ])
-        )
+
+        try:
+
+            session = create_platform_plan_checkout(user_id, plan_cobrable)
+
+        except Exception as e:
+
+            log_event(
+                "platform_plan_checkout_failed",
+                category="billing",
+                severity="error",
+                scope="global",
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message="Error creando el checkout del plan de publicación.",
+                metadata={
+                    "plan_id": plan_cobrable.get("id"),
+                    "commercial_request_id": request_id,
+                    "error": str(e)[:300]
+                }
+            )
+
+            await query.message.reply_text(
+                "No he podido abrir el pago ahora mismo. Inténtalo en un "
+                "momento o escríbenos y lo resolvemos."
+            )
+
+            return
+
 
         await query.message.reply_text(
-            "El pago automático comercial todavía está pendiente de conectar."
+            f"💳 {plan_cobrable.get('name')} · "
+            f"{format_plan_amount(plan_cobrable)} "
+            f"{describe_plan_period(plan_cobrable)}\n\n"
+            "Completa el pago y el bot te avisa aquí mismo en cuanto se "
+            "confirme.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "💳 Pagar", url=session.get("url")
+            )]])
         )
 
         return

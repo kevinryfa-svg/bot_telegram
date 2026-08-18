@@ -204,9 +204,35 @@ def get_creator_group_quota(user_id):
     profile_row = sync_commercial_creator_profile_from_request(user_id)
 
 
+    if not profile_row:
+
+        # La sincronización sale de commercial_requests: si esta persona no
+        # tiene solicitud, no devuelve fila. Pero SÍ puede tener perfil, y es
+        # justo el caso de quien paga el plan de publicación por su cuenta sin
+        # pasar por una solicitud. Sin esta lectura, pagaba y seguía sin cupo:
+        # cobrado y no entregado.
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT user_id, group_quota
+                FROM commercial_creator_profiles
+                WHERE user_id=%s
+                LIMIT 1
+
+            """, (user_id,))
+
+            profile_row = cur.fetchone()
+
+
     if profile_row:
 
-        return profile_row[1] or 1
+        cupo = profile_row[1]
+
+        # Un 0 explícito significa CERO, no uno. Antes «0 or 1» lo convertía en
+        # 1, así que retirarle el cupo a alguien no le retiraba nada. NULL sí
+        # cae al 1 por defecto de la columna.
+        return int(cupo) if cupo is not None else 1
 
 
     return 0

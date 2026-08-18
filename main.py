@@ -3358,6 +3358,19 @@ def main():
         daemon=True
     ).start()
 
+    # El plan de publicación: si ninguna duración tiene precio, nadie puede
+    # pagar por publicar su comunidad y el arranque lo dice.
+    try:
+
+        from platform_plan_service import describe_platform_plan_for_startup
+
+        print(describe_platform_plan_for_startup())
+
+    except Exception as e:
+
+        print("Plan de publicación: no se pudo comprobar:", str(e)[:200])
+
+
     # La tienda de servicios extra: sembrar los productos y asegurarles precio.
     # Es la única línea de ingresos RECURRENTES del producto y estaba apagada
     # porque el sembrador no se llamaba desde ningún sitio. Nunca puede tumbar
