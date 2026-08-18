@@ -259,3 +259,95 @@ def test_one_person_counts_once_however_many_attempts(comunidad):
         )
 
     assert bas.detect_paying_members_locked_out(87) == 1
+
+
+# =========================
+# EL PLAN QUE COBRA Y NO ENTREGA
+# =========================
+# En producción, la única comunidad vendible del sistema tenía un plan de
+# 1.300.000 días: el cobro se niega a convertir eso en acceso, así que se
+# cobraba y no se entregaba. Desde que el escaparate mira el mismo techo, ese
+# plan ya no se ofrece — y su comunidad deja de vender del todo. Callarse eso
+# sería cambiar un fallo ruidoso por uno silencioso.
+
+def crear_plan(dias, group_id=87, price="price_x", amount=15):
+    from db import conn as db_conn
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO plans (group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active) "
+            "VALUES (%s, 'Plan', %s, %s, %s, %s, 'EUR', TRUE)",
+            (group_id, price, price, dias, amount)
+        )
+
+
+def test_a_plan_the_charge_would_refuse_reaches_the_owner(comunidad):
+    crear_plan(1300000)
+
+    contexto = FakeContext()
+    resumen = asyncio.run(bas.process_business_alerts(contexto))
+
+    assert resumen["sent"] == 1
+
+    chat, texto, _teclado = contexto.bot.enviados[0]
+
+    assert chat == 707, "va al propietario, que es quien puede corregirlo"
+    assert "1300000 días" in texto, (
+        "el número exacto: es lo que va a buscar en la pantalla de planes"
+    )
+    assert str(bas.MAX_PLAN_DURATION_DAYS) in texto, "y cuál es el máximo"
+    assert "no está vendiendo" in texto, (
+        "la consecuencia de hoy, que es dejar de vender, no la de ayer"
+    )
+    assert "o 0 si querías acceso permanente" in texto, (
+        "el arreglo concreto: quien escribe 1.300.000 quería decir «siempre»"
+    )
+
+
+def test_a_healthy_plan_says_nothing(comunidad):
+    crear_plan(30)
+
+    contexto = FakeContext()
+    resumen = asyncio.run(bas.process_business_alerts(contexto))
+
+    assert resumen["sent"] == 0, "un catálogo sano no genera ruido"
+
+
+def test_the_exact_ceiling_is_not_an_alert(comunidad):
+    """El límite exacto se entrega, así que no hay nada que avisar."""
+
+    crear_plan(bas.MAX_PLAN_DURATION_DAYS)
+
+    assert bas.detect_undeliverable_plans(87) is None
+
+    crear_plan(bas.MAX_PLAN_DURATION_DAYS + 1, price="price_y")
+
+    assert bas.detect_undeliverable_plans(87) == (
+        1, bas.MAX_PLAN_DURATION_DAYS + 1
+    )
+
+
+def test_an_inactive_broken_plan_is_not_worth_waking_anyone(comunidad):
+    from db import conn as db_conn
+
+    crear_plan(1300000)
+
+    with db_conn.cursor() as cur:
+        cur.execute("UPDATE plans SET is_active=FALSE WHERE group_id=87")
+
+    assert bas.detect_undeliverable_plans(87) is None, (
+        "un plan apagado no se ofrece ni se cobra: avisar de él es ruido"
+    )
+
+
+def test_it_is_said_once_a_week_not_once_a_run(comunidad):
+    crear_plan(1300000)
+
+    primero = asyncio.run(bas.process_business_alerts(FakeContext()))
+    segundo = asyncio.run(bas.process_business_alerts(FakeContext()))
+
+    assert primero["sent"] == 1
+    assert segundo["sent"] == 0, (
+        "un redespliegue no puede convertir el aviso en spam"
+    )

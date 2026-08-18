@@ -31,6 +31,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from audit_log_service import log_event
 from db import conn
+from payment_access_service import MAX_PLAN_DURATION_DAYS
 from owner_revenue_service import PAID_STATUSES, formato_importe
 from owner_weekly_digest_service import fetch_owned_active_groups
 
@@ -247,6 +248,54 @@ def detect_paying_members_locked_out(group_id):
         return 0
 
 
+def detect_undeliverable_plans(group_id):
+    """Planes activos cuya duración el cobro se NIEGA a convertir en acceso.
+
+    El peor estado posible de un catálogo: se puede enseñar, se puede cobrar, y
+    el acceso no sale. En producción la única comunidad vendible del sistema
+    tenía un plan de 1.300.000 días.
+
+    Desde que el escaparate mira el mismo techo que la concesión de acceso,
+    esos planes ya no se ofrecen — lo que quiere decir que su comunidad deja de
+    vender del todo y en silencio. Justo por eso hay que decírselo a quien
+    puede corregirlo: elegir la duración de verdad es una decisión suya, no de
+    un arreglo automático.
+
+    Devuelve (cuántos, el mayor de los días) o None.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*), MAX(duration_days)
+                FROM plans
+                WHERE group_id = %s
+                  AND COALESCE(is_active, TRUE) = TRUE
+                  AND duration_days IS NOT NULL
+                  AND duration_days > %s
+
+            """, (group_id, MAX_PLAN_DURATION_DAYS))
+
+            fila = cur.fetchone() or (0, None)
+
+    except Exception as e:
+
+        print("Alertas de negocio: error buscando planes no entregables:", e)
+
+        return None
+
+
+    cuantos = int(fila[0] or 0)
+
+    if not cuantos:
+        return None
+
+    return (cuantos, int(fila[1] or 0))
+
+
 def mark_alert_sent(group_id, owner_user_id, alert_key, period_key):
     """True si quedó registrado: entonces toca enviar (y solo entonces)."""
 
@@ -287,6 +336,29 @@ def collect_group_alerts(group_id, group_name):
     """[(alert_key, period_key, texto)] con todo lo que merece alerta hoy."""
 
     alertas = []
+
+    # Va primera a propósito: las demás alertas hablan de vender peor, esta de
+    # no poder vender.
+    imposibles = detect_undeliverable_plans(group_id)
+
+    if imposibles:
+
+        cuantos, mayor = imposibles
+
+        etiqueta = "plan" if cuantos == 1 else "planes"
+
+        alertas.append((
+            "undeliverable_plans", clave_semana(),
+            f"🚨 {cuantos} {etiqueta} de {group_name} tiene una duración que "
+            f"el bot no puede entregar ({mayor} días; el máximo es "
+            f"{MAX_PLAN_DURATION_DAYS}).\n\n"
+            "No se ofrece a nadie, así que esa comunidad no está vendiendo. "
+            "Antes era peor: se ofrecía, se cobraba y el acceso no se "
+            "concedía.\n\n"
+            "Edítalo en «Planes» y pon los días reales — o 0 si querías "
+            "acceso permanente."
+        ))
+
 
     racha = detect_failed_charge_streak(group_id)
 
