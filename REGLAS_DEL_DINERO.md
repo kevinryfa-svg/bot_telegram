@@ -122,6 +122,12 @@ muerta). Para lo demás pone el botón delante de quien tiene el criterio, con
 el permiso comprobado **al pulsar** —un callback se puede reenviar— y sin
 escribir un pago falso que desvirtúe los ingresos del propietario.
 
+Aparecieron dos más, y las dos se **evitan** en vez de repararse, porque el
+fallo estaba antes del cobro: un plan cuya duración no se puede entregar
+(sección 12) y una credencial de webhook que no se puede verificar (sección
+13). Cuando se puede saber ANTES de cobrar que no se va a poder entregar, la
+salida no es una reparación: es no cobrar.
+
 ---
 
 ## 7. Un número que exagera es peor que no tener número
@@ -225,3 +231,62 @@ python tools/snapshot_diff.py /tmp/antes.json /tmp/despues.json
 esperabas. La que no esperabas es el fallo que ibas a desplegar. Con estas
 tres se troceó una función de 24.000 líneas en 36 módulos sin mover una sola
 pantalla.
+
+---
+
+## 12. Nunca se ofrece lo que el cobro va a rechazar
+
+**Qué pasó:** la línea de arranque que informa del escaparate leyó producción y
+dijo: `1 comunidad(es) vendible(s), la más barata a 7 EUR/1300000 días`. La
+ÚNICA comunidad vendible del sistema tenía un plan de 1.300.000 días, y
+`calculate_group_access_expiration` se niega a convertir en acceso cualquier
+duración por encima de 3.650: registraba el error, abría incidencia y devolvía
+OK. Lo único que se podía comprar era justo lo único que no se podía entregar.
+
+**La regla:** el límite de lo entregable vive en UN sitio
+(`MAX_PLAN_DURATION_DAYS`, en `payment_access_service`, al lado de la función
+que decide el acceso) y lo importan todos: el webhook, el escaparate, el panel
+del propietario y las alertas. La diferencia entre el número que usa quien
+OFRECE y el que usa quien ENTREGA es exactamente el hueco por el que se cobra
+sin entregar.
+
+**La asimetría que decide los casos raros:** `duration_days = 0` significa
+acceso permanente para la concesión, así que parece vendible. No se vende,
+porque ningún asistente del bot puede crear un plan con 0 —todos exigen entre 1
+y el techo— y un 0 en la tabla es un dato anómalo, no una decisión. Venderlo por
+error regala acceso de por vida al precio de un mes y no se deshace; no venderlo
+deja un plan sin usar y el panel lo dice. Cuando los dos errores no cuestan lo
+mismo, se elige el reversible.
+
+**Y dejar de ofrecer algo roto no puede volverlo invisible:** al esconderlo, esa
+comunidad deja de vender EN SILENCIO. Un fallo ruidoso convertido en silencioso
+solo es una mejora si alguien avisa, así que lo dicen tres sitios: el arranque,
+el panel «🚦 ¿Puedo vender?» y una alerta al propietario con el número exacto y
+qué escribir.
+
+---
+
+## 13. Un campo que solo se comprueba «no vacío» no está comprobado
+
+**Qué pasó:** la casilla del `webhook_id` de PayPal guardaba un valor con forma
+de `client_id`. Lo único que se validaba era que no estuviera vacío. El cobro
+salía, PayPal lo aceptaba, el comprador pagaba, y la verificación de la firma
+del webhook contestaba HTTP 400: cobrado, no entregado, sin traza. Y la
+comprobación periódica lo llamaba «no se ha podido leer la configuración», que
+manda a revisar TODAS las credenciales cuando el problema es un campo y se sabe
+cuál.
+
+**La regla:** una credencial de la que depende la ENTREGA se valida por forma
+antes de guardarse, y quien vaya a cobrar con ella se niega si no la pasa. Y el
+diagnóstico nombra el campo: decir «revisa tus credenciales» cuesta una tarde,
+decir «el webhook_id no puede ser esto, el tuyo está en Apps & Credentials →
+Webhooks» cuesta un minuto.
+
+**La otra mitad de la regla, igual de importante:** el filtro se queda en lo
+IMPOSIBLE, no en lo esperado. Rechazar una credencial válida deja a un
+propietario sin poder cobrar, que es peor que el fallo que se evita. Aquí se
+descarta lo que ninguna credencial de webhook puede ser (más de 40 caracteres,
+espacios, trozos de URL) y se aceptan los guiones, porque no se puede afirmar
+que PayPal no los use nunca. La primera versión exigía `[A-Za-z0-9]` y rompió
+tres pruebas existentes que usaban `WH-1`: avisaron de que el filtro era
+demasiado estricto antes de que lo fuera en producción.
