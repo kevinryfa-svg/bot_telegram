@@ -1,3 +1,5 @@
+import os
+
 from audit_log_service import log_event
 from db import conn
 
@@ -240,6 +242,125 @@ def prepare_owner_addon_store():
         f"Servicios extra: {len(productos)} disponibles ({rango}), "
         f"{con_precio} con precio de Stripe listo."
     )
+
+
+# =========================
+# LA SUGERENCIA DEL SERVICIO QUE HACE FALTA
+# =========================
+# La tienda puede estar llena y no vender nada si nadie le dice el precio a un
+# propietario. El sitio donde un propietario SÍ lee es su resumen semanal, no un
+# submenú del panel. Pero una oferta repetida cada semana no es una oferta: es
+# una insistencia, y se paga con que dejen de leer el resumen entero.
+
+# Cuántas altas por semana marcan que una comunidad no necesita que nadie la
+# promocione. Con más que esto, ofrecer publicidad es ruido.
+ADDON_SUGGESTION_MAX_ALTAS = int(
+    os.environ.get("ADDON_SUGGESTION_MAX_ALTAS", "3")
+)
+
+ADDON_SUGGESTION_KEY = "addon_offer"
+
+
+def mark_addon_suggestion_sent(group_id, owner_user_id, period_key):
+    """True si toca sugerir (y solo entonces). Una vez al mes por comunidad.
+
+    Se apunta ANTES de enviar, como el resto de avisos: aquí el riesgo es la
+    insistencia, así que un fallo al apuntar se resuelve callando.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO business_alerts
+                    (group_id, owner_user_id, alert_key, period_key)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (group_id, alert_key, period_key) DO NOTHING
+
+            """, (group_id, owner_user_id, ADDON_SUGGESTION_KEY, period_key))
+
+            hecho = cur.rowcount > 0
+            conn.commit()
+
+            return hecho
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Servicios extra: error apuntando la sugerencia:", e)
+
+        return False
+
+
+def fetch_addon_suggestion(group_id, owner_user_id, altas_semana,
+                           period_key=None):
+    """El servicio que le falta a esta comunidad, con su precio. None si no toca.
+
+    Las cuatro puertas que tiene que pasar una sugerencia para no ser ruido:
+
+      SOLO SI HACE FALTA    Con altas de sobra esta semana, nadie necesita que
+                            le promocionen la comunidad.
+      SOLO SI NO LO TIENE   Ofrecerle lo que ya paga es la forma más rápida de
+                            que deje de creer lo que dice el bot.
+      SOLO SI PUEDE VENDER  Promocionar una comunidad que no se puede comprar
+                            es vender tráfico hacia una puerta cerrada.
+      UNA VEZ AL MES        Y con el registro antes del envío.
+    """
+
+    if altas_semana is not None and int(altas_semana) > ADDON_SUGGESTION_MAX_ALTAS:
+        return None
+
+    try:
+
+        from start_offer_service import fetch_offer_for_group
+
+        if not fetch_offer_for_group(group_id, 0):
+            return None
+
+    except Exception as e:
+
+        print("Servicios extra: no se pudo comprobar si la comunidad vende:", e)
+
+        return None
+
+    try:
+
+        # owner_has_feature mira el servicio Y el pack que lo incluye: quien
+        # tiene el pack de 24,99 ya tiene la publicidad dentro.
+        if owner_has_feature(owner_user_id, "ad_promo", group_id=group_id):
+            return None
+
+    except Exception as e:
+
+        # Ante la duda, NO sugerir: ofrecerle lo que ya paga es peor que
+        # callarse una venta.
+        print("Servicios extra: no se pudo comprobar lo que ya tiene:", e)
+
+        return None
+
+    producto = fetch_owner_addon_product("ad_promo")
+
+    if not producto or not producto.get("monthly_price_cents"):
+        return None
+
+    if period_key and not mark_addon_suggestion_sent(
+        group_id, owner_user_id, period_key
+    ):
+        return None
+
+    return producto
+
+
+def format_addon_monthly_price(product):
+    """«19,99 EUR/mes». El precio va SIEMPRE en la sugerencia."""
+
+    centimos = int((product or {}).get("monthly_price_cents") or 0)
+    moneda = str((product or {}).get("currency") or "eur").upper()
+
+    return f"{centimos / 100:.2f}".replace(".", ",") + f" {moneda}/mes"
 
 
 def fetch_owner_addon_products(active_only=True):

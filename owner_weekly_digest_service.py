@@ -268,7 +268,29 @@ def formato_semana(filas):
     return " · ".join(partes)
 
 
-def build_weekly_digest_text(group_id, group_name):
+def clave_mes():
+    """'2026-08': la clave de la sugerencia, que es mensual y no semanal.
+
+    Del reloj de la base de datos, como la clave de la semana: dos procesos con
+    la hora distinta se repartirían el mes y la sugerencia saldría dos veces.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("SELECT to_char(NOW(), 'YYYY-MM')")
+
+            return cur.fetchone()[0]
+
+    except Exception:
+
+        # Con "?" la clave sigue siendo estable: una sugerencia como mucho, en
+        # vez de una por pasada.
+        return "?"
+
+
+def build_weekly_digest_text(group_id, group_name, sugerencia=None):
 
     from group_delivery_health_service import describe_group_delivery
 
@@ -298,15 +320,40 @@ def build_weekly_digest_text(group_id, group_name):
         "El panel de ingresos tiene el detalle completo y el CSV.",
     ])
 
+    if sugerencia:
+
+        from owner_addon_service import format_addon_monthly_price
+
+        # El precio va DENTRO del texto, no solo en el botón: una sugerencia sin
+        # precio obliga a entrar para saber cuánto cuesta, y eso ya no es una
+        # oferta, es un anzuelo.
+        lineas.extend([
+            "",
+            f"📣 Pocas altas esta semana. {sugerencia.get('name')} publica tu "
+            "comunidad en canales de publicidad de forma automática, por "
+            f"{format_addon_monthly_price(sugerencia)}. Se cancela cuando "
+            "quieras.",
+        ])
+
     return "\n".join(lineas)
 
 
-def build_digest_keyboard():
+def build_digest_keyboard(sugerencia=None):
 
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("💰 Abrir panel de ingresos",
-                             callback_data="owner_panel_revenue")
-    ]])
+    filas = [[InlineKeyboardButton("💰 Abrir panel de ingresos",
+                                   callback_data="owner_panel_revenue")]]
+
+    if sugerencia:
+
+        from owner_addon_service import format_addon_monthly_price
+
+        filas.append([InlineKeyboardButton(
+            f"📣 {sugerencia.get('name')} · "
+            f"{format_addon_monthly_price(sugerencia)}",
+            callback_data="owner_addons_menu"
+        )])
+
+    return InlineKeyboardMarkup(filas)
 
 
 async def process_weekly_digests(context):
@@ -331,12 +378,36 @@ async def process_weekly_digests(context):
             summary["skipped"] += 1
             continue
 
+        # La sugerencia se pide UNA vez por comunidad y se pasa al texto y al
+        # botón. Pedirla dos veces gastaría la marca mensual en la primera
+        # llamada y la segunda volvería vacía: el texto ofrecería un servicio
+        # que el teclado no tendría, o al revés.
+        sugerencia = None
+
+        try:
+
+            from owner_addon_service import fetch_addon_suggestion
+
+            sugerencia = fetch_addon_suggestion(
+                group_id,
+                owner_user_id,
+                fetch_week_numbers(group_id).get("altas"),
+                period_key=clave_mes(),
+            )
+
+        except Exception as e:
+
+            print("Resumen semanal: no se pudo preparar la sugerencia:",
+                  str(e)[:200])
+
         try:
 
             await context.bot.send_message(
                 chat_id=owner_user_id,
-                text=build_weekly_digest_text(group_id, group_name),
-                reply_markup=build_digest_keyboard(),
+                text=build_weekly_digest_text(
+                    group_id, group_name, sugerencia=sugerencia
+                ),
+                reply_markup=build_digest_keyboard(sugerencia=sugerencia),
             )
 
             summary["sent"] += 1

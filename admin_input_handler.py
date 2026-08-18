@@ -458,6 +458,84 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
 
+    # =========================
+    # PRECIO DE PUBLICAR COMUNIDAD
+    # =========================
+    # Se pide EN EUROS a propósito. commercial_plans.amount va en céntimos, pero
+    # nadie teclea «2900» pensando en 29 euros: pedir céntimos aquí es cómo se
+    # publica un precio cien veces más bajo del que se quería. Y ojo, porque en
+    # este mismo producto plans.amount SÍ va en unidades mayores: las dos
+    # convenciones conviven, así que la conversión se hace donde se lee el texto.
+
+    if context.user_data.get("setting_platform_plan_price_id"):
+
+        plan_id = context.user_data.get("setting_platform_plan_price_id")
+
+        from platform_plan_service import set_platform_plan_amount
+
+        try:
+
+            euros = float(str(text).strip().replace(",", "."))
+
+        except (TypeError, ValueError):
+
+            await update.message.reply_text(
+                "❌ Eso no es un número. Escribe el precio en euros, por "
+                "ejemplo 29 o 29,50."
+            )
+
+            return
+
+
+        if euros <= 0:
+
+            await update.message.reply_text(
+                "❌ El precio tiene que ser mayor que cero. Si quieres que sea "
+                "gratis, desactiva el plan en vez de ponerle 0."
+            )
+
+            return
+
+
+        if euros > 10000:
+
+            # Un tope alto pero tope: un dedazo de más ceros publicaría un
+            # precio absurdo, y el primero que lo vea se va.
+            await update.message.reply_text(
+                "❌ Ese precio parece un error de tecleo (más de 10.000 EUR). "
+                "Escríbelo otra vez si es correcto... o mejor revísalo."
+            )
+
+            return
+
+
+        context.user_data["setting_platform_plan_price_id"] = None
+
+        guardado = set_platform_plan_amount(plan_id, round(euros * 100))
+
+        if not guardado:
+
+            await update.message.reply_text(
+                "❌ No he podido guardar ese precio. Vuelve a intentarlo."
+            )
+
+            return
+
+
+        await update.message.reply_text(
+            f"✅ Precio guardado: {euros:.2f}".replace(".", ",")
+            + " EUR.\n\n"
+            "Ya se puede pagar por publicar una comunidad con esa duración: el "
+            "precio de Stripe se crea solo en la primera compra.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "💰 Ver los precios",
+                callback_data="admin_platform_plan_prices"
+            )]])
+        )
+
+        return
+
+
     if (
         context.user_data.get("configuring_owner_payment_provider")
         or context.user_data.get("configuring_platform_payment_provider")

@@ -256,6 +256,117 @@ def build_owner_addon_lifecycle_metadata(subscription_row, payload, event_type):
     }
 
 
+def process_platform_plan_checkout_completed(session):
+    """El pago del plan de publicación: le da el cupo a quien lo ha pagado.
+
+    Aquí no se escribe un pago en la tabla de pagos de comunidades: esto no es
+    la compra de un acceso, es la cuota de la plataforma. Mezclarlas
+    desvirtuaría los ingresos de los propietarios, que es la regla 7.
+    """
+
+    from platform_plan_service import activate_platform_plan
+
+    metadata = session.get("metadata") or {}
+
+    try:
+
+        user_id = int(metadata.get("user_id"))
+
+    except (TypeError, ValueError):
+
+        log_event(
+            "platform_plan_checkout_without_user",
+            category="billing",
+            severity="error",
+            scope="global",
+            message="Checkout del plan de publicación sin user_id utilizable.",
+            metadata={"stripe_session_id": session.get("id")},
+        )
+
+        return False
+
+    stripe_subscription_id = extract_stripe_subscription_id(
+        session.get("subscription")
+    )
+    commercial_plan_id = metadata.get("commercial_plan_id")
+
+    period_end = None
+    estado = "active"
+
+    if stripe_subscription_id:
+
+        try:
+
+            suscripcion = recurso_plano(
+                stripe.Subscription.retrieve(stripe_subscription_id)
+            )
+
+            # El recurso del SDK no es un diccionario (regla 1): recurso_plano
+            # antes de tocar nada.
+            estado_stripe = suscripcion.get("status")
+
+            # trialing cuenta como activo: la prueba la promete el catálogo, y
+            # durante ella tiene que poder publicar o la prueba no prueba nada.
+            if estado_stripe in ("active", "trialing"):
+                estado = "active"
+
+            fin = suscripcion.get("current_period_end")
+
+            if fin:
+                period_end = datetime.fromtimestamp(int(fin))
+
+        except Exception as e:
+
+            # Sin la fecha se activa igual: quien ha pagado no puede quedarse
+            # esperando porque una segunda llamada a Stripe fallara.
+            print("Plan de plataforma: no se pudo leer la suscripción:",
+                  str(e)[:200])
+
+    activado = activate_platform_plan(
+        user_id,
+        stripe_subscription_id=stripe_subscription_id,
+        stripe_customer_id=session.get("customer"),
+        period_end=period_end,
+        status=estado,
+    )
+
+    log_event(
+        "platform_plan_checkout_completed",
+        category="billing",
+        severity="info" if activado else "error",
+        scope="global",
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        message="Checkout del plan de publicación procesado.",
+        metadata={
+            "stripe_session_id": session.get("id"),
+            "commercial_plan_id": commercial_plan_id,
+            "activated": bool(activado),
+        },
+    )
+
+    if activado:
+
+        try:
+
+            send_telegram_message(
+                TOKEN,
+                user_id,
+                "✅ Plan activado\n\n"
+                "Ya puedes publicar tu comunidad en el bot y cobrar "
+                "suscripciones con acceso automático.\n\n"
+                "Abre el menú y pulsa «🚀 Publicar mi comunidad» para "
+                "configurarla."
+            )
+
+        except Exception as e:
+
+            print("Plan de plataforma: no se pudo avisar al propietario:",
+                  str(e)[:200])
+
+    return activado
+
+
 def process_owner_addon_checkout_completed(session):
 
     metadata = session.get("metadata") or {}
@@ -873,6 +984,11 @@ def stripe_webhook():
         if metadata.get("purpose") == "owner_addon":
 
             process_owner_addon_checkout_completed(session)
+            return "OK"
+
+        if metadata.get("purpose") == "platform_plan":
+
+            process_platform_plan_checkout_completed(session)
             return "OK"
 
         user_id = int(
