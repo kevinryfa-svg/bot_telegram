@@ -114,6 +114,134 @@ def ensure_owner_addon_products_seeded():
         conn.commit()
 
 
+def ensure_owner_addon_stripe_price(product):
+    """El price_id de Stripe de un servicio extra, creándolo si no lo tiene.
+
+    Los tres servicios se sembraban SIN precio de Stripe, y el checkout usaba
+    ese hueco tal cual: `line_items[0].price = None`. Aunque la tienda se
+    hubiera llenado, comprar habría sido imposible. Y como el sembrador tampoco
+    se llamaba desde ningún sitio, la tienda estaba vacía y la única línea de
+    ingresos RECURRENTES del producto no se podía contratar.
+
+    El precio se crea una vez con la clave de la plataforma y se guarda. No hace
+    falta tocar el panel de Stripe.
+
+    LA TRAMPA DE UNIDADES: monthly_price_cents son CÉNTIMOS y
+    create_stripe_product_and_price espera unidades MAYORES. Pasar 1999 sin
+    dividir crearía un precio de 1.999 € al mes en vez de 19,99 €. Es el mismo
+    error que ya tuvo el panel de ingresos, y aquí lo pagaría un cliente.
+    """
+
+    if not product:
+        return None
+
+    if product.get("stripe_price_id"):
+        return product["stripe_price_id"]
+
+    centimos = int(product.get("monthly_price_cents") or 0)
+
+    if centimos <= 0:
+        return None
+
+    from stripe_catalog import create_stripe_product_and_price
+
+    _product_id, price_id = create_stripe_product_and_price(
+        product.get("name") or "Servicio extra",
+        centimos / 100.0,
+        product.get("currency") or "eur",
+        metadata={
+            "purpose": "owner_addon",
+            "addon_code": product.get("code"),
+        },
+        # Mensual: es lo que dice el precio en pantalla («19,99 EUR/mes»), y un
+        # cobro con otro periodo del que se anuncia es un cargo que el cliente
+        # no reconoce.
+        recurring_interval_days=30,
+    )
+
+    with conn.cursor() as cur:
+
+        # El WHERE ... IS NULL hace que dos arranques simultáneos no se pisen:
+        # el segundo no sobrescribe el precio del primero.
+        cur.execute("""
+
+            UPDATE owner_addon_products
+            SET stripe_price_id = %s, updated_at = NOW()
+            WHERE code = %s AND stripe_price_id IS NULL
+
+        """, (price_id, product.get("code")))
+
+        conn.commit()
+
+    log_event(
+        "owner_addon_price_created",
+        category="billing",
+        severity="info",
+        scope="global",
+        message="Precio mensual de un servicio extra creado en Stripe.",
+        metadata={
+            "addon_code": product.get("code"),
+            "stripe_price_id": price_id,
+            "monthly_price_cents": centimos,
+        }
+    )
+
+    return price_id
+
+
+def prepare_owner_addon_store():
+    """Siembra los servicios y les asegura precio. Devuelve una línea legible.
+
+    Se llama al arrancar. Nunca puede tumbar el arranque: si Stripe no
+    contesta, los servicios quedan sembrados sin precio y el precio se crea al
+    primer intento de compra.
+    """
+
+    try:
+
+        ensure_owner_addon_products_seeded()
+
+    except Exception as e:
+
+        conn.rollback()
+
+        return f"Servicios extra: no se pudieron sembrar ({str(e)[:120]})."
+
+    productos = fetch_owner_addon_products(active_only=True)
+
+    if not productos:
+        return "Servicios extra: 0 disponibles."
+
+    con_precio = 0
+
+    for producto in productos:
+
+        try:
+
+            if ensure_owner_addon_stripe_price(producto):
+                con_precio += 1
+
+        except Exception as e:
+
+            print("Servicios extra: no se pudo crear el precio de",
+                  producto.get("code"), "-", str(e)[:160])
+
+    importes = sorted(
+        int(p.get("monthly_price_cents") or 0) for p in productos
+    )
+    rango = (
+        f"{importes[0] / 100:.2f}".replace(".", ",")
+        + "–"
+        + f"{importes[-1] / 100:.2f}".replace(".", ",")
+        + " EUR/mes"
+    )
+
+    return (
+        f"Servicios extra: {len(productos)} disponibles ({rango}), "
+        f"{con_precio} con precio de Stripe listo."
+    )
+
+
 def fetch_owner_addon_products(active_only=True):
 
     filters = []
