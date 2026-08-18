@@ -115,6 +115,7 @@ from owner_addon_service import (
     activate_owner_addon_manual_trial,
     owner_addon_is_purchase_allowed,
     fetch_owner_addon_product,
+    ensure_owner_addon_stripe_price,
     fetch_owner_addon_products,
     fetch_owner_addon_subscription,
     fetch_owner_addon_subscriptions_for_management,
@@ -11704,12 +11705,23 @@ def create_owner_addon_stripe_checkout_session(
     group_id
 ):
 
-    # Stripe Tax queda FUERA de los extras del propietario a propósito: sus
-    # precios se crean en el panel de Stripe, no con nuestro código, así que
-    # nadie garantiza que tengan tax_behavior. Con automatic_tax activado, un
-    # precio sin esa marca hace fallar el checkout — y el fallo se lo comería
-    # el propietario intentando comprar. El IVA automático se aplica donde
-    # los precios los creamos nosotros: la venta de accesos.
+    # El precio se asegura AQUÍ, no se da por hecho. Antes esta línea usaba
+    # product["stripe_price_id"] tal cual, y los servicios se sembraban sin él:
+    # el checkout salía con price=None y no se podía comprar. Ahora, si falta,
+    # se crea con la clave de la plataforma en el momento.
+    precio_id = ensure_owner_addon_stripe_price(product)
+
+    if not precio_id:
+
+        raise ValueError(
+            "El servicio no tiene precio mensual configurado, así que no se "
+            "puede cobrar."
+        )
+
+    # Stripe Tax sigue fuera de automatic_tax en los extras, pero ya no por
+    # falta de tax_behavior: los precios que crea este código llevan la marca
+    # fiscal (stripe_catalog). Queda fuera porque encenderlo aquí cambiaría lo
+    # que paga un propietario que ya está suscrito, y eso se decide aparte.
     success_url, cancel_url = build_owner_addon_checkout_urls()
     metadata = {
         "purpose": "owner_addon",
@@ -11722,7 +11734,7 @@ def create_owner_addon_stripe_checkout_session(
     return stripe.checkout.Session.create(
         mode="subscription",
         line_items=[{
-            "price": product.get("stripe_price_id"),
+            "price": precio_id,
             "quantity": 1
         }],
         success_url=success_url,

@@ -3340,6 +3340,22 @@ def main():
         daemon=True
     ).start()
 
+    # La tienda de servicios extra: sembrar los productos y asegurarles precio.
+    # Es la única línea de ingresos RECURRENTES del producto y estaba apagada
+    # porque el sembrador no se llamaba desde ningún sitio. Nunca puede tumbar
+    # el arranque: si Stripe no contesta, el precio se crea al primer intento de
+    # compra.
+    try:
+
+        from owner_addon_service import prepare_owner_addon_store
+
+        print(prepare_owner_addon_store())
+
+    except Exception as e:
+
+        print("Servicios extra: no se pudo preparar la tienda:", str(e)[:200])
+
+
     # El estado del escaparate, en el arranque: si no hay nada vendible,
     # /start no puede vender nada y hasta ahora eso no se decía en ningún
     # sitio. Nunca puede tumbar el arranque: es una línea de diagnóstico.
