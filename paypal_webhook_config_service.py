@@ -141,6 +141,16 @@ def revisar_webhook(base_url, token, webhook_id, etiqueta):
     resultado: ok / faltaban / arreglado / error.
     """
 
+    # La forma se mira antes de gastar una llamada: con un valor que no puede
+    # ser un webhook_id, PayPal contesta 400 y el diagnóstico que llegaba era
+    # «no se ha podido leer la configuración», que manda al propietario a
+    # revisar sus credenciales — cuando el problema es UN campo y se sabe
+    # cuál. Un diagnóstico que no señala el campo cuesta más que no tenerlo.
+    if not pp.parece_webhook_id_de_paypal(webhook_id):
+
+        return {"etiqueta": etiqueta, "estado": "forma_invalida", "faltaban": []}
+
+
     actuales = leer_eventos_del_webhook(base_url, token, webhook_id)
 
     if actuales is None:
@@ -194,6 +204,20 @@ def notificar_resultado(resultado, owner_user_id=None, token_bot=None):
             "renovaciones o bajas se perderían en silencio."
         )
 
+    elif estado == "forma_invalida":
+
+        texto = (
+            "🚨 Webhook de PayPal mal configurado: lo que hay guardado como "
+            "webhook_id no puede ser un webhook_id.\n\n"
+            "Un webhook_id es corto, de unos 17 caracteres (por ejemplo "
+            "0EH40505U7160970P). Lo guardado es demasiado largo o lleva "
+            "espacios o parte de un enlace: normalmente es el client_id.\n\n"
+            "Mientras siga así, un pago por PayPal se cobraría y el bot no "
+            "podría verificarlo: el acceso no se entregaría. El bot se niega "
+            "a cobrar por PayPal en esta comunidad hasta que se corrija.\n\n"
+            "Está en PayPal → Apps & Credentials → tu app → Webhooks."
+        )
+
     elif estado == "ilegible":
 
         texto = (
@@ -214,7 +238,11 @@ def notificar_resultado(resultado, owner_user_id=None, token_bot=None):
     log_event(
         "paypal_webhook_config_check",
         category="payment",
-        severity="info" if estado == "arreglado" else "warning",
+        severity=(
+            "info" if estado == "arreglado"
+            else "critical" if estado == "forma_invalida"
+            else "warning"
+        ),
         scope="global",
         message=f"Webhook PayPal ({resultado['etiqueta']}): {estado}.",
         metadata=resultado,

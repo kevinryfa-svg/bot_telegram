@@ -97,6 +97,51 @@ def get_paypal_redirect_url(kind):
     return "https://t.me/TheStarVipBOT"
 
 
+# El largo por el que se distingue un webhook_id de otra credencial. Los que
+# emite PayPal rondan los 17 caracteres («0EH40505U7160970P»); un client_id
+# pasa de 70. 40 deja sitio de sobra para un formato que hoy no conozca.
+PAYPAL_WEBHOOK_ID_MAX_LEN = 40
+
+
+def parece_webhook_id_de_paypal(valor):
+    """¿Esto puede ser un webhook_id de PayPal? Se rechaza solo lo imposible.
+
+    En producción la casilla del webhook_id guardaba un valor con forma de
+    client_id, y el resultado era el peor posible: el cobro salía, PayPal lo
+    aceptaba, y la verificación de la firma del webhook contestaba HTTP 400.
+    Cobrado y no entregado, sin ninguna traza que lo dijera.
+
+    La regla es deliberadamente PERMISIVA, y eso es la mitad del diseño: un
+    propietario al que se le rechaza un webhook_id VÁLIDO se queda sin poder
+    cobrar, y eso es peor que el fallo que se está evitando. Así que no se
+    exige una forma concreta —los guiones se aceptan, porque no puedo afirmar
+    que PayPal no los use nunca—, solo se descarta lo que ninguna credencial
+    de webhook puede ser: algo larguísimo (un client_id), o algo con espacios
+    o trozos de URL dentro (un enlace pegado, o dos valores en una línea).
+    """
+
+    if not valor:
+        return False
+
+    valor = str(valor).strip()
+
+    if not valor:
+        return False
+
+    if len(valor) > PAYPAL_WEBHOOK_ID_MAX_LEN:
+        return False
+
+    # Espacios, dos puntos, barras, arrobas: nada de eso sale en un id, y son
+    # justo las señales de que ahí se ha pegado una URL, un correo o dos
+    # cosas juntas.
+    if any(c.isspace() for c in valor):
+        return False
+
+    return valor.isascii() and all(
+        c.isalnum() or c in "-_" for c in valor
+    )
+
+
 def is_paypal_platform_ready():
 
     config = get_payment_provider_config(PAYMENT_PROVIDER_PAYPAL)
@@ -250,6 +295,21 @@ def get_group_paypal_credentials(group_id):
 
         raise PaymentProviderUnavailable(
             "PayPal del grupo necesita webhook_id para activar checkout real."
+        )
+
+
+    if not parece_webhook_id_de_paypal(credentials.get("webhook_id")):
+
+        # Antes solo se comprobaba que el campo NO estuviera vacío, y un valor
+        # con la forma equivocada (típicamente el client_id pegado en la
+        # casilla de al lado) pasaba el filtro. El cobro se creaba, PayPal lo
+        # aceptaba, y la verificación de la firma del webhook devolvía 400: el
+        # dinero se cobraba y el acceso nunca se entregaba, sin traza. Es más
+        # barato negarse a cobrar aquí.
+        raise PaymentProviderUnavailable(
+            "El webhook_id de PayPal de esta comunidad no puede ser un "
+            "webhook_id. Sin un webhook verificable el pago no se puede "
+            "confirmar, así que no se cobra."
         )
 
 

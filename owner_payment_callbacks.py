@@ -19,6 +19,7 @@ después, igual que antes.
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from audit_log_service import log_event
+from payment_providers.paypal_provider import parece_webhook_id_de_paypal
 from payment_secret_store import (
     encrypt_provider_config,
     has_payment_encryption_key,
@@ -862,6 +863,34 @@ async def handle_owner_payment_callbacks(update, context, query, user_id, data):
             await query.message.reply_text(
                 "⚠️ Falta PAYMENT_CONFIG_ENCRYPTION_KEY. No se guardan credenciales sin cifrado.",
                 reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        # La forma del webhook_id se comprueba ANTES de guardar, porque el
+        # error de escribirlo mal no da ninguna señal hasta que hay un cobro
+        # real: PayPal acepta el pago y la verificación de la firma contesta
+        # 400, así que el dinero entra y el acceso no sale. Es el fallo que
+        # había en producción, y el sitio donde se comete es esta casilla.
+        # No se borra lo que escribió: se le dice qué pasa y sigue en el punto
+        # donde estaba.
+        if payload.get("webhook_id") and not parece_webhook_id_de_paypal(
+            payload.get("webhook_id")
+        ):
+
+            await query.message.reply_text(
+                "⚠️ Eso no puede ser un webhook_id de PayPal\n\n"
+                "Un webhook_id es corto, de unos 17 caracteres (por ejemplo "
+                "0EH40505U7160970P). Lo que has pegado es demasiado largo o "
+                "lleva espacios o parte de un enlace: suele ser el client_id, "
+                "que pasa de 70 caracteres.\n\n"
+                "Está en PayPal → Apps & Credentials → tu app → Webhooks, "
+                "en el webhook que hayas creado.\n\n"
+                "Con un webhook_id que no se puede verificar, PayPal cobraría "
+                "y el bot no podría confirmar el pago: el acceso no se "
+                "entregaría. Por eso no se guarda así.",
+                reply_markup=build_owner_paypal_cancel_keyboard(group_id)
             )
 
             return
