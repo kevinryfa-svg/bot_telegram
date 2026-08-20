@@ -261,7 +261,15 @@ def detect_undeliverable_plans(group_id):
     puede corregirlo: elegir la duración de verdad es una decisión suya, no de
     un arreglo automático.
 
-    Devuelve (cuántos, el mayor de los días) o None.
+    También cuenta los de duración 0. Antes no: 0 significa «acceso permanente»
+    para la CONCESIÓN, pero el escaparate no ofrece esos planes a propósito
+    (ningún asistente del bot puede crear uno, así que un 0 en la tabla es un
+    dato anómalo, y venderlo regalaría acceso de por vida al precio de un mes).
+    O sea que un plan a 0 tampoco se vende — y hasta ahora nadie se enteraba,
+    porque este aviso además RECOMENDABA poner 0. Seguir ese consejo apagaba la
+    alerta y dejaba el plan igual de invendible, pero ya en silencio.
+
+    Devuelve {"largos", "mayor", "ceros"} o None.
     """
 
     try:
@@ -270,16 +278,18 @@ def detect_undeliverable_plans(group_id):
 
             cur.execute("""
 
-                SELECT COUNT(*), MAX(duration_days)
+                SELECT COUNT(*) FILTER (WHERE duration_days > %(max_dias)s),
+                       MAX(duration_days) FILTER (WHERE duration_days > %(max_dias)s),
+                       COUNT(*) FILTER (WHERE duration_days <= 0)
                 FROM plans
-                WHERE group_id = %s
+                WHERE group_id = %(gid)s
                   AND COALESCE(is_active, TRUE) = TRUE
                   AND duration_days IS NOT NULL
-                  AND duration_days > %s
+                  AND (duration_days > %(max_dias)s OR duration_days <= 0)
 
-            """, (group_id, MAX_PLAN_DURATION_DAYS))
+            """, {"gid": group_id, "max_dias": MAX_PLAN_DURATION_DAYS})
 
-            fila = cur.fetchone() or (0, None)
+            fila = cur.fetchone() or (0, None, 0)
 
     except Exception as e:
 
@@ -288,12 +298,17 @@ def detect_undeliverable_plans(group_id):
         return None
 
 
-    cuantos = int(fila[0] or 0)
+    largos = int(fila[0] or 0)
+    ceros = int(fila[2] or 0)
 
-    if not cuantos:
+    if not largos and not ceros:
         return None
 
-    return (cuantos, int(fila[1] or 0))
+    return {
+        "largos": largos,
+        "mayor": int(fila[1] or 0),
+        "ceros": ceros,
+    }
 
 
 def mark_alert_sent(group_id, owner_user_id, alert_key, period_key):
@@ -343,20 +358,35 @@ def collect_group_alerts(group_id, group_name):
 
     if imposibles:
 
-        cuantos, mayor = imposibles
+        largos = imposibles["largos"]
+        ceros = imposibles["ceros"]
+        cuantos = largos + ceros
 
         etiqueta = "plan" if cuantos == 1 else "planes"
+        verbo = "tiene" if cuantos == 1 else "tienen"
+
+        detalles = []
+
+        if largos:
+
+            detalles.append(
+                f"{largos} con {imposibles['mayor']} días o más, por encima "
+                f"del máximo de {MAX_PLAN_DURATION_DAYS}"
+            )
+
+        if ceros:
+            detalles.append(f"{ceros} con la duración a 0")
 
         alertas.append((
             "undeliverable_plans", clave_semana(),
-            f"🚨 {cuantos} {etiqueta} de {group_name} tiene una duración que "
-            f"el bot no puede entregar ({mayor} días; el máximo es "
-            f"{MAX_PLAN_DURATION_DAYS}).\n\n"
-            "No se ofrece a nadie, así que esa comunidad no está vendiendo. "
-            "Antes era peor: se ofrecía, se cobraba y el acceso no se "
+            f"🚨 {cuantos} {etiqueta} de {group_name} {verbo} una duración que "
+            f"no se puede vender ({'; '.join(detalles)}).\n\n"
+            "No se ofrecen a nadie, así que esa comunidad no está vendiendo por "
+            "ellos. Antes era peor: se ofrecían, se cobraba y el acceso no se "
             "concedía.\n\n"
-            "Edítalo en «Planes» y pon los días reales — o 0 si querías "
-            "acceso permanente."
+            "Edítalo en «Planes» y pon los días reales, entre 1 y "
+            f"{MAX_PLAN_DURATION_DAYS} (unos diez años). El 0 NO vale: no lo "
+            "ofrece el escaparate."
         ))
 
 

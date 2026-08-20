@@ -1,6 +1,5 @@
 import json
 
-from datetime import datetime, timedelta
 
 from db import conn
 
@@ -53,30 +52,20 @@ def get_active_plan_by_price(price_id, group_id):
 
 
 # =========================
-# PAYMENT SERVICE — CALCULATE EXPIRATION
-# duration_days currently stores minutes for test plans when value < 1440.
+# AQUÍ HABÍA UNA MINA: LOS DÍAS QUE ERAN MINUTOS
 # =========================
-
-def calculate_expiration_from_duration(duration_days):
-
-    if duration_days is None or duration_days == 0:
-
-        return None
-
-
-    duration_value = int(duration_days)
-
-
-    if duration_value < 1440:
-
-        return datetime.now() + timedelta(
-            minutes=duration_value
-        )
-
-
-    return datetime.now() + timedelta(
-        days=duration_value // 1440
-    )
+# Existía calculate_expiration_from_duration(), que interpretaba plans.duration_days
+# como MINUTOS cuando el valor era menor de 1440. Con ella, el plan real de
+# producción de «360 días» daba 360 minutos: seis horas de acceso por 29 euros.
+#
+# No la llamaba nadie: la concesión de acceso usa calculate_group_access_expiration()
+# (payment_access_service), que lee la columna en días, que es lo que significa.
+# Pero seguía ahí, con nombre de utilidad general, esperando a que alguien la
+# usara de buena fe. Se borra: dos funciones con el mismo propósito y unidades
+# contrarias no es una duplicación, es una trampa.
+#
+# La regla, en un sitio solo: plans.duration_days está SIEMPRE en días.
+# Los minutos son de los códigos de acceso temporales, que no pasan por aquí.
 
 
 # =========================

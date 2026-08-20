@@ -896,9 +896,13 @@ def test_the_startup_line_explains_an_empty_window_it_caused(catalogo):
     assert str(MAX_PLAN_DURATION_DAYS) in linea, (
         "hay que decir cuál es el techo, no solo que se ha pasado"
     )
-    assert "0 para acceso permanente" in linea, (
-        "quien escribe 1.300.000 días quería decir «para siempre»: hay que "
-        "decirle cómo se dice eso"
+    assert "entre 1 y" in linea, (
+        "quien escribe 1.300.000 días necesita saber qué rango sí se vende"
+    )
+    assert "Poner 0 NO los arregla" in linea, (
+        "esta línea recomendaba poner 0. Un plan a 0 tampoco se ofrece —a "
+        "propósito—, así que seguir el consejo cambiaba un plan invendible "
+        "ruidoso por uno invendible callado"
     )
 
 
