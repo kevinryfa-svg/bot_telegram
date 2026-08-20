@@ -315,6 +315,69 @@ def check_visibility(group_id):
     return (True, "Visible en " + " y ".join(sitios) + ".")
 
 
+def check_pitch(group_id):
+    """(ok, texto). Si le has contado a alguien QUÉ es esto.
+
+    Lo encontré simulando el /start de un desconocido con los datos reales de
+    producción. Esto es, literalmente, todo lo que veía:
+
+        🔓 StarsVip
+        Precio: 7 EUR/360 días
+
+    Un nombre y un precio. Nadie paga por un nombre. El escaparate puede estar
+    perfecto —precio en el botón, un toque hasta pagar— y no vender nada porque
+    no hay ni una palabra sobre qué recibe el que paga.
+
+    El texto sale de groups.preview_text, que es lo que el propietario escribe en
+    «Vista previa». No bloquea la venta (quien llega del canal del propietario ya
+    sabe qué es), pero es la primera cosa que hay que arreglar cuando no se
+    vende.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(NULLIF(TRIM(preview_text), ''), '')
+                FROM groups
+                WHERE id=%s
+
+            """, (group_id,))
+
+            fila = cur.fetchone()
+
+    except Exception as e:
+
+        print("Listo para vender: error leyendo la descripción:", e)
+
+        return (False, "No se pudo comprobar la descripción.")
+
+    texto = (fila[0] if fila else "") or ""
+
+    if not texto:
+
+        return (
+            False,
+            "Tu comunidad no tiene descripción: quien la ve solo lee el nombre "
+            "y el precio, y nadie paga por un nombre. Escribe en «Vista previa» "
+            "qué recibe quien entra, cada cuánto, y para quién es."
+        )
+
+    # 40 caracteres no es una descripción, es un titular. El umbral es bajo a
+    # propósito: solo descarta lo que claramente no explica nada.
+    if len(texto) < 40:
+
+        return (
+            True,
+            f"Descripción muy corta ({len(texto)} caracteres). Di qué recibe "
+            "quien paga y cada cuánto: es lo último que lee antes de decidir."
+        )
+
+    return (True, f"Descripción de {len(texto)} caracteres.")
+
+
 def collect_readiness(group_id):
     """[(ok, titulo, detalle)] — la lista completa, en orden de arreglo."""
 
@@ -323,6 +386,9 @@ def collect_readiness(group_id):
         ("Planes de venta", check_plans),
         ("Métodos de cobro", check_payment_methods),
         ("Visibilidad", check_visibility),
+        # La última porque es la única que no impide cobrar. Impide convencer,
+        # que es lo que estaba pasando en producción.
+        ("Qué es tu comunidad", check_pitch),
     )
 
     resultado = []

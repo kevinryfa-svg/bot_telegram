@@ -3358,6 +3358,21 @@ def main():
         daemon=True
     ).start()
 
+    # ¿Se puede cobrar de verdad? El escaparate puede estar perfecto y el último
+    # paso roto: el enlace de pago lo crea una petición del bot a su propio
+    # servidor web, y si esa dirección no vale, TODA compra muere con un error.
+    # Nada de esto puede tumbar el arranque.
+    try:
+
+        from sale_readiness_service import describe_sale_readiness
+
+        print(describe_sale_readiness())
+
+    except Exception as e:
+
+        print("Cobro: no se pudo comprobar si se puede cobrar:", str(e)[:200])
+
+
     # El plan de publicación: si ninguna duración tiene precio, nadie puede
     # pagar por publicar su comunidad y el arranque lo dice.
     try:
