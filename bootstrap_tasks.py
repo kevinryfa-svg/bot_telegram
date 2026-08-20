@@ -510,11 +510,105 @@ def tarea_cobrar_por_stripe():
     return "cobrar_por_stripe: " + " | ".join(resultados)
 
 
+# =========================
+# EL NOMBRE QUE VE EL COMPRADOR AL PAGAR
+# =========================
+# El nombre del plan viaja al producto de Stripe, así que es lo que se lee en la
+# página de pago con la tarjeta ya en la mano. En producción se llamaba
+# «PERMANENTE PAYPAL» — ni es permanente (360 días) ni cobra por PayPal (ya no),
+# y leer eso justo antes de pagar 29 euros no invita a seguir.
+#
+# Al renombrar se BORRA el precio de Stripe a propósito: la reparación de
+# arranque, que corre justo después, le crea uno nuevo con el nombre correcto y
+# el importe que ya se anuncia. Sin ese paso, el nombre cambiaría en el bot y
+# seguiría siendo el viejo en la pantalla donde de verdad importa.
+
+def tarea_renombrar_plan():
+    """BOOTSTRAP_PLAN_NAME='<plan_id>=<nombre nuevo>', separados por comas."""
+
+    crudo = (os.environ.get("BOOTSTRAP_PLAN_NAME") or "").strip()
+
+    if not crudo:
+        return "renombrar_plan: falta BOOTSTRAP_PLAN_NAME, no se hace nada."
+
+    resultados = []
+
+    for trozo in [t.strip() for t in crudo.split(",") if t.strip()]:
+
+        if "=" not in trozo:
+
+            resultados.append(f"«{trozo}» no tiene la forma plan_id=nombre")
+            continue
+
+        plan_id, nombre = trozo.split("=", 1)
+        nombre = nombre.strip()
+
+        try:
+
+            plan_id = int(plan_id.strip())
+
+        except (TypeError, ValueError):
+
+            resultados.append(f"«{trozo}» no empieza por un número de plan")
+            continue
+
+        if not nombre:
+
+            resultados.append(f"plan #{plan_id}: un nombre vacío no es un nombre")
+            continue
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    UPDATE plans
+                    SET name = %s,
+                        stripe_price_id = NULL
+                    WHERE id = %s
+                    RETURNING (SELECT name FROM plans WHERE id = %s)
+
+                """, (nombre, plan_id, plan_id))
+
+                fila = cur.fetchone()
+                conn.commit()
+
+        except Exception as e:
+
+            conn.rollback()
+
+            resultados.append(f"plan #{plan_id}: error renombrando ({e})")
+            continue
+
+        if not fila:
+
+            resultados.append(f"plan #{plan_id}: no existe")
+            continue
+
+        log_event(
+            "bootstrap_plan_renamed",
+            category="billing",
+            severity="info",
+            scope="global",
+            message="Plan renombrado; su precio de Stripe se recrea con el nombre nuevo.",
+            metadata={"plan_id": plan_id, "nombre": nombre},
+        )
+
+        resultados.append(
+            f"plan #{plan_id} → «{nombre}» (se le creará precio nuevo para que "
+            "la página de pago diga lo mismo)"
+        )
+
+    return "renombrar_plan: " + " | ".join(resultados)
+
+
 TAREAS = {
     "descripcion_minima": tarea_descripcion_minima,
     "precio_publicacion": tarea_precio_publicacion,
     "precio_comunidad": tarea_precio_comunidad,
     "cobrar_por_stripe": tarea_cobrar_por_stripe,
+    "renombrar_plan": tarea_renombrar_plan,
 }
 
 
