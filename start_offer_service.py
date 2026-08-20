@@ -625,11 +625,17 @@ def describe_shop_window():
             "entrega sin descartar." + aviso
         )
 
-    precios = [o["precio"] for o in ofertas if o["precio"]]
+    # Con el proveedor de cada una: una comunidad puede estar en el escaparate
+    # con su precio y cobrar por un método que no funciona, y desde fuera se ve
+    # exactamente igual que una que vende bien.
+    detalle = ", ".join(
+        f"{o['nombre']} {o['precio'] or 'sin precio'} "
+        f"(cobra por {(o.get('provider') or 'stripe').strip().lower()})"
+        for o in ofertas[:5]
+    )
 
     return (
-        f"Escaparate: {len(ofertas)} comunidad(es) vendible(s)"
-        + (f", la más barata a {precios[0]}." if precios else ".")
+        f"Escaparate: {len(ofertas)} comunidad(es) vendible(s): {detalle}."
         + aviso
     )
 

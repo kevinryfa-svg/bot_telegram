@@ -116,6 +116,68 @@ def check_checkout_endpoint():
     )
 
 
+def _fallo_de_otro_proveedor(oferta, proveedor):
+    """Una oferta que cobra por PayPal (o similar): ¿puede cobrar de verdad?
+
+    El diagnóstico solo sabía de Stripe, y eso deja un agujero del tamaño de una
+    comunidad entera: la que se anuncia con su precio y cobra por un método
+    apagado o mal configurado se ve, desde fuera, exactamente igual que una que
+    vende bien.
+    """
+
+    from payment_gateway_config import is_payment_provider_enabled
+
+    nombre = oferta.get("nombre")
+    group_id = oferta.get("group_id")
+
+    try:
+
+        habilitado = is_payment_provider_enabled(proveedor)
+
+    except Exception:
+
+        habilitado = False
+
+    if not habilitado:
+
+        return {
+            "group_id": group_id,
+            "nombre": nombre,
+            "price_id": oferta.get("price_id"),
+            "detalle": (
+                f"se ofrece y cobra por {proveedor}, que está DESHABILITADO: "
+                "quien pulse comprar no puede pagar"
+            ),
+        }
+
+    if proveedor == "paypal":
+
+        # Las credenciales del grupo se comprueban de verdad: es donde estaba el
+        # webhook_id con forma de client_id, que hacía que PayPal cobrara y el
+        # bot no pudiera confirmar el pago.
+        try:
+
+            from payment_providers.paypal_provider import (
+                get_group_paypal_credentials,
+            )
+
+            get_group_paypal_credentials(group_id)
+
+        except Exception as e:
+
+            return {
+                "group_id": group_id,
+                "nombre": nombre,
+                "price_id": oferta.get("price_id"),
+                "detalle": (
+                    f"se ofrece y cobra por PayPal, pero su configuración no "
+                    f"sirve: {str(e)[:160]}"
+                ),
+            }
+
+    return None
+
+
 def _descuadre_de_importe(oferta, precio_stripe):
     """El plan anuncia un importe y Stripe cobraría otro. None si cuadran.
 
@@ -195,7 +257,30 @@ def check_stripe_prices(ofertas=None):
         proveedor = (oferta.get("provider") or "stripe").strip().lower()
         price_id = oferta.get("price_id")
 
-        if proveedor != "stripe" or not price_id:
+        if proveedor != "stripe":
+
+            # Se ofrece y cobra por otro método: hay que comprobar ESE, no
+            # callarse. Una comunidad puede estar en el escaparate con su precio
+            # y su botón, y tener el cobro apagado o mal configurado.
+            fallo = _fallo_de_otro_proveedor(oferta, proveedor)
+
+            if fallo:
+                rotos.append(fallo)
+
+            continue
+
+        if not price_id:
+
+            rotos.append({
+                "group_id": oferta.get("group_id"),
+                "nombre": oferta.get("nombre"),
+                "price_id": None,
+                "detalle": (
+                    "está a la venta por Stripe y no tiene identificador de "
+                    "precio: el cobro no se puede ni empezar"
+                ),
+            })
+
             continue
 
         comprobados += 1

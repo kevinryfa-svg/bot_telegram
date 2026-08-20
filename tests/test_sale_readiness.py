@@ -161,6 +161,8 @@ def test_a_good_price_is_silence(monkeypatch):
 
 
 def test_providers_that_are_not_stripe_are_not_asked_to_stripe(monkeypatch):
+    """A Stripe no se le pregunta por un plan de PayPal..."""
+
     import stripe
 
     def no_deberia_llamarse(price_id):
@@ -168,11 +170,57 @@ def test_providers_that_are_not_stripe_are_not_asked_to_stripe(monkeypatch):
 
     monkeypatch.setattr(stripe.Price, "retrieve", no_deberia_llamarse)
 
-    rotos, comprobados = srs.check_stripe_prices([
+    _rotos, comprobados = srs.check_stripe_prices([
         {**OFERTA, "provider": "paypal"}
     ])
 
-    assert (rotos, comprobados) == ([], 0)
+    assert comprobados == 0, "no cuenta como precio de Stripe comprobado"
+
+
+def test_but_the_other_provider_is_checked_instead_of_ignored(monkeypatch):
+    """...pero SÍ se comprueba el suyo, que era el agujero.
+
+    Una comunidad puede estar en el escaparate con su precio y su botón y cobrar
+    por un método apagado o mal configurado. Desde fuera se ve exactamente igual
+    que una que vende bien, y el diagnóstico solo sabía de Stripe: se callaba
+    justo el caso que impide vender.
+    """
+
+    monkeypatch.delenv("ENABLE_PAYPAL_PAYMENTS", raising=False)
+    monkeypatch.setenv("ENABLE_PAYPAL_PAYMENTS", "0")
+
+    rotos, _c = srs.check_stripe_prices([{**OFERTA, "provider": "paypal"}])
+
+    assert len(rotos) == 1
+    assert "DESHABILITADO" in rotos[0]["detalle"]
+    assert "no puede pagar" in rotos[0]["detalle"]
+
+
+def test_a_paypal_offer_with_broken_credentials_is_reported(monkeypatch):
+    monkeypatch.setenv("ENABLE_PAYPAL_PAYMENTS", "1")
+
+    import payment_providers.paypal_provider as pp
+
+    def credenciales_malas(group_id):
+        raise ValueError("El webhook_id de PayPal no puede ser un webhook_id.")
+
+    monkeypatch.setattr(pp, "get_group_paypal_credentials", credenciales_malas)
+
+    rotos, _c = srs.check_stripe_prices([{**OFERTA, "provider": "paypal"}])
+
+    assert len(rotos) == 1
+    assert "su configuración no sirve" in rotos[0]["detalle"]
+    assert "webhook_id" in rotos[0]["detalle"]
+
+
+def test_a_stripe_offer_without_a_price_id_is_reported(monkeypatch):
+    """El caso de producción: en el escaparate y sin con qué cobrar."""
+
+    rotos, _c = srs.check_stripe_prices([{**OFERTA, "price_id": None}])
+
+    assert len(rotos) == 1
+    assert "no tiene identificador de precio" in rotos[0]["detalle"]
+    assert "no se puede ni empezar" in rotos[0]["detalle"]
 
 
 # =========================
