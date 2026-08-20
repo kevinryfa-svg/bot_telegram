@@ -354,6 +354,14 @@ def describe_sale_readiness(avisar=True):
                 "una devolución garantizada."
             )
 
+        elif roto.get("detalle") and not roto["detalle"].startswith("No such price"):
+
+            # El fallo trae su propia explicación (proveedor apagado,
+            # credenciales que no sirven, sin identificador de precio): contarlo
+            # todo como «el precio no existe en Stripe» manda a mirar donde no
+            # es, que es lo que me pasó a mí leyendo este log.
+            problemas.append(f"«{roto['nombre']}»: {roto['detalle']}")
+
         else:
 
             problemas.append(

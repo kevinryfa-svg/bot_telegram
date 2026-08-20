@@ -345,10 +345,168 @@ def tarea_precio_comunidad():
     return "precio_comunidad: " + " | ".join(resultados)
 
 
+# =========================
+# PASAR UN PLAN A COBRAR POR STRIPE
+# =========================
+# En producción, lo ÚNICO a la venta cobraba por PayPal, y ese PayPal es el que
+# tiene el webhook_id inválido: el bot se niega a cobrar (con razón, porque el
+# pago no se podría confirmar y el acceso no se entregaría). Con eso, la
+# conversión no podía ser otra cosa que cero.
+#
+# Esta tarea pasa esos planes a Stripe, que en este despliegue está verificado y
+# funcionando, y les crea su precio con el importe que YA se anuncia.
+#
+# Qué NO hace: tocar planes de un proveedor que funciona. Si el método actual
+# puede cobrar, cambiarlo es mover el dinero de sitio sin que nadie lo haya
+# pedido.
+
+def tarea_cobrar_por_stripe():
+    """BOOTSTRAP_PLAN_PROVIDER='g<grupo>' o '<plan_id>', separados por comas."""
+
+    crudo = (os.environ.get("BOOTSTRAP_PLAN_PROVIDER") or "").strip()
+
+    if not crudo:
+        return "cobrar_por_stripe: falta BOOTSTRAP_PLAN_PROVIDER, no se hace nada."
+
+    from payment_access_service import MAX_PLAN_DURATION_DAYS
+    from plan_price_service import crear_precio_stripe_para_plan
+
+    resultados = []
+
+    for objetivo in [t.strip() for t in crudo.split(",") if t.strip()]:
+
+        if objetivo.lower().startswith("g"):
+
+            condicion, valor = "group_id", objetivo[1:]
+
+        else:
+
+            condicion, valor = "id", objetivo
+
+        try:
+
+            valor = int(valor)
+
+        except (TypeError, ValueError):
+
+            resultados.append(f"«{objetivo}» no es un número")
+            continue
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute(f"""
+
+                    SELECT id, group_id,
+                           COALESCE(NULLIF(name, ''), 'Plan'),
+                           amount,
+                           COALESCE(NULLIF(currency, ''), 'EUR'),
+                           duration_days,
+                           COALESCE(is_recurring, FALSE),
+                           COALESCE(NULLIF(payment_provider, ''), 'stripe')
+                    FROM plans
+                    WHERE {condicion} = %s
+                      AND COALESCE(is_active, TRUE) = TRUE
+                      AND amount IS NOT NULL AND amount > 0
+                      AND duration_days IS NOT NULL
+                      AND duration_days > 0
+                      AND duration_days <= %s
+
+                """, (valor, MAX_PLAN_DURATION_DAYS))
+
+                planes = cur.fetchall() or []
+
+        except Exception as e:
+
+            resultados.append(f"«{objetivo}»: error leyendo los planes ({e})")
+            continue
+
+        if not planes:
+
+            resultados.append(f"«{objetivo}»: sin planes vendibles")
+            continue
+
+        for (plan_id, group_id, nombre, importe, moneda, dias, recurrente,
+             proveedor) in planes:
+
+            if (proveedor or "").strip().lower() == "stripe":
+
+                resultados.append(f"plan #{plan_id} ya cobra por Stripe")
+                continue
+
+            plan = {
+                "id": plan_id, "group_id": group_id, "name": nombre,
+                "currency": moneda, "duration_days": dias,
+                "is_recurring": bool(recurrente),
+            }
+
+            try:
+
+                price_id = crear_precio_stripe_para_plan(plan, float(importe))
+
+            except Exception as e:
+
+                resultados.append(
+                    f"plan #{plan_id}: Stripe no aceptó el precio ({str(e)[:120]})"
+                )
+                continue
+
+            try:
+
+                with conn.cursor() as cur:
+
+                    # Proveedor y precio se escriben JUNTOS: dejar el proveedor
+                    # cambiado sin precio válido es cambiar un cobro roto por
+                    # otro.
+                    cur.execute("""
+
+                        UPDATE plans
+                        SET payment_provider = 'stripe',
+                            stripe_price_id = %s,
+                            price_id = %s
+                        WHERE id = %s
+
+                    """, (price_id, price_id, plan_id))
+
+                    conn.commit()
+
+            except Exception as e:
+
+                conn.rollback()
+
+                resultados.append(f"plan #{plan_id}: error guardando ({e})")
+                continue
+
+            log_event(
+                "bootstrap_plan_provider_switched",
+                category="billing",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                message="Plan pasado a cobrar por Stripe.",
+                metadata={
+                    "plan_id": plan_id,
+                    "antes": proveedor,
+                    "amount": float(importe),
+                    "currency": moneda,
+                    "stripe_price_id": price_id,
+                },
+            )
+
+            resultados.append(
+                f"plan #{plan_id} ({nombre}, {float(importe):.2f} {moneda}): "
+                f"{proveedor} → stripe, con precio nuevo"
+            )
+
+    return "cobrar_por_stripe: " + " | ".join(resultados)
+
+
 TAREAS = {
     "descripcion_minima": tarea_descripcion_minima,
     "precio_publicacion": tarea_precio_publicacion,
     "precio_comunidad": tarea_precio_comunidad,
+    "cobrar_por_stripe": tarea_cobrar_por_stripe,
 }
 
 
