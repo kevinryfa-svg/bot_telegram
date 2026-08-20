@@ -125,6 +125,33 @@ def resolver_plan_de_grupo(group_id):
     return (filas[0][0], f"grupo {group_id} → plan #{filas[0][0]} ({inventario})")
 
 
+def moneda_valida_para_stripe(currency):
+    """El código ISO que Stripe acepta. Lanza si no se puede saber cuál es.
+
+    En producción la moneda del plan estaba escrita «EURO», y Stripe contesta
+    «Invalid currency: euro» y no crea el precio: con eso, el plan no se puede
+    poner a cobrar por mucho que todo lo demás esté bien.
+
+    Se traducen solo los alias INEQUÍVOCOS (los mismos que el escaparate usa para
+    enseñarlo bien) y se exige un código de tres letras. Lo que no se reconoce NO
+    se convierte a euros por si acaso: cobrar en una moneda que nadie ha elegido
+    es peor que no cobrar.
+    """
+
+    from start_offer_service import normaliza_moneda_para_mostrar
+
+    moneda = normaliza_moneda_para_mostrar(currency)
+
+    if len(moneda) != 3 or not moneda.isalpha() or not moneda.isascii():
+
+        raise ValueError(
+            f"la moneda «{currency}» no es un código de tres letras y no se "
+            "puede adivinar cuál es"
+        )
+
+    return moneda
+
+
 def crear_precio_stripe_para_plan(plan, amount_major):
     """Crea en Stripe un precio que dice exactamente lo que se va a enseñar.
 
@@ -141,10 +168,12 @@ def crear_precio_stripe_para_plan(plan, amount_major):
 
     intervalo = int(plan.get("duration_days") or 0) if plan.get("is_recurring") else None
 
+    moneda = moneda_valida_para_stripe(plan.get("currency"))
+
     _producto, price_id = create_stripe_product_and_price(
         plan.get("name") or "Plan",
         amount_major,
-        plan.get("currency") or "EUR",
+        moneda,
         metadata={
             "purpose": "group_access",
             "plan_id": plan.get("id"),
@@ -365,15 +394,27 @@ def set_group_plan_price(plan_id, amount_major):
 
             # Importe y precio de Stripe se escriben JUNTOS. Escribir solo uno
             # es exactamente el descuadre que este módulo evita.
+            # La moneda se guarda ya canonizada: «EURO» impide crear el
+            # precio en Stripe, así que dejarla como estaba convertiría cada
+            # futuro cambio de precio en este mismo fallo. No es inventar nada
+            # —es el mismo euro, escrito como lo escribe todo el mundo—, y solo
+            # se toca cuando ya estamos escribiendo el plan.
             cur.execute("""
 
                 UPDATE plans
                 SET amount = %s,
+                    currency = %s,
                     stripe_price_id = %s,
                     price_id = %s
                 WHERE id = %s
 
-            """, (nuevo, price_id, price_id, int(plan_id)))
+            """, (
+                nuevo,
+                moneda_valida_para_stripe(plan.get("currency")),
+                price_id,
+                price_id,
+                int(plan_id),
+            ))
 
             conn.commit()
 

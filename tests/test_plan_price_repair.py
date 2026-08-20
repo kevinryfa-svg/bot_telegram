@@ -164,3 +164,54 @@ def test_the_startup_runs_it_wrapped():
     pos = fuente.index("describe_price_repairs")
 
     assert "try:" in fuente[pos - 400:pos]
+
+
+# =========================
+# LA MONEDA QUE STRIPE RECHAZA
+# =========================
+# En producción la moneda del plan estaba escrita «EURO». Stripe contesta
+# «Invalid currency: euro» y no crea el precio, así que el plan no se puede poner
+# a cobrar por mucho que todo lo demás esté bien.
+
+def test_an_unmistakable_alias_is_translated_for_stripe(catalogo):
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET currency='EURO' WHERE id=661")
+
+    pps.reparar_precios_de_planes()
+
+    assert catalogo["creados"][0]["currency"] == "EUR", (
+        "«EURO» es el mismo euro escrito de otra forma, y Stripe no lo acepta"
+    )
+
+
+def test_a_currency_nobody_can_read_is_refused_not_guessed(catalogo):
+    """Cobrar en una moneda que nadie ha elegido es peor que no cobrar."""
+
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        pps.moneda_valida_para_stripe("dólares")
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET currency='ZZZZ' WHERE id=661")
+
+    assert pps.reparar_precios_de_planes() == []
+    assert catalogo["creados"] == []
+
+
+def test_changing_the_price_canonicalises_the_stored_currency(catalogo):
+    """Dejarla mal convierte cada futuro cambio de precio en el mismo fallo."""
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET currency='EURO' WHERE id=661")
+
+    ok, _detalle = pps.set_group_plan_price(661, 29)
+
+    assert ok is True
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("SELECT currency, amount FROM plans WHERE id=661")
+        moneda, importe = cur.fetchone()
+
+    assert moneda == "EUR"
+    assert float(importe) == 29.0
