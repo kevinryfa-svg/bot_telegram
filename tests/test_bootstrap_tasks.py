@@ -330,3 +330,53 @@ def test_garbage_in_the_variable_is_reported_not_guessed(plan_de_comunidad,
 
     assert "no tiene la forma" in resultado or "no son números" in resultado
     assert plan_de_comunidad["creados"] == []
+
+
+def test_the_group_can_be_named_instead_of_the_plan(plan_de_comunidad,
+                                                    monkeypatch):
+    """Los ids de plan no se pueden consultar desde fuera; el del grupo sí."""
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PRICE", "g41:29")
+
+    resultado = bt.tarea_precio_comunidad()
+
+    assert "grupo 41 → plan #881" in resultado
+    assert "7.00 → 29.00 EUR" in resultado
+
+
+def test_a_tie_between_plans_is_refused_instead_of_drawn(plan_de_comunidad,
+                                                         monkeypatch):
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO plans (id, group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active, is_recurring) VALUES "
+            "(882, 41, 'Otro', 'price_v2', 'price_v2', 30, 7, 'EUR', TRUE, TRUE)"
+        )
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PRICE", "g41:29")
+
+    resultado = bt.tarea_precio_comunidad()
+
+    assert "no se elige por sorteo" in resultado
+    assert "#881" in resultado and "#882" in resultado, (
+        "los enumera para poder elegir a mano"
+    )
+    assert plan_de_comunidad["creados"] == []
+
+
+def test_an_undeliverable_plan_is_never_the_chosen_one(plan_de_comunidad,
+                                                       monkeypatch):
+    """El plan de 1.300.000 días no se puede entregar: no es candidato."""
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO plans (id, group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active, is_recurring) VALUES "
+            "(883, 41, 'Eterno', 'price_e', 'price_e', 1300000, 1, 'EUR', TRUE, TRUE)"
+        )
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PRICE", "g41:29")
+
+    resultado = bt.tarea_precio_comunidad()
+
+    assert "plan #881" in resultado, "el entregable, no el más barato a secas"
