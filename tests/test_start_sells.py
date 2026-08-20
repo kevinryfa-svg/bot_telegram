@@ -1099,3 +1099,82 @@ def test_the_single_offer_button_does_not_repeat_the_name(catalogo):
 
     assert any("Entrar ahora — 15 EUR/mes" in t for t in etiquetas), etiquetas
     assert not any("💳 Comunidad" in t for t in etiquetas)
+
+
+# =========================
+# EL PROPIETARIO QUE NO ESTÁ AL DÍA
+# =========================
+# El menú de inicio ocultaba las comunidades cuya prueba comercial caducó sin
+# pago. El escaparate nuevo NO aplicaba esa regla: dos consultas decidiendo «esto
+# está a la venta» con criterios distintos, que es el hueco por el que se acaba
+# vendiendo lo que el producto considera despublicado.
+
+def _prueba_caducada(db, group_id=51, estado="trial_active", pagado=None):
+    with db.conn.cursor() as cur:
+        cur.execute("DELETE FROM commercial_requests WHERE approved_group_id=%s",
+                    (group_id,))
+        cur.execute(
+            "INSERT INTO commercial_requests "
+            "(user_id, status, approved_group_id, trial_ends_at, "
+            " commercial_subscription_status) "
+            "VALUES (999, %s, %s, NOW() - INTERVAL '2 days', %s)",
+            (estado, group_id, pagado)
+        )
+
+
+def test_an_unpaid_expired_trial_is_not_sold(catalogo):
+    assert sos.fetch_sellable_communities(7001), "antes se vende"
+
+    _prueba_caducada(catalogo)
+
+    assert sos.fetch_sellable_communities(7001) == [], (
+        "el menú de inicio ya la ocultaba: el escaparate no puede seguir "
+        "vendiéndola"
+    )
+    assert sos.fetch_offer_for_group(51, 7001) is None, (
+        "tampoco por el enlace directo de un anuncio"
+    )
+
+
+def test_a_paid_subscription_keeps_selling(catalogo):
+    _prueba_caducada(catalogo, pagado="active")
+
+    assert sos.fetch_sellable_communities(7001), (
+        "con la suscripción al día, la prueba caducada no pinta nada"
+    )
+
+
+def test_the_two_queries_share_one_definition():
+    """Si se copia, con el primer cambio se separan y una miente."""
+
+    menu = open("start_handler.py", encoding="utf-8").read()
+
+    assert "filtro_propietario_al_dia" in menu
+
+    # Ojo: start_handler menciona «expired_pending_reactivation» por su cuenta,
+    # porque es el módulo que ASIGNA ese estado al caducar una prueba. Eso es
+    # legítimo. Lo que no puede repetirse es el FILTRO, y su parte inconfundible
+    # es la comparación de la fecha de fin de prueba.
+    assert "cr.trial_ends_at < NOW()" not in menu, (
+        "el filtro no puede estar escrito a mano en los dos sitios: con el "
+        "primer cambio se separan y una consulta acaba vendiendo lo que la "
+        "otra despublica"
+    )
+
+    escaparate = open("start_offer_service.py", encoding="utf-8").read()
+
+    assert escaparate.count("cr.trial_ends_at < NOW()") == 1, (
+        "una sola definición del filtro"
+    )
+
+
+def test_the_startup_line_says_when_this_is_what_empties_the_window(catalogo):
+    _prueba_caducada(catalogo)
+
+    linea = sos.describe_shop_window()
+
+    assert "0 comunidades vendibles" in linea
+    assert "no está al día" in linea, (
+        "un escaparate vacío por impago del propietario es un problema "
+        "distinto de no tener comunidades, y se arregla en otro sitio"
+    )

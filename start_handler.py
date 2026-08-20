@@ -642,26 +642,17 @@ async def expire_expired_start_trials(context):
 
 
 def active_marketplace_trial_filter():
+    """El filtro del propietario al día. La definición vive en un solo sitio.
 
-    return """
-        NOT EXISTS (
-            SELECT 1
-            FROM commercial_requests cr
-            WHERE (
-                cr.approved_group_id = groups.id
-                OR cr.approved_telegram_group_id = groups.telegram_group_id
-            )
-            AND (
-                (
-                    cr.status='trial_active'
-                    AND cr.trial_ends_at IS NOT NULL
-                    AND cr.trial_ends_at < NOW()
-                    AND COALESCE(cr.commercial_subscription_status, 'pending') NOT IN ('active', 'paid')
-                )
-                OR cr.status='expired_pending_reactivation'
-            )
-        )
+    Estaba escrito a mano aquí y el escaparate de /start no lo aplicaba: dos
+    consultas decidiendo «esto está a la venta» con reglas distintas, que es el
+    hueco por el que se acaba vendiendo lo que el producto considera
+    despublicado. Ahora las dos preguntan lo mismo.
     """
+
+    from start_offer_service import filtro_propietario_al_dia
+
+    return filtro_propietario_al_dia("groups")
 
 # =========================
 # START BOT — MENÚ COMERCIAL

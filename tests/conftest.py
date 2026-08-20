@@ -107,6 +107,10 @@ def clean_db(db_module):
         "owner_addon_products",
         "commercial_creator_profiles",
         "commercial_plans",
+        # Sin esta, una solicitud comercial de una prueba se filtraba a TODAS
+        # las demás: el filtro del propietario al día veía una prueba caducada
+        # y el escaparate se quedaba vacío en 23 pruebas seguidas.
+        "commercial_requests",
         "dunning_notices",
         "member_return_offers",
         "delivery_recovery_notices",

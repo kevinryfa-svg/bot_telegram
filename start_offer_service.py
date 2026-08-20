@@ -127,6 +127,75 @@ def formato_precio(amount, currency, duration_days):
     return f"{importe} {moneda}{formato_periodo(duration_days)}"
 
 
+def filtro_propietario_al_dia(alias="g"):
+    """SQL: excluye las comunidades cuyo propietario no está al día.
+
+    Regla de negocio que ya existía en el menú de inicio: si la prueba comercial
+    del propietario caducó sin pagar, o su solicitud quedó en «expirada
+    pendiente de reactivar», su comunidad deja de mostrarse.
+
+    Vivía escrita a mano dentro de la consulta del menú, y el escaparate nuevo
+    NO la aplicaba: dos consultas decidiendo «esto está a la venta» con reglas
+    distintas. Esa diferencia es justo el hueco por el que se acaba vendiendo lo
+    que el producto considera despublicado (y al revés). Ahora la definición es
+    una y la usan las dos.
+    """
+
+    return f"""
+        NOT EXISTS (
+            SELECT 1
+            FROM commercial_requests cr
+            WHERE (
+                cr.approved_group_id = {alias}.id
+                OR cr.approved_telegram_group_id = {alias}.telegram_group_id
+            )
+            AND (
+                (
+                    cr.status='trial_active'
+                    AND cr.trial_ends_at IS NOT NULL
+                    AND cr.trial_ends_at < NOW()
+                    AND COALESCE(cr.commercial_subscription_status, 'pending')
+                        NOT IN ('active', 'paid')
+                )
+                OR cr.status='expired_pending_reactivation'
+            )
+        )
+    """
+
+
+def contar_ocultas_por_impago():
+    """Cuántas comunidades no se ofrecen porque su propietario no está al día.
+
+    Sin este número, que el escaparate se quede vacío por esta regla es
+    indistinguible de que no haya comunidades: dos problemas con arreglos
+    completamente distintos.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(f"""
+
+                SELECT COUNT(*)
+                FROM groups g
+                WHERE COALESCE(g.is_active, TRUE) = TRUE
+                  AND COALESCE(g.is_free_group, FALSE) = FALSE
+                  AND NOT ({filtro_propietario_al_dia("g")})
+
+            """)
+
+            fila = cur.fetchone()
+
+            return int(fila[0] or 0) if fila else 0
+
+    except Exception as e:
+
+        print("Escaparate: error contando comunidades ocultas por impago:", e)
+
+        return 0
+
+
 def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                                exigir_visibilidad=True):
     """Las comunidades que se pueden ofrecer AHORA, con su mejor precio.
@@ -149,6 +218,12 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
     que hace falta para entregar: comunidad activa, plan usable, no gratuita y
     la entrega sin descartar.
     """
+
+    # Se calcula fuera de la cadena: dentro de un bloque de triple comilla, un
+    # «+ funcion() +» no concatena nada, se queda como texto y revienta el SQL.
+    # Ese fallo devuelve el escaparate VACÍO en silencio, que es la peor forma
+    # posible de fallar aquí.
+    filtro = filtro_propietario_al_dia("g")
 
     try:
 
@@ -243,6 +318,10 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                          IN ('start_home', 'explore_only', 'both')
                   )
                   AND barato.plan_id IS NOT NULL
+                  -- La misma regla que el menú de inicio, y la MISMA
+                  -- definición: si se copia, las dos se separan con el primer
+                  -- cambio y una acaba vendiendo lo que la otra despublica.
+                  AND """ + filtro + """
                   -- Entrega roja CONFIRMADA fuera; sin comprobar, dentro:
                   -- ante la duda se deja vender, como el resto del sistema.
                   AND COALESCE(h.can_deliver, TRUE) = TRUE
@@ -506,8 +585,21 @@ def describe_shop_window():
     # problemas distintos con arreglos distintos, así que se distinguen: si no,
     # el arreglo del segundo se busca en el sitio del primero.
     imposibles = contar_planes_no_entregables()
+    ocultas = contar_ocultas_por_impago()
 
     aviso = ""
+
+    if ocultas:
+
+        # Sin este número, un escaparate vacío por esta regla es indistinguible
+        # de uno vacío por falta de comunidades. Dos problemas con arreglos
+        # completamente distintos.
+        aviso += (
+            f" Y {ocultas} comunidad(es) no se ofrecen porque su propietario no "
+            "está al día: prueba comercial caducada sin pago, o solicitud "
+            "expirada pendiente de reactivar."
+        )
+
 
     if imposibles:
 
