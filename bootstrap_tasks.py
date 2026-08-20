@@ -256,9 +256,65 @@ def tarea_precio_publicacion():
     return f"precio_publicacion: {len(puestos)} plan(es) con precio ({detalle})."
 
 
+# =========================
+# EL PRECIO DE UNA COMUNIDAD
+# =========================
+# El plan concreto y el importe se dicen por variable (BOOTSTRAP_PLAN_PRICE) y no
+# se adivinan: cambiarle el precio a la comunidad de alguien es una decisión de
+# su dueño, y una regla automática del tipo «sube todo lo que esté por debajo de
+# X» acabaría tocando planes de terceros que no ha visto nadie.
+#
+# El cambio pasa por plan_price_service, que escribe el importe Y crea el precio
+# de Stripe correspondiente: cambiar solo uno deja al bot anunciando una cosa y
+# cobrando otra.
+
+def tarea_precio_comunidad():
+    """BOOTSTRAP_PLAN_PRICE='<plan_id>:<euros>[,<plan_id>:<euros>...]'."""
+
+    crudo = (os.environ.get("BOOTSTRAP_PLAN_PRICE") or "").strip()
+
+    if not crudo:
+        return "precio_comunidad: falta BOOTSTRAP_PLAN_PRICE, no se hace nada."
+
+    from plan_price_service import set_group_plan_price
+
+    resultados = []
+
+    for trozo in crudo.split(","):
+
+        trozo = trozo.strip()
+
+        if not trozo:
+            continue
+
+        if ":" not in trozo:
+
+            resultados.append(f"«{trozo}» no tiene la forma plan_id:euros")
+            continue
+
+        plan_id, euros = trozo.split(":", 1)
+
+        try:
+
+            plan_id = int(plan_id.strip())
+            euros = float(euros.strip().replace(",", "."))
+
+        except (TypeError, ValueError):
+
+            resultados.append(f"«{trozo}» no son números")
+            continue
+
+        _ok, detalle = set_group_plan_price(plan_id, euros)
+
+        resultados.append(detalle)
+
+    return "precio_comunidad: " + " | ".join(resultados)
+
+
 TAREAS = {
     "descripcion_minima": tarea_descripcion_minima,
     "precio_publicacion": tarea_precio_publicacion,
+    "precio_comunidad": tarea_precio_comunidad,
 }
 
 

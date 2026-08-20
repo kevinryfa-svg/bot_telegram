@@ -224,3 +224,87 @@ def test_the_startup_calls_it_wrapped():
     assert "try:" in fuente[pos - 400:pos], (
         "una petición de red en el arranque va envuelta o puede tumbar el bot"
     )
+
+
+# =========================
+# ANUNCIAR UN PRECIO Y COBRAR OTRO
+# =========================
+# El importe vive en dos sitios: plans.amount (lo que se enseña) y el precio de
+# Stripe (lo que se cobra). El asistente del panel deja cambiar uno y pide el
+# otro a mano. Nada comprobaba que coincidieran.
+
+def _oferta(amount, currency="EUR"):
+    return {
+        "group_id": 51,
+        "nombre": "StarsVip",
+        "provider": "stripe",
+        "price_id": "price_x",
+        "amount": amount,
+        "currency": currency,
+    }
+
+
+def test_a_price_that_charges_something_else_is_caught(monkeypatch):
+    import stripe
+
+    # Se anuncian 29 EUR y el precio de Stripe dice 7 EUR.
+    monkeypatch.setattr(
+        stripe.Price, "retrieve",
+        lambda price_id: {"id": price_id, "unit_amount": 700}
+    )
+
+    rotos, comprobados = srs.check_stripe_prices([_oferta(29)])
+
+    assert comprobados == 1
+    assert len(rotos) == 1
+    assert rotos[0]["descuadre"] is True
+    assert "29.00 EUR" in rotos[0]["detalle"]
+    assert "7.00 EUR" in rotos[0]["detalle"]
+
+
+def test_matching_amounts_are_silence(monkeypatch):
+    import stripe
+
+    monkeypatch.setattr(
+        stripe.Price, "retrieve",
+        lambda price_id: {"id": price_id, "unit_amount": 2900}
+    )
+
+    assert srs.check_stripe_prices([_oferta(29)]) == ([], 1)
+
+
+def test_the_comparison_is_done_in_cents_not_units(monkeypatch):
+    """El error clásico: comparar 29 con 2900 y ver un descuadre inventado."""
+
+    import stripe
+
+    monkeypatch.setattr(
+        stripe.Price, "retrieve",
+        lambda price_id: {"id": price_id, "unit_amount": 2900}
+    )
+
+    rotos, _c = srs.check_stripe_prices([_oferta(29.00)])
+
+    assert rotos == [], "29 EUR y 2900 céntimos son lo mismo"
+
+
+def test_the_alert_says_it_ends_in_a_refund(monkeypatch):
+    avisos = []
+
+    monkeypatch.setenv("SERVER_URL", "https://ejemplo.test")
+    monkeypatch.setattr(srs.requests, "post", lambda url, **k: FakeResp(400))
+    monkeypatch.setattr(
+        srs, "check_stripe_prices",
+        lambda ofertas=None: ([{
+            "group_id": 51, "nombre": "StarsVip", "price_id": "price_x",
+            "detalle": "se anuncia 29.00 EUR y Stripe cobraría 7.00 EUR",
+            "descuadre": True,
+        }], 1)
+    )
+    monkeypatch.setattr(srs, "log_event", lambda *a, **k: avisos.append(k))
+
+    linea = srs.describe_sale_readiness(avisar=False)
+
+    assert "COBRO ROTO" in linea
+    assert "anuncia un precio y Stripe cobraría otro" in linea
+    assert "devolución garantizada" in linea

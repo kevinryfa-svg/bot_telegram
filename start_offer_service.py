@@ -362,6 +362,11 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
             "precio": formato_precio(amount, currency, duration_days),
             "price_id": price_id,
             "provider": provider,
+            # El importe crudo (en unidades MAYORES) además del formateado: sin
+            # él no se puede comparar lo que se enseña con lo que cobraría
+            # Stripe, que es de las pocas cosas que no pueden diferir.
+            "amount": amount,
+            "currency": currency,
             "planes": int(planes or 0),
             "miembros": int(miembros or 0),
             "ya_dentro": bool(ya_dentro),

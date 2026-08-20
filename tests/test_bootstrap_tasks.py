@@ -205,3 +205,128 @@ def test_the_startup_runs_them_wrapped():
     assert "try:" in fuente[pos - 400:pos], (
         "una tarea de datos no puede impedir que el bot arranque"
     )
+
+
+# =========================
+# CAMBIAR EL PRECIO DE UNA COMUNIDAD
+# =========================
+# El importe vive en DOS sitios: plans.amount (lo que se ENSEÑA) y el precio de
+# Stripe (lo que se COBRA). El asistente del panel deja cambiar el primero y pide
+# el segundo a mano, sin comprobar que coincidan: así se puede anunciar 29 y
+# cobrar 7, o al revés, y no enterarse hasta mirar un extracto.
+
+@pytest.fixture
+def plan_de_comunidad(entorno, monkeypatch):
+    creados = []
+
+    def falso_precio(name, amount_major, currency, metadata=None,
+                     recurring_interval_days=None):
+        creados.append({
+            "amount_major": amount_major,
+            "currency": currency,
+            "recurring_interval_days": recurring_interval_days,
+        })
+        return (f"prod_{len(creados)}", f"price_nuevo_{len(creados)}")
+
+    import stripe_catalog
+
+    monkeypatch.setattr(
+        stripe_catalog, "create_stripe_product_and_price", falso_precio
+    )
+
+    with entorno.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO plans (id, group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active, is_recurring) VALUES "
+            "(881, 41, 'VIP', 'price_viejo', 'price_viejo', 360, 7, 'EUR', TRUE, TRUE)"
+        )
+
+    return {"db": entorno, "creados": creados}
+
+
+def test_changing_the_price_also_changes_what_stripe_charges(plan_de_comunidad,
+                                                             monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PRICE", "881:29")
+
+    resultado = bt.tarea_precio_comunidad()
+
+    assert "7.00 → 29.00 EUR" in resultado
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("SELECT amount, stripe_price_id FROM plans WHERE id=881")
+        amount, price_id = cur.fetchone()
+
+    assert float(amount) == 29.0, "lo que se enseña"
+    assert price_id == "price_nuevo_1", "y lo que se cobra, cambiados JUNTOS"
+
+    creado = plan_de_comunidad["creados"][0]
+
+    assert creado["amount_major"] == pytest.approx(29.0), (
+        "plans.amount va en unidades MAYORES: pasar céntimos cobraría 100 veces "
+        "de más"
+    )
+    assert creado["recurring_interval_days"] == 360, (
+        "el plan es recurrente: convertirlo en pago único cambia lo que el "
+        "comprador cree que compra"
+    )
+
+
+def test_a_one_off_plan_does_not_become_a_subscription(plan_de_comunidad,
+                                                       monkeypatch):
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET is_recurring=FALSE WHERE id=881")
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PRICE", "881:29")
+
+    bt.tarea_precio_comunidad()
+
+    assert plan_de_comunidad["creados"][0]["recurring_interval_days"] is None
+
+
+def test_the_same_price_twice_does_not_create_another_stripe_price(
+    plan_de_comunidad, monkeypatch
+):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PRICE", "881:29")
+
+    bt.tarea_precio_comunidad()
+    segunda = bt.tarea_precio_comunidad()
+
+    assert "ya está a 29.00" in segunda
+    assert len(plan_de_comunidad["creados"]) == 1, (
+        "un precio nuevo en cada arranque llenaría Stripe de duplicados"
+    )
+
+
+def test_without_the_variable_it_touches_nothing(plan_de_comunidad, monkeypatch):
+    monkeypatch.delenv("BOOTSTRAP_PLAN_PRICE", raising=False)
+
+    resultado = bt.tarea_precio_comunidad()
+
+    assert "falta BOOTSTRAP_PLAN_PRICE" in resultado
+    assert plan_de_comunidad["creados"] == []
+
+
+def test_a_plan_from_another_provider_is_refused(plan_de_comunidad, monkeypatch):
+    """Su identificador de precio lo emite el proveedor, no nosotros."""
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET payment_provider='paypal' WHERE id=881")
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PRICE", "881:29")
+
+    resultado = bt.tarea_precio_comunidad()
+
+    assert "paypal" in resultado
+    assert plan_de_comunidad["creados"] == [], (
+        "cambiar solo el importe dejaría descuadrado lo que se cobra"
+    )
+
+
+def test_garbage_in_the_variable_is_reported_not_guessed(plan_de_comunidad,
+                                                         monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PRICE", "881,esto:no,:")
+
+    resultado = bt.tarea_precio_comunidad()
+
+    assert "no tiene la forma" in resultado or "no son números" in resultado
+    assert plan_de_comunidad["creados"] == []
