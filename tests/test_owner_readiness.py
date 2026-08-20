@@ -48,8 +48,13 @@ def preparar_todo(db):
             "duration_days, amount, currency, is_active) "
             "VALUES (87, 'Mensual', 'price_m87', 'price_m87', 30, 15, 'EUR', TRUE)"
         )
+        # Una descripción de verdad: desde que existe la condición «Qué es tu
+        # comunidad», estar listo para vender incluye haberle contado a alguien
+        # qué recibe. Un nombre y un precio no venden.
         cur.execute(
-            "UPDATE groups SET is_marketplace_visible=TRUE WHERE id=87"
+            "UPDATE groups SET is_marketplace_visible=TRUE, "
+            "preview_text='Señales diarias, dos directos por semana y "
+            "acceso al histórico completo de análisis.' WHERE id=87"
         )
 
 
@@ -184,3 +189,59 @@ def test_the_panel_has_the_button_with_the_same_permissions():
     for permiso in ("can_manage_plans", "can_manage_groups",
                     "can_view_payments", "can_manage_payments"):
         assert permiso in trozo
+
+
+# =========================
+# QUÉ ES TU COMUNIDAD
+# =========================
+# Lo encontré simulando el /start de un desconocido con los datos reales de
+# producción: lo único que veía era «🔓 StarsVip» y «Precio: 7 EUR/360 días».
+# Un nombre y un precio. El escaparate estaba perfecto y no había ni una palabra
+# sobre qué recibe el que paga.
+
+def test_a_community_without_a_description_is_flagged(comunidad):
+    ok, texto = ors.check_pitch(87)
+
+    assert ok is False
+    assert "solo lee el nombre y el precio" in texto
+    assert "Vista previa" in texto, "hay que decir DÓNDE se escribe"
+
+
+def test_a_headline_is_not_a_description(comunidad):
+    with comunidad.conn.cursor() as cur:
+        cur.execute("UPDATE groups SET preview_text='VIP' WHERE id=87")
+
+    ok, texto = ors.check_pitch(87)
+
+    assert ok is True, "no bloquea: quien llega del canal del dueño ya sabe qué es"
+    assert "muy corta" in texto
+
+
+def test_a_real_description_passes(comunidad):
+    preparar_todo(comunidad)
+
+    ok, texto = ors.check_pitch(87)
+
+    assert ok is True
+    assert "caracteres" in texto
+    assert "muy corta" not in texto
+
+
+def test_it_does_not_block_selling(comunidad):
+    """La descripción impide convencer, no cobrar: va la última y no tumba."""
+
+    preparar_todo(comunidad)
+
+    with comunidad.conn.cursor() as cur:
+        cur.execute("UPDATE groups SET preview_text=NULL WHERE id=87")
+
+    filas = ors.collect_readiness(87)
+    titulos = [titulo for _ok, titulo, _d in filas]
+
+    assert titulos[-1] == "Qué es tu comunidad"
+
+    entrega = [ok for ok, titulo, _d in filas if titulo == "Entrega de accesos"]
+
+    assert entrega == [True], (
+        "que falte la descripción no puede ensuciar el resto del diagnóstico"
+    )

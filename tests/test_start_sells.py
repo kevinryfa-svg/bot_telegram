@@ -681,6 +681,8 @@ def test_a_member_arriving_from_the_ad_gets_their_access_not_a_second_bill(catal
 def test_a_broken_link_is_never_a_dead_end(catalogo):
     """La carga la escribe cualquiera en la barra de direcciones de Telegram."""
 
+    texto_sin_carga, botones_sin_carga = _start_con_carga(None)
+
     for basura in ("group_", "group_abc", "group_0", "group_-5",
                    "group_99999999", "group_51_extra"):
 
@@ -692,13 +694,15 @@ def test_a_broken_link_is_never_a_dead_end(catalogo):
             f"la carga «{basura}» dejó al usuario sin nada en pantalla"
         )
 
-        # Sí puede aparecer un botón de compra: es el escaparate normal de
-        # /start, que ofrece el catálogo con su precio. Lo que no puede
-        # aparecer es la pantalla DEDICADA de una comunidad, porque la carga
-        # no señala ninguna. Su botón («Entrar ahora») solo existe ahí.
-        assert not any(
-            "Entrar ahora" in t for t, _c in botones
-        ), f"la carga «{basura}» montó una oferta que nadie ha pedido"
+        # La propiedad de verdad: una carga rota tiene que dar EXACTAMENTE lo
+        # mismo que no traer carga ninguna. Comparar contra una marca de texto
+        # es frágil —el escaparate normal puede usar las mismas palabras—; lo
+        # que no puede pasar es que una carga sin sentido monte una pantalla
+        # distinta de la de siempre.
+        assert (texto, botones) == (texto_sin_carga, botones_sin_carga), (
+            f"la carga «{basura}» cambió la pantalla: tiene que caer al menú "
+            "de siempre"
+        )
 
 
 # =========================
@@ -1026,4 +1030,151 @@ def test_both_problems_at_once_are_both_reported(catalogo):
 
     assert texto.index("COBRA") < texto.index("código de tres letras"), (
         "primero lo que impide vender, después lo que solo se lee mal"
+    )
+
+
+# =========================
+# PRUEBA SOCIAL, DE LA DE VERDAD
+# =========================
+# Simulando el /start con los datos de producción, lo único que veía un
+# desconocido era un nombre y un precio. La descripción la escribe el
+# propietario (y el panel ya se la reclama), pero hay un argumento que el bot SÍ
+# tiene y no usaba: cuánta gente hay dentro. Sale de contar accesos vivos, así
+# que si alguien lo comprueba, cuadra.
+
+def test_the_number_of_members_is_real_and_shown(catalogo):
+    with catalogo.conn.cursor() as cur:
+        for i in range(7):
+            cur.execute(
+                "INSERT INTO users (user_id, group_id, expiration, "
+                "subscription_active) VALUES (%s, 51, NOW() + INTERVAL '10 days', TRUE)",
+                (80000 + i,)
+            )
+
+    oferta = sos.fetch_sellable_communities(7001)[0]
+
+    assert oferta["miembros"] == 7
+    assert "7 personas dentro" in sos.build_single_offer_text(oferta)
+
+
+def test_expired_members_are_not_counted(catalogo):
+    """Contar caducados sería inflar el número: si lo comprueban, cuadra."""
+
+    with catalogo.conn.cursor() as cur:
+        for i in range(6):
+            cur.execute(
+                "INSERT INTO users (user_id, group_id, expiration, "
+                "subscription_active) VALUES (%s, 51, NOW() - INTERVAL '3 days', FALSE)",
+                (81000 + i,)
+            )
+
+    oferta = sos.fetch_sellable_communities(7001)[0]
+
+    assert oferta["miembros"] == 0
+    assert sos.frase_de_miembros(oferta) is None
+
+
+def test_a_tiny_number_is_kept_quiet(catalogo):
+    """«1 persona dentro» es un argumento EN CONTRA."""
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, "
+            "subscription_active) VALUES (82000, 51, NOW() + INTERVAL '10 days', TRUE)"
+        )
+
+    oferta = sos.fetch_sellable_communities(7001)[0]
+
+    assert oferta["miembros"] == 1
+    assert sos.frase_de_miembros(oferta) is None
+    assert "1 personas" not in sos.build_single_offer_text(oferta)
+
+
+def test_the_single_offer_button_does_not_repeat_the_name(catalogo):
+    """El nombre ya está en el título: el botón dice qué pasa al pulsarlo."""
+
+    texto, botones = _start_con_carga(None)
+
+    etiquetas = [t for t, _c in botones]
+
+    assert any("Entrar ahora — 15 EUR/mes" in t for t in etiquetas), etiquetas
+    assert not any("💳 Comunidad" in t for t in etiquetas)
+
+
+# =========================
+# EL PROPIETARIO QUE NO ESTÁ AL DÍA
+# =========================
+# El menú de inicio ocultaba las comunidades cuya prueba comercial caducó sin
+# pago. El escaparate nuevo NO aplicaba esa regla: dos consultas decidiendo «esto
+# está a la venta» con criterios distintos, que es el hueco por el que se acaba
+# vendiendo lo que el producto considera despublicado.
+
+def _prueba_caducada(db, group_id=51, estado="trial_active", pagado=None):
+    with db.conn.cursor() as cur:
+        cur.execute("DELETE FROM commercial_requests WHERE approved_group_id=%s",
+                    (group_id,))
+        cur.execute(
+            "INSERT INTO commercial_requests "
+            "(user_id, status, approved_group_id, trial_ends_at, "
+            " commercial_subscription_status) "
+            "VALUES (999, %s, %s, NOW() - INTERVAL '2 days', %s)",
+            (estado, group_id, pagado)
+        )
+
+
+def test_an_unpaid_expired_trial_is_not_sold(catalogo):
+    assert sos.fetch_sellable_communities(7001), "antes se vende"
+
+    _prueba_caducada(catalogo)
+
+    assert sos.fetch_sellable_communities(7001) == [], (
+        "el menú de inicio ya la ocultaba: el escaparate no puede seguir "
+        "vendiéndola"
+    )
+    assert sos.fetch_offer_for_group(51, 7001) is None, (
+        "tampoco por el enlace directo de un anuncio"
+    )
+
+
+def test_a_paid_subscription_keeps_selling(catalogo):
+    _prueba_caducada(catalogo, pagado="active")
+
+    assert sos.fetch_sellable_communities(7001), (
+        "con la suscripción al día, la prueba caducada no pinta nada"
+    )
+
+
+def test_the_two_queries_share_one_definition():
+    """Si se copia, con el primer cambio se separan y una miente."""
+
+    menu = open("start_handler.py", encoding="utf-8").read()
+
+    assert "filtro_propietario_al_dia" in menu
+
+    # Ojo: start_handler menciona «expired_pending_reactivation» por su cuenta,
+    # porque es el módulo que ASIGNA ese estado al caducar una prueba. Eso es
+    # legítimo. Lo que no puede repetirse es el FILTRO, y su parte inconfundible
+    # es la comparación de la fecha de fin de prueba.
+    assert "cr.trial_ends_at < NOW()" not in menu, (
+        "el filtro no puede estar escrito a mano en los dos sitios: con el "
+        "primer cambio se separan y una consulta acaba vendiendo lo que la "
+        "otra despublica"
+    )
+
+    escaparate = open("start_offer_service.py", encoding="utf-8").read()
+
+    assert escaparate.count("cr.trial_ends_at < NOW()") == 1, (
+        "una sola definición del filtro"
+    )
+
+
+def test_the_startup_line_says_when_this_is_what_empties_the_window(catalogo):
+    _prueba_caducada(catalogo)
+
+    linea = sos.describe_shop_window()
+
+    assert "0 comunidades vendibles" in linea
+    assert "no está al día" in linea, (
+        "un escaparate vacío por impago del propietario es un problema "
+        "distinto de no tener comunidades, y se arregla en otro sitio"
     )

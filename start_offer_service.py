@@ -38,6 +38,8 @@ Lo que hace este módulo:
   DENTRO, SU ACCESO       su botón lleva a «Mis accesos».
 """
 
+import os
+
 from db import conn
 from payment_access_service import MAX_PLAN_DURATION_DAYS
 
@@ -125,6 +127,75 @@ def formato_precio(amount, currency, duration_days):
     return f"{importe} {moneda}{formato_periodo(duration_days)}"
 
 
+def filtro_propietario_al_dia(alias="g"):
+    """SQL: excluye las comunidades cuyo propietario no está al día.
+
+    Regla de negocio que ya existía en el menú de inicio: si la prueba comercial
+    del propietario caducó sin pagar, o su solicitud quedó en «expirada
+    pendiente de reactivar», su comunidad deja de mostrarse.
+
+    Vivía escrita a mano dentro de la consulta del menú, y el escaparate nuevo
+    NO la aplicaba: dos consultas decidiendo «esto está a la venta» con reglas
+    distintas. Esa diferencia es justo el hueco por el que se acaba vendiendo lo
+    que el producto considera despublicado (y al revés). Ahora la definición es
+    una y la usan las dos.
+    """
+
+    return f"""
+        NOT EXISTS (
+            SELECT 1
+            FROM commercial_requests cr
+            WHERE (
+                cr.approved_group_id = {alias}.id
+                OR cr.approved_telegram_group_id = {alias}.telegram_group_id
+            )
+            AND (
+                (
+                    cr.status='trial_active'
+                    AND cr.trial_ends_at IS NOT NULL
+                    AND cr.trial_ends_at < NOW()
+                    AND COALESCE(cr.commercial_subscription_status, 'pending')
+                        NOT IN ('active', 'paid')
+                )
+                OR cr.status='expired_pending_reactivation'
+            )
+        )
+    """
+
+
+def contar_ocultas_por_impago():
+    """Cuántas comunidades no se ofrecen porque su propietario no está al día.
+
+    Sin este número, que el escaparate se quede vacío por esta regla es
+    indistinguible de que no haya comunidades: dos problemas con arreglos
+    completamente distintos.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(f"""
+
+                SELECT COUNT(*)
+                FROM groups g
+                WHERE COALESCE(g.is_active, TRUE) = TRUE
+                  AND COALESCE(g.is_free_group, FALSE) = FALSE
+                  AND NOT ({filtro_propietario_al_dia("g")})
+
+            """)
+
+            fila = cur.fetchone()
+
+            return int(fila[0] or 0) if fila else 0
+
+    except Exception as e:
+
+        print("Escaparate: error contando comunidades ocultas por impago:", e)
+
+        return 0
+
+
 def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                                exigir_visibilidad=True):
     """Las comunidades que se pueden ofrecer AHORA, con su mejor precio.
@@ -148,6 +219,12 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
     la entrega sin descartar.
     """
 
+    # Se calcula fuera de la cadena: dentro de un bloque de triple comilla, un
+    # «+ funcion() +» no concatena nada, se queda como texto y revienta el SQL.
+    # Ese fallo devuelve el escaparate VACÍO en silencio, que es la peor forma
+    # posible de fallar aquí.
+    filtro = filtro_propietario_al_dia("g")
+
     try:
 
         with conn.cursor() as cur:
@@ -169,6 +246,15 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                        barato.price_id,
                        barato.provider,
                        cuantos.total,
+                       (
+                           SELECT COUNT(*)
+                           FROM users u2
+                           WHERE u2.group_id = g.id
+                             AND (
+                                 u2.expiration IS NULL
+                                 OR u2.expiration > NOW()
+                             )
+                       ) AS miembros,
                        EXISTS (
                            SELECT 1 FROM users u
                            WHERE u.user_id = %(uid)s
@@ -232,6 +318,10 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                          IN ('start_home', 'explore_only', 'both')
                   )
                   AND barato.plan_id IS NOT NULL
+                  -- La misma regla que el menú de inicio, y la MISMA
+                  -- definición: si se copia, las dos se separan con el primer
+                  -- cambio y una acaba vendiendo lo que la otra despublica.
+                  AND """ + filtro + """
                   -- Entrega roja CONFIRMADA fuera; sin comprobar, dentro:
                   -- ante la duda se deja vender, como el resto del sistema.
                   AND COALESCE(h.can_deliver, TRUE) = TRUE
@@ -260,7 +350,8 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
     for fila in filas:
 
         (group_id, telegram_group_id, nombre, descripcion, plan_id, amount,
-         currency, duration_days, price_id, provider, planes, ya_dentro) = fila
+         currency, duration_days, price_id, provider, planes, miembros,
+         ya_dentro) = fila
 
         ofertas.append({
             "group_id": group_id,
@@ -272,6 +363,7 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
             "price_id": price_id,
             "provider": provider,
             "planes": int(planes or 0),
+            "miembros": int(miembros or 0),
             "ya_dentro": bool(ya_dentro),
         })
 
@@ -328,6 +420,29 @@ def callback_de_oferta(oferta):
     return callback_de_compra(oferta)
 
 
+# A partir de cuántos socios la cifra ayuda a vender. Por debajo, decirla es
+# peor que callarla: «1 persona dentro» es un argumento en contra. Es la misma
+# disciplina que la de los porcentajes sin base (regla 7).
+MIN_MIEMBROS_PARA_ENSENAR = int(
+    os.environ.get("MIN_MIEMBROS_PARA_ENSENAR", "5")
+)
+
+
+def frase_de_miembros(oferta):
+    """«👥 23 personas dentro ahora mismo». None si el número no ayuda.
+
+    Sale de contar accesos vivos de verdad, no de un número inventado ni
+    redondeado: si alguien lo comprueba, tiene que cuadrar.
+    """
+
+    miembros = int((oferta or {}).get("miembros") or 0)
+
+    if miembros < MIN_MIEMBROS_PARA_ENSENAR:
+        return None
+
+    return f"👥 {miembros} personas dentro ahora mismo."
+
+
 def build_single_offer_text(oferta):
     """La oferta cuando solo hay una cosa que vender: sin menú de por medio."""
 
@@ -337,6 +452,14 @@ def build_single_offer_text(oferta):
 
         # La descripción la escribe el propietario: se recorta, no se adorna.
         lineas.extend(["", oferta["descripcion"][:400]])
+
+    social = frase_de_miembros(oferta)
+
+    if social:
+
+        # Delante del precio a propósito: lo que convence a un desconocido es
+        # que ahí dentro hay gente, y eso se lee ANTES de mirar cuánto cuesta.
+        lineas.extend(["", social])
 
     if oferta["precio"]:
 
@@ -462,8 +585,21 @@ def describe_shop_window():
     # problemas distintos con arreglos distintos, así que se distinguen: si no,
     # el arreglo del segundo se busca en el sitio del primero.
     imposibles = contar_planes_no_entregables()
+    ocultas = contar_ocultas_por_impago()
 
     aviso = ""
+
+    if ocultas:
+
+        # Sin este número, un escaparate vacío por esta regla es indistinguible
+        # de uno vacío por falta de comunidades. Dos problemas con arreglos
+        # completamente distintos.
+        aviso += (
+            f" Y {ocultas} comunidad(es) no se ofrecen porque su propietario no "
+            "está al día: prueba comercial caducada sin pago, o solicitud "
+            "expirada pendiente de reactivar."
+        )
+
 
     if imposibles:
 
