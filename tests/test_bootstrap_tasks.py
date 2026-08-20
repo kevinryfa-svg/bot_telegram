@@ -222,6 +222,9 @@ def plan_de_comunidad(entorno, monkeypatch):
     def falso_precio(name, amount_major, currency, metadata=None,
                      recurring_interval_days=None):
         creados.append({
+            # El nombre se guarda porque es lo que se lee en la página de pago:
+            # un doble que no lo mira no puede vigilar lo que ve el comprador.
+            "name": name,
             "amount_major": amount_major,
             "currency": currency,
             "recurring_interval_days": recurring_interval_days,
@@ -503,3 +506,64 @@ def test_after_switching_the_community_can_actually_be_charged(plan_de_paypal,
     assert (rotos, comprobados) == ([], 1), (
         "y ahora el diagnóstico lo da por cobrable"
     )
+
+
+# =========================
+# EL NOMBRE QUE SE LEE AL PAGAR
+# =========================
+# El nombre del plan viaja al producto de Stripe: es lo que se lee en la página
+# de pago, con la tarjeta ya en la mano. En producción se llamaba «PERMANENTE
+# PAYPAL» — ni permanente (360 días) ni PayPal (ya no).
+
+def test_renaming_also_forces_a_price_with_the_new_name(plan_de_comunidad,
+                                                        monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_NAME", "881=Acceso 360 días")
+
+    resultado = bt.tarea_renombrar_plan()
+
+    assert "«Acceso 360 días»" in resultado
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("SELECT name, stripe_price_id FROM plans WHERE id=881")
+        nombre, price_id = cur.fetchone()
+
+    assert nombre == "Acceso 360 días"
+    assert price_id is None, (
+        "sin borrarlo, el nombre cambiaría en el bot y la página de pago "
+        "seguiría diciendo el viejo"
+    )
+
+    # Y la reparación de arranque, que corre justo después, lo recrea bien.
+    import plan_price_service as pps
+
+    pps.reparar_precios_de_planes()
+
+    assert plan_de_comunidad["creados"][-1]["name"] == "Acceso 360 días"
+
+
+def test_an_empty_name_is_refused(plan_de_comunidad, monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_NAME", "881=   ")
+
+    assert "no es un nombre" in bt.tarea_renombrar_plan()
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("SELECT name FROM plans WHERE id=881")
+        assert cur.fetchone()[0] == "VIP"
+
+
+def test_a_name_with_colons_survives(plan_de_comunidad, monkeypatch):
+    """Por eso el separador es «=» y no «:»."""
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_NAME", "881=VIP: acceso 12 meses")
+
+    bt.tarea_renombrar_plan()
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("SELECT name FROM plans WHERE id=881")
+        assert cur.fetchone()[0] == "VIP: acceso 12 meses"
+
+
+def test_without_the_variable_nothing_is_renamed(plan_de_comunidad, monkeypatch):
+    monkeypatch.delenv("BOOTSTRAP_PLAN_NAME", raising=False)
+
+    assert "falta BOOTSTRAP_PLAN_NAME" in bt.tarea_renombrar_plan()
