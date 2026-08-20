@@ -173,3 +173,56 @@ def test_the_route_answers_with_html_and_a_short_cache(catalogo):
 
     assert "VIP Trading" in cuerpo
     assert "?start=group_61" in cuerpo
+
+
+# =========================
+# QUE SE PUEDA ENCONTRAR
+# =========================
+# Una página pública que ningún buscador tiene por qué mirar es una página
+# privada con otra dirección.
+
+def test_robots_allows_the_catalogue_and_hides_the_money_routes(catalogo):
+    from flask import Flask
+
+    app = Flask(__name__)
+    pcp.register_public_catalog_routes(app)
+
+    respuesta = app.test_client().get("/robots.txt")
+
+    assert respuesta.status_code == 200
+    assert "text/plain" in respuesta.headers["Content-Type"]
+
+    cuerpo = respuesta.get_data(as_text=True)
+
+    assert "Allow: /comunidades" in cuerpo
+    assert "Disallow: /create-checkout-session" in cuerpo, (
+        "las rutas de cobro no pintan nada en un índice"
+    )
+    assert "Disallow: /webhook/" in cuerpo
+
+
+def test_the_sitemap_points_at_the_catalogue(catalogo):
+    from flask import Flask
+
+    app = Flask(__name__)
+    pcp.register_public_catalog_routes(app)
+
+    respuesta = app.test_client().get("/sitemap.xml")
+
+    assert respuesta.status_code == 200
+    assert "xml" in respuesta.headers["Content-Type"]
+
+    cuerpo = respuesta.get_data(as_text=True)
+
+    assert "/comunidades</loc>" in cuerpo
+    assert cuerpo.startswith("<?xml")
+
+    # Las comunidades no se listan una a una: sus enlaces llevan a Telegram, no
+    # a esta web, y en un mapa de este sitio no pintan nada.
+    assert "t.me" not in cuerpo
+
+
+def test_robots_says_where_the_sitemap_is(catalogo):
+    cuerpo = pcp.build_robots_txt("https://ejemplo.test/")
+
+    assert "Sitemap: https://ejemplo.test/sitemap.xml" in cuerpo

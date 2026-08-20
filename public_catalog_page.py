@@ -212,6 +212,58 @@ def build_public_catalog_html(base_url=None):
     return _pagina(tarjetas, canonica)
 
 
+def build_robots_txt(base_url):
+    """robots.txt: permite indexar y dice dónde está el mapa.
+
+    Sin esto un buscador no tiene por qué mirar nada, y el catálogo público es
+    justo la única página que interesa que encuentre alguien que no conoce el
+    bot. Se prohíbe explícitamente lo que no es escaparate: las rutas de cobro y
+    de webhooks no pintan nada en un índice.
+    """
+
+    base = (base_url or "").rstrip("/")
+
+    lineas = [
+        "User-agent: *",
+        "Allow: /comunidades",
+        "Disallow: /create-checkout-session",
+        "Disallow: /create-paypal-group-order",
+        "Disallow: /create-revolut-group-order",
+        "Disallow: /create-changenow-group-order",
+        "Disallow: /create-guardarian-group-order",
+        "Disallow: /create-paypal-platform-order",
+        "Disallow: /create-changenow-platform-order",
+        "Disallow: /create-guardarian-platform-order",
+        "Disallow: /create-revolut-platform-order",
+        "Disallow: /webhook/",
+        "Disallow: /owner-addon-success",
+        "Disallow: /owner-addon-cancel",
+    ]
+
+    if base:
+        lineas.append(f"Sitemap: {base}/sitemap.xml")
+
+    return "\n".join(lineas) + "\n"
+
+
+def build_sitemap_xml(base_url):
+    """El mapa: el catálogo. Una sola dirección, que es la que importa.
+
+    No se listan las comunidades una a una: sus enlaces llevan a Telegram, no a
+    esta web, así que en un mapa de este sitio no pintan nada.
+    """
+
+    base = (base_url or "").rstrip("/")
+    url = html.escape(f"{base}/comunidades") if base else "/comunidades"
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"  <url><loc>{url}</loc><changefreq>daily</changefreq></url>\n"
+        "</urlset>\n"
+    )
+
+
 def register_public_catalog_routes(app):
     """Monta /comunidades. La raíz sigue siendo el estado del despliegue."""
 
@@ -232,5 +284,29 @@ def register_public_catalog_routes(app):
                 "Cache-Control": "public, max-age=60",
             },
         )
+
+    @app.route("/robots.txt", methods=["GET"])
+    def robots_publico():
+
+        base = os.environ.get("SERVER_URL") or request.url_root
+
+        return Response(
+            build_robots_txt(base),
+            mimetype="text/plain; charset=utf-8",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+
+    @app.route("/sitemap.xml", methods=["GET"])
+    def sitemap_publico():
+
+        base = os.environ.get("SERVER_URL") or request.url_root
+
+        return Response(
+            build_sitemap_xml(base),
+            mimetype="application/xml; charset=utf-8",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
 
     return True

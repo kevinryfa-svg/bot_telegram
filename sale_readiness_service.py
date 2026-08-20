@@ -116,6 +116,61 @@ def check_checkout_endpoint():
     )
 
 
+def _descuadre_de_importe(oferta, precio_stripe):
+    """El plan anuncia un importe y Stripe cobraría otro. None si cuadran.
+
+    Se compara en la unidad de Stripe (céntimos para el euro) porque es la única
+    que no admite interpretación: plans.amount va en unidades MAYORES y el
+    unit_amount de Stripe en MENORES, y confundirlas es cómo se acaba cobrando
+    cien veces de más.
+    """
+
+    from payment_gateway_config import amount_to_minor_units
+
+    anunciado = (oferta or {}).get("amount")
+
+    if anunciado is None:
+        return None
+
+    try:
+
+        esperado = amount_to_minor_units(anunciado, oferta.get("currency") or "EUR")
+
+    except Exception:
+
+        return None
+
+    cobrado = None
+
+    try:
+
+        cobrado = (
+            precio_stripe.get("unit_amount")
+            if hasattr(precio_stripe, "get")
+            else None
+        )
+
+    except Exception:
+
+        cobrado = None
+
+    if cobrado is None or int(cobrado) == int(esperado):
+        return None
+
+    moneda = (oferta.get("currency") or "EUR").upper()
+
+    return {
+        "group_id": oferta.get("group_id"),
+        "nombre": oferta.get("nombre"),
+        "price_id": oferta.get("price_id"),
+        "detalle": (
+            f"se anuncia {int(esperado) / 100:.2f} {moneda} y Stripe cobraría "
+            f"{int(cobrado) / 100:.2f} {moneda}"
+        ),
+        "descuadre": True,
+    }
+
+
 def check_stripe_prices(ofertas=None):
     """(rotos, comprobados). Precios que Stripe dice que NO existen.
 
@@ -147,7 +202,16 @@ def check_stripe_prices(ofertas=None):
 
         try:
 
-            stripe.Price.retrieve(price_id)
+            precio = stripe.Price.retrieve(price_id)
+
+            # Y que diga lo MISMO que se anuncia. El asistente del panel deja
+            # cambiar el importe del plan y pide el identificador de Stripe a
+            # mano: si alguien cambia uno y no el otro, el bot enseña un precio
+            # y cobra otro, y no se entera nadie hasta que se mira un extracto.
+            descuadre = _descuadre_de_importe(oferta, precio)
+
+            if descuadre:
+                rotos.append(descuadre)
 
         except Exception as e:
 
@@ -197,10 +261,20 @@ def describe_sale_readiness(avisar=True):
 
     for roto in rotos:
 
-        problemas.append(
-            f"El precio de «{roto['nombre']}» ({roto['price_id']}) no existe en "
-            "esta cuenta de Stripe: quien pulse comprar no llegará a pagar."
-        )
+        if roto.get("descuadre"):
+
+            problemas.append(
+                f"«{roto['nombre']}» anuncia un precio y Stripe cobraría otro: "
+                f"{roto['detalle']}. Cobrar algo distinto de lo anunciado es "
+                "una devolución garantizada."
+            )
+
+        else:
+
+            problemas.append(
+                f"El precio de «{roto['nombre']}» ({roto['price_id']}) no existe "
+                "en esta cuenta de Stripe: quien pulse comprar no llegará a pagar."
+            )
 
 
     if not problemas:
