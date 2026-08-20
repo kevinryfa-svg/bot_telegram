@@ -71,6 +71,60 @@ def fetch_group_plan(plan_id):
     }
 
 
+def resolver_plan_de_grupo(group_id):
+    """(plan_id, detalle). El plan de una comunidad al que cambiar el precio.
+
+    Se elige el más barato de los que SE PUEDEN vender y entregar por Stripe. Si
+    hay empate a precio, se niega y los enumera: elegir por sorteo entre dos
+    planes de verdad es cómo se le cambia el precio al que no era.
+    """
+
+    from payment_access_service import MAX_PLAN_DURATION_DAYS
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id, COALESCE(NULLIF(name, ''), 'Plan'), amount,
+                       duration_days
+                FROM plans
+                WHERE group_id = %s
+                  AND COALESCE(is_active, TRUE) = TRUE
+                  AND COALESCE(NULLIF(payment_provider, ''), 'stripe') = 'stripe'
+                  AND amount IS NOT NULL AND amount > 0
+                  AND duration_days IS NOT NULL
+                  AND duration_days > 0
+                  AND duration_days <= %s
+                ORDER BY amount ASC, id ASC
+
+            """, (int(group_id), MAX_PLAN_DURATION_DAYS))
+
+            filas = cur.fetchall() or []
+
+    except Exception as e:
+
+        return (None, f"error leyendo los planes del grupo {group_id}: {e}")
+
+    if not filas:
+        return (None, f"el grupo {group_id} no tiene ningún plan cobrable por Stripe")
+
+    inventario = ", ".join(
+        f"#{f[0]} {f[1]} {float(f[2]):.2f} ({f[3]}d)" for f in filas
+    )
+
+    if len(filas) > 1 and float(filas[0][2]) == float(filas[1][2]):
+
+        return (
+            None,
+            f"el grupo {group_id} tiene varios planes al mismo precio y no se "
+            f"elige por sorteo: {inventario}"
+        )
+
+    return (filas[0][0], f"grupo {group_id} → plan #{filas[0][0]} ({inventario})")
+
+
 def crear_precio_stripe_para_plan(plan, amount_major):
     """Crea en Stripe un precio que dice exactamente lo que se va a enseñar.
 

@@ -292,17 +292,51 @@ def tarea_precio_comunidad():
             resultados.append(f"«{trozo}» no tiene la forma plan_id:euros")
             continue
 
-        plan_id, euros = trozo.split(":", 1)
+        objetivo, euros = trozo.split(":", 1)
+        objetivo = objetivo.strip()
 
         try:
 
-            plan_id = int(plan_id.strip())
             euros = float(euros.strip().replace(",", "."))
 
         except (TypeError, ValueError):
 
             resultados.append(f"«{trozo}» no son números")
             continue
+
+        # «g1159:29» apunta a la COMUNIDAD y deja que el servicio resuelva su
+        # plan: los identificadores de plan no se pueden consultar desde fuera,
+        # y el del grupo sí se conoce (sale en el enlace del escaparate).
+        if objetivo.lower().startswith("g"):
+
+            from plan_price_service import resolver_plan_de_grupo
+
+            try:
+
+                group_id = int(objetivo[1:])
+
+            except (TypeError, ValueError):
+
+                resultados.append(f"«{trozo}» no son números")
+                continue
+
+            plan_id, detalle = resolver_plan_de_grupo(group_id)
+
+            resultados.append(detalle)
+
+            if not plan_id:
+                continue
+
+        else:
+
+            try:
+
+                plan_id = int(objetivo)
+
+            except (TypeError, ValueError):
+
+                resultados.append(f"«{trozo}» no son números")
+                continue
 
         _ok, detalle = set_group_plan_price(plan_id, euros)
 
