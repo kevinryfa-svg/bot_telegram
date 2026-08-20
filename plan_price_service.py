@@ -20,6 +20,8 @@ solo afecta a las altas NUEVAS, que es justo la regla 4 del documento de reglas
 del dinero. Ni un socio actual paga un céntimo distinto por esto.
 """
 
+import re
+
 from audit_log_service import log_event
 from db import conn
 
@@ -641,3 +643,52 @@ def ids_de_planes_del_grupo(group_id):
         print("Precio de plan: error listando los planes del grupo:", str(e)[:160])
 
         return []
+
+
+# =========================
+# LO QUE PUEDE SER UN IDENTIFICADOR DE PRECIO Y LO QUE NO
+# =========================
+# El asistente de planes pide el identificador del precio a mano y guardaba
+# CUALQUIER cosa. En producción, dentro de stripe_price_id de un plan activo
+# había una respuesta de soporte entera: «Hola lorrrdd, Gracias por tu mensaje.
+# Hemos recibido tu solicitud de revisión manual de ubicación…». Ese plan se
+# anuncia y no se puede cobrar, y nadie se entera hasta que alguien lo intenta.
+#
+# Y hay otra forma de llegar al mismo sitio: el paso pide «escribe *auto* y el
+# bot creará el precio», pero al EDITAR un plan no había ningún «auto» — se
+# guardaba la palabra literal como identificador. Seguir la instrucción de la
+# pantalla dejaba el plan roto.
+
+# Las palabras con las que se pide que lo cree el bot. En un sitio solo: el
+# alta las tenía escritas dentro y la edición no las tenía en absoluto.
+PALABRAS_DE_PRECIO_AUTOMATICO = ("auto", "crear", "nuevo", "-")
+
+
+def pide_precio_automatico(texto):
+    """¿Está pidiendo que el precio lo cree el bot?"""
+
+    return (texto or "").strip().lower() in PALABRAS_DE_PRECIO_AUTOMATICO
+
+
+def parece_precio_de_stripe(texto):
+    """Un identificador de precio de Stripe: price_ y letras y números."""
+
+    return bool(re.fullmatch(r"price_[A-Za-z0-9]+", (texto or "").strip()))
+
+
+def parece_plan_de_paypal(texto):
+    """Un identificador de plan de PayPal: P- y letras y números."""
+
+    return bool(re.fullmatch(r"P-[A-Za-z0-9]+", (texto or "").strip()))
+
+
+def parece_referencia_interna(texto):
+    """Para los demás proveedores: una referencia, no un párrafo.
+
+    No se puede exigir un formato porque lo emite cada proveedor, pero sí lo
+    que ninguno usa: espacios, saltos de línea o cien caracteres de texto.
+    """
+
+    limpio = (texto or "").strip()
+
+    return bool(limpio) and len(limpio) <= 100 and not re.search(r"\s", limpio)

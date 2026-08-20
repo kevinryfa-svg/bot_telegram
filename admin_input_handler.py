@@ -726,9 +726,85 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         if step == 2:
 
+            from plan_price_service import (
+                parece_plan_de_paypal,
+                parece_precio_de_stripe,
+                parece_referencia_interna,
+                pide_precio_automatico,
+            )
+
             provider = normalize_plan_payment_provider(
                 context.user_data.get("edit_plan_provider")
             )
+
+            # Lo que se escriba aquí es lo que el cobro usará para cobrar. Si no
+            # puede ser un identificador, no entra: guardarlo deja el plan
+            # anunciándose y sin poder cobrar, y eso no se ve hasta que alguien
+            # lo intenta y se va.
+            if provider == PLAN_PAYMENT_PROVIDER_STRIPE:
+
+                if pide_precio_automatico(text):
+
+                    # El paso lo ofrecía por escrito y al editar no existía: se
+                    # guardaba la palabra «auto» como identificador de precio.
+                    context.user_data["edit_plan_stripe_autocreate"] = True
+                    context.user_data["edit_plan_price"] = None
+                    context.user_data["edit_plan_stripe_price_id"] = None
+                    context.user_data["edit_plan_provider_price_id"] = None
+                    context.user_data["edit_plan_step"] = 3
+
+                    await update.message.reply_text(
+
+                        "Paso 3️⃣\n\n"
+                        "Vale: al terminar creo yo el precio en Stripe con el "
+                        "importe que me digas.\n\n"
+                        "Introduce la nueva duración en días."
+
+                    )
+
+                    return
+
+                if not parece_precio_de_stripe(text):
+
+                    await update.message.reply_text(
+
+                        "❌ Eso no es un Stripe Price ID.\n\n"
+                        "Tiene la forma price_1ABCxyz... y se copia del panel "
+                        "de Stripe, en el precio del producto.\n\n"
+                        "O escribe *auto* y lo creo yo con el importe que me "
+                        "digas al terminar."
+
+                    )
+
+                    return
+
+            elif provider == PLAN_PAYMENT_PROVIDER_PAYPAL:
+
+                if not parece_plan_de_paypal(text):
+
+                    await update.message.reply_text(
+
+                        "❌ Eso no es un PayPal Plan ID.\n\n"
+                        "Empieza por P- (por ejemplo P-5ML4271244454362W) y se "
+                        "copia del panel de PayPal, en el plan de "
+                        "suscripción."
+
+                    )
+
+                    return
+
+            elif not parece_referencia_interna(text):
+
+                await update.message.reply_text(
+
+                    "❌ Eso no vale como referencia: tiene que ser una sola "
+                    "palabra, sin espacios (por ejemplo mensual_vip)."
+
+                )
+
+                return
+
+            context.user_data["edit_plan_stripe_autocreate"] = False
             context.user_data["edit_plan_provider_price_id"] = text
 
             if provider == PLAN_PAYMENT_PROVIDER_PAYPAL:
@@ -839,7 +915,26 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         if step == 5:
 
-            currency = text.upper()
+            from plan_price_service import moneda_valida_para_stripe
+
+            # En producción hay planes con la moneda escrita «EURO», «€», «$» y
+            # hasta «1». Con Stripe el descuadre tarda en verse (el precio lleva
+            # su propia moneda), pero los demás proveedores mandan este código
+            # tal cual y lo rechazan: el plan se anuncia y no cobra.
+            try:
+
+                currency = moneda_valida_para_stripe(text)
+
+            except ValueError:
+
+                await update.message.reply_text(
+
+                    "❌ Esa moneda no vale.\n\n"
+                    "Escribe el código de tres letras: EUR, USD, GBP..."
+
+                )
+
+                return
 
             plan_id = context.user_data.get("editing_plan_id")
             group_id = context.user_data.get("selected_group_admin")
@@ -910,6 +1005,25 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
 
 
+            aviso_precio = ""
+
+            if context.user_data.get("edit_plan_stripe_autocreate"):
+
+                # Se pidió «auto»: el precio se crea AHORA, con el importe y el
+                # nombre que se acaban de guardar, para que la página de pago
+                # diga exactamente lo mismo que el bot.
+                from plan_price_service import set_group_plan_price
+
+                ok_precio, detalle_precio = set_group_plan_price(plan_id, amount)
+
+                aviso_precio = (
+                    "\nPrecio de Stripe: creado con el importe que has puesto."
+                    if ok_precio else
+                    f"\n⚠️ No he podido crear el precio en Stripe "
+                    f"({detalle_precio}). El plan no podrá cobrar hasta que se "
+                    "arregle."
+                )
+
             clear_plan_wizard_state(
                 context,
                 user_id=update.effective_user.id,
@@ -920,6 +1034,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
                 "✅ Plan actualizado correctamente.\n\n"
                 f"Método: {format_plan_payment_provider(provider)}\n"
+                f"{aviso_precio}\n"
                 "Para cambiar método de pago, crea un nuevo plan. "
                 "Puedes actualizar la referencia del proveedor actual."
 
@@ -1059,6 +1174,64 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
             context.user_data["new_plan"]["payment_provider"] = provider
 
+            from plan_price_service import (
+                parece_plan_de_paypal,
+                parece_precio_de_stripe,
+                parece_referencia_interna,
+                pide_precio_automatico,
+            )
+
+            # La misma puerta que al editar: lo que no puede ser un
+            # identificador no entra. Un plan nuevo con la referencia mal
+            # copiada se anuncia igual y no cobra.
+            if (
+                provider == PLAN_PAYMENT_PROVIDER_STRIPE
+                and not pide_precio_automatico(text)
+                and not parece_precio_de_stripe(text)
+            ):
+
+                await update.message.reply_text(
+
+                    "❌ Eso no es un Stripe Price ID.\n\n"
+                    "Tiene la forma price_1ABCxyz... y se copia del panel de "
+                    "Stripe, en el precio del producto.\n\n"
+                    "O escribe *auto* y lo creo yo con el importe que me digas."
+
+                )
+
+                return
+
+            if (
+                provider == PLAN_PAYMENT_PROVIDER_PAYPAL
+                and not parece_plan_de_paypal(text)
+            ):
+
+                await update.message.reply_text(
+
+                    "❌ Eso no es un PayPal Plan ID.\n\n"
+                    "Empieza por P- (por ejemplo P-5ML4271244454362W) y se "
+                    "copia del panel de PayPal, en el plan de suscripción."
+
+                )
+
+                return
+
+            if (
+                provider not in (
+                    PLAN_PAYMENT_PROVIDER_STRIPE, PLAN_PAYMENT_PROVIDER_PAYPAL
+                )
+                and not parece_referencia_interna(text)
+            ):
+
+                await update.message.reply_text(
+
+                    "❌ Eso no vale como referencia: tiene que ser una sola "
+                    "palabra, sin espacios (por ejemplo mensual_vip)."
+
+                )
+
+                return
+
             if provider == PLAN_PAYMENT_PROVIDER_PAYPAL:
 
                 context.user_data["new_plan"]["provider_price_id"] = text
@@ -1067,7 +1240,7 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
             elif provider == PLAN_PAYMENT_PROVIDER_STRIPE:
 
-                if text.strip().lower() in ("auto", "crear", "nuevo", "-"):
+                if pide_precio_automatico(text):
 
                     # El bot creará el Producto + Precio en Stripe al terminar.
                     context.user_data["new_plan"]["stripe_autocreate"] = True
@@ -1178,7 +1351,25 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
         if step == 5:
 
-            currency = text.upper()
+            from plan_price_service import moneda_valida_para_stripe
+
+            # La misma puerta que al editar: un código que el cobro no reconoce
+            # deja el plan anunciado y sin poder cobrar.
+            try:
+
+                currency = moneda_valida_para_stripe(text)
+
+            except ValueError:
+
+                await update.message.reply_text(
+
+                    "❌ Esa moneda no vale.\n\n"
+                    "Escribe el código de tres letras: EUR, USD, GBP..."
+
+                )
+
+                return
+
             context.user_data["new_plan"]["currency"] = currency
 
             plan = context.user_data["new_plan"]

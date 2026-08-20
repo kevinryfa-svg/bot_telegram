@@ -13,6 +13,9 @@ PLAN_WIZARD_KEYS = (
     "edit_plan_provider",
     "edit_plan_provider_price_id",
     "edit_plan_stripe_price_id",
+    # Sin esto, un «auto» de una edición anterior seguiría puesto y el
+    # siguiente plan que se editara se llevaría un precio nuevo sin pedirlo.
+    "edit_plan_stripe_autocreate",
     "edit_plan_paypal_plan_id",
     "edit_plan_duration",
     "edit_plan_amount"
