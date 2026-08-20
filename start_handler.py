@@ -903,6 +903,7 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
         from start_offer_service import (
             callback_de_oferta,
+            etiqueta_de_compra_directa,
             etiqueta_de_oferta,
             fetch_sellable_communities,
         )
@@ -919,13 +920,26 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
         ofrecidos = set()
 
+        # Con una sola cosa que vender, la pantalla ES la oferta y su nombre ya
+        # está en el título: repetirlo en el botón gasta el ancho en algo que
+        # acaba de leer, y lo que tiene que leer ahí es qué pasa al pulsar.
+        oferta_unica_comprable = (
+            len(ofertas) == 1 and not ofertas[0]["ya_dentro"]
+        )
+
         for oferta in ofertas:
 
             ofrecidos.add(oferta["group_id"])
 
+            etiqueta = (
+                etiqueta_de_compra_directa(oferta)
+                if oferta_unica_comprable
+                else etiqueta_de_oferta(oferta)
+            )
+
             keyboard.append([
                 InlineKeyboardButton(
-                    etiqueta_de_oferta(oferta),
+                    etiqueta,
                     callback_data=callback_de_oferta(oferta)
                 )
             ])

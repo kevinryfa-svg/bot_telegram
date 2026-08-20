@@ -38,6 +38,8 @@ Lo que hace este módulo:
   DENTRO, SU ACCESO       su botón lleva a «Mis accesos».
 """
 
+import os
+
 from db import conn
 from payment_access_service import MAX_PLAN_DURATION_DAYS
 
@@ -169,6 +171,15 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                        barato.price_id,
                        barato.provider,
                        cuantos.total,
+                       (
+                           SELECT COUNT(*)
+                           FROM users u2
+                           WHERE u2.group_id = g.id
+                             AND (
+                                 u2.expiration IS NULL
+                                 OR u2.expiration > NOW()
+                             )
+                       ) AS miembros,
                        EXISTS (
                            SELECT 1 FROM users u
                            WHERE u.user_id = %(uid)s
@@ -260,7 +271,8 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
     for fila in filas:
 
         (group_id, telegram_group_id, nombre, descripcion, plan_id, amount,
-         currency, duration_days, price_id, provider, planes, ya_dentro) = fila
+         currency, duration_days, price_id, provider, planes, miembros,
+         ya_dentro) = fila
 
         ofertas.append({
             "group_id": group_id,
@@ -272,6 +284,7 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
             "price_id": price_id,
             "provider": provider,
             "planes": int(planes or 0),
+            "miembros": int(miembros or 0),
             "ya_dentro": bool(ya_dentro),
         })
 
@@ -328,6 +341,29 @@ def callback_de_oferta(oferta):
     return callback_de_compra(oferta)
 
 
+# A partir de cuántos socios la cifra ayuda a vender. Por debajo, decirla es
+# peor que callarla: «1 persona dentro» es un argumento en contra. Es la misma
+# disciplina que la de los porcentajes sin base (regla 7).
+MIN_MIEMBROS_PARA_ENSENAR = int(
+    os.environ.get("MIN_MIEMBROS_PARA_ENSENAR", "5")
+)
+
+
+def frase_de_miembros(oferta):
+    """«👥 23 personas dentro ahora mismo». None si el número no ayuda.
+
+    Sale de contar accesos vivos de verdad, no de un número inventado ni
+    redondeado: si alguien lo comprueba, tiene que cuadrar.
+    """
+
+    miembros = int((oferta or {}).get("miembros") or 0)
+
+    if miembros < MIN_MIEMBROS_PARA_ENSENAR:
+        return None
+
+    return f"👥 {miembros} personas dentro ahora mismo."
+
+
 def build_single_offer_text(oferta):
     """La oferta cuando solo hay una cosa que vender: sin menú de por medio."""
 
@@ -337,6 +373,14 @@ def build_single_offer_text(oferta):
 
         # La descripción la escribe el propietario: se recorta, no se adorna.
         lineas.extend(["", oferta["descripcion"][:400]])
+
+    social = frase_de_miembros(oferta)
+
+    if social:
+
+        # Delante del precio a propósito: lo que convence a un desconocido es
+        # que ahí dentro hay gente, y eso se lee ANTES de mirar cuánto cuesta.
+        lineas.extend(["", social])
 
     if oferta["precio"]:
 

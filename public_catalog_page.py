@@ -32,7 +32,7 @@ Tres decisiones que no son evidentes:
 import html
 import os
 
-from start_offer_service import fetch_sellable_communities
+from start_offer_service import fetch_sellable_communities, frase_de_miembros
 
 
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheStarVipBOT")
@@ -61,6 +61,7 @@ h1{font-size:1.6rem;line-height:1.25;margin:0 0 8px}
 margin-bottom:14px}
 .card h2{font-size:1.15rem;margin:0 0 6px}
 .desc{color:#5a6672;margin:0 0 14px;white-space:pre-wrap}
+.social{color:#2f7a4d;font-weight:600;margin:0 0 10px;font-size:.95rem}
 .precio{display:inline-block;font-weight:600;background:#eef4ff;color:#1a4fbf;
 border-radius:999px;padding:4px 12px;margin:0 0 14px;font-size:.95rem}
 a.cta{display:block;text-align:center;text-decoration:none;font-weight:600;
@@ -74,6 +75,7 @@ body{background:#0f1319;color:#e8edf3}
 .card,.vacio{background:#161c24;border-color:#252d38}
 .desc,.sub{color:#9aa7b4}
 .precio{background:#1b2740;color:#8fb4ff}
+.social{color:#6fcf97}
 footer{color:#7b8794}
 }
 """
@@ -107,6 +109,14 @@ def _tarjeta(oferta):
 
     if descripcion:
         partes.append(f'<p class="desc">{descripcion}</p>')
+
+    # La misma prueba social que dentro del bot y con el mismo umbral: contada
+    # de accesos vivos, no inventada. Aquí importa más todavía, porque quien
+    # llega a la web no conoce de nada a quien vende.
+    social = frase_de_miembros(oferta)
+
+    if social:
+        partes.append(f'<p class="social">{html.escape(social)}</p>')
 
     if precio:
         partes.append(f'<p class="precio">{precio}</p>')

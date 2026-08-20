@@ -119,12 +119,24 @@ def test_the_seller_button_comes_after_the_buyer_actions(clean_db):
         return None
 
     vender = posicion("Publicar mi comunidad")
-    # El botón de la comunidad puede llamarse «Ver comunidad — X» (cuando no
-    # hay precio que ofrecer) o «💳 X — 15 EUR/mes» (la oferta). Es el mismo
-    # botón, así que se busca por el NOMBRE de la comunidad, no por la
-    # etiqueta: fijar la etiqueta convertía este test en un freno para
-    # mejorar el escaparate, que es justo lo contrario de lo que vigila.
-    comunidad = posicion("Comunidad 881")
+    # El botón de la comunidad ha tenido tres etiquetas ya: «Ver comunidad — X»,
+    # «💳 X — 15 EUR/mes» y, cuando solo hay una cosa que vender, «💳 Entrar
+    # ahora — 15 EUR/mes» (ahí el nombre está en el TÍTULO del mensaje y
+    # repetirlo en el botón gasta el ancho). Buscarlo por su etiqueta, o por el
+    # nombre de la comunidad, convierte este test en un freno para mejorar el
+    # escaparate — que es justo lo contrario de lo que vigila.
+    #
+    # Lo que de verdad importa es el ORDEN: la acción del comprador va antes que
+    # la del vendedor. Así que se busca el botón que lleva a comprar.
+    comunidad = None
+
+    for indice, etiqueta in enumerate(etiquetas):
+
+        if "Comunidad 881" in etiqueta or "Entrar ahora" in etiqueta:
+
+            comunidad = indice
+            break
+
     soporte = posicion("Soporte")
 
     assert vender is not None
@@ -224,9 +236,12 @@ def test_explore_disappears_when_it_would_show_nothing_new(clean_db):
         clean_db, 880001, communities=[(881, True, True)]
     )
 
-    assert any("Comunidad 881" in e for e in etiquetas), (
-        f"la comunidad tiene que estar, con precio o sin él: {etiquetas}"
-    )
+    # Con su nombre, o —cuando es lo ÚNICO que se vende— con el botón de
+    # entrar: ahí el nombre está en el título del mensaje y repetirlo en el
+    # botón gasta el ancho en algo que se acaba de leer.
+    assert any(
+        "Comunidad 881" in e or "Entrar ahora" in e for e in etiquetas
+    ), f"la comunidad tiene que estar, con precio o sin él: {etiquetas}"
     assert not any("Explorar comunidades" in e for e in etiquetas)
 
 
