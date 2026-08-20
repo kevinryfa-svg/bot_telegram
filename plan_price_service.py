@@ -156,6 +156,162 @@ def crear_precio_stripe_para_plan(plan, amount_major):
     return price_id
 
 
+def planes_stripe_vendibles():
+    """Los planes activos que se cobran por Stripe y se pueden entregar."""
+
+    from payment_access_service import MAX_PLAN_DURATION_DAYS
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT p.id, p.group_id,
+                       COALESCE(NULLIF(g.name, ''), 'la comunidad'),
+                       COALESCE(NULLIF(p.name, ''), 'Plan'),
+                       p.amount,
+                       COALESCE(NULLIF(p.currency, ''), 'EUR'),
+                       p.duration_days,
+                       COALESCE(p.is_recurring, FALSE),
+                       COALESCE(NULLIF(p.stripe_price_id, ''), '')
+                FROM plans p
+                JOIN groups g ON g.id = p.group_id
+                WHERE COALESCE(p.is_active, TRUE) = TRUE
+                  AND COALESCE(g.is_active, TRUE) = TRUE
+                  AND COALESCE(NULLIF(p.payment_provider, ''), 'stripe') = 'stripe'
+                  AND p.amount IS NOT NULL AND p.amount > 0
+                  AND p.duration_days IS NOT NULL
+                  AND p.duration_days > 0
+                  AND p.duration_days <= %s
+                ORDER BY p.group_id, p.id
+
+            """, (MAX_PLAN_DURATION_DAYS,))
+
+            filas = cur.fetchall() or []
+
+    except Exception as e:
+
+        print("Precio de plan: error listando planes vendibles:", e)
+
+        return []
+
+    return [
+        {
+            "id": f[0], "group_id": f[1], "group_name": f[2], "name": f[3],
+            "amount": f[4], "currency": f[5], "duration_days": f[6],
+            "is_recurring": bool(f[7]), "stripe_price_id": f[8] or None,
+        }
+        for f in filas
+    ]
+
+
+def reparar_precios_de_planes():
+    """Le crea precio de Stripe a los planes que se venden y no lo tienen.
+
+    Un plan puede estar activo, con importe y con duración —o sea, en el
+    escaparate— y no tener identificador de precio de Stripe. Entonces se
+    anuncia, se pulsa, y el cobro no se puede ni empezar: se ofrece algo que no
+    se puede comprar, que es la peor mentira que puede decir una tienda.
+
+    El precio se crea con el importe QUE YA SE ANUNCIA, así que nadie paga nada
+    distinto de lo que vio. Y solo se toca lo que falta: un precio existente no
+    se reemplaza aquí ni aunque Stripe no lo reconozca, porque reemplazarlo a
+    ciegas cambiaría lo que se cobra a partir de ese momento sin que nadie lo
+    haya decidido.
+    """
+
+    reparados = []
+
+    for plan in planes_stripe_vendibles():
+
+        if plan.get("stripe_price_id"):
+            continue
+
+        try:
+
+            price_id = crear_precio_stripe_para_plan(plan, float(plan["amount"]))
+
+        except Exception as e:
+
+            print(
+                "Precio de plan: no se pudo crear el precio del plan",
+                plan["id"], "-", str(e)[:160]
+            )
+
+            continue
+
+        try:
+
+            with conn.cursor() as cur:
+
+                # El WHERE con el hueco evita que dos arranques a la vez dejen
+                # dos precios distintos para el mismo plan.
+                cur.execute("""
+
+                    UPDATE plans
+                    SET stripe_price_id = %s,
+                        price_id = COALESCE(NULLIF(price_id, ''), %s)
+                    WHERE id = %s
+                      AND COALESCE(NULLIF(stripe_price_id, ''), '') = ''
+
+                """, (price_id, price_id, plan["id"]))
+
+                cambiado = cur.rowcount > 0
+                conn.commit()
+
+        except Exception as e:
+
+            conn.rollback()
+
+            print("Precio de plan: error guardando el precio creado:", e)
+
+            continue
+
+        if not cambiado:
+            continue
+
+        reparados.append(plan)
+
+        log_event(
+            "group_plan_stripe_price_repaired",
+            category="billing",
+            severity="warning",
+            scope="group",
+            group_id=plan["group_id"],
+            message="Plan a la venta sin precio de Stripe: se le ha creado uno.",
+            metadata={
+                "plan_id": plan["id"],
+                "group": plan["group_name"],
+                "amount": float(plan["amount"]),
+                "currency": plan["currency"],
+                "stripe_price_id": price_id,
+            },
+        )
+
+    return reparados
+
+
+def describe_price_repairs():
+    """Una línea para el arranque. Si no había nada roto, se calla."""
+
+    reparados = reparar_precios_de_planes()
+
+    if not reparados:
+        return None
+
+    detalle = ", ".join(
+        f"{p['group_name']}/{p['name']} {float(p['amount']):.2f} {p['currency']}"
+        for p in reparados
+    )
+
+    return (
+        f"Precios de plan: {len(reparados)} plan(es) estaban a la venta SIN "
+        f"precio de Stripe y no se podían cobrar; se les ha creado uno con su "
+        f"importe anunciado ({detalle})."
+    )
+
+
 def set_group_plan_price(plan_id, amount_major):
     """Cambia el precio de un plan: lo que se enseña y lo que se cobra.
 

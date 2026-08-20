@@ -3373,6 +3373,24 @@ def main():
         print("Puesta a punto: no se pudieron ejecutar las tareas:", str(e)[:200])
 
 
+    # Un plan a la venta SIN precio de Stripe se anuncia y no se puede cobrar.
+    # Se le crea uno con el importe que ya se anuncia, así que nadie paga nada
+    # distinto de lo que vio. Va antes del diagnóstico para que este lo vea ya
+    # arreglado.
+    try:
+
+        from plan_price_service import describe_price_repairs
+
+        aviso_precios = describe_price_repairs()
+
+        if aviso_precios:
+            print(aviso_precios)
+
+    except Exception as e:
+
+        print("Precios de plan: no se pudieron revisar:", str(e)[:200])
+
+
     # ¿Se puede cobrar de verdad? El escaparate puede estar perfecto y el último
     # paso roto: el enlace de pago lo crea una petición del bot a su propio
     # servidor web, y si esa dirección no vale, TODA compra muere con un error.
