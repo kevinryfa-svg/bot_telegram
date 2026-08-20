@@ -459,15 +459,23 @@ def tarea_cobrar_por_stripe():
                     # Proveedor y precio se escriben JUNTOS: dejar el proveedor
                     # cambiado sin precio válido es cambiar un cobro roto por
                     # otro.
+                    from plan_price_service import moneda_valida_para_stripe
+
                     cur.execute("""
 
                         UPDATE plans
                         SET payment_provider = 'stripe',
+                            currency = %s,
                             stripe_price_id = %s,
                             price_id = %s
                         WHERE id = %s
 
-                    """, (price_id, price_id, plan_id))
+                    """, (
+                        moneda_valida_para_stripe(moneda),
+                        price_id,
+                        price_id,
+                        plan_id,
+                    ))
 
                     conn.commit()
 
