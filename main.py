@@ -3358,6 +3358,21 @@ def main():
         daemon=True
     ).start()
 
+    # Tareas puntuales de puesta a punto (BOOTSTRAP_TASKS). Sin esa variable no
+    # se ejecuta nada, que es el estado normal. Van ANTES de los diagnósticos
+    # para que estos vean ya el resultado.
+    try:
+
+        from bootstrap_tasks import run_bootstrap_tasks
+
+        for linea in run_bootstrap_tasks():
+            print("Puesta a punto:", linea)
+
+    except Exception as e:
+
+        print("Puesta a punto: no se pudieron ejecutar las tareas:", str(e)[:200])
+
+
     # ¿Se puede cobrar de verdad? El escaparate puede estar perfecto y el último
     # paso roto: el enlace de pago lo crea una petición del bot a su propio
     # servidor web, y si esa dirección no vale, TODA compra muere con un error.

@@ -365,6 +365,23 @@ def check_pitch(group_id):
             "qué recibe quien entra, cada cuánto, y para quién es."
         )
 
+    # El texto de relleno que pone la puesta a punto NO cuenta como descripción:
+    # es honesto (no promete nada que el bot no cumpla) pero no dice qué hay
+    # dentro, que es lo único que convence. Si contara, mi relleno silenciaría
+    # justo el aviso que hace falta.
+    from bootstrap_tasks import es_descripcion_de_relleno
+
+    if es_descripcion_de_relleno(texto):
+
+        return (
+            False,
+            "Tu comunidad solo tiene el texto de relleno, que no dice nada de "
+            "lo que hay dentro. Escribe en «Vista previa» qué recibe quien "
+            "entra, cada cuánto, y para quién es: es lo único que convence a "
+            "alguien que no te conoce."
+        )
+
+
     # 40 caracteres no es una descripción, es un titular. El umbral es bajo a
     # propósito: solo descarta lo que claramente no explica nada.
     if len(texto) < 40:
