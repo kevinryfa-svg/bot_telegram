@@ -223,6 +223,33 @@ def test_a_stripe_offer_without_a_price_id_is_reported(monkeypatch):
     assert "no se puede ni empezar" in rotos[0]["detalle"]
 
 
+def test_a_price_id_that_cannot_be_one_is_named_out_loud(monkeypatch):
+    """Lo que había de verdad dentro de este campo en producción."""
+
+    llamadas = []
+
+    import stripe
+
+    monkeypatch.setattr(
+        stripe.Price, "retrieve",
+        lambda pid, *a, **k: llamadas.append(pid) or {"unit_amount": 2900}
+    )
+
+    rotos, comprobados = srs.check_stripe_prices([{
+        **OFERTA,
+        "price_id": "Hola lorrrdd, gracias por tu mensaje.",
+    }])
+
+    assert len(rotos) == 1
+    assert "no puede serlo" in rotos[0]["detalle"]
+    assert "Hola lorrrdd" in rotos[0]["detalle"], (
+        "con sus propias palabras: si no, el aviso manda a buscar en Stripe un "
+        "precio borrado que nunca existió"
+    )
+    assert llamadas == [], "no hace falta preguntárselo a Stripe"
+    assert comprobados == 0
+
+
 # =========================
 # LA LÍNEA DEL ARRANQUE
 # =========================

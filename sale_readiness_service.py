@@ -283,6 +283,27 @@ def check_stripe_prices(ofertas=None):
 
             continue
 
+        from plan_price_service import parece_precio_de_stripe
+
+        if not parece_precio_de_stripe(price_id):
+
+            # Ni se pregunta a Stripe: esto no puede ser un precio. En
+            # producción, dentro de este campo había una respuesta de soporte
+            # entera. Decirlo con sus propias palabras evita que el aviso
+            # mande a buscar un precio borrado que nunca existió.
+            rotos.append({
+                "group_id": oferta.get("group_id"),
+                "nombre": oferta.get("nombre"),
+                "price_id": price_id,
+                "detalle": (
+                    "lo que tiene guardado como precio de Stripe no puede "
+                    f"serlo: «{str(price_id)[:60]}». El cobro no se puede "
+                    "ni empezar"
+                ),
+            })
+
+            continue
+
         comprobados += 1
 
         try:
