@@ -300,8 +300,11 @@ def test_a_plan_the_charge_would_refuse_reaches_the_owner(comunidad):
     assert "no está vendiendo" in texto, (
         "la consecuencia de hoy, que es dejar de vender, no la de ayer"
     )
-    assert "o 0 si querías acceso permanente" in texto, (
-        "el arreglo concreto: quien escribe 1.300.000 quería decir «siempre»"
+    assert "entre 1 y" in texto, "el rango que sí se vende"
+    assert "El 0 NO vale" in texto, (
+        "este aviso recomendaba poner 0. Quien lo hacía apagaba la alerta y "
+        "dejaba el plan igual de invendible, pero ya en silencio: el "
+        "escaparate no ofrece los planes a 0 a propósito"
     )
 
 
@@ -323,9 +326,11 @@ def test_the_exact_ceiling_is_not_an_alert(comunidad):
 
     crear_plan(bas.MAX_PLAN_DURATION_DAYS + 1, price="price_y")
 
-    assert bas.detect_undeliverable_plans(87) == (
-        1, bas.MAX_PLAN_DURATION_DAYS + 1
-    )
+    detectados = bas.detect_undeliverable_plans(87)
+
+    assert detectados["largos"] == 1
+    assert detectados["mayor"] == bas.MAX_PLAN_DURATION_DAYS + 1
+    assert detectados["ceros"] == 0
 
 
 def test_an_inactive_broken_plan_is_not_worth_waking_anyone(comunidad):
@@ -351,3 +356,30 @@ def test_it_is_said_once_a_week_not_once_a_run(comunidad):
     assert segundo["sent"] == 0, (
         "un redespliegue no puede convertir el aviso en spam"
     )
+
+
+def test_a_plan_with_zero_days_is_not_a_permanent_plan_that_sells(comunidad):
+    """El consejo que este aviso daba antes: «pon 0 si querías siempre».
+
+    Para la CONCESIÓN, 0 significa acceso permanente. Para el escaparate, no:
+    los planes a 0 no se ofrecen a propósito, porque ningún asistente del bot
+    puede crear uno —así que un 0 es un dato anómalo— y venderlo regalaría
+    acceso de por vida al precio de un mes. Quien seguía el consejo dejaba de
+    recibir la alerta y seguía sin vender.
+    """
+
+    crear_plan(0)
+
+    detectados = bas.detect_undeliverable_plans(87)
+
+    assert detectados is not None, "un plan a 0 tampoco se vende: hay que decirlo"
+    assert detectados["ceros"] == 1
+
+    contexto = FakeContext()
+
+    assert asyncio.run(bas.process_business_alerts(contexto))["sent"] == 1
+
+    _chat, texto, _teclado = contexto.bot.enviados[0]
+
+    assert "duración a 0" in texto
+    assert "El 0 NO vale" in texto

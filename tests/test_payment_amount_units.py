@@ -244,3 +244,47 @@ def test_the_wizard_still_stores_major_units():
         "el asistente convierte a céntimos al guardar: el conversor de los "
         "proveedores multiplicaría dos veces"
     )
+
+
+# =========================
+# Y LA OTRA UNIDAD: LOS DÍAS QUE ERAN MINUTOS
+# =========================
+# plans.duration_days está en DÍAS. Había en payment_service una función que la
+# leía como MINUTOS cuando el valor era menor de 1440: con ella, el plan real de
+# producción de «360 días» daba 360 minutos, seis horas de acceso por 29 euros.
+# No la llamaba nadie —la concesión usa calculate_group_access_expiration, que
+# lee días— pero estaba ahí, con nombre de utilidad general, esperando a que
+# alguien la usara de buena fe.
+
+def test_nothing_reads_plan_days_as_minutes():
+    import pathlib
+
+    sospechosos = []
+
+    for ruta in pathlib.Path(".").glob("*.py"):
+
+        fuente = ruta.read_text(encoding="utf-8")
+
+        if "timedelta(" not in fuente or "1440" not in fuente:
+            continue
+
+        # Los códigos de acceso temporales SÍ se miden en minutos, y no salen de
+        # plans.duration_days: se generan con callback_data gen_<minutos>.
+        if "gen_1440" in fuente:
+            continue
+
+        sospechosos.append(ruta.name)
+
+    assert sospechosos == [], (
+        "algo vuelve a mezclar minutos con la duración de los planes: "
+        f"{sospechosos}. plans.duration_days está SIEMPRE en días"
+    )
+
+
+def test_the_minutes_landmine_is_gone_for_good():
+    import payment_service
+
+    assert not hasattr(payment_service, "calculate_expiration_from_duration"), (
+        "dos funciones con el mismo propósito y unidades contrarias no son una "
+        "duplicación, son una trampa"
+    )

@@ -612,7 +612,8 @@ def describe_shop_window():
             f" Además hay {imposibles} plan(es) activo(s) con una duración de "
             f"más de {MAX_PLAN_DURATION_DAYS} días: no se ofrecen porque el "
             "cobro no los puede convertir en acceso. Se corrigen poniendo los "
-            "días reales, o 0 para acceso permanente."
+            f"días reales, entre 1 y {MAX_PLAN_DURATION_DAYS}. Poner 0 NO los "
+            "arregla: el escaparate tampoco ofrece los planes a 0."
         )
 
 
