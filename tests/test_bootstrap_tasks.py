@@ -567,3 +567,103 @@ def test_without_the_variable_nothing_is_renamed(plan_de_comunidad, monkeypatch)
     monkeypatch.delenv("BOOTSTRAP_PLAN_NAME", raising=False)
 
     assert "falta BOOTSTRAP_PLAN_NAME" in bt.tarea_renombrar_plan()
+
+
+def test_renaming_what_cannot_be_sold_does_not_erase_its_price(
+    plan_de_comunidad, monkeypatch
+):
+    """El caso real: se renombró y la página de pago siguió igual.
+
+    En producción se renombró un plan, el arranque dijo «se le creará precio
+    nuevo» y no se creó ninguno: el plan no estaba entre los vendibles, así que
+    la reparación pasó de largo. Borrarle el identificador lo habría dejado
+    apoyado en el precio viejo —con el nombre viejo— y encima con el log
+    prometiendo lo contrario.
+    """
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        # Más días de los que el cobro puede convertir en acceso: fuera del
+        # escaparate y fuera de la reparación.
+        cur.execute("UPDATE plans SET duration_days=4000 WHERE id=881")
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_NAME", "881=Acceso 360 días")
+
+    resultado = bt.tarea_renombrar_plan()
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("SELECT name, stripe_price_id FROM plans WHERE id=881")
+        nombre, price_id = cur.fetchone()
+
+    assert nombre == "Acceso 360 días", "el nombre sí se cambia"
+    assert price_id == "price_viejo", (
+        "quitarle el precio a un plan al que nadie va a crearle otro solo "
+        "empeora lo que ya estaba"
+    )
+    assert "seguirá diciendo el nombre viejo" in resultado
+    assert "4000" in resultado, "y por qué, para no volver a buscar a ciegas"
+
+
+# =========================
+# MIRAR SIN TOCAR
+# =========================
+# La tarea que faltaba: todas las demás cambian datos y hay que creerse la línea
+# del arranque. Cuando el resultado no es el esperado, sin esto no hay forma de
+# averiguar por qué desde fuera del servidor.
+
+def test_the_listing_says_why_a_plan_is_not_being_sold(plan_de_comunidad,
+                                                       monkeypatch):
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET payment_provider='paypal' WHERE id=881")
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_LIST", "881")
+
+    resultado = bt.tarea_listar_planes()
+
+    assert "#881" in resultado
+    assert "NO SE VENDE" in resultado
+    assert "paypal" in resultado
+
+
+def test_the_listing_shows_a_sellable_plan_as_sellable(plan_de_comunidad,
+                                                       monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_LIST", "g41")
+
+    resultado = bt.tarea_listar_planes()
+
+    assert "#881" in resultado
+    assert "SE VENDE" in resultado
+    assert "NO SE VENDE" not in resultado
+    assert "price_viejo" in resultado, (
+        "sin el identificador entero no se puede comparar con lo que hay en "
+        "Stripe, que es para lo que sirve mirar"
+    )
+
+
+def test_the_listing_changes_nothing(plan_de_comunidad, monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_LIST", "todos")
+
+    bt.tarea_listar_planes()
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT name, amount, stripe_price_id, payment_provider "
+            "FROM plans WHERE id=881"
+        )
+        assert cur.fetchone() == ("VIP", 7, "price_viejo", "stripe")
+
+    assert plan_de_comunidad["creados"] == [], (
+        "mirar no crea precios en Stripe"
+    )
+
+
+def test_a_plan_that_does_not_exist_is_said_plainly(plan_de_comunidad,
+                                                    monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_LIST", "999999")
+
+    assert "no existe" in bt.tarea_listar_planes()
+
+
+def test_without_the_variable_nothing_is_listed(plan_de_comunidad, monkeypatch):
+    monkeypatch.delenv("BOOTSTRAP_PLAN_LIST", raising=False)
+
+    assert "falta BOOTSTRAP_PLAN_LIST" in bt.tarea_listar_planes()

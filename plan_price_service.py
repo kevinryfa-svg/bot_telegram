@@ -298,6 +298,16 @@ def reparar_precios_de_planes():
             continue
 
         if not cambiado:
+
+            # El precio ya está creado en Stripe y la fila resulta que no tenía
+            # el hueco: otro arranque simultáneo ganó la carrera. Se dice, en
+            # vez de seguir en silencio, porque ese precio se queda suelto en
+            # Stripe y el silencio se lee como «aquí no hacía falta nada».
+            print(
+                "Precio de plan: se creó el precio", price_id, "para el plan",
+                plan["id"], "y la fila ya tenía otro: no se ha guardado."
+            )
+
             continue
 
         reparados.append(plan)
@@ -446,3 +456,188 @@ def set_group_plan_price(plan_id, amount_major):
         f"plan {plan_id}: {actual:.2f} → {nuevo:.2f} {plan['currency']} "
         f"(precio de Stripe nuevo, solo para altas nuevas)"
     )
+
+
+# =========================
+# VER UN PLAN COMO LO VE EL COBRO
+# =========================
+# Un plan puede estar perfecto en la pantalla del propietario y aun así no
+# llegar nunca al escaparate, y hasta ahora eso no se podía averiguar desde
+# fuera: las credenciales de la base no salen del servidor, así que la única
+# forma de saber por qué un plan no se vende era adivinarlo.
+#
+# El «por qué no» NO se decide aquí. La lista de vendibles la sigue decidiendo
+# planes_stripe_vendibles(), y esto solo mira si el plan está o no en ella; el
+# motivo es una EXPLICACIÓN de lo que se ve en la fila, no un segundo criterio
+# que pueda decir que sí cuando el de verdad dice que no.
+
+
+def _fila_de_plan(plan_id):
+    """Todo lo que hace falta para explicar un plan. None si no existe."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT p.id, p.group_id,
+                       COALESCE(NULLIF(g.name, ''), '(grupo sin nombre)'),
+                       COALESCE(NULLIF(p.name, ''), '(plan sin nombre)'),
+                       p.amount,
+                       COALESCE(NULLIF(p.currency, ''), 'EUR'),
+                       p.duration_days,
+                       COALESCE(p.is_recurring, FALSE),
+                       COALESCE(NULLIF(p.stripe_price_id, ''), ''),
+                       COALESCE(NULLIF(p.price_id, ''), ''),
+                       COALESCE(NULLIF(p.payment_provider, ''), 'stripe'),
+                       COALESCE(p.is_active, TRUE),
+                       COALESCE(g.is_active, TRUE)
+                FROM plans p
+                LEFT JOIN groups g ON g.id = p.group_id
+                WHERE p.id = %s
+
+            """, (int(plan_id),))
+
+            fila = cur.fetchone()
+
+    except Exception as e:
+
+        print("Precio de plan: error leyendo el plan", plan_id, "-", str(e)[:160])
+
+        return None
+
+    if not fila:
+        return None
+
+    return {
+        "id": fila[0], "group_id": fila[1], "group_name": fila[2],
+        "name": fila[3], "amount": fila[4], "currency": fila[5],
+        "duration_days": fila[6], "is_recurring": bool(fila[7]),
+        "stripe_price_id": fila[8] or None, "price_id": fila[9] or None,
+        "provider": (fila[10] or "stripe").strip().lower(),
+        "is_active": bool(fila[11]), "group_active": bool(fila[12]),
+    }
+
+
+def _motivo_no_vendible(plan):
+    """Por qué esta fila no está entre las vendibles. Texto para humanos."""
+
+    from payment_access_service import MAX_PLAN_DURATION_DAYS
+
+    if not plan.get("is_active"):
+        return "el plan está desactivado"
+
+    if not plan.get("group_active"):
+        return "la comunidad está desactivada"
+
+    if plan.get("provider") != "stripe":
+        return f"cobra por «{plan.get('provider')}», no por Stripe"
+
+    importe = plan.get("amount")
+
+    if importe is None or float(importe) <= 0:
+        return "no tiene importe (o es 0), así que no hay nada que cobrar"
+
+    dias = plan.get("duration_days")
+
+    if dias is None:
+        return "no tiene duración, y sin duración el cobro no sabe qué acceso dar"
+
+    if int(dias) <= 0:
+
+        return (
+            f"su duración es {int(dias)}: el escaparate solo ofrece de 1 a "
+            f"{MAX_PLAN_DURATION_DAYS} días"
+        )
+
+    if int(dias) > MAX_PLAN_DURATION_DAYS:
+
+        return (
+            f"su duración son {int(dias)} días, más del máximo de "
+            f"{MAX_PLAN_DURATION_DAYS} que el cobro puede convertir en acceso"
+        )
+
+    # Honestidad por encima de aparentar que se sabe: si el plan no sale en la
+    # lista y ninguna razón conocida lo explica, se dice tal cual. Inventar un
+    # motivo mandaría a arreglar lo que no está roto.
+    return "no aparece entre los vendibles y ninguna razón conocida lo explica"
+
+
+def diagnostico_de_plan(plan_id, vendibles=None):
+    """Cómo está un plan y, si no se puede vender por Stripe, por qué.
+
+    `vendibles` permite pasar la lista ya leída cuando se diagnostican varios
+    planes seguidos, para no repetir la misma consulta por cada uno.
+    """
+
+    plan = _fila_de_plan(plan_id)
+
+    if not plan:
+        return None
+
+    if vendibles is None:
+        vendibles = planes_stripe_vendibles()
+
+    plan["vendible"] = any(int(v["id"]) == int(plan["id"]) for v in vendibles)
+    plan["motivo"] = None if plan["vendible"] else _motivo_no_vendible(plan)
+
+    return plan
+
+
+def describe_plan(plan):
+    """Una línea con todo lo que decide si un plan vende o no."""
+
+    if not plan:
+        return "(plan inexistente)"
+
+    importe = plan.get("amount")
+    importe = f"{float(importe):.2f}" if importe is not None else "sin importe"
+
+    dias = plan.get("duration_days")
+    dias = f"{int(dias)}d" if dias is not None else "sin duración"
+
+    partes = [
+        f"#{plan['id']} grupo {plan.get('group_id')} "
+        f"«{plan.get('group_name')}» / «{plan.get('name')}»",
+        f"{importe} {plan.get('currency')}",
+        dias,
+        f"cobra por {plan.get('provider')}",
+        "recurrente" if plan.get("is_recurring") else "pago único",
+        f"plan {'activo' if plan.get('is_active') else 'DESACTIVADO'}",
+        f"grupo {'activo' if plan.get('group_active') else 'DESACTIVADO'}",
+        # El identificador de precio no es un secreto: viaja al navegador del
+        # comprador en cada pago. Y sin verlo entero no se puede comparar con lo
+        # que hay en Stripe, que es justo para lo que sirve esto.
+        f"stripe_price_id={plan.get('stripe_price_id') or 'NINGUNO'}",
+        f"price_id={plan.get('price_id') or 'NINGUNO'}",
+    ]
+
+    if plan.get("vendible"):
+        partes.append("SE VENDE")
+
+    else:
+        partes.append(f"NO SE VENDE: {plan.get('motivo')}")
+
+    return " · ".join(partes)
+
+
+def ids_de_planes_del_grupo(group_id):
+    """Todos los planes de una comunidad, vendibles o no, por orden."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT id FROM plans WHERE group_id = %s ORDER BY id",
+                (int(group_id),),
+            )
+
+            return [f[0] for f in (cur.fetchall() or [])]
+
+    except Exception as e:
+
+        print("Precio de plan: error listando los planes del grupo:", str(e)[:160])
+
+        return []

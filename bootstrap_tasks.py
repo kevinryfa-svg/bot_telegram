@@ -557,21 +557,46 @@ def tarea_renombrar_plan():
             resultados.append(f"plan #{plan_id}: un nombre vacío no es un nombre")
             continue
 
+        from plan_price_service import diagnostico_de_plan
+
+        # ¿De verdad le va a crear precio nuevo la reparación de arranque? Solo
+        # si el plan está entre los vendibles por Stripe. Si no lo está,
+        # borrarle el identificador no arregla nada: lo deja apoyado en el
+        # precio viejo —con el nombre viejo— y encima el arranque prometería un
+        # precio nuevo que no llega nunca. Eso fue exactamente lo que pasó la
+        # primera vez que se usó esta tarea, y el log no dio ni una pista.
+        antes = diagnostico_de_plan(plan_id)
+
+        if antes is None:
+
+            resultados.append(f"plan #{plan_id}: no existe")
+            continue
+
+        recrea_precio = bool(antes.get("vendible"))
+
         try:
 
             with conn.cursor() as cur:
 
-                cur.execute("""
+                if recrea_precio:
 
-                    UPDATE plans
-                    SET name = %s,
-                        stripe_price_id = NULL
-                    WHERE id = %s
-                    RETURNING (SELECT name FROM plans WHERE id = %s)
+                    cur.execute("""
 
-                """, (nombre, plan_id, plan_id))
+                        UPDATE plans
+                        SET name = %s,
+                            stripe_price_id = NULL
+                        WHERE id = %s
 
-                fila = cur.fetchone()
+                    """, (nombre, plan_id))
+
+                else:
+
+                    cur.execute(
+                        "UPDATE plans SET name = %s WHERE id = %s",
+                        (nombre, plan_id),
+                    )
+
+                cambiado = cur.rowcount > 0
                 conn.commit()
 
         except Exception as e:
@@ -581,7 +606,7 @@ def tarea_renombrar_plan():
             resultados.append(f"plan #{plan_id}: error renombrando ({e})")
             continue
 
-        if not fila:
+        if not cambiado:
 
             resultados.append(f"plan #{plan_id}: no existe")
             continue
@@ -591,19 +616,128 @@ def tarea_renombrar_plan():
             category="billing",
             severity="info",
             scope="global",
-            message="Plan renombrado; su precio de Stripe se recrea con el nombre nuevo.",
-            metadata={"plan_id": plan_id, "nombre": nombre},
+            message="Plan renombrado.",
+            metadata={
+                "plan_id": plan_id,
+                "nombre": nombre,
+                "precio_recreado": recrea_precio,
+                "motivo": antes.get("motivo"),
+            },
         )
 
-        resultados.append(
-            f"plan #{plan_id} → «{nombre}» (se le creará precio nuevo para que "
-            "la página de pago diga lo mismo)"
-        )
+        if recrea_precio:
+
+            resultados.append(
+                f"plan #{plan_id} → «{nombre}» (se le creará precio nuevo para "
+                "que la página de pago diga lo mismo)"
+            )
+
+        else:
+
+            resultados.append(
+                f"plan #{plan_id} → «{nombre}», pero la página de pago seguirá "
+                f"diciendo el nombre viejo porque este plan no se vende por "
+                f"Stripe: {antes.get('motivo')}"
+            )
 
     return "renombrar_plan: " + " | ".join(resultados)
 
 
+# =========================
+# MIRAR, SIN TOCAR NADA
+# =========================
+# Todas las tareas de aquí arriba cambian datos a ciegas: se pide un cambio, se
+# lee una línea en el arranque y hay que creérsela. Cuando el resultado no es el
+# esperado —un plan que se renombra y sigue enseñando el nombre viejo— no hay
+# forma de averiguar por qué, porque las credenciales de la base no salen del
+# servidor.
+#
+# Esta tarea no escribe NADA. Solo cuenta cómo está cada plan y, si no se
+# vende, por qué no. Es la única de la lista que se puede dejar puesta sin
+# miedo, y la primera que conviene usar antes de pedir un cambio.
+
+
+def tarea_listar_planes():
+    """BOOTSTRAP_PLAN_LIST='g<grupo>' o '<plan_id>' o 'todos', por comas."""
+
+    from plan_price_service import (
+        describe_plan,
+        diagnostico_de_plan,
+        ids_de_planes_del_grupo,
+        planes_stripe_vendibles,
+    )
+
+    crudo = (os.environ.get("BOOTSTRAP_PLAN_LIST") or "").strip()
+
+    if not crudo:
+        return "listar_planes: falta BOOTSTRAP_PLAN_LIST, no se mira nada."
+
+    ids = []
+
+    for objetivo in [t.strip() for t in crudo.split(",") if t.strip()]:
+
+        if objetivo.lower() == "todos":
+
+            try:
+
+                with conn.cursor() as cur:
+
+                    # Con tope: esto va al log de arranque, no es un volcado de
+                    # la base.
+                    cur.execute("SELECT id FROM plans ORDER BY id LIMIT 60")
+
+                    ids.extend(f[0] for f in (cur.fetchall() or []))
+
+            except Exception as e:
+
+                return f"listar_planes: error listando los planes ({e})"
+
+            continue
+
+        if objetivo.lower().startswith("g"):
+
+            try:
+
+                ids.extend(ids_de_planes_del_grupo(int(objetivo[1:])))
+
+            except (TypeError, ValueError):
+
+                ids.append(objetivo)
+
+            continue
+
+        ids.append(objetivo)
+
+    # Una sola lectura de los vendibles para todos: la lista es la misma y
+    # repetir la consulta por plan no cambiaría la respuesta.
+    vendibles = planes_stripe_vendibles()
+
+    lineas = []
+
+    for identificador in ids:
+
+        try:
+
+            plan = diagnostico_de_plan(int(identificador), vendibles=vendibles)
+
+        except (TypeError, ValueError):
+
+            lineas.append(f"«{identificador}» no es un número de plan")
+            continue
+
+        lineas.append(
+            describe_plan(plan) if plan
+            else f"plan #{identificador}: no existe"
+        )
+
+    if not lineas:
+        return "listar_planes: no hay ningún plan que mirar."
+
+    return "listar_planes:\n  " + "\n  ".join(lineas)
+
+
 TAREAS = {
+    "listar_planes": tarea_listar_planes,
     "descripcion_minima": tarea_descripcion_minima,
     "precio_publicacion": tarea_precio_publicacion,
     "precio_comunidad": tarea_precio_comunidad,
