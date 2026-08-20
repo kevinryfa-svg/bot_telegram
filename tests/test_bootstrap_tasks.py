@@ -380,3 +380,126 @@ def test_an_undeliverable_plan_is_never_the_chosen_one(plan_de_comunidad,
     resultado = bt.tarea_precio_comunidad()
 
     assert "plan #881" in resultado, "el entregable, no el más barato a secas"
+
+
+# =========================
+# PASAR UN PLAN A COBRAR POR STRIPE
+# =========================
+# En producción, lo ÚNICO a la venta cobraba por PayPal, y ese PayPal tiene el
+# webhook_id inválido: el bot se niega a cobrar, con razón, porque el pago no se
+# podría confirmar y el acceso no se entregaría. Con eso, la conversión no podía
+# ser otra cosa que cero.
+
+@pytest.fixture
+def plan_de_paypal(plan_de_comunidad):
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET payment_provider='paypal', stripe_price_id=NULL, "
+            "price_id='P-PAYPAL-1' WHERE id=881"
+        )
+
+    return plan_de_comunidad
+
+
+def test_a_paypal_plan_is_switched_and_gets_a_stripe_price(plan_de_paypal,
+                                                            monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PROVIDER", "g41")
+
+    resultado = bt.tarea_cobrar_por_stripe()
+
+    assert "paypal → stripe" in resultado
+
+    with plan_de_paypal["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT payment_provider, stripe_price_id, price_id, amount "
+            "FROM plans WHERE id=881"
+        )
+        proveedor, stripe_price_id, price_id, importe = cur.fetchone()
+
+    assert proveedor == "stripe"
+    assert stripe_price_id == "price_nuevo_1"
+    assert price_id == "price_nuevo_1", (
+        "el identificador de PayPal ya no vale para nada aquí"
+    )
+    assert float(importe) == 7.0, "el importe anunciado no se toca"
+
+    creado = plan_de_paypal["creados"][0]
+
+    assert creado["amount_major"] == pytest.approx(7.0), (
+        "se cobra lo que ya se anunciaba: nadie paga algo distinto de lo que vio"
+    )
+
+
+def test_a_working_provider_is_left_alone(plan_de_comunidad, monkeypatch):
+    """Cambiar un cobro que funciona es mover el dinero de sitio sin pedirlo."""
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PROVIDER", "g41")
+
+    resultado = bt.tarea_cobrar_por_stripe()
+
+    assert "ya cobra por Stripe" in resultado
+    assert plan_de_comunidad["creados"] == []
+
+
+def test_the_provider_and_the_price_are_written_together(plan_de_paypal,
+                                                          monkeypatch):
+    """Si Stripe falla, el plan NO se queda a medias."""
+
+    import stripe_catalog
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PROVIDER", "g41")
+    monkeypatch.setattr(
+        stripe_catalog, "create_stripe_product_and_price",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Stripe down"))
+    )
+
+    resultado = bt.tarea_cobrar_por_stripe()
+
+    assert "Stripe no aceptó" in resultado
+
+    with plan_de_paypal["db"].conn.cursor() as cur:
+        cur.execute("SELECT payment_provider FROM plans WHERE id=881")
+
+        assert cur.fetchone()[0] == "paypal", (
+            "dejar el proveedor cambiado sin precio válido es cambiar un cobro "
+            "roto por otro"
+        )
+
+
+def test_without_the_variable_it_does_nothing(plan_de_paypal, monkeypatch):
+    monkeypatch.delenv("BOOTSTRAP_PLAN_PROVIDER", raising=False)
+
+    assert "falta BOOTSTRAP_PLAN_PROVIDER" in bt.tarea_cobrar_por_stripe()
+    assert plan_de_paypal["creados"] == []
+
+
+def test_after_switching_the_community_can_actually_be_charged(plan_de_paypal,
+                                                                monkeypatch):
+    """El objetivo no es el proveedor: es que exista una venta posible."""
+
+    import sale_readiness_service as srs
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_PROVIDER", "g41")
+
+    bt.tarea_cobrar_por_stripe()
+
+    import start_offer_service as sos
+
+    oferta = [o for o in sos.fetch_sellable_communities(0) if o["group_id"] == 41]
+
+    assert oferta, "sigue en el escaparate"
+    assert oferta[0]["provider"] == "stripe"
+    assert oferta[0]["price_id"] == "price_nuevo_1"
+
+    import stripe
+
+    monkeypatch.setattr(
+        stripe.Price, "retrieve",
+        lambda price_id: {"id": price_id, "unit_amount": 700}
+    )
+
+    rotos, comprobados = srs.check_stripe_prices(oferta)
+
+    assert (rotos, comprobados) == ([], 1), (
+        "y ahora el diagnóstico lo da por cobrable"
+    )
