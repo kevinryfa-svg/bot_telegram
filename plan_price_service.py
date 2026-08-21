@@ -736,3 +736,38 @@ def parece_referencia_interna(texto):
     limpio = (texto or "").strip()
 
     return bool(limpio) and len(limpio) <= 100 and not re.search(r"\s", limpio)
+
+
+# =========================
+# EL PRECIO CON EL QUE SE COBRA DE VERDAD, EN UN SOLO SITIO
+# =========================
+# Un plan guarda su identificador de precio en DOS columnas (stripe_price_id y
+# price_id), y cada consulta resolvía cuál manda a su manera. El escaparate
+# usaba COALESCE(NULLIF(stripe_price_id, ''), price_id) y el cobro
+# COALESCE(stripe_price_id, price_id) —sin NULLIF—, así que un plan con la
+# columna a CADENA VACÍA (que no es NULL) se anunciaba con un identificador y se
+# buscaba por otro:
+#
+#   El escaparate ofrece el plan con price_id = «price_X».
+#   El cobro busca WHERE COALESCE('', price_id) = 'price_X' → '' ≠ 'price_X'.
+#   El comprador, ya decidido, recibe «Plan inválido».
+#
+# Y en el webhook la misma discrepancia era peor: al no encontrar el plan, el
+# acceso se concedía SIN caducidad. Alguien pagaba 360 días y se quedaba para
+# siempre.
+
+
+def sql_precio_efectivo(alias=None):
+    """El SQL de «con qué identificador se cobra este plan».
+
+    Se pasa el alias de la tabla (p, plans, o nada) porque cada consulta usa el
+    suyo; lo que no cambia nunca es la regla. Una cadena vacía no es un
+    identificador, así que NULLIF va en las DOS columnas.
+    """
+
+    prefijo = f"{alias}." if alias else ""
+
+    return (
+        f"COALESCE(NULLIF({prefijo}stripe_price_id, ''), "
+        f"NULLIF({prefijo}price_id, ''))"
+    )

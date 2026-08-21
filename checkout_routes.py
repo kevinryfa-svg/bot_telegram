@@ -122,17 +122,26 @@ def register_checkout_routes(app):
 
             with conn.cursor() as cur:
 
+                # La MISMA definición que usa el escaparate para anunciarlo.
+                # Cuando no lo era, un plan con la columna a cadena vacía se
+                # ofrecía con un identificador y se buscaba por otro, y el
+                # comprador —ya decidido— recibía «Plan inválido».
+                from plan_price_service import sql_precio_efectivo
+
+                precio_efectivo = sql_precio_efectivo()
+
                 cur.execute("""
 
-                    SELECT COALESCE(stripe_price_id, price_id),
+                    SELECT """ + precio_efectivo + """,
                            COALESCE(is_recurring, FALSE),
                            COALESCE(trial_days, 0),
                            amount,
-                           currency
+                           currency,
+                           id
 
                     FROM plans
 
-                    WHERE COALESCE(stripe_price_id, price_id)=%s
+                    WHERE """ + precio_efectivo + """=%s
                     AND group_id=%s
                     AND is_active=TRUE
                     AND COALESCE(NULLIF(payment_provider, ''), 'stripe')='stripe'
@@ -155,6 +164,7 @@ def register_checkout_routes(app):
             plan_trial_days = int(row[2] or 0)
             plan_amount_major = row[3]
             plan_currency = row[4]
+            plan_id_encontrado = row[5]
 
         except Exception as e:
 
@@ -216,6 +226,12 @@ def register_checkout_routes(app):
                 "telegram_id": str(telegram_id),
                 "group_id": str(group_id),
                 "price_id": price_id,
+                # El número del plan viaja con el pago. Es lo único que no
+                # puede cambiar entre el cobro y su confirmación: el precio se
+                # puede recrear (un cambio de importe crea uno nuevo) y
+                # entonces el webhook ya no encuentra por precio el plan que se
+                # compró — y sin plan concedía acceso SIN caducidad.
+                "plan_id": str(plan_id_encontrado),
                 "community_type": community_type
             }
 
