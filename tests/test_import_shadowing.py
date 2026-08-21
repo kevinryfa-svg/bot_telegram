@@ -81,3 +81,42 @@ def test_no_function_shadows_a_module_level_import():
         "función, y los usos anteriores revientan con UnboundLocalError:\n  "
         + "\n  ".join(sombras)
     )
+
+
+# =========================
+# NOMBRES QUE NO EXISTEN
+# =========================
+# El mismo día que los imports en la sombra apareció esto: la pantalla que fija
+# el precio de publicar una comunidad leía «text» sin haberlo definido —la
+# variable se asigna más abajo, dentro de OTRAS ramas del mismo manejador—. No
+# es un error de sintaxis, así que arrancaba perfecto y reventaba con NameError
+# solo cuando alguien escribía el precio: la pantalla que decide lo que cobra la
+# plataforma por su propio producto se quedaba muda.
+#
+# pyflakes lo dice en un segundo. Vale la pena tenerlo puesto.
+
+def test_no_module_uses_a_name_that_does_not_exist():
+    # Instalado a propósito en CI (ver .github/workflows/ci.yml): si esta
+    # prueba se omitiera allí, sería exactamente igual que no existir.
+    pyflakes = pytest.importorskip("pyflakes.api")
+
+    from pyflakes import reporter as pyflakes_reporter
+
+    import io
+
+    salida, errores = io.StringIO(), io.StringIO()
+
+    reporter = pyflakes_reporter.Reporter(salida, errores)
+
+    for ruta in sorted(pathlib.Path(".").glob("*.py")):
+        pyflakes.checkPath(str(ruta), reporter=reporter)
+
+    graves = [
+        linea for linea in salida.getvalue().splitlines()
+        if "undefined name" in linea
+    ]
+
+    assert graves == [], (
+        "un nombre que no existe no falla al arrancar: falla en producción, y "
+        "solo por la rama que lo usa:\n  " + "\n  ".join(graves)
+    )

@@ -469,6 +469,14 @@ async def receive_admin_inputs(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if context.user_data.get("setting_platform_plan_price_id"):
 
+        # Esta rama leía «text» sin haberlo definido: la variable se asigna más
+        # abajo, dentro de OTRAS ramas que aquí no se recorren. Así que poner
+        # precio al plan de publicación no daba un error entendible: reventaba
+        # con NameError y el administrador se quedaba mirando una pantalla que
+        # no contestaba. Justo la pantalla que decide lo que cobra la
+        # plataforma por su propio producto.
+        text = (update.message.text or "").strip()
+
         plan_id = context.user_data.get("setting_platform_plan_price_id")
 
         from platform_plan_service import set_platform_plan_amount

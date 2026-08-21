@@ -283,3 +283,39 @@ def test_a_normal_send_does_not_erase_a_relaunch_already_noted(clean_db):
             "borrarla dejaría a esa persona lista para recibir otra vez el "
             "mismo relanzamiento"
         )
+
+
+def test_an_empty_pass_says_why_it_is_empty(clean_db, monkeypatch):
+    """«306 candidatos, 0 enviados» no dice nada: hay que saber qué los frena."""
+
+    _persona_que_gasto_el_tope(clean_db, user_id=5601)
+    _persona_que_gasto_el_tope(clean_db, user_id=5602)
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute("UPDATE user_reengagement SET opted_out=TRUE WHERE user_id=5602")
+
+    monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "")
+
+    explicacion = rs.explica_por_que_no_hay_nadie()
+
+    assert "2 candidatos" in explicacion
+    assert "se dieron de baja" in explicacion
+    assert "gastaron el tope" in explicacion
+    assert "no hay relanzamiento activo" in explicacion, (
+        "lo que hay que tocar para que esa gente vuelva a recibir algo"
+    )
+
+
+def test_the_explanation_notices_the_recent_ones(clean_db, monkeypatch):
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO bot_user_events (user_id, event_type) VALUES (5603, 'start')"
+        )
+        cur.execute(
+            "INSERT INTO user_reengagement (user_id, sent_count, last_sent_at) "
+            "VALUES (5603, 1, NOW())"
+        )
+
+    monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "")
+
+    assert "avisados hace menos de" in rs.explica_por_que_no_hay_nadie()
