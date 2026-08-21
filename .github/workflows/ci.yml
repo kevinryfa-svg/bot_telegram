@@ -41,7 +41,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
+          # pyflakes no es una dependencia del bot: es lo que caza los
+          # nombres que no existen (un NameError que solo revienta cuando
+          # alguien recorre esa rama) y los imports que tapan a los de arriba.
+          # Sin instalarlo aquí, esa prueba se OMITE en silencio, que es peor
+          # que no tenerla.
+          pip install pytest pyflakes
 
       - name: Syntax check (compile all modules)
         run: python -m compileall -q .

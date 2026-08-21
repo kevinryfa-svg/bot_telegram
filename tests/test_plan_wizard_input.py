@@ -269,3 +269,43 @@ def test_choosing_auto_really_creates_the_price_at_the_end(clean_db, monkeypatch
     )
     assert creados[-1]["amount_major"] == pytest.approx(29.0)
     assert any("Precio de Stripe" in (r or "") for r in respuestas)
+
+
+# =========================
+# EL PRECIO DE LO QUE VENDE LA PLATAFORMA
+# =========================
+# La pantalla que decide cuánto cobra la plataforma por publicar una comunidad
+# leía una variable que no existía en ese momento: se asigna más abajo, dentro
+# de OTRAS ramas del mismo manejador que aquí no se recorren. Escribir el precio
+# reventaba con NameError y el administrador se quedaba mirando una pantalla que
+# no contestaba.
+
+def test_setting_the_publishing_price_answers_instead_of_exploding(clean_db):
+    with clean_db.conn.cursor() as cur:
+        cur.execute("DELETE FROM commercial_plans")
+        cur.execute(
+            "INSERT INTO commercial_plans (id, product_type, name, "
+            "duration_days, amount, is_active) VALUES "
+            "(901, 'shared_bot_space', '1 mes', 30, NULL, TRUE)"
+        )
+
+    respuestas, _estado = escribir(
+        "29", {"setting_platform_plan_price_id": 901}
+    )
+
+    assert respuestas, "sin respuesta, el administrador no sabe si se guardó"
+    assert "Precio guardado" in respuestas[0]
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute("SELECT amount FROM commercial_plans WHERE id=901")
+        assert cur.fetchone()[0] == 2900, (
+            "se teclean EUROS y commercial_plans guarda CÉNTIMOS"
+        )
+
+
+def test_a_price_that_is_not_a_number_is_explained(clean_db):
+    respuestas, _estado = escribir(
+        "veintinueve", {"setting_platform_plan_price_id": 901}
+    )
+
+    assert "no es un número" in respuestas[0]

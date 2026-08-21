@@ -97,6 +97,144 @@ CALLBACK_REENGAGEMENT_STOP = "reengagement_stop"
 # SELECCIÓN DE DESTINATARIOS
 # =========================
 
+# =========================
+# QUIÉN ES UN CANDIDATO: UNA SOLA DEFINICIÓN
+# =========================
+# «Ha pasado por el bot y no ha contratado nada» estaba escrito tres veces, con
+# cuarenta líneas cada una. Tres copias de una regla son tres reglas: basta con
+# arreglar una para que el recuento diga una cosa y el envío haga otra.
+
+SQL_CANDIDATOS = """
+
+    WITH visitors AS (
+        -- Eventos registrados (visitantes recientes)
+        SELECT DISTINCT user_id
+        FROM bot_user_events
+        WHERE user_id IS NOT NULL AND user_id > 0
+
+        UNION
+
+        -- Usuarios que el bot ya conoce (incluye visitantes antiguos,
+        -- anteriores al registro de eventos)
+        SELECT DISTINCT user_id
+        FROM users
+        WHERE user_id IS NOT NULL AND user_id > 0
+    )
+    SELECT e.user_id,
+           COALESCE(r.sent_count, 0) AS avisos,
+           r.last_sent_at,
+           COALESCE(r.opted_out, FALSE) AS de_baja,
+           COALESCE(r.is_blocked, FALSE) AS bloqueado,
+           COALESCE(r.relaunch_key, '') AS relanzamiento
+    FROM visitors e
+    LEFT JOIN user_reengagement r ON r.user_id = e.user_id
+    WHERE e.user_id <> %(admin)s
+
+      AND NOT EXISTS (
+          SELECT 1
+          FROM payments p
+          WHERE p.user_id = e.user_id
+            AND LOWER(COALESCE(p.status, '')) IN ('paid', 'completed', 'succeeded')
+      )
+
+      AND NOT EXISTS (
+          SELECT 1
+          FROM payment_transactions t
+          WHERE t.user_id = e.user_id
+            AND LOWER(COALESCE(t.status, '')) IN ('paid', 'completed', 'succeeded')
+      )
+
+      AND NOT EXISTS (
+          SELECT 1
+          FROM users u
+          WHERE u.user_id = e.user_id
+            AND (
+                COALESCE(u.subscription_active, FALSE) = TRUE
+                OR (u.expiration IS NOT NULL AND u.expiration > NOW())
+            )
+      )
+
+      AND NOT EXISTS (
+          SELECT 1
+          FROM banned_users b
+          WHERE b.user_id = e.user_id
+      )
+
+      AND NOT EXISTS (
+          SELECT 1
+          FROM admins a
+          WHERE a.user_id = e.user_id
+      )
+
+"""
+
+
+def explica_por_que_no_hay_nadie():
+    """Por qué una pasada no tiene a nadie a quien escribir.
+
+    Sin esto, una pasada vacía y una campaña agotada se leen igual: «ninguna
+    persona pendiente». Y son dos cosas distintas con arreglos distintos —una se
+    resuelve esperando y la otra no se resuelve sola—. Esto lo dice en números.
+    """
+
+    clave = REENGAGEMENT_RELAUNCH_KEY if relanzamiento_activo() else ""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT COUNT(*) FILTER (WHERE de_baja), "
+                "COUNT(*) FILTER (WHERE bloqueado AND NOT de_baja), "
+                "COUNT(*) FILTER (WHERE NOT de_baja AND NOT bloqueado "
+                "                 AND last_sent_at IS NOT NULL "
+                "                 AND last_sent_at >= NOW() - "
+                "                     (%(dias)s || ' days')::interval), "
+                "COUNT(*) FILTER (WHERE NOT de_baja AND NOT bloqueado "
+                "                 AND avisos >= %(tope)s "
+                "                 AND (%(clave)s = '' OR relanzamiento = %(clave)s)), "
+                "COUNT(*) "
+                "FROM (" + SQL_CANDIDATOS + ") AS candidatos",
+                {
+                    "admin": int(ADMIN_ID),
+                    "dias": REENGAGEMENT_INTERVAL_DAYS,
+                    "tope": REENGAGEMENT_MAX_MESSAGES,
+                    "clave": clave,
+                },
+            )
+
+            fila = cur.fetchone() or (0, 0, 0, 0, 0)
+
+    except Exception as e:
+
+        return f"no se pudo averiguar por qué ({str(e)[:120]})"
+
+    de_baja, bloqueados, recientes, agotados, total = [int(x or 0) for x in fila]
+
+    partes = [f"{total} candidatos"]
+
+    if de_baja:
+        partes.append(f"{de_baja} se dieron de baja")
+
+    if bloqueados:
+        partes.append(f"{bloqueados} bloquearon el bot")
+
+    if recientes:
+        partes.append(
+            f"{recientes} avisados hace menos de {REENGAGEMENT_INTERVAL_DAYS} días"
+        )
+
+    if agotados:
+
+        partes.append(
+            f"{agotados} gastaron el tope de {REENGAGEMENT_MAX_MESSAGES} avisos"
+            + (" y ya recibieron el relanzamiento" if clave else
+               " (no hay relanzamiento activo)")
+        )
+
+    return ", ".join(partes)
+
+
 def fetch_reengagement_targets(limit=None):
     """
     Usuarios que han usado el bot y NO han contratado nada:
@@ -115,95 +253,27 @@ def fetch_reengagement_targets(limit=None):
 
     with conn.cursor() as cur:
 
-        cur.execute("""
+        cur.execute(
+            "SELECT user_id, avisos FROM (" + SQL_CANDIDATOS + ") AS candidatos "
+            "WHERE NOT de_baja AND NOT bloqueado "
 
-            WITH visitors AS (
-                -- Eventos registrados (visitantes recientes)
-                SELECT DISTINCT user_id
-                FROM bot_user_events
-                WHERE user_id IS NOT NULL AND user_id > 0
+            # El tope de siempre, más la excepción con nombre: quien lo gastó
+            # cuando esto no podía cobrar entra UNA vez, y al anotarle la clave
+            # deja de entrar.
+            "AND (avisos < %(tope)s "
+            "     OR (%(clave)s <> '' AND relanzamiento <> %(clave)s)) "
 
-                UNION
-
-                -- Usuarios que el bot ya conoce (incluye visitantes antiguos,
-                -- anteriores al registro de eventos)
-                SELECT DISTINCT user_id
-                FROM users
-                WHERE user_id IS NOT NULL AND user_id > 0
-            )
-            SELECT e.user_id,
-                   COALESCE(r.sent_count, 0)
-            FROM visitors e
-            LEFT JOIN user_reengagement r
-                   ON r.user_id = e.user_id
-            WHERE e.user_id <> %s
-
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM payments p
-                  WHERE p.user_id = e.user_id
-                    AND LOWER(COALESCE(p.status, '')) IN ('paid', 'completed', 'succeeded')
-              )
-
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM payment_transactions t
-                  WHERE t.user_id = e.user_id
-                    AND LOWER(COALESCE(t.status, '')) IN ('paid', 'completed', 'succeeded')
-              )
-
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM users u
-                  WHERE u.user_id = e.user_id
-                    AND (
-                        COALESCE(u.subscription_active, FALSE) = TRUE
-                        OR (u.expiration IS NOT NULL AND u.expiration > NOW())
-                    )
-              )
-
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM banned_users b
-                  WHERE b.user_id = e.user_id
-              )
-
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM admins a
-                  WHERE a.user_id = e.user_id
-              )
-
-              AND COALESCE(r.opted_out, FALSE) = FALSE
-              AND COALESCE(r.is_blocked, FALSE) = FALSE
-
-              -- El tope de siempre, más la excepción con nombre: quien lo
-              -- gastó cuando esto no podía cobrar entra UNA vez, y al anotarle
-              -- la clave deja de entrar.
-              AND (
-                  COALESCE(r.sent_count, 0) < %s
-                  OR (
-                      %s <> ''
-                      AND COALESCE(r.relaunch_key, '') <> %s
-                  )
-              )
-
-              AND (
-                  r.last_sent_at IS NULL
-                  OR r.last_sent_at < NOW() - (%s || ' days')::interval
-              )
-
-            ORDER BY 1
-            LIMIT %s
-
-        """, (
-            int(ADMIN_ID),
-            REENGAGEMENT_MAX_MESSAGES,
-            clave_de_relanzamiento,
-            clave_de_relanzamiento,
-            REENGAGEMENT_INTERVAL_DAYS,
-            limit
-        ))
+            "AND (last_sent_at IS NULL "
+            "     OR last_sent_at < NOW() - (%(dias)s || ' days')::interval) "
+            "ORDER BY user_id LIMIT %(limite)s",
+            {
+                "admin": int(ADMIN_ID),
+                "tope": REENGAGEMENT_MAX_MESSAGES,
+                "clave": clave_de_relanzamiento,
+                "dias": REENGAGEMENT_INTERVAL_DAYS,
+                "limite": limit,
+            },
+        )
 
         # (user_id, avisos_ya_recibidos) — el contador elige la variante.
         return [
@@ -222,53 +292,10 @@ def count_reengagement_candidates():
 
     with conn.cursor() as cur:
 
-        cur.execute("""
-
-            WITH visitors AS (
-                SELECT DISTINCT user_id
-                FROM bot_user_events
-                WHERE user_id IS NOT NULL AND user_id > 0
-
-                UNION
-
-                SELECT DISTINCT user_id
-                FROM users
-                WHERE user_id IS NOT NULL AND user_id > 0
-            )
-            SELECT COUNT(*)
-            FROM visitors e
-            WHERE e.user_id <> %s
-
-              AND NOT EXISTS (
-                  SELECT 1 FROM payments p
-                  WHERE p.user_id = e.user_id
-                    AND LOWER(COALESCE(p.status, '')) IN ('paid', 'completed', 'succeeded')
-              )
-
-              AND NOT EXISTS (
-                  SELECT 1 FROM payment_transactions t
-                  WHERE t.user_id = e.user_id
-                    AND LOWER(COALESCE(t.status, '')) IN ('paid', 'completed', 'succeeded')
-              )
-
-              AND NOT EXISTS (
-                  SELECT 1 FROM users u
-                  WHERE u.user_id = e.user_id
-                    AND (
-                        COALESCE(u.subscription_active, FALSE) = TRUE
-                        OR (u.expiration IS NOT NULL AND u.expiration > NOW())
-                    )
-              )
-
-              AND NOT EXISTS (
-                  SELECT 1 FROM banned_users b WHERE b.user_id = e.user_id
-              )
-
-              AND NOT EXISTS (
-                  SELECT 1 FROM admins a WHERE a.user_id = e.user_id
-              )
-
-        """, (int(ADMIN_ID),))
+        cur.execute(
+            "SELECT COUNT(*) FROM (" + SQL_CANDIDATOS + ") AS candidatos",
+            {"admin": int(ADMIN_ID)},
+        )
 
         return (cur.fetchone() or [0])[0] or 0
 
@@ -909,17 +936,12 @@ async def process_reengagement_batch(context):
 
             _logged_empty_run = True
 
-            try:
-
-                candidates = count_reengagement_candidates()
-
-            except Exception:
-
-                candidates = None
-
+            # Con el desglose: «306 candidatos» y cero envíos se leía igual
+            # tanto si la campaña estaba agotada como si simplemente no tocaba
+            # todavía, y son dos cosas con arreglos distintos.
             print(
-                "Reenganche: ninguna persona pendiente en esta pasada "
-                f"(candidatos sin compras en total: {candidates})."
+                "Reenganche: ninguna persona pendiente en esta pasada — "
+                + explica_por_que_no_hay_nadie()
             )
 
 
