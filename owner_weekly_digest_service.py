@@ -290,6 +290,50 @@ def clave_mes():
         return "?"
 
 
+def _por_que_no_entro_nadie(group_id):
+    """Las líneas que explican una semana con cero altas.
+
+    Sin esto, el resumen de una comunidad que no vende es una fila de ceros y
+    un «mira el panel»: el propietario ve el problema y no ve la causa, que es
+    justo lo que hace falta para que la semana siguiente sea distinta.
+    """
+
+    try:
+
+        from owner_readiness_service import collect_readiness
+
+        pendientes = [f for f in collect_readiness(group_id) if not f[0]]
+
+    except Exception as e:
+
+        print("Resumen semanal: no se pudo mirar si puede vender:", str(e)[:200])
+
+        return []
+
+    if not pendientes:
+
+        # Puede cobrar y no ha entrado nadie: el problema no es de
+        # configuración, es que no llega gente. Y para eso hay material.
+        return [
+            "",
+            "🔍 Ninguna alta esta semana. Se puede comprar sin problema, así "
+            "que lo que falta es que llegue alguien: en «📣 Traer compradores» "
+            "tienes tu enlace, tu página y un mensaje listo para pegar.",
+        ]
+
+    lineas = [
+        "",
+        "🔍 Ninguna alta esta semana, y hay algo que lo impide:",
+    ]
+
+    # Solo lo que falta, y con su detalle: la lista completa vive en su
+    # pantalla, aquí sobra todo lo que ya está bien.
+    for _ok, titulo, detalle in pendientes[:3]:
+        lineas.append(f"❌ {titulo} — {detalle}")
+
+    return lineas
+
+
 def build_weekly_digest_text(group_id, group_name, sugerencia=None):
 
     from group_delivery_health_service import describe_group_delivery
@@ -320,6 +364,12 @@ def build_weekly_digest_text(group_id, group_name, sugerencia=None):
         "El panel de ingresos tiene el detalle completo y el CSV.",
     ])
 
+    # Una semana a cero no necesita un panel: necesita saber POR QUÉ. Y el
+    # porqué ya lo calcula la pantalla «¿Puedo vender?», así que se usa esa, sin
+    # repetir aquí sus condiciones —dos listas acaban discrepando.
+    if not numeros["altas"]:
+        lineas.extend(_por_que_no_entro_nadie(group_id))
+
     if sugerencia:
 
         from owner_addon_service import format_addon_monthly_price
@@ -338,10 +388,21 @@ def build_weekly_digest_text(group_id, group_name, sugerencia=None):
     return "\n".join(lineas)
 
 
-def build_digest_keyboard(sugerencia=None):
+def build_digest_keyboard(sugerencia=None, sin_altas=False):
 
     filas = [[InlineKeyboardButton("💰 Abrir panel de ingresos",
                                    callback_data="owner_panel_revenue")]]
+
+    if sin_altas:
+
+        # El botón que corresponde a lo que dice el texto: con cero altas, el
+        # panel de ingresos no tiene nada que enseñar.
+        filas.append([InlineKeyboardButton(
+            "🚦 ¿Puedo vender?", callback_data="owner_panel_ready"
+        )])
+        filas.append([InlineKeyboardButton(
+            "📣 Traer compradores", callback_data="owner_panel_share"
+        )])
 
     if sugerencia:
 
@@ -384,14 +445,21 @@ async def process_weekly_digests(context):
         # que el teclado no tendría, o al revés.
         sugerencia = None
 
+        # Las altas de la semana se leen UNA vez y sirven para las dos cosas:
+        # elegir la sugerencia y decidir si el resumen tiene que explicar por
+        # qué no entró nadie.
+        altas_semana = 0
+
         try:
 
             from owner_addon_service import fetch_addon_suggestion
 
+            altas_semana = int(fetch_week_numbers(group_id).get("altas") or 0)
+
             sugerencia = fetch_addon_suggestion(
                 group_id,
                 owner_user_id,
-                fetch_week_numbers(group_id).get("altas"),
+                altas_semana,
                 period_key=clave_mes(),
             )
 
@@ -407,7 +475,9 @@ async def process_weekly_digests(context):
                 text=build_weekly_digest_text(
                     group_id, group_name, sugerencia=sugerencia
                 ),
-                reply_markup=build_digest_keyboard(sugerencia=sugerencia),
+                reply_markup=build_digest_keyboard(
+                    sugerencia=sugerencia, sin_altas=not altas_semana
+                ),
             )
 
             summary["sent"] += 1

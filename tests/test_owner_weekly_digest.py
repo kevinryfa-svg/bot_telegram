@@ -154,3 +154,60 @@ def test_the_job_is_scheduled_on_mondays():
         "en PTB 22 los días van 0-6 domingo-sábado: el lunes es el 1"
     )
     assert "schedule_owner_weekly_digest(telegram_app)" in source
+
+
+# =========================
+# UNA SEMANA A CERO NECESITA UN PORQUÉ
+# =========================
+# El resumen de una comunidad que no vende era una fila de ceros y un «mira el
+# panel de ingresos». El propietario veía el problema y no veía la causa, que es
+# lo único que puede hacer que la semana siguiente sea distinta.
+
+def test_a_week_with_no_signups_says_what_is_blocking_it(comunidades):
+    """La 82 no vendió nada, y además no tiene ni plan ni entrega comprobada."""
+
+    texto = owd.build_weekly_digest_text(82, "Muerta")
+
+    assert "Ninguna alta esta semana" in texto
+    assert "❌" in texto, "y qué es lo que lo impide, no solo que pasa"
+
+
+def test_when_everything_is_ready_it_points_at_the_traffic(comunidades,
+                                                           monkeypatch):
+    """Se puede cobrar y no entra nadie: eso ya no es configuración."""
+
+    monkeypatch.setattr(
+        "owner_readiness_service.collect_readiness",
+        lambda group_id: [(True, "Todo", "listo")]
+    )
+
+    texto = owd.build_weekly_digest_text(82, "Muerta")
+
+    assert "Traer compradores" in texto
+    assert "❌" not in texto
+
+
+def test_a_week_with_signups_does_not_get_the_lecture(comunidades):
+    """Quien vendió no necesita que le expliquen por qué no vende."""
+
+    numeros = owd.fetch_week_numbers(83)
+
+    assert numeros["altas"] >= 1, "la comunidad viva sí tuvo alta la semana pasada"
+
+    texto = owd.build_weekly_digest_text(83, "VIP Semana")
+
+    assert "Ninguna alta esta semana" not in texto
+
+
+def test_the_buttons_match_what_the_text_says():
+    con_cero = owd.build_digest_keyboard(sin_altas=True)
+    con_ventas = owd.build_digest_keyboard(sin_altas=False)
+
+    def callbacks(teclado):
+        return [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert "owner_panel_share" in callbacks(con_cero)
+    assert "owner_panel_ready" in callbacks(con_cero)
+    assert "owner_panel_share" not in callbacks(con_ventas), (
+        "quien vende no necesita el kit de lanzamiento en cada resumen"
+    )

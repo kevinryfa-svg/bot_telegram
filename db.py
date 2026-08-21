@@ -576,7 +576,9 @@ def create_tables():
 
                 UPDATE plans
                 SET payment_provider=COALESCE(payment_provider, 'stripe'),
-                    stripe_price_id=COALESCE(stripe_price_id, price_id),
+                    -- Con NULLIF: la cadena vacía no es un identificador,
+                    -- y sin esto se quedaba tal cual para siempre.
+                    stripe_price_id=COALESCE(NULLIF(stripe_price_id, ''), price_id),
                     provider_price_id=COALESCE(provider_price_id, price_id)
                 WHERE price_id IS NOT NULL
                 AND (

@@ -421,3 +421,39 @@ def test_the_plan_number_in_the_payment_survives_a_price_change(stripe_env):
         "con el número del plan en el pago, la duración se aplica aunque el "
         "precio ya no sea el mismo"
     )
+
+
+def test_nobody_writes_that_coalesce_by_hand_any_more():
+    """Una regla escrita en cinco sitios acaba siendo cinco reglas.
+
+    Así empezó esto: el escaparate con NULLIF, el cobro sin él, el webhook sin
+    él, y el atajo de compra de /start con NULLIF en una columna y no en la
+    otra. Cuatro formas de responder «¿con qué identificador se cobra este
+    plan?», y las diferencias solo se notaban con dinero de por medio.
+    """
+
+    import pathlib
+    import re
+
+    patron = re.compile(r"COALESCE\(\s*(?:\w+\.)?(?:NULLIF\()?stripe_price_id")
+
+    culpables = []
+
+    for ruta in sorted(pathlib.Path(".").glob("*.py")):
+
+        # Donde vive la definición, y la migración que RELLENA la columna (que
+        # no es lo mismo que leerla).
+        if ruta.name in ("plan_price_service.py", "db.py"):
+            continue
+
+        for numero, linea in enumerate(
+            ruta.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+
+            if patron.search(linea):
+                culpables.append(f"{ruta.name}:{numero}")
+
+    assert culpables == [], (
+        "usa sql_precio_efectivo() en vez de escribir el COALESCE a mano: "
+        + ", ".join(culpables)
+    )
