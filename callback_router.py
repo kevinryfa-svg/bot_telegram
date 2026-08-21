@@ -27818,8 +27818,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             try:
 
-                import asyncio
-
+                # asyncio ya está importado arriba. Importarlo AQUÍ lo convertía
+                # en local de button() entera, y su uso anterior —el
+                # asyncio.create_task que relanza la verificación del grupo
+                # recién añadido— reventaba con UnboundLocalError. O sea que un
+                # import escrito para una copia de seguridad rompía el botón de
+                # «reintentar verificación» de quien acaba de dar de alta su
+                # comunidad.
                 from db_backup_service import run_backup_now
 
                 # Volcar y subir es bloqueante: en un hilo para no congelar el bot.

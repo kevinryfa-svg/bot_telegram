@@ -347,3 +347,77 @@ def test_the_recovery_button_can_actually_deliver_the_link(stripe_env_sin_enlace
         assert cur.fetchone() is not None, (
             "«Mis accesos» no encontraría nada y el botón no podría dar el enlace"
         )
+
+
+# =========================
+# EL PRECIO CON EL QUE SE COBRA, EN UN SOLO SITIO
+# =========================
+# Un plan guarda su identificador de precio en DOS columnas. El escaparate
+# resolvía cuál manda con COALESCE(NULLIF(stripe_price_id, ''), price_id) y el
+# cobro con COALESCE(stripe_price_id, price_id) —sin NULLIF—, así que un plan
+# con la columna a CADENA VACÍA (que no es NULL) se anunciaba con un
+# identificador y se buscaba por otro. Y aquí, en el webhook, no encontrar el
+# plan no daba error: concedía el acceso SIN caducidad.
+
+def test_an_empty_price_column_does_not_grant_lifetime_access(stripe_env):
+    """Quien paga 30 días no se puede quedar para siempre por un ''."""
+
+    env = stripe_env
+
+    with env["db"].conn.cursor() as cur:
+        # Cadena vacía, que no es NULL: el COALESCE viejo la daba por buena.
+        cur.execute("UPDATE plans SET stripe_price_id='' WHERE group_id=%s",
+                    (env["group_id"],))
+
+    run_webhook(env["sh"], make_event(env["user_id"], env["group_id"]))
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT expiration FROM users WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+        fila = cur.fetchone()
+
+    assert fila is not None, "el pago tiene que conceder acceso igualmente"
+    assert fila[0] is not None, (
+        "sin caducidad, el comprador de un plan de 30 días se queda de por "
+        "vida y el propietario pierde todas las renovaciones"
+    )
+
+
+def test_the_plan_number_in_the_payment_survives_a_price_change(stripe_env):
+    """El precio se puede recrear; el número del plan no cambia nunca.
+
+    Cambiar el importe de un plan crea un precio NUEVO en Stripe. Un pago que
+    viajaba solo con el precio viejo ya no encontraba su plan — y no encontrarlo
+    era acceso sin caducidad.
+    """
+
+    env = stripe_env
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute("SELECT id FROM plans WHERE group_id=%s", (env["group_id"],))
+        plan_id = cur.fetchone()[0]
+
+        cur.execute(
+            "UPDATE plans SET stripe_price_id='price_recreado', "
+            "price_id='price_recreado' WHERE id=%s",
+            (plan_id,)
+        )
+
+    evento = make_event(env["user_id"], env["group_id"])
+    evento["data"]["object"]["metadata"]["plan_id"] = str(plan_id)
+
+    run_webhook(env["sh"], evento)
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT expiration FROM users WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+        fila = cur.fetchone()
+
+    assert fila is not None and fila[0] is not None, (
+        "con el número del plan en el pago, la duración se aplica aunque el "
+        "precio ya no sea el mismo"
+    )

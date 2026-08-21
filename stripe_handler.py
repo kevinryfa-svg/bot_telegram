@@ -1101,26 +1101,60 @@ def stripe_webhook():
                 session["metadata"]["group_id"]
             )
 
+            # El número del plan, si el cobro lo mandó. Es la única referencia
+            # que no cambia: el precio se puede recrear (cambiar el importe crea
+            # uno nuevo), y entonces buscar por precio ya no encuentra el plan
+            # que esta persona compró.
+            plan_id_metadata = (session.get("metadata") or {}).get("plan_id")
+
             with conn.cursor() as cur:
 
-                cur.execute("""
+                row = None
 
-                    SELECT duration_days, name
+                if plan_id_metadata:
 
-                    FROM plans
+                    try:
 
-                    WHERE COALESCE(stripe_price_id, price_id)=%s
-                    AND group_id=%s
-                    AND COALESCE(NULLIF(payment_provider, ''), 'stripe')='stripe'
+                        cur.execute("""
 
-                """, (
+                            SELECT duration_days, name
+                            FROM plans
+                            WHERE id = %s AND group_id = %s
 
-                    price_id,
-                    metadata_group_id
+                        """, (int(plan_id_metadata), metadata_group_id))
 
-                ))
+                        row = cur.fetchone()
 
-                row = cur.fetchone()
+                    except (TypeError, ValueError):
+
+                        row = None
+
+                if not row:
+
+                    # La misma definición del precio efectivo que usan el
+                    # escaparate y el cobro. Antes era COALESCE sin NULLIF, así
+                    # que un plan con la columna a cadena vacía no se encontraba
+                    # —y no encontrarlo concedía el acceso SIN caducidad—.
+                    from plan_price_service import sql_precio_efectivo
+
+                    cur.execute("""
+
+                        SELECT duration_days, name
+
+                        FROM plans
+
+                        WHERE """ + sql_precio_efectivo() + """=%s
+                        AND group_id=%s
+                        AND COALESCE(NULLIF(payment_provider, ''), 'stripe')='stripe'
+
+                    """, (
+
+                        price_id,
+                        metadata_group_id
+
+                    ))
+
+                    row = cur.fetchone()
 
 
             if not row:
@@ -1130,6 +1164,53 @@ def stripe_webhook():
                     price_id,
                     metadata_group_id
                 )
+
+                # El acceso se concede igual —el dinero ha entrado y dejar sin
+                # entrar a quien acaba de pagar es peor que cualquier otra
+                # cosa—, pero SIN CADUCIDAD, o sea de por vida. Eso no puede
+                # pasar en silencio: quien pagó 360 días se queda para siempre
+                # y el propietario pierde todas las renovaciones sin enterarse.
+                log_event(
+                    "payment_plan_not_found",
+                    category="payment",
+                    severity="critical",
+                    scope="group",
+                    group_id=metadata_group_id,
+                    actor_user_id=user_id,
+                    target_user_id=user_id,
+                    message=(
+                        "Pago cobrado sin encontrar su plan: se ha concedido "
+                        "acceso SIN caducidad."
+                    ),
+                    metadata={
+                        "price_id": price_id,
+                        "plan_id_metadata": plan_id_metadata,
+                    },
+                )
+
+                try:
+
+                    # Nada de importar aquí lo que ya está importado arriba
+                    # (TOKEN, ADMIN_ID, send_telegram_message): un import dentro
+                    # de la función convierte ese nombre en local para TODA la
+                    # función, y sus usos anteriores dejan de existir. El cobro
+                    # entero se caía con UnboundLocalError.
+                    if ADMIN_ID and TOKEN:
+
+                        send_telegram_message(
+                            TOKEN,
+                            int(ADMIN_ID),
+                            "🚨 Un pago se ha cobrado sin encontrar su plan\n\n"
+                            f"Comunidad {metadata_group_id}, precio {price_id}.\n\n"
+                            "Se le ha dado acceso PARA SIEMPRE, porque sin plan "
+                            "no hay duración que aplicar. Revisa ese plan: "
+                            "mientras siga así, cada compra regala acceso de por "
+                            "vida."
+                        )
+
+                except Exception as e:
+
+                    print("No se pudo avisar del plan no encontrado:", str(e)[:200])
 
                 expiration = None
                 plan_name = "Desconocido"
