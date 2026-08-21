@@ -736,8 +736,110 @@ def tarea_listar_planes():
     return "listar_planes:\n  " + "\n  ".join(lineas)
 
 
+# =========================
+# APAGAR LO QUE NO SE PUEDE VENDER
+# =========================
+# Un plan activo que el escaparate nunca va a ofrecer no es neutro: aparece en
+# las pantallas del propietario, dispara su alerta semanal y sigue ahí para que
+# alguien lo «arregle» un día bajando su duración —y si su precio es más bajo
+# que el del plan bueno, el escaparate pasaría a anunciar ESE, porque enseña el
+# más barato. En producción hay uno así: «PERMANENTE OFERTA 7€», 1.300.000 días,
+# en la única comunidad que vende, a 7 euros contra los 29 del plan que sí
+# funciona.
+#
+# LA CONDICIÓN QUE HACE ESTO SEGURO: solo se apaga lo que NO se puede vender,
+# comprobado con la misma lista que decide el escaparate. Un plan que funciona
+# no se apaga aquí ni aunque se pida por su número.
+
+
+def tarea_desactivar_plan():
+    """BOOTSTRAP_PLAN_DISABLE='<plan_id>', por comas. Solo lo invendible."""
+
+    from plan_price_service import diagnostico_de_plan
+
+    crudo = (os.environ.get("BOOTSTRAP_PLAN_DISABLE") or "").strip()
+
+    if not crudo:
+        return "desactivar_plan: falta BOOTSTRAP_PLAN_DISABLE, no se hace nada."
+
+    resultados = []
+
+    for objetivo in [t.strip() for t in crudo.split(",") if t.strip()]:
+
+        try:
+
+            plan_id = int(objetivo)
+
+        except (TypeError, ValueError):
+
+            resultados.append(f"«{objetivo}» no es un número de plan")
+            continue
+
+        plan = diagnostico_de_plan(plan_id)
+
+        if not plan:
+
+            resultados.append(f"plan #{plan_id}: no existe")
+            continue
+
+        if plan.get("vendible"):
+
+            # Esta es la línea que separa una limpieza de un apagón: un plan que
+            # vende no se toca desde aquí ni pidiéndolo.
+            resultados.append(
+                f"plan #{plan_id} SE VENDE ahora mismo: no se apaga"
+            )
+            continue
+
+        if not plan.get("is_active"):
+
+            resultados.append(f"plan #{plan_id} ya estaba apagado")
+            continue
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    "UPDATE plans SET is_active = FALSE WHERE id = %s",
+                    (plan_id,),
+                )
+
+                conn.commit()
+
+        except Exception as e:
+
+            conn.rollback()
+
+            resultados.append(f"plan #{plan_id}: error apagándolo ({e})")
+            continue
+
+        log_event(
+            "bootstrap_plan_disabled",
+            category="billing",
+            severity="warning",
+            scope="group",
+            group_id=plan.get("group_id"),
+            message="Plan invendible apagado.",
+            metadata={
+                "plan_id": plan_id,
+                "nombre": plan.get("name"),
+                "motivo": plan.get("motivo"),
+            },
+        )
+
+        resultados.append(
+            f"plan #{plan_id} «{plan.get('name')}» apagado ({plan.get('motivo')}). "
+            "Para recuperarlo: edítalo en «Planes», pon una duración entre 1 y "
+            "3650 días y vuelve a activarlo"
+        )
+
+    return "desactivar_plan: " + " | ".join(resultados)
+
+
 TAREAS = {
     "listar_planes": tarea_listar_planes,
+    "desactivar_plan": tarea_desactivar_plan,
     "descripcion_minima": tarea_descripcion_minima,
     "precio_publicacion": tarea_precio_publicacion,
     "precio_comunidad": tarea_precio_comunidad,
