@@ -405,6 +405,9 @@ def test_the_batch_builds_one_keyboard_per_person(catalogo, monkeypatch):
     # La suite tiene el reenganche apagado a propósito (nadie quiere que una
     # prueba escriba a nadie): aquí se enciende solo para este caso.
     monkeypatch.setattr(res, "REENGAGEMENT_ENABLED", True)
+    # La campaña no sale si no se puede vender —esa es la regla nueva, y aquí
+    # lo que se prueba es el contenido del mensaje, no la sonda del cobro.
+    monkeypatch.setattr(res, "merece_la_pena_escribir", lambda: (True, ""))
     monkeypatch.setattr(
         res, "fetch_reengagement_targets",
         lambda limit=None: [(7002, 0), (7003, 0)]
@@ -461,6 +464,9 @@ def test_the_closing_line_matches_what_is_under_it(catalogo, monkeypatch):
         )
 
     monkeypatch.setattr(res, "REENGAGEMENT_ENABLED", True)
+    # La campaña no sale si no se puede vender —esa es la regla nueva, y aquí
+    # lo que se prueba es el contenido del mensaje, no la sonda del cobro.
+    monkeypatch.setattr(res, "merece_la_pena_escribir", lambda: (True, ""))
     monkeypatch.setattr(
         res, "fetch_reengagement_targets",
         lambda limit=None: [(7002, 0), (7003, 0)]
