@@ -667,3 +667,60 @@ def test_without_the_variable_nothing_is_listed(plan_de_comunidad, monkeypatch):
     monkeypatch.delenv("BOOTSTRAP_PLAN_LIST", raising=False)
 
     assert "falta BOOTSTRAP_PLAN_LIST" in bt.tarea_listar_planes()
+
+
+# =========================
+# APAGAR LO QUE NO SE PUEDE VENDER
+# =========================
+# En producción, la única comunidad que vende tiene además un plan de 1.300.000
+# días a 7 euros. No se ofrece —el cobro no puede convertir esa duración en
+# acceso— pero sigue activo, dispara la alerta semanal del propietario y espera
+# a que alguien le baje la duración: el escaparate enseña el plan MÁS BARATO, así
+# que ese día la comunidad pasaría de anunciarse a 29 a anunciarse a 7.
+
+def test_an_unsellable_plan_can_be_switched_off(plan_de_comunidad, monkeypatch):
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET duration_days=1300000 WHERE id=881")
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_DISABLE", "881")
+
+    resultado = bt.tarea_desactivar_plan()
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("SELECT is_active FROM plans WHERE id=881")
+        assert cur.fetchone()[0] is False
+
+    assert "1300000" in resultado, "por qué no se podía vender"
+    assert "3650" in resultado, "y cómo recuperarlo, que es decisión suya"
+
+
+def test_a_plan_that_sells_is_never_switched_off(plan_de_comunidad, monkeypatch):
+    """La línea que separa una limpieza de un apagón."""
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_DISABLE", "881")
+
+    resultado = bt.tarea_desactivar_plan()
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("SELECT is_active FROM plans WHERE id=881")
+        assert cur.fetchone()[0] is True
+
+    assert "SE VENDE" in resultado
+
+
+def test_switching_off_twice_says_so(plan_de_comunidad, monkeypatch):
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET duration_days=1300000 WHERE id=881")
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_DISABLE", "881")
+
+    bt.tarea_desactivar_plan()
+
+    assert "ya estaba apagado" in bt.tarea_desactivar_plan()
+
+
+def test_without_the_variable_nothing_is_switched_off(plan_de_comunidad,
+                                                      monkeypatch):
+    monkeypatch.delenv("BOOTSTRAP_PLAN_DISABLE", raising=False)
+
+    assert "falta BOOTSTRAP_PLAN_DISABLE" in bt.tarea_desactivar_plan()
