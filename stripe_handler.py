@@ -1001,6 +1001,47 @@ def stripe_webhook():
 
 
         # =========================
+        # ¿ESTÁ PAGADO DE VERDAD?
+        # =========================
+        # «checkout.session.completed» NO significa «pagado». Significa que el
+        # comprador terminó el formulario. Con tarjeta las dos cosas coinciden
+        # casi siempre —por eso esto nunca se notó—, pero la cuenta de Stripe de
+        # este bot tiene activos Klarna, Link, Bancontact, Revolut Pay y varios
+        # más, y algunos confirman el cobro DESPUÉS, en un evento aparte. El día
+        # que se ofrezca cualquiera de ellos, esta rama estaría regalando el
+        # acceso al terminar el formulario, sin que hubiera entrado un euro.
+        #
+        # «no_payment_required» sí entra: es lo que contesta Stripe cuando el
+        # total queda a cero (un cupón del 100%), y ahí no hay nada que cobrar.
+        estado_del_pago = (session.get("payment_status") or "").strip().lower()
+
+        if estado_del_pago and estado_del_pago not in ("paid", "no_payment_required"):
+
+            print(
+                "Stripe: sesión terminada SIN pagar (", estado_del_pago,
+                ") — no se concede acceso:", stripe_session_id
+            )
+
+            log_event(
+                "checkout_completed_unpaid",
+                category="payment",
+                severity="warning",
+                scope="global",
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                message=(
+                    "Sesión de pago terminada sin pagar: no se concede acceso."
+                ),
+                metadata={
+                    "payment_status": estado_del_pago,
+                    "session": stripe_session_id,
+                },
+            )
+
+            return "OK"
+
+
+        # =========================
         # COMPROBAR SI ESTÁ BANEADO
         # =========================
 

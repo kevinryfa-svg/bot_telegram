@@ -457,3 +457,69 @@ def test_nobody_writes_that_coalesce_by_hand_any_more():
         "usa sql_precio_efectivo() en vez de escribir el COALESCE a mano: "
         + ", ".join(culpables)
     )
+
+
+# =========================
+# «TERMINADO» NO ES «PAGADO»
+# =========================
+# checkout.session.completed significa que el comprador terminó el formulario,
+# no que haya pagado. Con tarjeta las dos cosas coinciden casi siempre, y por eso
+# esto nunca se notó. Pero la cuenta de Stripe de este bot tiene activos Klarna,
+# Link, Bancontact, Revolut Pay y varios más, y algunos confirman el cobro
+# DESPUÉS, en otro evento. El día que se ofrezca cualquiera de ellos, esta rama
+# regalaría el acceso al terminar el formulario.
+
+def test_an_unpaid_session_grants_nothing(stripe_env):
+    env = stripe_env
+
+    evento = make_event(env["user_id"], env["group_id"])
+    evento["data"]["object"]["payment_status"] = "unpaid"
+
+    run_webhook(env["sh"], evento)
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM users WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+
+        assert cur.fetchone() is None, (
+            "acceso concedido sin que hubiera entrado un euro"
+        )
+
+
+def test_a_paid_session_still_grants(stripe_env):
+    env = stripe_env
+
+    evento = make_event(env["user_id"], env["group_id"])
+    evento["data"]["object"]["payment_status"] = "paid"
+
+    run_webhook(env["sh"], evento)
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM users WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+
+        assert cur.fetchone() is not None
+
+
+def test_a_full_discount_is_not_treated_as_unpaid(stripe_env):
+    """Con un cupón del 100% Stripe dice «no_payment_required»: no hay nada
+    que cobrar, pero la compra es buena y el acceso se da igual."""
+
+    env = stripe_env
+
+    evento = make_event(env["user_id"], env["group_id"])
+    evento["data"]["object"]["payment_status"] = "no_payment_required"
+
+    run_webhook(env["sh"], evento)
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM users WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+
+        assert cur.fetchone() is not None
