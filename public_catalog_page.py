@@ -68,11 +68,20 @@ a.cta{display:block;text-align:center;text-decoration:none;font-weight:600;
 background:#1a4fbf;color:#fff;border-radius:10px;padding:13px 16px}
 a.cta:hover{background:#153f9c}
 .vacio{background:#fff;border:1px solid #e3e8ee;border-radius:12px;padding:22px}
+.crear{background:#fff;border:1px solid #e3e8ee;border-radius:12px;padding:22px;
+margin-top:34px}
+.crear h2{font-size:1.2rem;margin:0 0 8px}
+.crear p{color:#5a6672;margin:0 0 14px}
+.crear ul{color:#5a6672;margin:0 0 16px;padding-left:20px}
+.crear li{margin-bottom:6px}
+.desde{font-weight:600;color:#10151c}
 footer{color:#78848f;font-size:.85rem;margin-top:30px;text-align:center}
 footer a{color:#1a4fbf}
 @media (prefers-color-scheme:dark){
 body{background:#0f1319;color:#e8edf3}
-.card,.vacio{background:#161c24;border-color:#252d38}
+.card,.vacio,.crear{background:#161c24;border-color:#252d38}
+.crear p,.crear ul{color:#9aa7b4}
+.desde{color:#e8edf3}
 .desc,.sub{color:#9aa7b4}
 .precio{background:#1b2740;color:#8fb4ff}
 .social{color:#6fcf97}
@@ -128,6 +137,88 @@ def _tarjeta(oferta):
     )
 
     partes.append("</article>")
+
+    return "".join(partes)
+
+
+def _precio_de_publicar():
+    """«desde 19,99 EUR al mes», con el precio REAL. None si no se puede pagar.
+
+    Sale de los mismos planes que cobra el bot, así que la web no puede
+    anunciar un precio que la pantalla de pago desmienta. Y si ninguno tiene
+    precio, esta sección no promete nada: no se puede publicar todavía.
+    """
+
+    try:
+
+        from platform_plan_service import (
+            describe_plan_period,
+            fetch_purchasable_platform_plans,
+            format_plan_amount,
+        )
+
+        planes = fetch_purchasable_platform_plans()
+
+    except Exception as e:
+
+        print("Catálogo público: error leyendo el plan de publicación:", str(e)[:200])
+
+        return None
+
+    if not planes:
+        return None
+
+    # El más barato por importe, no el primero: el orden de la consulta es por
+    # duración, y el de un mes no tiene por qué ser el que menos cuesta.
+    barato = min(planes, key=lambda p: int(p.get("amount") or 0))
+
+    importe = format_plan_amount(barato)
+
+    if not importe:
+        return None
+
+    periodo = describe_plan_period(barato)
+
+    return f"{importe} {periodo}".strip()
+
+
+def _seccion_para_creadores():
+    """Lo que ve quien llega aquí y tiene SU PROPIO canal privado.
+
+    Esta página vendía una sola cosa: entrar en las comunidades de otros. Pero
+    quien la encuentra en un buscador puede ser justo la persona que tiene un
+    canal privado y no sabe cómo cobrar por él — y esa persona vale más para el
+    negocio que una entrada suelta, porque paga por publicar y se queda.
+    Hasta ahora solo se le hablaba cuando el catálogo estaba VACÍO, que es la
+    única vez que no había nada más que enseñarle.
+    """
+
+    precio = _precio_de_publicar()
+
+    partes = [
+        '<section class="crear">',
+        "<h2>¿Tienes tú una comunidad privada?</h2>",
+        "<p>Si ya tienes un grupo o canal privado en Telegram, aquí puedes "
+        "cobrar por la entrada sin montar nada.</p>",
+        "<ul>",
+        "<li>El cobro con tarjeta lo pone el bot.</li>",
+        "<li>Al confirmarse el pago, entrega el enlace de entrada solo.</li>",
+        "<li>Cuando caduca el acceso, saca a quien no ha renovado.</li>",
+        "</ul>",
+    ]
+
+    if precio:
+
+        partes.append(
+            f'<p class="desde">Publicar tu comunidad: desde {html.escape(precio)}.</p>'
+        )
+
+    partes.append(
+        f'<a class="cta" href="{html.escape(enlace_del_bot())}" '
+        'rel="nofollow">Publicar mi comunidad</a>'
+    )
+
+    partes.append("</section>")
 
     return "".join(partes)
 
@@ -209,7 +300,7 @@ def build_public_catalog_html(base_url=None):
 
     tarjetas = "".join(_tarjeta(oferta) for oferta in ofertas)
 
-    return _pagina(tarjetas, canonica)
+    return _pagina(tarjetas + _seccion_para_creadores(), canonica)
 
 
 def build_robots_txt(base_url):
