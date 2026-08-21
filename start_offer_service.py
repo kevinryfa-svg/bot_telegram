@@ -225,6 +225,12 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
     # posible de fallar aquí.
     filtro = filtro_propietario_al_dia("g")
 
+    # El identificador con el que se cobra de verdad: la misma definición que
+    # usan el cobro y el webhook, para que lo anunciado y lo cobrado no puedan
+    # resolverse de dos maneras. Se importa aquí dentro porque
+    # plan_price_service usa este módulo para las monedas.
+    from plan_price_service import sql_precio_efectivo
+
     try:
 
         with conn.cursor() as cur:
@@ -267,7 +273,7 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                            p.amount,
                            COALESCE(NULLIF(p.currency, ''), 'EUR') AS currency,
                            p.duration_days,
-                           COALESCE(NULLIF(p.stripe_price_id, ''), p.price_id) AS price_id,
+                           """ + sql_precio_efectivo("p") + """ AS price_id,
                            COALESCE(NULLIF(p.payment_provider, ''), 'stripe') AS provider
                     FROM plans p
                     WHERE p.group_id = g.id

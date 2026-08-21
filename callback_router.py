@@ -28792,9 +28792,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             with conn.cursor() as cur:
 
+                # La misma definición que el escaparate y el cobro: aquí
+                # faltaba el NULLIF de price_id, así que un plan con las dos
+                # columnas vacías devolvía «» y el cobro contestaba «Plan
+                # inválido» al que ya había pulsado comprar.
+                from plan_price_service import sql_precio_efectivo
+
                 cur.execute("""
 
-                    SELECT COALESCE(NULLIF(stripe_price_id, ''), price_id)
+                    SELECT """ + sql_precio_efectivo() + """
                     FROM plans
                     WHERE id=%s
                       AND group_id=%s
