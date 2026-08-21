@@ -256,8 +256,22 @@ def reparar_precios_de_planes():
 
     for plan in planes_stripe_vendibles():
 
-        if plan.get("stripe_price_id"):
+        actual = plan.get("stripe_price_id")
+
+        if actual and parece_precio_de_stripe(actual):
             continue
+
+        if actual:
+
+            # Lo que hay guardado NO puede ser un precio: en producción había
+            # una respuesta de soporte entera dentro de este campo. No se está
+            # reemplazando un precio —no hay ninguno—, así que no cambia lo que
+            # se le cobra a nadie: un identificador imposible no ha cobrado
+            # nunca, y quien ya esté suscrito lleva su precio en Stripe.
+            print(
+                "Precio de plan: el plan", plan["id"], "tiene guardado algo que "
+                "no puede ser un precio de Stripe; se le crea uno de verdad."
+            )
 
         try:
 
@@ -276,17 +290,24 @@ def reparar_precios_de_planes():
 
             with conn.cursor() as cur:
 
-                # El WHERE con el hueco evita que dos arranques a la vez dejen
-                # dos precios distintos para el mismo plan.
+                # Se exige que la fila siga como se leyó: así dos arranques a
+                # la vez no dejan dos precios distintos para el mismo plan, y
+                # además solo se pisa exactamente el valor imposible que se vio,
+                # nunca un precio que haya aparecido entre medias.
                 cur.execute("""
 
                     UPDATE plans
                     SET stripe_price_id = %s,
-                        price_id = COALESCE(NULLIF(price_id, ''), %s)
+                        price_id = CASE
+                            WHEN COALESCE(NULLIF(price_id, ''), '') = ''
+                                 OR price_id = %s
+                            THEN %s
+                            ELSE price_id
+                        END
                     WHERE id = %s
-                      AND COALESCE(NULLIF(stripe_price_id, ''), '') = ''
+                      AND COALESCE(NULLIF(stripe_price_id, ''), '') = %s
 
-                """, (price_id, price_id, plan["id"]))
+                """, (price_id, actual or "", price_id, plan["id"], actual or ""))
 
                 cambiado = cur.rowcount > 0
                 conn.commit()
@@ -311,6 +332,8 @@ def reparar_precios_de_planes():
             )
 
             continue
+
+        plan["precio_imposible"] = actual
 
         reparados.append(plan)
 
@@ -343,13 +366,15 @@ def describe_price_repairs():
 
     detalle = ", ".join(
         f"{p['group_name']}/{p['name']} {float(p['amount']):.2f} {p['currency']}"
+        + (" (tenía guardado algo que no era un precio)"
+           if p.get("precio_imposible") else "")
         for p in reparados
     )
 
     return (
-        f"Precios de plan: {len(reparados)} plan(es) estaban a la venta SIN "
-        f"precio de Stripe y no se podían cobrar; se les ha creado uno con su "
-        f"importe anunciado ({detalle})."
+        f"Precios de plan: {len(reparados)} plan(es) estaban a la venta sin un "
+        f"precio de Stripe utilizable y no se podían cobrar; se les ha creado "
+        f"uno con su importe anunciado ({detalle})."
     )
 
 
@@ -494,7 +519,8 @@ def _fila_de_plan(plan_id):
                        COALESCE(NULLIF(p.price_id, ''), ''),
                        COALESCE(NULLIF(p.payment_provider, ''), 'stripe'),
                        COALESCE(p.is_active, TRUE),
-                       COALESCE(g.is_active, TRUE)
+                       COALESCE(g.is_active, TRUE),
+                       (g.id IS NOT NULL)
                 FROM plans p
                 LEFT JOIN groups g ON g.id = p.group_id
                 WHERE p.id = %s
@@ -519,6 +545,11 @@ def _fila_de_plan(plan_id):
         "stripe_price_id": fila[8] or None, "price_id": fila[9] or None,
         "provider": (fila[10] or "stripe").strip().lower(),
         "is_active": bool(fila[11]), "group_active": bool(fila[12]),
+        # La consulta de vendibles hace JOIN con groups: un plan cuya comunidad
+        # ya no existe desaparece de ella sin dejar rastro. Sin esto, el motivo
+        # honesto («ninguna razón conocida lo explica») era el único que
+        # encajaba, y eso fue justo lo que salió en producción con el plan #10.
+        "group_exists": bool(fila[13]),
     }
 
 
@@ -526,6 +557,13 @@ def _motivo_no_vendible(plan):
     """Por qué esta fila no está entre las vendibles. Texto para humanos."""
 
     from payment_access_service import MAX_PLAN_DURATION_DAYS
+
+    if not plan.get("group_exists"):
+
+        return (
+            f"su comunidad (la {plan.get('group_id')}) ya no existe: es un "
+            "plan huérfano"
+        )
 
     if not plan.get("is_active"):
         return "el plan está desactivado"
@@ -671,9 +709,15 @@ def pide_precio_automatico(texto):
 
 
 def parece_precio_de_stripe(texto):
-    """Un identificador de precio de Stripe: price_ y letras y números."""
+    """Un identificador de precio de Stripe: price_ y letras y números.
 
-    return bool(re.fullmatch(r"price_[A-Za-z0-9]+", (texto or "").strip()))
+    Se admite el guion bajo dentro (Stripe no lo usa, pero tampoco pasa nada
+    por aceptarlo): lo que se busca es separar un identificador de un párrafo,
+    no adivinar el formato exacto de Stripe. Rechazar de más aquí sería peor
+    que aceptar de más: dejaría a alguien sin poder guardar un precio bueno.
+    """
+
+    return bool(re.fullmatch(r"price_[A-Za-z0-9_]+", (texto or "").strip()))
 
 
 def parece_plan_de_paypal(texto):

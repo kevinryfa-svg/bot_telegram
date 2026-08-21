@@ -215,3 +215,90 @@ def test_changing_the_price_canonicalises_the_stored_currency(catalogo):
 
     assert moneda == "EUR"
     assert float(importe) == 29.0
+
+
+# =========================
+# LO QUE NO PUEDE SER UN PRECIO
+# =========================
+# En producción, dentro del stripe_price_id de un plan activo había una
+# respuesta de soporte entera. Eso no es «un precio que quizá ya no existe»: es
+# algo que no ha cobrado nunca ni puede cobrar. Tratarlo como un precio válido
+# —y no tocarlo por prudencia— deja el plan anunciándose y sin poder cobrar.
+
+def test_a_price_id_that_cannot_be_one_is_replaced(catalogo):
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET stripe_price_id=%s, price_id=%s WHERE id=661",
+            ("Hola lorrrdd, gracias por tu mensaje.",) * 2
+        )
+
+    reparados = pps.reparar_precios_de_planes()
+
+    assert len(reparados) == 1
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("SELECT stripe_price_id, price_id FROM plans WHERE id=661")
+        stripe_price_id, price_id = cur.fetchone()
+
+    assert stripe_price_id == "price_creado_1"
+    assert price_id == "price_creado_1", (
+        "el identificador imposible estaba en los dos campos: dejar uno "
+        "apuntando a él mantiene el cobro roto"
+    )
+
+
+def test_a_real_price_is_still_never_replaced(catalogo):
+    """La regla de siempre: un precio de verdad no se toca aquí."""
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET stripe_price_id='price_1Real', "
+            "price_id='price_1Real' WHERE id=661"
+        )
+
+    assert pps.reparar_precios_de_planes() == []
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("SELECT stripe_price_id FROM plans WHERE id=661")
+        assert cur.fetchone()[0] == "price_1Real"
+
+    assert catalogo["creados"] == [], (
+        "reemplazarlo cambiaría lo que se cobra sin que nadie lo haya decidido"
+    )
+
+
+def test_the_startup_line_says_it_was_not_a_price(catalogo):
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET stripe_price_id='Hola, buenas tardes' WHERE id=661"
+        )
+
+    linea = pps.describe_price_repairs()
+
+    assert "no era un precio" in linea, (
+        "un plan que nunca tuvo precio y uno con basura dentro se arreglan "
+        "igual, pero se buscan en sitios distintos"
+    )
+
+
+def test_an_orphan_plan_is_explained_not_shrugged_at(catalogo):
+    """El motivo honesto delató un hueco real: el plan sin comunidad.
+
+    La consulta de vendibles hace JOIN con groups, así que un plan cuya
+    comunidad ya no existe desaparece de ella sin dejar rastro. En producción
+    salió con el motivo «ninguna razón conocida lo explica», que es justo lo que
+    ese texto existe para provocar: buscar en vez de inventarse una causa.
+    """
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO plans (id, group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active) VALUES "
+            "(662, 999999, 'Huérfano', 'price_x', 'price_x', 30, 5, 'EUR', TRUE)"
+        )
+
+    diagnostico = pps.diagnostico_de_plan(662)
+
+    assert diagnostico["vendible"] is False
+    assert "huérfano" in diagnostico["motivo"]
+    assert "999999" in diagnostico["motivo"]
