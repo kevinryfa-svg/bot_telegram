@@ -14,8 +14,10 @@ def offer(**kwargs):
 
 
 def test_defaults_are_conservative():
-    # Cada 3 días, con tope de mensajes y pausa entre envíos.
-    assert rs.REENGAGEMENT_INTERVAL_DAYS == 3
+    # Cada 7 días, con tope de mensajes y pausa entre envíos. Eran 3, y el dato
+    # que lo cambió: de 306 personas avisadas, 176 —el 58%— habían bloqueado el
+    # bot. Una audiencia quemada no se recupera.
+    assert rs.REENGAGEMENT_INTERVAL_DAYS >= 7
     assert rs.REENGAGEMENT_MAX_MESSAGES >= 1
     assert rs.REENGAGEMENT_BATCH_SIZE >= 1
     assert rs.REENGAGEMENT_SEND_DELAY_SECONDS > 0
@@ -319,3 +321,89 @@ def test_the_explanation_notices_the_recent_ones(clean_db, monkeypatch):
     monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "")
 
     assert "avisados hace menos de" in rs.explica_por_que_no_hay_nadie()
+
+
+# =========================
+# NO ESCRIBIR CUANDO NO SE PUEDE VENDER
+# =========================
+# El dato que ordenó todo esto: de 306 personas a las que este bot había
+# escrito, 176 —el 58%— habían bloqueado el bot. Durante meses la campaña
+# funcionó perfectamente mientras la tienda estaba rota: cada tres días,
+# repartiendo el daño en silencio. Quien bloquea no vuelve nunca.
+
+def test_nothing_is_sent_when_there_is_nothing_to_sell(monkeypatch):
+    monkeypatch.setattr(rs, "hay_algo_que_vender", lambda: False)
+
+    ok, motivo = rs.merece_la_pena_escribir()
+
+    assert ok is False
+    assert "nada que ofrecer" in motivo
+
+
+def test_nothing_is_sent_when_the_charge_is_broken(monkeypatch):
+    monkeypatch.setattr(rs, "hay_algo_que_vender", lambda: True)
+    monkeypatch.setattr(rs, "se_puede_cobrar_ahora", lambda: False)
+
+    ok, motivo = rs.merece_la_pena_escribir()
+
+    assert ok is False
+    assert "bloqueen el bot" in motivo
+
+
+def test_a_doubt_about_the_checkout_stops_the_batch(monkeypatch):
+    """El coste de callarse una tanda es cero; el de escribir con el cobro
+    roto es una audiencia bloqueada."""
+
+    import sale_readiness_service
+
+    def revienta(*a, **k):
+        raise RuntimeError("no se pudo comprobar")
+
+    monkeypatch.setattr(
+        sale_readiness_service, "check_checkout_endpoint", revienta
+    )
+
+    assert rs.se_puede_cobrar_ahora() is False
+
+
+def test_the_batch_stops_before_choosing_anyone(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(rs, "_logged_no_vale_la_pena", False)
+    monkeypatch.setattr(rs, "merece_la_pena_escribir", lambda: (False, "roto"))
+
+    def no_deberia_llamarse(*a, **k):
+        raise AssertionError("ni se mira a quién escribir si no se puede vender")
+
+    monkeypatch.setattr(rs, "fetch_reengagement_targets", no_deberia_llamarse)
+
+    class FakeContext:
+        bot = None
+
+    resumen = asyncio.run(rs.process_reengagement_batch(FakeContext()))
+
+    assert resumen["sent"] == 0
+
+
+def test_a_burned_audience_is_said_out_loud(clean_db, monkeypatch):
+    for user_id in (5701, 5702, 5703):
+        with clean_db.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO bot_user_events (user_id, event_type) "
+                "VALUES (%s, 'start')", (user_id,)
+            )
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO user_reengagement (user_id, sent_count, is_blocked) "
+            "VALUES (5701, 6, TRUE), (5702, 6, TRUE)"
+        )
+
+    monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "")
+
+    explicacion = rs.explica_por_que_no_hay_nadie()
+
+    assert "66% de la audiencia ha bloqueado el bot" in explicacion, (
+        "es el número que dice que el problema no es a quién se escribe esta "
+        "semana"
+    )

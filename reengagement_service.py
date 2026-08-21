@@ -20,8 +20,14 @@ from audit_log_service import log_event
 #   - Envíos en tandas con pausa entre mensajes (límites de Telegram).
 #   - Nunca se envía a admins, propietarios ni usuarios baneados.
 
+# Cada 7 días, no cada 3. El dato que lo cambió: de 306 personas a las que este
+# bot había escrito, 176 —el 58%— habían bloqueado el bot. Seis mensajes en
+# dieciocho días a alguien que no compró, y encima durante meses en los que el
+# botón de pagar estaba roto, es exactamente la receta para que te bloqueen.
+# Una audiencia quemada no se recupera: cada bloqueo es una persona que ya no
+# puede recibir nada nunca más.
 REENGAGEMENT_INTERVAL_DAYS = int(
-    os.environ.get("REENGAGEMENT_INTERVAL_DAYS", "3")
+    os.environ.get("REENGAGEMENT_INTERVAL_DAYS", "7")
 )
 
 REENGAGEMENT_MAX_MESSAGES = int(
@@ -82,6 +88,60 @@ def hay_algo_que_vender():
         print("Reenganche: no se pudo mirar el escaparate:", str(e)[:160])
 
         return False
+
+
+def se_puede_cobrar_ahora():
+    """¿El servidor que crea los cobros contesta? Una petición, no más.
+
+    Va aquí y no solo en el arranque porque de esto depende si tiene sentido
+    escribir a nadie: durante meses este bot escribió cada tres días a gente que,
+    al pulsar comprar, se encontraba «No he podido abrir la pasarela de pago».
+    De 306 personas avisadas, 176 acabaron bloqueando el bot.
+    """
+
+    try:
+
+        from sale_readiness_service import check_checkout_endpoint
+
+        ok, _detalle = check_checkout_endpoint()
+
+        return bool(ok)
+
+    except Exception as e:
+
+        print("Reenganche: no se pudo comprobar el cobro:", str(e)[:160])
+
+        # Ante la duda NO se escribe: el coste de callarse una tanda es cero, y
+        # el de escribir con el cobro roto es una audiencia bloqueada.
+        return False
+
+
+def merece_la_pena_escribir():
+    """(ok, motivo). Las dos condiciones para molestar a alguien hoy.
+
+    Un aviso comercial solo se justifica si al otro lado hay algo que se puede
+    comprar de verdad. Sin esto, la campaña seguía funcionando perfectamente
+    mientras la tienda estaba rota: repartía el daño en silencio, tres días tras
+    tres días.
+    """
+
+    if not hay_algo_que_vender():
+
+        return (
+            False,
+            "no hay ni una comunidad vendible: escribir sin nada que ofrecer "
+            "solo gasta la paciencia de la gente"
+        )
+
+    if not se_puede_cobrar_ahora():
+
+        return (
+            False,
+            "el servidor de cobro no contesta: quien pulse comprar se llevará "
+            "un error, y eso es lo que hace que bloqueen el bot"
+        )
+
+    return (True, "")
 
 
 def relanzamiento_activo():
@@ -213,6 +273,17 @@ def explica_por_que_no_hay_nadie():
 
     partes = [f"{total} candidatos"]
 
+    # El número que más importa de todos: quien bloquea el bot no vuelve. Si es
+    # una parte grande de la audiencia, el problema no es a quién se escribe
+    # esta semana, es que se ha escrito demasiado y sin nada que vender.
+    if total and bloqueados * 100 >= total * 30:
+
+        partes.append(
+            f"⚠️ {bloqueados * 100 // total}% de la audiencia ha bloqueado el "
+            "bot: se ha escrito demasiado, o se escribió cuando no se podía "
+            "comprar"
+        )
+
     if de_baja:
         partes.append(f"{de_baja} se dieron de baja")
 
@@ -284,6 +355,9 @@ def fetch_reengagement_targets(limit=None):
 
 
 _logged_empty_run = False
+
+# Una vez por proceso, igual que el anterior: el motivo no cambia entre pasadas.
+_logged_no_vale_la_pena = False
 
 
 def count_reengagement_candidates():
@@ -916,6 +990,32 @@ async def process_reengagement_batch(context):
         return summary
 
 
+    # Antes de mirar a quién escribir: ¿hay algo que ofrecerle y se le puede
+    # cobrar? Si no, esta tanda no sale. Es la lección más cara de todo esto.
+    ok_para_escribir, motivo = merece_la_pena_escribir()
+
+    if not ok_para_escribir:
+
+        global _logged_no_vale_la_pena
+
+        if not _logged_no_vale_la_pena:
+
+            _logged_no_vale_la_pena = True
+
+            print("Reenganche: no se escribe a nadie —", motivo)
+
+            log_event(
+                "reengagement_paused",
+                category="marketing",
+                severity="warning",
+                scope="global",
+                message="Campaña de reenganche detenida: no hay nada vendible.",
+                metadata={"motivo": motivo},
+            )
+
+        return summary
+
+
     try:
 
         targets = fetch_reengagement_targets()
@@ -1032,6 +1132,11 @@ async def process_reengagement_batch(context):
         f"{summary['sent']} enviados,",
         f"{summary['blocked']} bloqueados,",
         f"{summary['failed']} fallidos"
+        # Los del relanzamiento aparte: son gente a la que se le había dejado
+        # de escribir, y saber cuántos han vuelto a recibir algo es el único
+        # número que dice si esa excepción sirvió para algo.
+        + (f", de ellos {summary['relanzados']} del relanzamiento"
+           if summary.get("relanzados") else "")
     )
 
     if summary["sent"] or summary["blocked"] or summary["failed"]:
