@@ -1559,6 +1559,10 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
                                   callback_data="owner_panel_funnel")],
             [InlineKeyboardButton("🚦 ¿Puedo vender?",
                                   callback_data="owner_panel_ready")],
+            # El embudo que empieza en cero no es un problema de precio ni de
+            # cobro: no ha mirado nadie. La salida de ese cero está aquí.
+            [InlineKeyboardButton("📣 Traer compradores",
+                                  callback_data="owner_panel_share")],
             [InlineKeyboardButton("💰 Panel de ingresos",
                                   callback_data="owner_panel_revenue")],
         ]
@@ -1604,6 +1608,10 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
         teclado = [
             [InlineKeyboardButton("🔄 Comprobar otra vez",
                                   callback_data="owner_panel_ready")],
+            # Estar listo para vender y vender no son lo mismo: de aquí sale la
+            # única pregunta que esta pantalla no responde, que es quién viene.
+            [InlineKeyboardButton("📣 Traer compradores",
+                                  callback_data="owner_panel_share")],
             [InlineKeyboardButton("💰 Panel de ingresos",
                                   callback_data="owner_panel_revenue")],
         ]
@@ -1613,6 +1621,52 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
             context,
             query.message.chat_id,
             build_readiness_text(group_id, group_name),
+            reply_markup=InlineKeyboardMarkup(teclado)
+        )
+
+        return
+
+
+    if data == "owner_panel_share":
+
+        from owner_launch_kit_service import build_launch_kit_text
+
+        # Los mismos permisos que el resto del panel de negocio: quien puede
+        # ver por qué no hay ingresos puede llevarse el material para que los
+        # haya.
+        group_id = get_selected_group_for_permissions(
+            context,
+            user_id,
+            ["can_manage_plans", "can_manage_groups", "can_view_payments", "can_manage_payments"]
+        )
+
+
+        if not group_id:
+
+            await query.message.reply_text(
+                "⚠️ No he podido saber sobre qué comunidad quieres actuar.\n\n"
+                "Ábrela primero en «🏪 Mis comunidades» y repite la acción.",
+                reply_markup=build_owner_panel_nav_keyboard()
+            )
+
+            return
+
+
+        info = fetch_group_basic_info(group_id)
+        group_name = (info[1] if info else None) or f"Comunidad {group_id}"
+
+        teclado = [
+            [InlineKeyboardButton("🚦 ¿Puedo vender?",
+                                  callback_data="owner_panel_ready")],
+            [InlineKeyboardButton("📊 ¿Cuánta gente mira?",
+                                  callback_data="owner_panel_funnel")],
+        ]
+        teclado.extend(build_owner_panel_nav_keyboard().inline_keyboard)
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_launch_kit_text(group_id, group_name),
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
