@@ -4715,6 +4715,11 @@ def create_tables():
 
             last_error TEXT,
 
+            -- Qué relanzamiento se le ha contado ya a esta persona. Sirve para
+            -- que un aviso extra por un cambio real del producto sea UNO, y no
+            -- una forma de saltarse el tope de avisos.
+            relaunch_key TEXT,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -4722,6 +4727,21 @@ def create_tables():
         );
 
         """)
+
+        try:
+
+            # La tabla ya existe en producción: la columna hay que añadirla.
+            cur.execute("""
+
+                ALTER TABLE user_reengagement
+                ADD COLUMN IF NOT EXISTS relaunch_key TEXT
+
+            """)
+
+        except Exception:
+
+            pass
+
 
         try:
 

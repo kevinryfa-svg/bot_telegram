@@ -124,3 +124,162 @@ def test_blocked_error_detection():
     assert rs.is_blocked_error("user is deactivated") is True
     assert rs.is_blocked_error("Timed out") is False
     assert rs.is_blocked_error(None) is False
+
+
+# =========================
+# EL RELANZAMIENTO: UN AVISO MÁS, Y UNO SOLO
+# =========================
+# Las 297 personas que gastaron el tope de avisos lo gastaron cuando esto NO
+# PODÍA COBRAR: el único plan a la venta se pagaba por un método deshabilitado,
+# sin identificador de precio y con la moneda escrita como Stripe no acepta. Su
+# «no» fue a una tienda rota. Eso justifica UN aviso más — y las tres
+# condiciones que lo impiden convertirse en spam.
+
+def test_without_the_key_there_is_no_relaunch(monkeypatch):
+    monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "")
+    monkeypatch.setattr(rs, "hay_algo_que_vender", lambda: True)
+
+    assert rs.relanzamiento_activo() is False, (
+        "el estado normal es no relanzar nada"
+    )
+
+
+def test_with_nothing_to_sell_there_is_no_relaunch(monkeypatch):
+    """«Ya funciona» con el escaparate vacío es el último mensaje que abre."""
+
+    monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "tienda-arreglada")
+    monkeypatch.setattr(rs, "hay_algo_que_vender", lambda: False)
+
+    assert rs.relanzamiento_activo() is False
+
+
+def test_a_shop_window_error_does_not_announce_anything(monkeypatch):
+    def revienta(*a, **k):
+        raise RuntimeError("la base no contesta")
+
+    import start_offer_service
+
+    monkeypatch.setattr(
+        start_offer_service, "fetch_sellable_communities", revienta
+    )
+
+    assert rs.hay_algo_que_vender() is False, (
+        "ante la duda no se escribe: un error de lectura no es una tienda llena"
+    )
+
+
+def test_the_relaunch_message_starts_by_admitting_it_was_broken():
+    texto = rs.build_relaunch_text(offer(total=1, cheapest_amount=29,
+                                         cheapest_currency="EUR"))
+
+    assert "no funcionaba" in texto or "estaba roto" in texto, (
+        "es lo único que justifica un séptimo mensaje: que algo cambió"
+    )
+    assert "No quiero más avisos" in texto, (
+        "y la salida, dicha en el propio texto"
+    )
+
+
+def test_the_relaunch_message_is_not_the_same_old_one():
+    normal = rs.build_reengagement_text(offer(total=1), variant=0)
+    relanzamiento = rs.build_reengagement_text(offer(total=1), relanzamiento=True)
+
+    assert relanzamiento != normal
+
+
+def _persona_que_gasto_el_tope(db, user_id=5501, relaunch_key=None):
+    with db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO bot_user_events (user_id, event_type) VALUES (%s, %s)",
+            (user_id, "start")
+        )
+        cur.execute(
+            "INSERT INTO user_reengagement (user_id, sent_count, last_sent_at, "
+            "relaunch_key) VALUES (%s, %s, NOW() - INTERVAL '60 days', %s)",
+            (user_id, rs.REENGAGEMENT_MAX_MESSAGES, relaunch_key)
+        )
+
+
+def test_the_relaunch_reaches_someone_who_had_run_out_of_notices(clean_db,
+                                                                 monkeypatch):
+    _persona_que_gasto_el_tope(clean_db)
+
+    monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "tienda-arreglada")
+    monkeypatch.setattr(rs, "hay_algo_que_vender", lambda: True)
+
+    assert 5501 in [u for u, _ in rs.fetch_reengagement_targets()]
+
+
+def test_nobody_gets_the_same_relaunch_twice(clean_db, monkeypatch):
+    """Con la clave anotada ya no vuelve a entrar: es una excepción, no un
+    grifo abierto."""
+
+    _persona_que_gasto_el_tope(clean_db, relaunch_key="tienda-arreglada")
+
+    monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "tienda-arreglada")
+    monkeypatch.setattr(rs, "hay_algo_que_vender", lambda: True)
+
+    assert 5501 not in [u for u, _ in rs.fetch_reengagement_targets()]
+
+
+def test_the_cap_still_holds_when_there_is_no_relaunch(clean_db, monkeypatch):
+    _persona_que_gasto_el_tope(clean_db)
+
+    monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "")
+
+    assert 5501 not in [u for u, _ in rs.fetch_reengagement_targets()]
+
+
+def test_someone_who_said_no_is_never_relaunched(clean_db, monkeypatch):
+    """El «no» de una persona vale más que cualquier relanzamiento."""
+
+    _persona_que_gasto_el_tope(clean_db)
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE user_reengagement SET opted_out=TRUE WHERE user_id=5501"
+        )
+
+    monkeypatch.setattr(rs, "REENGAGEMENT_RELAUNCH_KEY", "tienda-arreglada")
+    monkeypatch.setattr(rs, "hay_algo_que_vender", lambda: True)
+
+    assert 5501 not in [u for u, _ in rs.fetch_reengagement_targets()]
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE user_reengagement SET opted_out=FALSE, is_blocked=TRUE "
+            "WHERE user_id=5501"
+        )
+
+    assert 5501 not in [u for u, _ in rs.fetch_reengagement_targets()], (
+        "quien bloqueó el bot tampoco: escribirle es pedir una denuncia"
+    )
+
+
+def test_marking_the_relaunch_is_what_closes_the_door(clean_db):
+    _persona_que_gasto_el_tope(clean_db)
+
+    rs.mark_reengagement_sent(5501, relaunch_key="tienda-arreglada")
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "SELECT relaunch_key, sent_count FROM user_reengagement "
+            "WHERE user_id=5501"
+        )
+        clave, enviados = cur.fetchone()
+
+    assert clave == "tienda-arreglada"
+    assert enviados == rs.REENGAGEMENT_MAX_MESSAGES + 1
+
+
+def test_a_normal_send_does_not_erase_a_relaunch_already_noted(clean_db):
+    _persona_que_gasto_el_tope(clean_db, relaunch_key="tienda-arreglada")
+
+    rs.mark_reengagement_sent(5501)
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute("SELECT relaunch_key FROM user_reengagement WHERE user_id=5501")
+        assert cur.fetchone()[0] == "tienda-arreglada", (
+            "borrarla dejaría a esa persona lista para recibir otra vez el "
+            "mismo relanzamiento"
+        )

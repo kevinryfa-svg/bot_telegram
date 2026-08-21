@@ -42,6 +42,54 @@ REENGAGEMENT_ENABLED = os.environ.get(
 ).strip().lower() not in ("0", "false", "no", "off")
 
 
+# =========================
+# EL RELANZAMIENTO: UN AVISO MÁS, Y UNO SOLO
+# =========================
+# Las personas que gastaron el tope de avisos lo gastaron cuando esto NO PODÍA
+# COBRAR: el único plan a la venta se pagaba por un método deshabilitado, sin
+# identificador de precio y con la moneda escrita de una forma que Stripe
+# rechaza. Su «no» fue a una tienda rota, no a esta.
+#
+# Eso justifica UN aviso más, y solo uno, con estas tres condiciones:
+#
+#   HAY QUE TENER ALGO   Si el escaparate está vacío no se manda nada. Escribir
+#                        «ya funciona» sin nada que vender es la última vez que
+#                        alguien abre un mensaje de este bot.
+#
+#   UNO POR CLAVE        Cada relanzamiento tiene un nombre y se anota en la
+#                        persona. Con el nombre anotado ya no vuelve a entrar:
+#                        esto no es una forma de saltarse el tope, es una
+#                        excepción con nombre y fecha.
+#
+#   SE SIGUE RESPETANDO  Quien se dio de baja, bloqueó el bot o está baneado no
+#   EL «NO»              recibe nada, igual que siempre.
+REENGAGEMENT_RELAUNCH_KEY = (
+    os.environ.get("REENGAGEMENT_RELAUNCH_KEY") or ""
+).strip()
+
+
+def hay_algo_que_vender():
+    """¿El escaparate tiene algo? Sin esto no se relanza nada."""
+
+    try:
+
+        from start_offer_service import fetch_sellable_communities
+
+        return bool(fetch_sellable_communities(0, limit=1))
+
+    except Exception as e:
+
+        print("Reenganche: no se pudo mirar el escaparate:", str(e)[:160])
+
+        return False
+
+
+def relanzamiento_activo():
+    """Hay clave de relanzamiento Y hay algo que vender."""
+
+    return bool(REENGAGEMENT_RELAUNCH_KEY) and hay_algo_que_vender()
+
+
 CALLBACK_REENGAGEMENT_STOP = "reengagement_stop"
 
 
@@ -58,6 +106,12 @@ def fetch_reengagement_targets(limit=None):
     """
 
     limit = int(limit or REENGAGEMENT_BATCH_SIZE)
+
+    # Se resuelve UNA vez por tanda: mirar el escaparate por persona sería la
+    # misma respuesta repetida cientos de veces.
+    clave_de_relanzamiento = (
+        REENGAGEMENT_RELAUNCH_KEY if relanzamiento_activo() else ""
+    )
 
     with conn.cursor() as cur:
 
@@ -122,7 +176,18 @@ def fetch_reengagement_targets(limit=None):
 
               AND COALESCE(r.opted_out, FALSE) = FALSE
               AND COALESCE(r.is_blocked, FALSE) = FALSE
-              AND COALESCE(r.sent_count, 0) < %s
+
+              -- El tope de siempre, más la excepción con nombre: quien lo
+              -- gastó cuando esto no podía cobrar entra UNA vez, y al anotarle
+              -- la clave deja de entrar.
+              AND (
+                  COALESCE(r.sent_count, 0) < %s
+                  OR (
+                      %s <> ''
+                      AND COALESCE(r.relaunch_key, '') <> %s
+                  )
+              )
+
               AND (
                   r.last_sent_at IS NULL
                   OR r.last_sent_at < NOW() - (%s || ' days')::interval
@@ -134,6 +199,8 @@ def fetch_reengagement_targets(limit=None):
         """, (
             int(ADMIN_ID),
             REENGAGEMENT_MAX_MESSAGES,
+            clave_de_relanzamiento,
+            clave_de_relanzamiento,
             REENGAGEMENT_INTERVAL_DAYS,
             limit
         ))
@@ -234,22 +301,30 @@ def count_reengagement_pending():
 # ESTADO POR USUARIO
 # =========================
 
-def mark_reengagement_sent(user_id):
+def mark_reengagement_sent(user_id, relaunch_key=None):
+    """Anota el envío. Con clave de relanzamiento, la deja anotada.
+
+    Anotarla es lo que convierte el relanzamiento en UNO: con la clave puesta,
+    esa persona ya no vuelve a entrar por esa excepción.
+    """
+
+    clave = (relaunch_key or "").strip() or None
 
     with conn.cursor() as cur:
 
         cur.execute("""
 
             INSERT INTO user_reengagement
-                (user_id, sent_count, last_sent_at, updated_at)
-            VALUES (%s, 1, NOW(), NOW())
+                (user_id, sent_count, last_sent_at, relaunch_key, updated_at)
+            VALUES (%s, 1, NOW(), %s, NOW())
             ON CONFLICT (user_id) DO UPDATE SET
                 sent_count = COALESCE(user_reengagement.sent_count, 0) + 1,
                 last_sent_at = NOW(),
+                relaunch_key = COALESCE(%s, user_reengagement.relaunch_key),
                 last_error = NULL,
                 updated_at = NOW()
 
-        """, (user_id,))
+        """, (user_id, clave, clave))
 
 
 def mark_reengagement_blocked(user_id, error_text=None):
@@ -498,7 +573,49 @@ def describe_examples(offer, max_items=3):
     return lines
 
 
-def build_reengagement_text(offer=None, variant=0, con_ofertas=False):
+def build_relaunch_text(offer=None):
+    """El aviso extra: empieza reconociendo lo que pasó.
+
+    A esta persona ya se le escribieron seis veces cuando el bot no podía
+    cobrar. Volver con el mismo «✨ esto es lo que puedes conseguir» sería el
+    séptimo mensaje idéntico. Lo único que justifica escribir otra vez es que
+    algo cambió de verdad, así que eso es lo que dice, en ese orden y sin
+    adornos.
+    """
+
+    offer = offer or fetch_offer_snapshot()
+
+    lineas = [
+        "🔧 Te escribí hace tiempo y no funcionaba",
+        "",
+        "Siendo sincero: cuando te avisé, el botón de pagar de este bot "
+        "estaba roto. Quien lo intentaba se encontraba un error.",
+        "",
+        "Ya está arreglado y comprobado.",
+        "",
+        describe_catalog(offer),
+    ]
+
+    ejemplos = describe_examples(offer)
+
+    if ejemplos:
+
+        lineas.append("")
+        lineas.extend(ejemplos)
+
+    lineas += [
+        "",
+        "Pagas con tarjeta y el enlace de entrada te llega al momento.",
+        "",
+        "Si no te interesa, pulsa «No quiero más avisos» aquí abajo y no "
+        "vuelvo a escribirte.",
+    ]
+
+    return "\n".join(lineas)
+
+
+def build_reengagement_text(offer=None, variant=0, con_ofertas=False,
+                            relanzamiento=False):
     """
     Texto del aviso. Rota entre variantes según cuántos avisos ha recibido ya
     la persona: repetir seis veces el mismo mensaje quema al usuario y hace que
@@ -507,6 +624,10 @@ def build_reengagement_text(offer=None, variant=0, con_ofertas=False):
     """
 
     offer = offer or fetch_offer_snapshot()
+
+    if relanzamiento:
+        return build_relaunch_text(offer)
+
     variant = int(variant or 0) % 4
 
     catalog = describe_catalog(offer)
@@ -817,7 +938,16 @@ async def process_reengagement_batch(context):
 
     texts_by_variant = {}
 
+    clave_de_relanzamiento = (
+        REENGAGEMENT_RELAUNCH_KEY if relanzamiento_activo() else ""
+    )
+
     for user_id, already_sent in targets:
+
+        # Quien ya gastó el tope solo puede estar aquí por el relanzamiento.
+        es_relanzamiento = bool(clave_de_relanzamiento) and (
+            int(already_sent or 0) >= REENGAGEMENT_MAX_MESSAGES
+        )
 
         # La oferta se lee POR PERSONA, no una vez para toda la tanda: excluye
         # las comunidades en las que ya está dentro, así que una lista
@@ -830,12 +960,13 @@ async def process_reengagement_batch(context):
 
         # La clave lleva el flag porque el texto CIERRA distinto según lo que
         # tenga debajo: con botones de compra no se le manda a mirar nada.
-        clave = (variant, bool(ofertas))
+        clave = (variant, bool(ofertas), es_relanzamiento)
 
         if clave not in texts_by_variant:
 
             texts_by_variant[clave] = build_reengagement_text(
-                offer, variant, con_ofertas=bool(ofertas)
+                offer, variant, con_ofertas=bool(ofertas),
+                relanzamiento=es_relanzamiento
             )
 
 
@@ -848,8 +979,15 @@ async def process_reengagement_batch(context):
                 reply_markup=keyboard
             )
 
-            mark_reengagement_sent(user_id)
+            mark_reengagement_sent(
+                user_id,
+                relaunch_key=clave_de_relanzamiento if es_relanzamiento else None
+            )
+
             summary["sent"] += 1
+
+            if es_relanzamiento:
+                summary["relanzados"] = summary.get("relanzados", 0) + 1
 
         except Exception as e:
 
