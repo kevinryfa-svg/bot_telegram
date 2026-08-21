@@ -226,3 +226,58 @@ def test_robots_says_where_the_sitemap_is(catalogo):
     cuerpo = pcp.build_robots_txt("https://ejemplo.test/")
 
     assert "Sitemap: https://ejemplo.test/sitemap.xml" in cuerpo
+
+
+# =========================
+# LA OTRA MITAD DEL NEGOCIO
+# =========================
+# Esta página vendía una sola cosa: entrar en las comunidades de otros. Pero
+# quien la encuentra en un buscador puede ser justo la persona que tiene un
+# canal privado y no sabe cómo cobrar por él — y esa persona vale más, porque
+# paga por publicar y se queda. Hasta ahora solo se le hablaba cuando el
+# catálogo estaba VACÍO, que es la única vez que no había nada más que
+# enseñarle.
+
+def test_the_page_also_speaks_to_whoever_has_a_community(catalogo):
+    html_page = pcp.build_public_catalog_html(base_url="https://bot.ejemplo")
+
+    assert "¿Tienes tú una comunidad privada?" in html_page
+    assert html_page.count("Publicar mi comunidad") >= 1, (
+        "con catálogo lleno esta llamada no existía"
+    )
+
+
+def test_the_publishing_price_is_the_one_that_will_be_charged(catalogo):
+    """La web no puede anunciar un precio que la pantalla de pago desmienta."""
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute("DELETE FROM commercial_plans")
+        cur.execute(
+            "INSERT INTO commercial_plans (id, product_type, name, "
+            "duration_days, amount, currency, is_active) VALUES "
+            "(801, 'shared_bot_space', '1 mes', 30, 1999, 'EUR', TRUE), "
+            "(802, 'shared_bot_space', '1 año', 365, 17999, 'EUR', TRUE)"
+        )
+
+    html_page = pcp.build_public_catalog_html(base_url="https://bot.ejemplo")
+
+    assert "19,99 EUR al mes" in html_page, (
+        "el más barato por importe, y el importe va en céntimos en esa tabla"
+    )
+    assert "179,99" not in html_page, "«desde» es el más barato, no cualquiera"
+
+
+def test_without_a_purchasable_plan_nothing_is_promised(catalogo):
+    """Sin plan cobrable no se puede publicar: no se anuncia un precio."""
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute("DELETE FROM commercial_plans")
+
+    html_page = pcp.build_public_catalog_html(base_url="https://bot.ejemplo")
+
+    assert "desde" not in html_page.lower().split("¿tienes tú")[-1], (
+        "un «desde» sin precio detrás es pedirle al lector que adivine"
+    )
+    assert "¿Tienes tú una comunidad privada?" in html_page, (
+        "la invitación sigue teniendo sentido: se habla con el bot"
+    )
