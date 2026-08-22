@@ -281,3 +281,46 @@ def test_without_a_purchasable_plan_nothing_is_promised(catalogo):
     assert "¿Tienes tú una comunidad privada?" in html_page, (
         "la invitación sigue teniendo sentido: se habla con el bot"
     )
+
+
+def test_the_page_shows_the_discount_and_the_countdown(catalogo, monkeypatch):
+    """Un precio rebajado sin decir que está rebajado es solo un precio."""
+
+    creados = []
+
+    def falso_precio(name, amount_major, currency, metadata=None,
+                     recurring_interval_days=None):
+        creados.append(name)
+        return ("prod_x", "price_oferta_web")
+
+    import stripe_catalog
+    import weekly_offer_service as ofs
+
+    monkeypatch.setattr(
+        stripe_catalog, "create_stripe_product_and_price", falso_precio
+    )
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET duration_days=7, amount=9 "
+            "WHERE id = (SELECT MIN(id) FROM plans)"
+        )
+        cur.execute("SELECT MIN(id), group_id FROM plans GROUP BY group_id "
+                    "ORDER BY 1 LIMIT 1")
+        plan_id, group_id = cur.fetchone()
+
+    plan = [p for p in ofs.planes_ofertables(group_id) if p["id"] == plan_id][0]
+
+    ofs.crear_oferta(plan, percent=60, dias=5)
+
+    html_page = pcp.build_public_catalog_html(base_url="https://bot.ejemplo")
+
+    assert "-60%" in html_page
+    assert "quedan" in html_page or "ÚLTIMO DÍA" in html_page
+    assert "3,60 EUR" in html_page, "y el precio ya rebajado, con sus céntimos"
+
+
+def test_without_an_offer_there_is_no_badge(catalogo):
+    html_page = pcp.build_public_catalog_html(base_url="https://bot.ejemplo")
+
+    assert "rebaja" not in html_page or "-60%" not in html_page
