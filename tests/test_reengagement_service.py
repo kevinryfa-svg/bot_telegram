@@ -25,7 +25,10 @@ def test_defaults_are_conservative():
 
 def test_format_price_trims_decimals_and_uses_comma():
     assert rs.format_price(9, "EUR") == "9 EUR"
-    assert rs.format_price(9.5, "EUR") == "9,5 EUR"
+    # Los céntimos, con sus dos cifras: es la MISMA definición que usan el
+    # escaparate y la web. Tres maneras de escribir un euro es como se acaba
+    # anunciando «3,6 EUR» en un aviso y «3,60 EUR» en la tienda.
+    assert rs.format_price(9.5, "EUR") == "9,50 EUR"
     assert rs.format_price(15.00, "USD") == "15 USD"
     assert rs.format_price(None, "EUR") is None
     assert rs.format_price("no-numero", "EUR") is None

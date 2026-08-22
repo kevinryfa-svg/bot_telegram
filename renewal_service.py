@@ -138,7 +138,15 @@ def renewal_is_really_active(user_id, group_id):
 # =========================
 
 def fetch_group_entry_price(group_id):
-    """Precio activo más bajo del grupo, para poder decir cuánto cuesta."""
+    """Precio activo más bajo del grupo, para poder decir cuánto cuesta.
+
+    Con el importe VIGENTE: si hay una oferta viva, es ese. Todo lo que este
+    bot le escribe a alguien —el carrito abandonado, el aviso al interesado, el
+    de renovación— pasa por aquí, y decir 9 EUR mientras la tienda vende a 3,60
+    es perder la venta y quedar mal a la vez.
+    """
+
+    from weekly_offer_service import sql_importe_vigente
 
     try:
 
@@ -146,14 +154,14 @@ def fetch_group_entry_price(group_id):
 
             cur.execute("""
 
-                SELECT amount,
-                       COALESCE(NULLIF(currency, ''), 'EUR')
-                FROM plans
-                WHERE group_id=%s
-                  AND COALESCE(is_active, TRUE)=TRUE
-                  AND amount IS NOT NULL
-                  AND amount > 0
-                ORDER BY amount ASC
+                SELECT """ + sql_importe_vigente("p") + """,
+                       COALESCE(NULLIF(p.currency, ''), 'EUR')
+                FROM plans p
+                WHERE p.group_id=%s
+                  AND COALESCE(p.is_active, TRUE)=TRUE
+                  AND p.amount IS NOT NULL
+                  AND p.amount > 0
+                ORDER BY 1 ASC
                 LIMIT 1
 
             """, (group_id,))

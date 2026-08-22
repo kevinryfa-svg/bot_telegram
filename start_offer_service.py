@@ -544,22 +544,12 @@ def frase_de_oferta(oferta):
     if oferta.get("oferta_antes"):
         partes.append(f"(antes {oferta['oferta_antes']})")
 
-    termina = oferta.get("oferta_termina")
+    from weekly_offer_service import frase_cuenta_atras
 
-    if termina:
+    cuenta = frase_cuenta_atras(oferta.get("oferta_termina"))
 
-        from datetime import datetime
-
-        dias = (termina - datetime.now()).days
-
-        if dias <= 0:
-            partes.append("· ÚLTIMO DÍA")
-
-        elif dias == 1:
-            partes.append("· queda 1 día")
-
-        else:
-            partes.append(f"· quedan {dias} días")
+    if cuenta:
+        partes.append(f"· {cuenta}")
 
     return " ".join(partes)
 

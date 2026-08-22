@@ -127,18 +127,12 @@ def _insignia_de_oferta(oferta):
             f'<span class="antes">{html.escape(oferta["oferta_antes"])}</span>'
         )
 
-    termina = oferta.get("oferta_termina")
+    from weekly_offer_service import frase_cuenta_atras
 
-    if termina:
+    cuenta = frase_cuenta_atras(oferta.get("oferta_termina"))
 
-        from datetime import datetime
-
-        dias = (termina - datetime.now()).days
-
-        trozos.append(
-            "ÚLTIMO DÍA" if dias <= 0
-            else ("queda 1 día" if dias == 1 else f"quedan {dias} días")
-        )
+    if cuenta:
+        trozos.append(html.escape(cuenta))
 
     return '<p class="rebaja">' + " · ".join(trozos) + "</p>"
 

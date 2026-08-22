@@ -537,3 +537,78 @@ def test_an_index_that_changed_shape_really_gets_replaced(db_module):
     assert fila is not None, "el índice nuevo no llegó a crearse"
     assert "user_id" in fila[0], "y tiene que incluir a la persona"
     assert viejo is None, "el viejo se queda y vuelve a haber dos reglas"
+
+
+# =========================
+# LA CUENTA ATRÁS, UNA SOLA
+# =========================
+# La dicen tres pantallas —el bot, la web y los avisos— y tres relojes distintos
+# acaban dando tres cuentas distintas de la misma oferta.
+
+def test_the_countdown_rounds_up_instead_of_eating_a_day():
+    from datetime import datetime, timedelta
+
+    ahora = datetime(2026, 8, 22, 12, 0)
+
+    # Restar dos fechas y quedarse con .days trunca: a una oferta que termina
+    # dentro de 2 días y 23 horas le quedan 3 para cualquiera que lo lea.
+    assert ofs.frase_cuenta_atras(
+        ahora + timedelta(days=2, hours=23), ahora
+    ) == "quedan 3 días"
+
+    assert ofs.frase_cuenta_atras(
+        ahora + timedelta(days=1, hours=1), ahora
+    ) == "quedan 2 días"
+
+    assert ofs.frase_cuenta_atras(ahora + timedelta(hours=20), ahora) == "ÚLTIMO DÍA"
+    assert ofs.frase_cuenta_atras(ahora + timedelta(minutes=5), ahora) == "ÚLTIMO DÍA"
+    assert ofs.frase_cuenta_atras(None) is None
+
+
+def test_the_three_screens_say_the_same_thing():
+    """Bot, web y avisos: la misma frase para la misma oferta."""
+
+    from datetime import datetime, timedelta
+
+    import public_catalog_page as pcp
+    import reengagement_service as rs
+    import start_offer_service as sos
+
+    termina = datetime.now() + timedelta(days=2, hours=23)
+
+    oferta = {
+        "oferta_percent": 60, "oferta_antes": "9 EUR", "oferta_termina": termina,
+        "precio": "3,60 EUR/semana", "nombre": "StarsVip",
+    }
+
+    en_el_bot = sos.frase_de_oferta(oferta)
+    en_la_web = pcp._insignia_de_oferta(oferta)
+    en_el_aviso = rs.cabecera_de_oferta(
+        {"offer_percent": 60, "offer_ends_at": termina}
+    )
+
+    for texto in (en_el_bot, en_la_web, en_el_aviso):
+        assert "-60%" in texto
+        assert "quedan 3 días" in texto
+
+
+def test_every_message_quotes_the_price_the_shop_charges(catalogo):
+    """El carrito abandonado, el aviso al interesado y el de renovación pasan
+    todos por el mismo lector de precio. Decir 9 EUR mientras la tienda vende a
+    3,60 pierde la venta y queda mal a la vez."""
+
+    import renewal_service as rs
+
+    antes = rs.fetch_group_entry_price(31)
+
+    assert float(antes[0]) == pytest.approx(10), "la semana, a tarifa"
+
+    plan = [p for p in ofs.planes_ofertables(31) if p["id"] == 311][0]
+
+    ofs.crear_oferta(plan, percent=60)
+
+    despues = rs.fetch_group_entry_price(31)
+
+    assert float(despues[0]) == pytest.approx(4.00), (
+        "con la oferta viva, el precio que se escribe es el de la oferta"
+    )
