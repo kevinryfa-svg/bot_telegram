@@ -55,6 +55,41 @@ from payment_providers.guardarian_provider import (
 )
 
 
+def _texto_de_confianza(group_id):
+    """La línea que va junto al botón de pagar. Solo hechos comprobables.
+
+    Es el último sitio donde se puede evitar un abandono, y el más barato: dice
+    a qué comunidad se entra y qué pasa justo después de pagar. Nada de
+    promesas sobre el contenido, que no lo conoce este código.
+    """
+
+    nombre = None
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT NULLIF(name, '') FROM groups WHERE id = %s",
+                (group_id,),
+            )
+
+            fila = cur.fetchone()
+
+            nombre = fila[0] if fila else None
+
+    except Exception as e:
+
+        print("Cobro: no se pudo leer el nombre de la comunidad:", str(e)[:160])
+
+    entrada = f"Acceso a {nombre}." if nombre else "Acceso a la comunidad."
+
+    return (
+        f"{entrada} Al confirmarse el pago recibes tu enlace de entrada en "
+        "Telegram, automáticamente y solo para ti."
+    )
+
+
 def _webhook_shared_secret_ok(env_var_name):
     """
     Verificación opcional de webhooks por token compartido.
@@ -325,7 +360,21 @@ def register_checkout_routes(app):
                 success_url=f"https://t.me/TheStarVipBOT?start=pagado_{group_id}",
                 cancel_url=f"https://t.me/TheStarVipBOT?start=cancelado_{group_id}",
 
-                metadata=metadata_session
+                metadata=metadata_session,
+
+                # QUÉ ESTÁ COMPRANDO, DICHO EN LA PROPIA PÁGINA DE PAGO.
+                # La cabecera de esa pantalla la pone Stripe con el nombre
+                # fiscal de la cuenta, y en esta es «TIENDA INFORMATICA»: quien
+                # llega desde un bot de comunidades de Telegram y lee eso cree
+                # que se ha equivocado de enlace y cierra. Esto no cambia la
+                # cabecera —eso se toca en el panel de Stripe— pero sí pone,
+                # junto al botón de pagar, el nombre de la comunidad y lo que
+                # pasa al pagar.
+                custom_text={
+                    "submit": {
+                        "message": _texto_de_confianza(group_id)
+                    }
+                }
 
             )
 
