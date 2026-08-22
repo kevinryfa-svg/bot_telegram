@@ -648,10 +648,13 @@ def frase_oferta_anual(oferta):
     if not oferta:
         return None
 
-    importe = float(oferta.get("amount") or 0)
-    moneda = oferta.get("currency") or "EUR"
+    from start_offer_service import formato_importe
+
+    importe = formato_importe(oferta.get("amount"), oferta.get("currency"))
+
+    if not importe:
+        return None
 
     return (
-        f"🎁 Año completo con -{int(oferta.get('percent') or 0)}% — "
-        f"{importe:.2f} {moneda}".replace(".", ",")
+        f"🎁 Año completo con -{int(oferta.get('percent') or 0)}% — {importe}"
     )

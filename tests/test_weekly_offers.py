@@ -467,3 +467,20 @@ def test_someone_who_never_paid_gets_the_normal_notice(catalogo):
     etiquetas = [b.text for fila in teclado.inline_keyboard for b in fila]
 
     assert not any("-50%" in e for e in etiquetas)
+
+
+def test_money_is_written_the_way_it_is_read():
+    """«3.6 EUR» no es un precio en ningún sitio donde se hable español, y se
+    lee justo antes de pagar."""
+
+    from start_offer_service import formato_importe, formato_precio
+
+    assert formato_importe(3.6, "EUR") == "3,60 EUR"
+    assert formato_importe(9.0, "EUR") == "9 EUR"
+    assert formato_importe(14.5, "EUR") == "14,50 EUR"
+    assert formato_precio(3.6, "EUR", 7) == "3,60 EUR/semana"
+
+    # Y una sola definición: el botón de la oferta anual usa la misma.
+    assert "14,50 EUR" in ofs.frase_oferta_anual(
+        {"amount": 14.5, "percent": 50, "currency": "EUR"}
+    )

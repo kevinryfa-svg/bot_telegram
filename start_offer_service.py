@@ -111,12 +111,17 @@ def normaliza_moneda_para_mostrar(currency):
     return ALIAS_DE_MONEDA.get(moneda, moneda)
 
 
-def formato_precio(amount, currency, duration_days):
-    """'15.00 EUR/mes'. amount de plans va en unidades mayores, no céntimos."""
+def formato_importe(amount, currency):
+    """«3,60 EUR», «29 EUR». El importe a secas, sin periodo.
+
+    Es la mitad de formato_precio, y vive aparte porque hay sitios —el botón de
+    la oferta anual, por ejemplo— donde el periodo ya lo dice el texto y
+    repetirlo sobra. Un solo sitio decide cómo se escribe el dinero.
+    """
 
     try:
 
-        importe = f"{float(amount):.2f}".rstrip("0").rstrip(".")
+        valor = float(amount)
 
     except (TypeError, ValueError):
 
@@ -124,7 +129,36 @@ def formato_precio(amount, currency, duration_days):
 
     moneda = normaliza_moneda_para_mostrar(currency)
 
-    return f"{importe} {moneda}{formato_periodo(duration_days)}"
+    if abs(valor - round(valor)) < 0.005:
+        return f"{int(round(valor))} {moneda}"
+
+    return f"{valor:.2f}".replace(".", ",") + f" {moneda}"
+
+
+def formato_precio(amount, currency, duration_days):
+    """'15 EUR/mes', '3,60 EUR/semana'. En unidades mayores, no céntimos.
+
+    Los céntimos se escriben con sus DOS cifras y con coma: «3.6 EUR» no es un
+    precio en ningún sitio donde se hable español, y quien lo lee justo antes de
+    pagar duda. Los importes redondos se quedan sin decimales, que es como los
+    escribe todo el mundo. Los planes se tarifan en euros enteros —la columna es
+    entera— pero una oferta rebajada cae en céntimos, y ahí es donde se leía mal.
+    """
+
+    try:
+
+        valor = float(amount)
+
+    except (TypeError, ValueError):
+
+        return None
+
+    importe = formato_importe(valor, currency)
+
+    if importe is None:
+        return None
+
+    return f"{importe}{formato_periodo(duration_days)}"
 
 
 def filtro_propietario_al_dia(alias="g"):
