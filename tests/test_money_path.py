@@ -441,9 +441,11 @@ def test_nobody_writes_that_coalesce_by_hand_any_more():
 
     for ruta in sorted(pathlib.Path(".").glob("*.py")):
 
-        # Donde vive la definición, y la migración que RELLENA la columna (que
-        # no es lo mismo que leerla).
-        if ruta.name in ("plan_price_service.py", "db.py"):
+        # Donde viven las dos mitades de la definición —el precio del plan y
+        # el de su oferta viva— y la migración que RELLENA la columna, que no
+        # es lo mismo que leerla.
+        if ruta.name in ("plan_price_service.py", "weekly_offer_service.py",
+                         "db.py"):
             continue
 
         for numero, linea in enumerate(

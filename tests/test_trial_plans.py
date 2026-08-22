@@ -103,7 +103,11 @@ def test_a_stripe_hiccup_never_blocks_the_grant(socio_en_prueba, monkeypatch):
 def test_the_checkout_sends_the_trial_only_for_recurring_plans():
     source = open("checkout_routes.py", encoding="utf-8").read()
 
-    assert "COALESCE(trial_days, 0)" in source
+    # Con alias desde que el cobro resuelve también el precio de oferta.
+    assert (
+        "COALESCE(trial_days, 0)" in source
+        or "COALESCE(p.trial_days, 0)" in source
+    )
 
     pos = source.index('"trial_period_days"')
     contexto = source[max(0, pos - 600):pos]

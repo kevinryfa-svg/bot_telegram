@@ -161,3 +161,95 @@ def test_the_pending_transaction_is_recorded(tienda):
         "forma de saber cuánta gente empieza a pagar y no termina"
     )
     assert fila[1] == "cs_test_e2e"
+
+
+# =========================
+# LAS OFERTAS SEMANALES
+# =========================
+# Una oferta cambia el precio que se anuncia. Si el cobro no la conoce, el botón
+# enseña 4,00 y la ruta contesta «Plan inválido» — el fallo de siempre, pero
+# estrenado cada lunes.
+
+@pytest.fixture
+def con_oferta(tienda, monkeypatch):
+    creados = []
+
+    def falso_precio(name, amount_major, currency, metadata=None,
+                     recurring_interval_days=None):
+        creados.append({"name": name, "amount_major": amount_major})
+        return ("prod_of", "price_de_oferta")
+
+    import stripe_catalog
+
+    monkeypatch.setattr(
+        stripe_catalog, "create_stripe_product_and_price", falso_precio
+    )
+
+    with tienda["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET duration_days=7, amount=10 WHERE id=991")
+
+    import weekly_offer_service as ofs
+
+    plan = [p for p in ofs.planes_ofertables(91) if p["id"] == 991][0]
+    oferta, _detalle = ofs.crear_oferta(plan, percent=60)
+
+    return {**tienda, "oferta": oferta}
+
+
+def test_the_offer_price_is_the_one_charged(con_oferta):
+    ofertas = sos.fetch_sellable_communities(0, limit=5, solo_grupo=91)
+
+    assert ofertas[0]["price_id"] == "price_de_oferta", (
+        "el escaparate anuncia el precio de oferta"
+    )
+    assert float(ofertas[0]["amount"]) == pytest.approx(4.00)
+    assert ofertas[0]["oferta_percent"] == 60
+
+    respuesta = cobrar(con_oferta, ofertas[0]["price_id"])
+
+    assert respuesta.status_code == 200, (
+        f"lo anunciado en oferta no se puede cobrar: {respuesta.get_json()}"
+    )
+
+    creada = con_oferta["creadas"][-1]
+
+    assert creada["line_items"][0]["price"] == "price_de_oferta"
+    assert creada["metadata"]["offer_percent"] == "60"
+
+
+def test_the_normal_price_still_works_while_the_offer_lives(con_oferta):
+    """La oferta añade un camino, no cierra el de siempre."""
+
+    respuesta = cobrar(con_oferta, "price_1nuevo")
+
+    assert respuesta.status_code == 200
+
+
+def test_an_offer_that_ended_says_so_instead_of_plan_invalido(con_oferta):
+    with con_oferta["db"].conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plan_offers SET ends_at = NOW() - INTERVAL '1 minute'"
+        )
+
+    respuesta = cobrar(con_oferta, "price_de_oferta")
+
+    assert respuesta.status_code == 400
+    assert "oferta ya ha terminado" in respuesta.get_json()["error"], (
+        "«Plan inválido» suena a error del bot; y cobrarle el precio normal "
+        "sin avisar sería cobrar más de lo que decía el botón"
+    )
+
+
+def test_an_old_button_never_charges_more_than_the_offer(con_oferta):
+    """Un botón de hace tres días lleva el precio de tarifa. Con la oferta
+    viva, se cobra la oferta: al revés sería cobrar más de lo anunciado."""
+
+    respuesta = cobrar(con_oferta, "price_1nuevo")
+
+    assert respuesta.status_code == 200
+
+    creada = con_oferta["creadas"][-1]
+
+    assert creada["line_items"][0]["price"] == "price_de_oferta", (
+        "el identificador viejo entra, pero cobra el precio de hoy"
+    )

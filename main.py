@@ -1266,6 +1266,55 @@ def schedule_business_alerts_job(application):
     return True
 
 
+async def weekly_offers_job(context: ContextTypes.DEFAULT_TYPE):
+    """Las ofertas de la semana. Idempotente: la clave de semana manda."""
+
+    try:
+
+        from weekly_offer_service import describe_weekly_offers
+
+        linea = describe_weekly_offers()
+
+        if linea:
+            print(linea)
+
+    except Exception as e:
+
+        print("Ofertas de la semana: no se pudieron preparar:", str(e)[:200])
+
+
+def schedule_weekly_offers(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print(
+            "Ofertas de la semana: JobQueue no disponible. "
+            "No se renovarán solas."
+        )
+
+        return False
+
+
+    import datetime as dt
+
+    # Lunes a las 08:00 UTC, una hora antes del resumen al propietario: así el
+    # resumen del lunes ya habla de la oferta que acaba de empezar. La clave de
+    # semana hace inocuo cualquier reinicio del contenedor ese mismo día.
+    job_queue.run_daily(
+        weekly_offers_job,
+        time=dt.time(hour=8, minute=0),
+        days=(1,),
+        name="weekly_offers"
+    )
+
+    print("Ofertas semanales programadas (lunes 08:00 UTC).")
+
+    return True
+
+
 def schedule_owner_weekly_digest(application):
 
     job_queue = getattr(application, "job_queue", None)
@@ -3342,6 +3391,7 @@ def main():
     schedule_group_delivery_health_job(telegram_app)
     schedule_stripe_webhook_config_check(telegram_app)
     schedule_paypal_webhook_config_check(telegram_app)
+    schedule_weekly_offers(telegram_app)
     schedule_owner_weekly_digest(telegram_app)
     schedule_business_alerts_job(telegram_app)
     schedule_stripe_reconcile_job(telegram_app)
@@ -3389,6 +3439,23 @@ def main():
     except Exception as e:
 
         print("Precios de plan: no se pudieron revisar:", str(e)[:200])
+
+
+    # Las ofertas de esta semana, ya. Si se dejaran solo al job del lunes, una
+    # semana recién estrenada por un despliegue del martes se quedaría sin
+    # oferta hasta siete días después. La clave de semana evita duplicados.
+    try:
+
+        from weekly_offer_service import describe_weekly_offers
+
+        aviso_ofertas = describe_weekly_offers()
+
+        if aviso_ofertas:
+            print(aviso_ofertas)
+
+    except Exception as e:
+
+        print("Ofertas de la semana: no se pudieron preparar:", str(e)[:200])
 
 
     # ¿Se puede cobrar de verdad? El escaparate puede estar perfecto y el último

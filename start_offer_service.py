@@ -251,6 +251,9 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                        barato.duration_days,
                        barato.price_id,
                        barato.provider,
+                       barato.oferta_percent,
+                       barato.oferta_antes,
+                       barato.oferta_termina,
                        cuantos.total,
                        (
                            SELECT COUNT(*)
@@ -269,13 +272,34 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                        ) AS ya_dentro
                 FROM groups g
                 LEFT JOIN LATERAL (
+                    -- El importe y el identificador salen de la OFERTA cuando
+                    -- hay una viva, y del plan cuando no. Los dos juntos, nunca
+                    -- por separado: enseñar el precio de oferta y mandar al
+                    -- cobro el del plan es cobrar más de lo anunciado.
                     SELECT p.id AS plan_id,
-                           p.amount,
+                           COALESCE(o.amount, p.amount) AS amount,
                            COALESCE(NULLIF(p.currency, ''), 'EUR') AS currency,
                            p.duration_days,
-                           """ + sql_precio_efectivo("p") + """ AS price_id,
-                           COALESCE(NULLIF(p.payment_provider, ''), 'stripe') AS provider
+                           COALESCE(
+                               NULLIF(o.stripe_price_id, ''),
+                               """ + sql_precio_efectivo("p") + """
+                           ) AS price_id,
+                           COALESCE(NULLIF(p.payment_provider, ''), 'stripe') AS provider,
+                           o.percent AS oferta_percent,
+                           p.amount AS oferta_antes,
+                           o.ends_at AS oferta_termina
                     FROM plans p
+                    LEFT JOIN LATERAL (
+                        SELECT po.amount, po.percent, po.stripe_price_id,
+                               po.ends_at
+                        FROM plan_offers po
+                        WHERE po.plan_id = p.id
+                          AND po.starts_at <= NOW()
+                          AND po.ends_at > NOW()
+                          AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''
+                        ORDER BY po.ends_at DESC
+                        LIMIT 1
+                    ) o ON TRUE
                     WHERE p.group_id = g.id
                       AND COALESCE(p.is_active, TRUE) = TRUE
                       AND p.amount IS NOT NULL AND p.amount > 0
@@ -296,7 +320,9 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                       -- eso no se puede deshacer; no venderlo solo deja un
                       -- plan sin usar, y el panel del propietario lo señala.
                       AND p.duration_days <= %(max_dias)s
-                    ORDER BY p.amount ASC, p.id ASC
+                    -- Por el precio que se va a PAGAR, no por el de tarifa:
+                    -- con una oferta viva, el más barato puede ser otro.
+                    ORDER BY COALESCE(o.amount, p.amount) ASC, p.id ASC
                     LIMIT 1
                 ) barato ON TRUE
                 LEFT JOIN LATERAL (
@@ -356,8 +382,8 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
     for fila in filas:
 
         (group_id, telegram_group_id, nombre, descripcion, plan_id, amount,
-         currency, duration_days, price_id, provider, planes, miembros,
-         ya_dentro) = fila
+         currency, duration_days, price_id, provider, oferta_percent,
+         oferta_antes, oferta_termina, planes, miembros, ya_dentro) = fila
 
         ofertas.append({
             "group_id": group_id,
@@ -373,6 +399,15 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
             # Stripe, que es de las pocas cosas que no pueden diferir.
             "amount": amount,
             "currency": currency,
+            # La oferta viva, si la hay: el porcentaje, lo que costaba antes y
+            # cuándo termina. Va en el diccionario y no en el texto para que
+            # cada pantalla lo diga a su manera sin volver a consultarlo.
+            "oferta_percent": int(oferta_percent) if oferta_percent else None,
+            "oferta_antes": (
+                formato_precio(oferta_antes, currency, duration_days)
+                if oferta_percent else None
+            ),
+            "oferta_termina": oferta_termina if oferta_percent else None,
             "planes": int(planes or 0),
             "miembros": int(miembros or 0),
             "ya_dentro": bool(ya_dentro),
@@ -454,6 +489,44 @@ def frase_de_miembros(oferta):
     return f"👥 {miembros} personas dentro ahora mismo."
 
 
+def frase_de_oferta(oferta):
+    """«🔥 -60% esta semana (antes 10 EUR) · quedan 3 días». None si no hay.
+
+    Los tres datos van juntos a propósito. El porcentaje solo suena a reclamo;
+    con el precio de antes se puede comprobar; y sin la cuenta atrás no hay
+    ninguna razón para comprar HOY, que es la única venta que existe.
+    """
+
+    percent = (oferta or {}).get("oferta_percent")
+
+    if not percent:
+        return None
+
+    partes = [f"🔥 -{int(percent)}% esta semana"]
+
+    if oferta.get("oferta_antes"):
+        partes.append(f"(antes {oferta['oferta_antes']})")
+
+    termina = oferta.get("oferta_termina")
+
+    if termina:
+
+        from datetime import datetime
+
+        dias = (termina - datetime.now()).days
+
+        if dias <= 0:
+            partes.append("· ÚLTIMO DÍA")
+
+        elif dias == 1:
+            partes.append("· queda 1 día")
+
+        else:
+            partes.append(f"· quedan {dias} días")
+
+    return " ".join(partes)
+
+
 def build_single_offer_text(oferta):
     """La oferta cuando solo hay una cosa que vender: sin menú de por medio."""
 
@@ -475,6 +548,11 @@ def build_single_offer_text(oferta):
     if oferta["precio"]:
 
         lineas.extend(["", f"Precio: {oferta['precio']}"])
+
+        rebaja = frase_de_oferta(oferta)
+
+        if rebaja:
+            lineas.append(rebaja)
 
     lineas.extend([
         "",
@@ -563,6 +641,15 @@ def etiqueta_de_compra_directa(oferta):
     la persona acaba de leer dos líneas más arriba. Lo que sí va, siempre, es
     el precio: un botón de pago sin precio es una trampa.
     """
+
+    if oferta["precio"] and oferta.get("oferta_percent"):
+
+        # El descuento va DENTRO del botón: es lo último que se lee antes de
+        # pulsar, y un «-60%» ahí vale más que tres líneas de texto arriba.
+        return (
+            f"🔥 Entrar con -{int(oferta['oferta_percent'])}% — "
+            f"{oferta['precio']}"
+        )
 
     if oferta["precio"]:
         return f"💳 Entrar ahora — {oferta['precio']}"
