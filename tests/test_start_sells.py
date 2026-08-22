@@ -162,7 +162,9 @@ def test_the_single_offer_reads_like_an_offer(catalogo):
 def test_the_periods_read_like_people_speak():
     assert sos.formato_precio(15, "EUR", 30) == "15 EUR/mes"
     assert sos.formato_precio(120, "eur", 365) == "120 EUR/año"
-    assert sos.formato_precio(9.5, "USD", 7) == "9.5 USD/semana"
+    # Los céntimos, con sus dos cifras y con coma: «9.5 USD» no es un precio
+    # en ningún sitio donde se hable español, y se lee justo antes de pagar.
+    assert sos.formato_precio(9.5, "USD", 7) == "9,50 USD/semana"
     assert sos.formato_precio(30, "EUR", 45) == "30 EUR/45 días"
 
     # Sin precio no se inventa nada.
