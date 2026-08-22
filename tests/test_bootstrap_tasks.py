@@ -724,3 +724,86 @@ def test_without_the_variable_nothing_is_switched_off(plan_de_comunidad,
     monkeypatch.delenv("BOOTSTRAP_PLAN_DISABLE", raising=False)
 
     assert "falta BOOTSTRAP_PLAN_DISABLE" in bt.tarea_desactivar_plan()
+
+
+# =========================
+# CREAR LOS PLANES CORTOS
+# =========================
+# Las ofertas semanales necesitan algo que ofertar. Una comunidad con un único
+# plan anual no puede tenerlas, y crear un plan desde fuera del servidor no se
+# podía: los asistentes exigen a una persona con Telegram delante.
+
+def test_a_new_plan_is_born_sellable(plan_de_comunidad, monkeypatch):
+    """Con su precio de Stripe en el mismo paso. Un plan a medias es justo lo
+    que llevaba meses rompiendo este bot."""
+
+    monkeypatch.setenv("BOOTSTRAP_PLAN_NEW", "g41:7:9:Acceso 7 días")
+
+    resultado = bt.tarea_crear_planes()
+
+    assert "Acceso 7 días" in resultado
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT amount, duration_days, stripe_price_id, price_id, "
+            "payment_provider, is_active FROM plans "
+            "WHERE group_id=41 AND duration_days=7"
+        )
+        importe, dias, stripe_price, price_id, proveedor, activo = cur.fetchone()
+
+    assert (float(importe), dias) == (9.0, 7)
+    assert stripe_price == price_id == "price_nuevo_1", (
+        "los dos campos, o el cobro resuelve uno y el escaparate el otro"
+    )
+    assert proveedor == "stripe"
+    assert activo is True
+
+    creado = plan_de_comunidad["creados"][-1]
+
+    assert creado["amount_major"] == pytest.approx(9.0)
+    assert creado["recurring_interval_days"] is None, "pago único"
+
+
+def test_it_does_not_duplicate_the_same_duration(plan_de_comunidad, monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_NEW", "g41:7:9:Acceso 7 días")
+
+    bt.tarea_crear_planes()
+    segunda = bt.tarea_crear_planes()
+
+    assert "ya tiene un plan activo de 7 días" in segunda
+
+    with plan_de_comunidad["db"].conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM plans WHERE group_id=41 AND duration_days=7")
+        assert cur.fetchone()[0] == 1, (
+            "el arranque se repite en cada despliegue"
+        )
+
+
+def test_an_impossible_duration_is_refused(plan_de_comunidad, monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_NEW", "g41:99999:9:Eterno")
+
+    resultado = bt.tarea_crear_planes()
+
+    assert "fuera de 1.." in resultado
+    assert plan_de_comunidad["creados"] == [], "ni se llama a Stripe"
+
+
+def test_a_group_that_does_not_exist_is_refused(plan_de_comunidad, monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_NEW", "g9999:7:9:Semana")
+
+    assert "no existe" in bt.tarea_crear_planes()
+
+
+def test_garbage_is_reported_not_guessed(plan_de_comunidad, monkeypatch):
+    monkeypatch.setenv("BOOTSTRAP_PLAN_NEW", "g41:siete:9:Semana,esto-no")
+
+    resultado = bt.tarea_crear_planes()
+
+    assert "son números" in resultado
+    assert "no tiene la forma" in resultado
+
+
+def test_without_the_variable_nothing_is_created(plan_de_comunidad, monkeypatch):
+    monkeypatch.delenv("BOOTSTRAP_PLAN_NEW", raising=False)
+
+    assert "falta BOOTSTRAP_PLAN_NEW" in bt.tarea_crear_planes()
