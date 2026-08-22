@@ -294,6 +294,9 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                                po.ends_at
                         FROM plan_offers po
                         WHERE po.plan_id = p.id
+                          -- Solo públicas: una oferta personal no le baja el
+                          -- precio a todo el mundo.
+                          AND po.user_id IS NULL
                           AND po.starts_at <= NOW()
                           AND po.ends_at > NOW()
                           AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''

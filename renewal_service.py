@@ -686,6 +686,42 @@ def build_renewal_keyboard(group_id, stage=RENEWAL_STAGE_EARLY,
 
     filas = []
 
+    # EL AÑO CON DESCUENTO, PRIMERO. Quien está a punto de perder el acceso de
+    # una semana es la persona más fácil de convertir en anual que existe: ya
+    # está dentro y ya sabe lo que hay. La oferta es SUYA —lleva su user_id— y
+    # por eso no le baja el precio anual a todo el mundo.
+    if user_id and group_id:
+
+        try:
+
+            from weekly_offer_service import (
+                asegurar_oferta_anual,
+                frase_oferta_anual,
+                tiene_plan_corto,
+            )
+
+            if tiene_plan_corto(user_id, group_id):
+
+                anual = asegurar_oferta_anual(user_id, group_id)
+
+                etiqueta = frase_oferta_anual(anual)
+
+                if anual and etiqueta:
+
+                    filas.append([InlineKeyboardButton(
+                        etiqueta,
+                        callback_data=(
+                            f"startbuy_{group_id}_{anual['plan_id']}"
+                        )
+                    )])
+
+        except Exception as e:
+
+            # Un fallo preparando la oferta no puede dejar sin aviso de
+            # renovación a quien está a punto de caducar.
+            print("Aviso de renovación: sin oferta anual:", str(e)[:160])
+
+
     # UN TOQUE: si se sabe qué plan compró y sigue activo, el primer botón
     # va directo a pagarlo, con nombre y precio en la etiqueta. Cada
     # pantalla intermedia es gente que se cae por el camino.

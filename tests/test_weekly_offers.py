@@ -319,3 +319,151 @@ def test_the_startup_and_the_monday_job_both_launch_them():
     assert "try:" in fuente[max(0, pos - 400):pos], (
         "preparar ofertas no puede impedir que el bot arranque"
     )
+
+
+# =========================
+# EL AÑO CON DESCUENTO, SOLO PARA QUIEN YA PROBÓ
+# =========================
+# Quien está a punto de perder su acceso de una semana es la persona más fácil
+# de convertir en anual que existe. Pero si esa oferta fuese pública, el precio
+# anual pasaría a ser la mitad para TODO el mundo, incluido quien iba a pagar el
+# completo. Por eso lleva dueño.
+
+def test_the_annual_offer_belongs_to_one_person(catalogo):
+    oferta = ofs.asegurar_oferta_anual(7001, 31)
+
+    assert oferta is not None
+    assert oferta["user_id"] == 7001
+    assert oferta["plan_id"] == 313, "el plan anual, no otro"
+    assert oferta["amount"] == pytest.approx(14.50), "29 con -50%"
+
+
+def test_the_annual_offer_never_reaches_the_shop_window(catalogo):
+    import start_offer_service as sos
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("UPDATE groups SET is_marketplace_visible=TRUE WHERE id=31")
+
+    ofs.asegurar_oferta_anual(7001, 31)
+
+    escaparate = sos.fetch_sellable_communities(0, limit=5, solo_grupo=31)[0]
+
+    assert escaparate["oferta_percent"] is None, (
+        "una oferta personal no puede bajarle el precio a todo el mundo"
+    )
+
+
+def test_only_the_owner_of_the_offer_can_use_it(catalogo, monkeypatch):
+    """Un precio personal que sirva a cualquiera no es personal."""
+
+    import flask
+    import json as json_mod
+
+    import checkout_routes
+
+    monkeypatch.setattr(
+        checkout_routes, "is_stripe_payments_enabled", lambda: True
+    )
+
+    class FakeSession:
+        id = "cs_test_anual"
+        url = "https://checkout.stripe.test/pagar"
+
+    monkeypatch.setattr(
+        checkout_routes.stripe.checkout.Session, "create",
+        staticmethod(lambda **k: FakeSession())
+    )
+
+    oferta = ofs.asegurar_oferta_anual(7001, 31)
+
+    app = flask.Flask(__name__)
+    checkout_routes.register_checkout_routes(app)
+    cliente = app.test_client()
+
+    def cobrar(user_id):
+        return cliente.post(
+            "/create-checkout-session",
+            data=json_mod.dumps({
+                "telegram_id": user_id, "plan": oferta["stripe_price_id"],
+                "group_id": 31,
+            }),
+            content_type="application/json",
+        )
+
+    assert cobrar(7001).status_code == 200, "su dueño sí puede pagarla"
+    assert cobrar(7002).status_code == 400, (
+        "otro no: si el precio rebajado sirviera para cualquiera, bastaría "
+        "con reenviar el enlace"
+    )
+
+
+def test_the_annual_offer_is_only_for_short_plan_buyers(catalogo):
+    """A quien ya pagó un año no se le regala otro más barato."""
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, "
+            "status, plan, payment_date) VALUES "
+            "(7003, 31, 2900, 'EUR', 'paid', 'Año', NOW())"
+        )
+
+    assert ofs.tiene_plan_corto(7003, 31) is False
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, "
+            "status, plan, payment_date) VALUES "
+            "(7004, 31, 400, 'EUR', 'paid', 'Semana', NOW())"
+        )
+
+    assert ofs.tiene_plan_corto(7004, 31) is True
+
+
+def test_without_an_annual_plan_nothing_is_promised(catalogo):
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET is_active=FALSE WHERE id=313")
+
+    assert ofs.asegurar_oferta_anual(7001, 31) is None
+
+
+def test_asking_twice_does_not_create_two_offers(catalogo):
+    primera = ofs.asegurar_oferta_anual(7001, 31)
+    segunda = ofs.asegurar_oferta_anual(7001, 31)
+
+    assert primera["id"] == segunda["id"]
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM plan_offers WHERE user_id=7001")
+        assert cur.fetchone()[0] == 1
+
+
+def test_the_renewal_notice_carries_the_annual_offer(catalogo):
+    """Es el momento: le quedan horas de acceso y ya sabe lo que hay dentro."""
+
+    import renewal_service as rs
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, "
+            "status, plan, payment_date) VALUES "
+            "(7005, 31, 400, 'EUR', 'paid', 'Semana', NOW())"
+        )
+
+    teclado = rs.build_renewal_keyboard(31, user_id=7005)
+
+    etiquetas = [b.text for fila in teclado.inline_keyboard for b in fila]
+
+    assert any("-50%" in e for e in etiquetas), (
+        "sin el botón, la oferta anual no existe para quien tiene que verla"
+    )
+    assert any("14,50" in e for e in etiquetas), "con su precio"
+
+
+def test_someone_who_never_paid_gets_the_normal_notice(catalogo):
+    import renewal_service as rs
+
+    teclado = rs.build_renewal_keyboard(31, user_id=7009)
+
+    etiquetas = [b.text for fila in teclado.inline_keyboard for b in fila]
+
+    assert not any("-50%" in e for e in etiquetas)
