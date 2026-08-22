@@ -3036,9 +3036,19 @@ def create_tables():
             # La unicidad incluye a la persona: dos socios distintos pueden
             # tener su propia oferta del mismo plan en la misma semana, pero
             # ninguno puede tener dos.
+            #
+            # NOMBRE NUEVO A PROPÓSITO. La primera versión de este índice era
+            # (plan_id, week_key), sin la persona. Como «CREATE INDEX IF NOT
+            # EXISTS» mira solo el NOMBRE, en una base que ya lo tenía el índice
+            # se quedaba con la definición vieja —y el ON CONFLICT de tres
+            # columnas fallaba con «no unique or exclusion constraint matching».
+            # Eso es exactamente lo que pasó en producción: ni una oferta se
+            # creó, y el error solo se vio en el log.
+            cur.execute("DROP INDEX IF EXISTS idx_plan_offers_semana")
+
             cur.execute("""
 
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_offers_semana
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_offers_semana_persona
                 ON plan_offers (plan_id, week_key, COALESCE(user_id, 0))
 
             """)

@@ -484,3 +484,56 @@ def test_money_is_written_the_way_it_is_read():
     assert "14,50 EUR" in ofs.frase_oferta_anual(
         {"amount": 14.5, "percent": 50, "currency": "EUR"}
     )
+
+
+def test_an_index_that_changed_shape_really_gets_replaced(db_module):
+    """El fallo que solo apareció en producción.
+
+    La primera versión del índice de ofertas era (plan_id, week_key), sin la
+    persona. Al añadirla, «CREATE UNIQUE INDEX IF NOT EXISTS» con el MISMO
+    nombre no hace nada —solo mira el nombre—, así que la base se quedó con la
+    definición vieja y el ON CONFLICT de tres columnas falló con «no unique or
+    exclusion constraint matching». Resultado: ni una oferta creada, y el error
+    solo visible en el log del arranque.
+
+    Aquí se reproduce ese estado exacto y se comprueba que el arranque lo
+    corrige.
+    """
+
+    with db_module.conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS plan_offers")
+        cur.execute("""
+            CREATE TABLE plan_offers (
+                id SERIAL PRIMARY KEY, plan_id INTEGER, group_id INTEGER,
+                percent INTEGER, amount NUMERIC(12, 2),
+                base_amount NUMERIC(12, 2), currency TEXT DEFAULT 'EUR',
+                stripe_price_id TEXT, starts_at TIMESTAMP, ends_at TIMESTAMP,
+                week_key TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute(
+            "CREATE UNIQUE INDEX idx_plan_offers_semana "
+            "ON plan_offers (plan_id, week_key)"
+        )
+
+    db_module.create_tables()
+
+    with db_module.conn.cursor() as cur:
+        cur.execute("""
+            SELECT indexdef FROM pg_indexes
+            WHERE tablename = 'plan_offers'
+              AND indexname = 'idx_plan_offers_semana_persona'
+        """)
+        fila = cur.fetchone()
+
+        cur.execute("""
+            SELECT 1 FROM pg_indexes
+            WHERE tablename = 'plan_offers'
+              AND indexname = 'idx_plan_offers_semana'
+        """)
+        viejo = cur.fetchone()
+
+    assert fila is not None, "el índice nuevo no llegó a crearse"
+    assert "user_id" in fila[0], "y tiene que incluir a la persona"
+    assert viejo is None, "el viejo se queda y vuelve a haber dos reglas"
