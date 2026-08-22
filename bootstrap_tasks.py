@@ -837,8 +837,180 @@ def tarea_desactivar_plan():
     return "desactivar_plan: " + " | ".join(resultados)
 
 
+# =========================
+# CREAR LOS PLANES CORTOS
+# =========================
+# Las ofertas semanales necesitan algo que ofertar: planes de una semana y de un
+# mes. Una comunidad con un único plan anual no puede tenerlas, y crear un plan
+# desde fuera del servidor no se podía —los asistentes exigen a una persona con
+# Telegram delante—.
+#
+# El plan nace VENDIBLE o no nace: con su precio de Stripe creado en el mismo
+# paso. Un plan a medias es justo lo que llevaba meses rompiendo este bot.
+
+
+def tarea_crear_planes():
+    """BOOTSTRAP_PLAN_NEW='g<grupo>:<días>:<euros>:<nombre>', por comas."""
+
+    from plan_price_service import crear_precio_stripe_para_plan
+    from payment_access_service import MAX_PLAN_DURATION_DAYS
+
+    crudo = (os.environ.get("BOOTSTRAP_PLAN_NEW") or "").strip()
+
+    if not crudo:
+        return "crear_planes: falta BOOTSTRAP_PLAN_NEW, no se crea nada."
+
+    resultados = []
+
+    for trozo in [t.strip() for t in crudo.split(",") if t.strip()]:
+
+        partes = trozo.split(":", 3)
+
+        if len(partes) < 4:
+
+            resultados.append(
+                f"«{trozo}» no tiene la forma g<grupo>:<días>:<euros>:<nombre>"
+            )
+            continue
+
+        grupo_txt, dias_txt, euros_txt, nombre = partes
+        nombre = nombre.strip()
+
+        try:
+
+            group_id = int(grupo_txt.strip().lstrip("gG"))
+            dias = int(dias_txt.strip())
+            euros = int(euros_txt.strip())
+
+        except (TypeError, ValueError):
+
+            resultados.append(f"«{trozo}»: grupo, días y euros son números")
+            continue
+
+        if not nombre:
+
+            resultados.append(f"«{trozo}»: un nombre vacío no es un nombre")
+            continue
+
+        if dias < 1 or dias > MAX_PLAN_DURATION_DAYS:
+
+            resultados.append(
+                f"«{nombre}»: {dias} días está fuera de 1..{MAX_PLAN_DURATION_DAYS}"
+            )
+            continue
+
+        if euros <= 0:
+
+            resultados.append(f"«{nombre}»: el precio tiene que ser mayor que 0")
+            continue
+
+        try:
+
+            with conn.cursor() as cur:
+
+                # Idempotencia por (grupo, duración): ejecutarlo en cada
+                # arranque no llena la comunidad de planes repetidos.
+                cur.execute("""
+
+                    SELECT id FROM plans
+                    WHERE group_id = %s AND duration_days = %s
+                      AND COALESCE(is_active, TRUE) = TRUE
+
+                """, (group_id, dias))
+
+                if cur.fetchone():
+
+                    resultados.append(
+                        f"el grupo {group_id} ya tiene un plan activo de "
+                        f"{dias} días"
+                    )
+                    continue
+
+                cur.execute(
+                    "SELECT 1 FROM groups WHERE id = %s", (group_id,)
+                )
+
+                if not cur.fetchone():
+
+                    resultados.append(f"el grupo {group_id} no existe")
+                    continue
+
+        except Exception as e:
+
+            resultados.append(f"«{nombre}»: error mirando los planes ({e})")
+            continue
+
+        try:
+
+            price_id = crear_precio_stripe_para_plan(
+                {
+                    "id": None, "group_id": group_id, "name": nombre,
+                    "currency": "EUR", "duration_days": dias,
+                    "is_recurring": False,
+                },
+                float(euros),
+            )
+
+        except Exception as e:
+
+            resultados.append(
+                f"«{nombre}»: Stripe no aceptó el precio ({str(e)[:120]})"
+            )
+            continue
+
+        try:
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    INSERT INTO plans
+                        (group_id, name, price_id, stripe_price_id,
+                         provider_price_id, payment_provider, duration_days,
+                         amount, currency, is_active, is_recurring)
+                    VALUES (%s, %s, %s, %s, %s, 'stripe', %s, %s, 'EUR',
+                            TRUE, FALSE)
+                    RETURNING id
+
+                """, (
+                    group_id, nombre, price_id, price_id, price_id,
+                    dias, euros,
+                ))
+
+                plan_id = (cur.fetchone() or [None])[0]
+                conn.commit()
+
+        except Exception as e:
+
+            conn.rollback()
+
+            resultados.append(f"«{nombre}»: error guardando el plan ({e})")
+            continue
+
+        log_event(
+            "bootstrap_plan_created",
+            category="billing",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            message="Plan creado desde la puesta a punto.",
+            metadata={
+                "plan_id": plan_id, "nombre": nombre, "dias": dias,
+                "amount": euros, "stripe_price_id": price_id,
+            },
+        )
+
+        resultados.append(
+            f"plan #{plan_id} «{nombre}»: {euros} EUR / {dias} días, "
+            "con su precio de Stripe listo"
+        )
+
+    return "crear_planes: " + " | ".join(resultados)
+
+
 TAREAS = {
     "listar_planes": tarea_listar_planes,
+    "crear_planes": tarea_crear_planes,
     "desactivar_plan": tarea_desactivar_plan,
     "descripcion_minima": tarea_descripcion_minima,
     "precio_publicacion": tarea_precio_publicacion,
