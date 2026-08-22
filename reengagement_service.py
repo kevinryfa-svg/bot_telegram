@@ -532,10 +532,15 @@ def fetch_offer_snapshot(limit=3):
 
         free_total = (cur.fetchone() or [0])[0] or 0
 
-        # Precio de entrada más bajo (con su moneda, sin mezclar divisas)
+        # Precio de entrada más bajo (con su moneda, sin mezclar divisas).
+        # Con el importe VIGENTE: si hay una oferta viva, el mensaje tiene que
+        # decir el precio de la oferta. Decir 9 EUR mientras la tienda vende a
+        # 3,60 es perder la venta y quedar mal a la vez.
+        from weekly_offer_service import sql_importe_vigente
+
         cur.execute(f"""
 
-            SELECT p.amount,
+            SELECT {sql_importe_vigente("p")},
                    COALESCE(NULLIF(p.currency, ''), 'EUR')
             FROM plans p
             JOIN groups g ON g.id = p.group_id
@@ -543,7 +548,7 @@ def fetch_offer_snapshot(limit=3):
               AND COALESCE(p.is_active, TRUE) = TRUE
               AND p.amount IS NOT NULL
               AND p.amount > 0
-            ORDER BY p.amount ASC
+            ORDER BY 1 ASC
             LIMIT 1
 
         """)
@@ -556,7 +561,7 @@ def fetch_offer_snapshot(limit=3):
                    COALESCE(g.category, ''),
                    (COALESCE(g.is_free_group, FALSE) OR COALESCE(g.is_free, FALSE)),
                    (
-                       SELECT MIN(p.amount)
+                       SELECT MIN({sql_importe_vigente("p")})
                        FROM plans p
                        WHERE p.group_id = g.id
                          AND COALESCE(p.is_active, TRUE) = TRUE
@@ -583,20 +588,61 @@ def fetch_offer_snapshot(limit=3):
         examples = cur.fetchall() or []
 
 
+        # La mejor oferta viva del escaparate: es con lo que hay que empezar
+        # el mensaje. Un aviso que entierra el -60% en la tercera línea es un
+        # aviso sin descuento.
+        cur.execute(f"""
+
+            SELECT po.percent, po.ends_at, g.name
+            FROM plan_offers po
+            JOIN plans p ON p.id = po.plan_id
+            JOIN groups g ON g.id = p.group_id
+            WHERE {VISIBLE_GROUP_CONDITIONS}
+              AND po.user_id IS NULL
+              AND po.starts_at <= NOW()
+              AND po.ends_at > NOW()
+              AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''
+              AND COALESCE(p.is_active, TRUE) = TRUE
+            ORDER BY po.percent DESC, po.ends_at ASC
+            LIMIT 1
+
+        """)
+
+        mejor_oferta = cur.fetchone()
+
+
     return {
         "total": total,
         "free_total": free_total,
         "cheapest_amount": cheapest[0] if cheapest else None,
         "cheapest_currency": cheapest[1] if cheapest else None,
-        "examples": examples
+        "examples": examples,
+        "offer_percent": mejor_oferta[0] if mejor_oferta else None,
+        "offer_ends_at": mejor_oferta[1] if mejor_oferta else None,
+        "offer_group": mejor_oferta[2] if mejor_oferta else None,
     }
 
 
 def format_price(amount, currency):
+    """El dinero se escribe en UN sitio. Aquí había una tercera manera, y con
+    los céntimos de una oferta se notaba: «3,6 EUR» en vez de «3,60 EUR»."""
 
     if amount is None:
 
         return None
+
+    try:
+
+        from start_offer_service import formato_importe
+
+        escrito = formato_importe(amount, currency)
+
+        if escrito:
+            return escrito
+
+    except Exception:
+
+        pass
 
 
     try:
@@ -674,6 +720,31 @@ def describe_examples(offer, max_items=3):
     return lines
 
 
+def cabecera_de_oferta(offer):
+    """«🔥 -60% esta semana · quedan 3 días». None si no hay oferta viva.
+
+    Va la PRIMERA línea de cualquier aviso: es lo único que hace abrir un
+    mensaje de un bot al que ya se le ha dicho que no. Un -60% enterrado en la
+    tercera línea es un mensaje sin descuento.
+    """
+
+    percent = (offer or {}).get("offer_percent")
+
+    if not percent:
+        return None
+
+    partes = [f"🔥 *-{int(percent)}% esta semana*"]
+
+    from weekly_offer_service import frase_cuenta_atras
+
+    cuenta = frase_cuenta_atras((offer or {}).get("offer_ends_at"))
+
+    if cuenta:
+        partes.append(f"· {cuenta}")
+
+    return " ".join(partes)
+
+
 def build_relaunch_text(offer=None):
     """El aviso extra: empieza reconociendo lo que pasó.
 
@@ -686,7 +757,9 @@ def build_relaunch_text(offer=None):
 
     offer = offer or fetch_offer_snapshot()
 
-    lineas = [
+    cabecera = cabecera_de_oferta(offer)
+
+    lineas = ([cabecera, ""] if cabecera else []) + [
         "🔧 Te escribí hace tiempo y no funcionaba",
         "",
         "Siendo sincero: cuando te avisé, el botón de pagar de este bot "
@@ -857,7 +930,15 @@ def build_reengagement_text(offer=None, variant=0, con_ofertas=False,
 
         lines.append("Mira lo que hay disponible 👇")
 
-    return "\n".join(lines)
+    texto = "\n".join(lines)
+
+    # La oferta manda: si la hay, encabeza el aviso sea cual sea la variante.
+    cabecera = cabecera_de_oferta(offer)
+
+    if cabecera:
+        texto = cabecera + "\n\n" + texto
+
+    return texto
 
 
 # Cuántas ofertas caben en un aviso: tres. Un aviso con seis botones de compra

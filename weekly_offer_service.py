@@ -658,3 +658,32 @@ def frase_oferta_anual(oferta):
     return (
         f"🎁 Año completo con -{int(oferta.get('percent') or 0)}% — {importe}"
     )
+
+
+def frase_cuenta_atras(ends_at, momento=None):
+    """«quedan 3 días», «queda 1 día», «ÚLTIMO DÍA». None sin fecha.
+
+    Se redondea HACIA ARRIBA a propósito. Restar dos fechas y quedarse con
+    `.days` trunca: a una oferta que termina dentro de 2 días y 23 horas le
+    quedan 3 días para cualquiera que lo lea, y decir «2» es contarle uno menos
+    de los que tiene. Y por debajo de 24 horas ya no se cuentan días: es el
+    último día, que es exactamente lo que hay que decir.
+
+    Vive aquí porque lo dicen tres pantallas —el bot, la web y los avisos— y
+    tres relojes distintos acaban dando tres cuentas distintas de la misma
+    oferta.
+    """
+
+    if not ends_at:
+        return None
+
+    restante = ends_at - (momento or datetime.now())
+
+    horas = restante.total_seconds() / 3600.0
+
+    if horas <= 24:
+        return "ÚLTIMO DÍA"
+
+    dias = int(-(-horas // 24))
+
+    return "queda 1 día" if dias == 1 else f"quedan {dias} días"
