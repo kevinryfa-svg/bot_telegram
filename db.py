@@ -2991,6 +2991,12 @@ def create_tables():
 
             group_id INTEGER,
 
+            -- NULL = oferta pública, la que ve todo el mundo en el escaparate.
+            -- Con user_id, la oferta es SOLO de esa persona: es como se le
+            -- ofrece el año con descuento a quien acaba de probar una semana,
+            -- sin bajarle el precio anual a todo el mundo.
+            user_id BIGINT,
+
             percent INTEGER,
 
             -- En unidades MAYORES, como plans.amount (y AL REVÉS que
@@ -3022,8 +3028,18 @@ def create_tables():
 
             cur.execute("""
 
+                ALTER TABLE plan_offers
+                ADD COLUMN IF NOT EXISTS user_id BIGINT
+
+            """)
+
+            # La unicidad incluye a la persona: dos socios distintos pueden
+            # tener su propia oferta del mismo plan en la misma semana, pero
+            # ninguno puede tener dos.
+            cur.execute("""
+
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_offers_semana
-                ON plan_offers (plan_id, week_key)
+                ON plan_offers (plan_id, week_key, COALESCE(user_id, 0))
 
             """)
 

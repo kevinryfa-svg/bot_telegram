@@ -129,8 +129,13 @@ def importe_con_descuento(base, percent):
     return rebajado
 
 
-def oferta_viva(plan_id):
-    """La oferta en vigor de un plan ahora mismo. None si no hay."""
+def oferta_viva(plan_id, user_id=None):
+    """La oferta en vigor de un plan. La personal manda sobre la pública.
+
+    Sin `user_id` solo se miran las públicas, que son las del escaparate. Una
+    oferta personal —el año con descuento para quien acaba de probar una
+    semana— no puede aparecerle a otro, ni bajarle el precio a todo el mundo.
+    """
 
     try:
 
@@ -139,16 +144,20 @@ def oferta_viva(plan_id):
             cur.execute("""
 
                 SELECT id, plan_id, group_id, percent, amount, base_amount,
-                       COALESCE(currency, 'EUR'), stripe_price_id, ends_at
+                       COALESCE(currency, 'EUR'), stripe_price_id, ends_at,
+                       user_id
                 FROM plan_offers
-                WHERE plan_id = %s
+                WHERE plan_id = %(plan)s
+                  AND (user_id IS NULL OR user_id = %(uid)s)
                   AND starts_at <= NOW()
                   AND ends_at > NOW()
                   AND COALESCE(NULLIF(stripe_price_id, ''), '') <> ''
-                ORDER BY ends_at DESC
+                -- La personal primero: si alguien tiene su oferta, es la suya
+                -- la que vale, aunque haya otra pública peor.
+                ORDER BY (user_id IS NOT NULL) DESC, ends_at DESC
                 LIMIT 1
 
-            """, (int(plan_id),))
+            """, {"plan": int(plan_id), "uid": int(user_id) if user_id else None})
 
             fila = cur.fetchone()
 
@@ -165,6 +174,7 @@ def oferta_viva(plan_id):
         "id": fila[0], "plan_id": fila[1], "group_id": fila[2],
         "percent": fila[3], "amount": fila[4], "base_amount": fila[5],
         "currency": fila[6], "stripe_price_id": fila[7], "ends_at": fila[8],
+        "user_id": fila[9],
     }
 
 
@@ -240,7 +250,8 @@ def planes_ofertables(group_id=None):
     ]
 
 
-def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None):
+def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None,
+                 user_id=None, permitir_cualquier_duracion=False):
     """(oferta, detalle). Crea la oferta de un plan con su precio real.
 
     El precio de Stripe se crea con el importe YA rebajado, así que la página de
@@ -251,7 +262,7 @@ def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None):
 
     tramo = tramo_de_plan(plan.get("duration_days"))
 
-    if not tramo:
+    if not tramo and not permitir_cualquier_duracion:
 
         return (None, f"el plan #{plan.get('id')} no es de semana ni de mes")
 
@@ -271,9 +282,9 @@ def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None):
             f"de {MINIMO_COBRABLE:.2f}, que es lo mínimo que se puede cobrar"
         )
 
-    ya = oferta_viva(plan["id"])
+    ya = oferta_viva(plan["id"], user_id=user_id)
 
-    if ya:
+    if ya and bool(ya.get("user_id")) == bool(user_id):
         return (ya, f"el plan #{plan['id']} ya tiene una oferta viva")
 
     # El nombre viaja al producto de Stripe: es lo que se lee con la tarjeta ya
@@ -300,14 +311,17 @@ def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None):
             cur.execute("""
 
                 INSERT INTO plan_offers
-                    (plan_id, group_id, percent, amount, base_amount, currency,
-                     stripe_price_id, starts_at, ends_at, week_key)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (plan_id, week_key) DO NOTHING
+                    (plan_id, group_id, user_id, percent, amount, base_amount,
+                     currency, stripe_price_id, starts_at, ends_at, week_key)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (plan_id, week_key, COALESCE(user_id, 0))
+                DO NOTHING
                 RETURNING id
 
             """, (
-                plan["id"], plan.get("group_id"), percent, rebajado,
+                plan["id"], plan.get("group_id"),
+                int(user_id) if user_id else None,
+                percent, rebajado,
                 float(base), plan.get("currency") or "EUR", price_id,
                 momento, termina, week_key,
             ))
@@ -324,7 +338,10 @@ def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None):
     if not fila:
 
         # Otro proceso ganó la carrera: la suya vale igual que la nuestra.
-        return (oferta_viva(plan["id"]), f"el plan #{plan['id']} ya estaba ofertado")
+        return (
+            oferta_viva(plan["id"], user_id=user_id),
+            f"el plan #{plan['id']} ya estaba ofertado"
+        )
 
     log_event(
         "plan_offer_created",
@@ -349,6 +366,7 @@ def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None):
             "percent": percent, "amount": rebajado, "base_amount": float(base),
             "currency": plan.get("currency") or "EUR",
             "stripe_price_id": price_id, "ends_at": termina,
+            "user_id": int(user_id) if user_id else None,
         },
         f"{plan.get('group_name')}/{plan.get('name')}: "
         f"{float(base):.2f} → {rebajado:.2f} {plan.get('currency') or 'EUR'} "
@@ -422,7 +440,29 @@ def describe_weekly_offers(momento=None):
 # lo único que no se puede permitir.
 
 
-def sql_precio_vigente(alias="p"):
+def _de_quien(param_persona):
+    """El filtro de a quién pertenece la oferta.
+
+    Sin persona, solo las públicas —es lo que ve el escaparate—. Con persona,
+    las suyas primero: así el botón que se le pinta a ELLA lleva su precio, y el
+    de otro no le sirve a nadie más.
+    """
+
+    if not param_persona:
+        return " AND po.user_id IS NULL"
+
+    return f" AND (po.user_id IS NULL OR po.user_id = %({param_persona})s)"
+
+
+def _orden_de_oferta(param_persona):
+
+    if not param_persona:
+        return " ORDER BY po.ends_at DESC"
+
+    return " ORDER BY (po.user_id IS NOT NULL) DESC, po.ends_at DESC"
+
+
+def sql_precio_vigente(alias="p", param_persona=None):
     """El identificador con el que se cobra hoy este plan (oferta incluida)."""
 
     from plan_price_service import sql_precio_efectivo
@@ -432,14 +472,15 @@ def sql_precio_vigente(alias="p"):
     return (
         "COALESCE((SELECT po.stripe_price_id FROM plan_offers po"
         f" WHERE po.plan_id = {prefijo}id"
+        + _de_quien(param_persona) +
         "   AND po.starts_at <= NOW() AND po.ends_at > NOW()"
         "   AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''"
-        " ORDER BY po.ends_at DESC LIMIT 1), "
+        + _orden_de_oferta(param_persona) + " LIMIT 1), "
         + sql_precio_efectivo(alias) + ")"
     )
 
 
-def sql_importe_vigente(alias="p"):
+def sql_importe_vigente(alias="p", param_persona=None):
     """El importe que se va a cobrar hoy (el de la oferta si la hay)."""
 
     prefijo = f"{alias}." if alias else ""
@@ -447,8 +488,170 @@ def sql_importe_vigente(alias="p"):
     return (
         "COALESCE((SELECT po.amount FROM plan_offers po"
         f" WHERE po.plan_id = {prefijo}id"
+        + _de_quien(param_persona) +
         "   AND po.starts_at <= NOW() AND po.ends_at > NOW()"
         "   AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''"
-        " ORDER BY po.ends_at DESC LIMIT 1), "
+        + _orden_de_oferta(param_persona) + " LIMIT 1), "
         f"{prefijo}amount)"
+    )
+
+
+# =========================
+# EL AÑO CON DESCUENTO PARA QUIEN YA PROBÓ
+# =========================
+# Quien acaba de pagar una semana es la persona más fácil de convertir en
+# suscriptor anual que existe: ya está dentro, ya sabe lo que hay y su acceso se
+# le acaba en días. A esa persona —y solo a esa— se le ofrece el año al 50%.
+#
+# «Y solo a esa» no es un detalle: si esta oferta fuese pública, el precio anual
+# de la comunidad pasaría a ser la mitad para todo el mundo, incluido quien
+# habría pagado el completo. Por eso la oferta lleva user_id y el escaparate
+# ignora las que lo llevan.
+
+ANUAL_MINIMO = 330
+
+
+def plan_anual_de(group_id):
+    """El plan de un año de esa comunidad. None si no tiene."""
+
+    from payment_access_service import MAX_PLAN_DURATION_DAYS
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT p.id, p.group_id,
+                       COALESCE(NULLIF(g.name, ''), 'la comunidad'),
+                       COALESCE(NULLIF(p.name, ''), 'Acceso anual'),
+                       p.amount,
+                       COALESCE(NULLIF(p.currency, ''), 'EUR'),
+                       p.duration_days,
+                       COALESCE(p.is_recurring, FALSE)
+                FROM plans p
+                JOIN groups g ON g.id = p.group_id
+                WHERE p.group_id = %s
+                  AND COALESCE(p.is_active, TRUE) = TRUE
+                  AND COALESCE(g.is_active, TRUE) = TRUE
+                  AND COALESCE(NULLIF(p.payment_provider, ''), 'stripe') = 'stripe'
+                  AND p.amount IS NOT NULL AND p.amount > 0
+                  AND p.duration_days BETWEEN %s AND %s
+                ORDER BY p.duration_days DESC, p.amount DESC
+                LIMIT 1
+
+            """, (int(group_id), ANUAL_MINIMO, MAX_PLAN_DURATION_DAYS))
+
+            fila = cur.fetchone()
+
+    except Exception as e:
+
+        print("Ofertas: error buscando el plan anual:", str(e)[:160])
+
+        return None
+
+    if not fila:
+        return None
+
+    return {
+        "id": fila[0], "group_id": fila[1], "group_name": fila[2],
+        "name": fila[3], "amount": fila[4], "currency": fila[5],
+        "duration_days": fila[6], "is_recurring": bool(fila[7]),
+    }
+
+
+def asegurar_oferta_anual(user_id, group_id, percent=None, dias=None):
+    """La oferta anual personal de alguien, creándola si hace falta.
+
+    Devuelve None cuando no hay plan anual, cuando el descuento dejaría el
+    importe por debajo de lo cobrable, o cuando falle Stripe: en todos esos
+    casos es mejor no enseñar nada que enseñar una oferta que no se puede pagar.
+    """
+
+    if not user_id or not group_id:
+        return None
+
+    plan = plan_anual_de(group_id)
+
+    if not plan:
+        return None
+
+    ya = oferta_viva(plan["id"], user_id=user_id)
+
+    if ya and ya.get("user_id"):
+        return ya
+
+    oferta, detalle = crear_oferta(
+        plan,
+        percent=int(percent or DESCUENTO_ANUAL),
+        dias=int(dias or DIAS_DE_OFERTA),
+        user_id=int(user_id),
+        # El anual está fuera de las ofertas del escaparate a propósito; aquí
+        # se permite porque esta oferta no va al escaparate, va a una persona.
+        permitir_cualquier_duracion=True,
+    )
+
+    if not oferta:
+
+        print("Ofertas: sin oferta anual para", user_id, "-", detalle)
+
+        return None
+
+    return oferta
+
+
+def tiene_plan_corto(user_id, group_id):
+    """¿Lo que esta persona compró en esta comunidad era corto?
+
+    Es la condición del upsell: a quien ya pagó un año no se le ofrece otro con
+    descuento —sería regalarle dinero por algo que ya tiene— y a quien nunca ha
+    pagado no se le puede llamar «quien ya probó».
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT p.duration_days
+                FROM payments pa
+                JOIN plans p
+                  ON p.group_id = pa.group_id
+                 AND p.name = pa.plan
+                WHERE pa.user_id = %s
+                  AND pa.group_id = %s
+                  AND LOWER(COALESCE(pa.status, '')) IN
+                      ('paid', 'completed', 'succeeded')
+                ORDER BY pa.payment_date DESC NULLS LAST
+                LIMIT 1
+
+            """, (int(user_id), int(group_id)))
+
+            fila = cur.fetchone()
+
+    except Exception as e:
+
+        print("Ofertas: error mirando el plan comprado:", str(e)[:160])
+
+        return False
+
+    if not fila:
+        return False
+
+    return tramo_de_plan(fila[0]) is not None
+
+
+def frase_oferta_anual(oferta):
+    """El texto del botón. None si no hay oferta que enseñar."""
+
+    if not oferta:
+        return None
+
+    importe = float(oferta.get("amount") or 0)
+    moneda = oferta.get("currency") or "EUR"
+
+    return (
+        f"🎁 Año completo con -{int(oferta.get('percent') or 0)}% — "
+        f"{importe:.2f} {moneda}".replace(".", ",")
     )

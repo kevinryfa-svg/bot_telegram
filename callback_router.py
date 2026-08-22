@@ -28798,16 +28798,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # inválido» al que ya había pulsado comprar.
                 from weekly_offer_service import sql_precio_vigente
 
+                # Con la persona delante: si tiene una oferta suya (el año con
+                # descuento de quien ya probó una semana), el botón tiene que
+                # llevar SU precio. Enseñarle el rebajado y mandar al cobro el
+                # de tarifa sería cobrarle más de lo que ponía el botón.
                 cur.execute("""
 
-                    SELECT """ + sql_precio_vigente("p") + """
+                    SELECT """ + sql_precio_vigente("p", "comprador") + """
                     FROM plans p
-                    WHERE p.id=%s
-                      AND p.group_id=%s
+                    WHERE p.id=%(plan)s
+                      AND p.group_id=%(grupo)s
                       AND COALESCE(p.is_active, TRUE)=TRUE
                       AND COALESCE(NULLIF(p.payment_provider, ''), 'stripe')='stripe'
 
-                """, (plan_id, group_id))
+                """, {
+                    "plan": plan_id,
+                    "grupo": group_id,
+                    "comprador": query.from_user.id if query.from_user else None,
+                })
 
                 fila = cur.fetchone()
 

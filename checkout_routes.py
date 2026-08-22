@@ -148,29 +148,39 @@ def register_checkout_routes(app):
                 # es más barato; al revés no puede pasar nunca.
                 cur.execute("""
 
-                    SELECT """ + sql_precio_vigente("p") + """,
+                    SELECT """ + sql_precio_vigente("p", "comprador") + """,
                            COALESCE(p.is_recurring, FALSE),
                            COALESCE(p.trial_days, 0),
-                           """ + sql_importe_vigente("p") + """,
+                           """ + sql_importe_vigente("p", "comprador") + """,
                            p.currency,
                            p.id,
                            (SELECT po.percent FROM plan_offers po
                              WHERE po.plan_id = p.id
+                               AND (po.user_id IS NULL
+                                    OR po.user_id = %(comprador)s)
                                AND po.starts_at <= NOW()
                                AND po.ends_at > NOW()
-                             ORDER BY po.ends_at DESC LIMIT 1)
+                             ORDER BY (po.user_id IS NOT NULL) DESC,
+                                      po.ends_at DESC LIMIT 1)
 
                     FROM plans p
 
                     WHERE (
-                              """ + sql_precio_vigente("p") + """=%(plan)s
+                              """ + sql_precio_vigente("p", "comprador") + """=%(plan)s
                               OR """ + sql_precio_efectivo("p") + """=%(plan)s
                           )
                     AND p.group_id=%(grupo)s
                     AND p.is_active=TRUE
                     AND COALESCE(NULLIF(p.payment_provider, ''), 'stripe')='stripe'
 
-                """, {"plan": plan, "grupo": group_id})
+                """, {
+                    "plan": plan,
+                    "grupo": group_id,
+                    # La oferta personal es de quien la recibió: el precio de
+                    # otro no resuelve aquí, así que no se le puede pasar a un
+                    # amigo.
+                    "comprador": telegram_id,
+                })
 
                 row = cur.fetchone()
 

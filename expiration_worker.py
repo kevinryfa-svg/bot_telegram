@@ -101,6 +101,32 @@ def has_active_subscription_record(cur, user_id, group_id):
     return cur.fetchone() is not None
 
 
+def fetch_expired_members():
+    """Quién ha caducado y sigue dentro. La lista que hay que expulsar.
+
+    Vive en su propia función para poder comprobarla: es la consulta de la que
+    depende que una oferta de UNA SEMANA sea de una semana y no de siempre, y
+    estaba enterrada dentro de un bucle infinito, donde ninguna prueba podía
+    llegar. Un pago único también entra: la concesión marca
+    subscription_active=TRUE sea cual sea el plan, así que el que compró siete
+    días sale a los siete días.
+    """
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+
+            SELECT user_id, group_id, expiration
+            FROM users
+            WHERE expiration IS NOT NULL
+            AND expiration < NOW()
+            AND COALESCE(subscription_active, TRUE)=TRUE
+
+        """)
+
+        return cur.fetchall() or []
+
+
 def check_expirations():
 
     while True:
@@ -109,17 +135,7 @@ def check_expirations():
 
             with conn.cursor() as cur:
 
-                cur.execute("""
-
-                SELECT user_id, group_id, expiration
-                FROM users
-                WHERE expiration IS NOT NULL
-                AND expiration < NOW()
-                AND COALESCE(subscription_active, TRUE)=TRUE
-
-                """)
-
-                rows = cur.fetchall()
+                rows = fetch_expired_members()
 
                 now = datetime.now()
 
