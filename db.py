@@ -2973,6 +2973,73 @@ def create_tables():
         # =========================
         # TABLA PLANES COMERCIALES
         # =========================
+        # OFERTAS DE PLAN (LAS SEMANALES QUE SE AUTOGESTIONAN)
+        # =========================
+        # Una oferta NO toca el plan: vive aparte, con su ventana de fechas y su
+        # propio precio de Stripe con el importe rebajado. Así lo que se enseña
+        # y lo que se cobra siguen siendo el mismo número —que es la regla que
+        # gobierna todo el dinero de este bot— y cuando la oferta caduca no hay
+        # nada que deshacer: simplemente deja de estar viva.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS plan_offers (
+
+            id SERIAL PRIMARY KEY,
+
+            plan_id INTEGER,
+
+            group_id INTEGER,
+
+            percent INTEGER,
+
+            -- En unidades MAYORES, como plans.amount (y AL REVÉS que
+            -- commercial_plans, que va en céntimos). Las dos convenciones
+            -- conviven en este producto y confundirlas cobra de más.
+            amount NUMERIC(12, 2),
+
+            base_amount NUMERIC(12, 2),
+
+            currency TEXT DEFAULT 'EUR',
+
+            stripe_price_id TEXT,
+
+            starts_at TIMESTAMP,
+
+            ends_at TIMESTAMP,
+
+            -- Idempotencia: una oferta por plan y semana, aunque el arranque se
+            -- repita cinco veces el mismo lunes.
+            week_key TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+        try:
+
+            cur.execute("""
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_offers_semana
+                ON plan_offers (plan_id, week_key)
+
+            """)
+
+            cur.execute("""
+
+                CREATE INDEX IF NOT EXISTS idx_plan_offers_vivas
+                ON plan_offers (plan_id, starts_at, ends_at)
+
+            """)
+
+        except Exception as e:
+
+            print("Índices de plan_offers:", e)
+
+
+        # =========================
 
         cur.execute("""
 

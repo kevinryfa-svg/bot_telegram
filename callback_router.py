@@ -28796,16 +28796,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # faltaba el NULLIF de price_id, así que un plan con las dos
                 # columnas vacías devolvía «» y el cobro contestaba «Plan
                 # inválido» al que ya había pulsado comprar.
-                from plan_price_service import sql_precio_efectivo
+                from weekly_offer_service import sql_precio_vigente
 
                 cur.execute("""
 
-                    SELECT """ + sql_precio_efectivo() + """
-                    FROM plans
-                    WHERE id=%s
-                      AND group_id=%s
-                      AND COALESCE(is_active, TRUE)=TRUE
-                      AND COALESCE(NULLIF(payment_provider, ''), 'stripe')='stripe'
+                    SELECT """ + sql_precio_vigente("p") + """
+                    FROM plans p
+                    WHERE p.id=%s
+                      AND p.group_id=%s
+                      AND COALESCE(p.is_active, TRUE)=TRUE
+                      AND COALESCE(NULLIF(p.payment_provider, ''), 'stripe')='stripe'
 
                 """, (plan_id, group_id))
 

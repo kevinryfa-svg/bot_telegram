@@ -130,32 +130,78 @@ def register_checkout_routes(app):
 
                 precio_efectivo = sql_precio_efectivo()
 
+                # El identificador que llega puede ser el del plan o el de su
+                # OFERTA viva. Las dos cosas se resuelven aquí, en la misma
+                # consulta y con el mismo COALESCE que usa el escaparate para
+                # anunciarlo: si el botón enseñó el precio de oferta, es ese el
+                # que tiene que cobrarse.
+                from weekly_offer_service import (
+                    sql_importe_vigente,
+                    sql_precio_vigente,
+                )
+
+                # Se cobra SIEMPRE el precio vigente —el de la oferta mientras
+                # esté viva—, y se acepta llegar aquí con cualquiera de los dos
+                # identificadores: el de la oferta (el que enseña el escaparate
+                # hoy) o el del plan (el que puede llevar un botón de un mensaje
+                # de hace tres días). Un botón viejo cobra el precio nuevo, que
+                # es más barato; al revés no puede pasar nunca.
                 cur.execute("""
 
-                    SELECT """ + precio_efectivo + """,
-                           COALESCE(is_recurring, FALSE),
-                           COALESCE(trial_days, 0),
-                           amount,
-                           currency,
-                           id
+                    SELECT """ + sql_precio_vigente("p") + """,
+                           COALESCE(p.is_recurring, FALSE),
+                           COALESCE(p.trial_days, 0),
+                           """ + sql_importe_vigente("p") + """,
+                           p.currency,
+                           p.id,
+                           (SELECT po.percent FROM plan_offers po
+                             WHERE po.plan_id = p.id
+                               AND po.starts_at <= NOW()
+                               AND po.ends_at > NOW()
+                             ORDER BY po.ends_at DESC LIMIT 1)
 
-                    FROM plans
+                    FROM plans p
 
-                    WHERE """ + precio_efectivo + """=%s
-                    AND group_id=%s
-                    AND is_active=TRUE
-                    AND COALESCE(NULLIF(payment_provider, ''), 'stripe')='stripe'
+                    WHERE (
+                              """ + sql_precio_vigente("p") + """=%(plan)s
+                              OR """ + sql_precio_efectivo("p") + """=%(plan)s
+                          )
+                    AND p.group_id=%(grupo)s
+                    AND p.is_active=TRUE
+                    AND COALESCE(NULLIF(p.payment_provider, ''), 'stripe')='stripe'
 
-                """, (
-
-                    plan,
-                    group_id
-
-                ))
+                """, {"plan": plan, "grupo": group_id})
 
                 row = cur.fetchone()
 
+                oferta_caducada = False
+
+                if not row:
+
+                    # ¿Era el precio de una oferta que ha terminado entre que
+                    # se pintó el botón y se pulsó? Decirlo así es mejor que
+                    # «Plan inválido» —que suena a error del bot— y muchísimo
+                    # mejor que cobrarle el precio normal sin avisar.
+                    cur.execute("""
+
+                        SELECT 1 FROM plan_offers
+                        WHERE stripe_price_id = %s AND ends_at <= NOW()
+                        LIMIT 1
+
+                    """, (plan,))
+
+                    oferta_caducada = cur.fetchone() is not None
+
             if not row:
+
+                if oferta_caducada:
+
+                    return jsonify({
+                        "error": (
+                            "Esa oferta ya ha terminado. Vuelve a abrir la "
+                            "comunidad y verás el precio de ahora."
+                        )
+                    }), 400
 
                 return jsonify({"error": "Plan inválido"}), 400
 
@@ -165,6 +211,7 @@ def register_checkout_routes(app):
             plan_amount_major = row[3]
             plan_currency = row[4]
             plan_id_encontrado = row[5]
+            plan_oferta_percent = row[6]
 
         except Exception as e:
 
@@ -234,6 +281,12 @@ def register_checkout_routes(app):
                 "plan_id": str(plan_id_encontrado),
                 "community_type": community_type
             }
+
+            if plan_oferta_percent:
+
+                # Queda escrito en el pago: dentro de un mes, mirando un
+                # extracto, «por qué cobré 4 y no 10» tiene respuesta.
+                metadata_session["offer_percent"] = str(plan_oferta_percent)
 
             session_kwargs = dict(
 

@@ -482,7 +482,10 @@ def test_the_catalog_creates_a_recurring_price_only_when_asked(monkeypatch):
 def test_the_checkout_route_switches_to_subscription_mode():
     source = open("checkout_routes.py", encoding="utf-8").read()
 
-    assert "COALESCE(is_recurring, FALSE)" in source, (
+    assert (
+        "COALESCE(is_recurring, FALSE)" in source
+        or "COALESCE(p.is_recurring, FALSE)" in source
+    ), (
         "el checkout no lee si el plan es recurrente"
     )
     assert 'mode="subscription" if plan_es_recurrente else "payment"' in source
