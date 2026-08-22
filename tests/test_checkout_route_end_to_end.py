@@ -253,3 +253,37 @@ def test_an_old_button_never_charges_more_than_the_offer(con_oferta):
     assert creada["line_items"][0]["price"] == "price_de_oferta", (
         "el identificador viejo entra, pero cobra el precio de hoy"
     )
+
+
+def test_the_payment_page_says_what_is_being_bought(tienda):
+    """La cabecera de esa pantalla la pone Stripe con el nombre fiscal de la
+    cuenta —en esta, «TIENDA INFORMATICA»—. Quien llega desde un bot de
+    comunidades de Telegram y lee eso cree que se ha equivocado de enlace."""
+
+    ofertas = sos.fetch_sellable_communities(0, limit=5, solo_grupo=91)
+
+    cobrar(tienda, ofertas[0]["price_id"])
+
+    mensaje = tienda["creadas"][-1]["custom_text"]["submit"]["message"]
+
+    assert "StarsVip" in mensaje, "a qué comunidad entra"
+    assert "enlace de entrada" in mensaje, "y qué pasa justo después de pagar"
+
+    for promesa in ("exclusivo", "diario", "mejor", "garantizado"):
+        assert promesa not in mensaje.lower(), (
+            "aquí no se promete nada sobre el contenido: este código no lo "
+            "conoce"
+        )
+
+
+def test_the_trust_line_survives_a_nameless_community(tienda):
+    with tienda["db"].conn.cursor() as cur:
+        cur.execute("UPDATE groups SET name='' WHERE id=91")
+
+    ofertas = sos.fetch_sellable_communities(0, limit=5, solo_grupo=91)
+
+    respuesta = cobrar(tienda, ofertas[0]["price_id"])
+
+    assert respuesta.status_code == 200, (
+        "un nombre vacío no puede tumbar un cobro"
+    )
