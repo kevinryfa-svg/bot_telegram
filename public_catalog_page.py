@@ -64,6 +64,9 @@ margin-bottom:14px}
 .social{color:#2f7a4d;font-weight:600;margin:0 0 10px;font-size:.95rem}
 .precio{display:inline-block;font-weight:600;background:#eef4ff;color:#1a4fbf;
 border-radius:999px;padding:4px 12px;margin:0 0 14px;font-size:.95rem}
+.rebaja{display:inline-block;font-weight:700;background:#ffeceb;color:#c2321f;
+border-radius:999px;padding:4px 12px;margin:0 8px 14px 0;font-size:.95rem}
+.antes{color:#78848f;text-decoration:line-through;font-weight:500}
 a.cta{display:block;text-align:center;text-decoration:none;font-weight:600;
 background:#1a4fbf;color:#fff;border-radius:10px;padding:13px 16px}
 a.cta:hover{background:#153f9c}
@@ -84,6 +87,8 @@ body{background:#0f1319;color:#e8edf3}
 .desde{color:#e8edf3}
 .desc,.sub{color:#9aa7b4}
 .precio{background:#1b2740;color:#8fb4ff}
+.rebaja{background:#3a1c19;color:#ff9d8f}
+.antes{color:#7b8794}
 .social{color:#6fcf97}
 footer{color:#7b8794}
 }
@@ -99,6 +104,43 @@ def enlace_del_bot(group_id=None):
         return f"{base}?start=group_{int(group_id)}"
 
     return base
+
+
+def _insignia_de_oferta(oferta):
+    """«🔥 -60% · antes 9 EUR · quedan 3 días». Cadena vacía si no hay oferta.
+
+    Un precio rebajado sin decir que está rebajado es solo un precio. Los tres
+    datos van juntos: el porcentaje llama, el precio de antes lo hace
+    comprobable, y la cuenta atrás es la única razón para comprar hoy.
+    """
+
+    percent = (oferta or {}).get("oferta_percent")
+
+    if not percent:
+        return ""
+
+    trozos = [f"🔥 -{int(percent)}%"]
+
+    if oferta.get("oferta_antes"):
+
+        trozos.append(
+            f'<span class="antes">{html.escape(oferta["oferta_antes"])}</span>'
+        )
+
+    termina = oferta.get("oferta_termina")
+
+    if termina:
+
+        from datetime import datetime
+
+        dias = (termina - datetime.now()).days
+
+        trozos.append(
+            "ÚLTIMO DÍA" if dias <= 0
+            else ("queda 1 día" if dias == 1 else f"quedan {dias} días")
+        )
+
+    return '<p class="rebaja">' + " · ".join(trozos) + "</p>"
 
 
 def _tarjeta(oferta):
@@ -126,6 +168,12 @@ def _tarjeta(oferta):
 
     if social:
         partes.append(f'<p class="social">{html.escape(social)}</p>')
+
+    # La rebaja va DELANTE del precio: es lo que hace mirar el precio.
+    rebaja = _insignia_de_oferta(oferta)
+
+    if rebaja:
+        partes.append(rebaja)
 
     if precio:
         partes.append(f'<p class="precio">{precio}</p>')
