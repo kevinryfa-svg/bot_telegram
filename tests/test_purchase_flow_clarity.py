@@ -14,6 +14,8 @@ con acceso) aparecieron tres cosas:
     único que importa en ese momento: que no te han cobrado.
 """
 
+import pytest
+
 import callback_router as cr
 
 
@@ -165,8 +167,20 @@ def test_a_broken_duration_is_ignored_instead_of_crashing():
 # LA PANTALLA DE PLANES
 # =========================
 
-def plan_row(plan_id, name, amount, currency, duration, provider="stripe"):
-    return (plan_id, name, f"price_{plan_id}", amount, currency, provider, duration)
+def plan_row(plan_id, name, amount, currency, duration, provider="stripe",
+             amount_tarifa=None, oferta_percent=None):
+    """La fila tal y como la lee la pantalla de compra.
+
+    Lleva dos campos más desde que hay ofertas: el importe de TARIFA y el
+    porcentaje, para poder decir «3,60 EUR 🔥 -60% (antes 9 EUR)». El importe
+    de la posición 4 es el VIGENTE, que es el que se cobra.
+    """
+
+    return (
+        plan_id, name, f"price_{plan_id}", amount, currency, provider, duration,
+        amount_tarifa if amount_tarifa is not None else amount,
+        oferta_percent,
+    )
 
 
 def test_the_plans_are_readable_before_touching_a_button():
@@ -309,3 +323,98 @@ def test_the_backup_button_no_longer_shows_a_database_error():
     assert "No he podido identificar al propietario" in source, (
         "falta la comprobación previa: sin dueño, el INSERT rompía"
     )
+
+
+# =========================
+# DE QUÉ COMUNIDAD ES ESTA PANTALLA
+# =========================
+# La pantalla de compra ponía «💳 Elige tu acceso» y una lista de precios, sin
+# nombrar la comunidad ni una vez. Quien llega desde un mensaje, desde un enlace
+# compartido o después de mirar dos o tres comunidades, se encuentra unos
+# precios sueltos y no sabe qué está comprando. Y con una oferta viva era peor:
+# el escaparate prometía 3,60 y esta lista enseñaba 9.
+
+def test_the_summary_shows_the_offer_price_and_what_it_cost_before():
+    resumen = cr.format_plans_summary([
+        plan_row(1, "Acceso 7 días", 3.60, "eur", 7,
+                 amount_tarifa=9, oferta_percent=60),
+    ])
+
+    assert "3,60 EUR" in resumen, "el precio que se va a cobrar"
+    assert "-60%" in resumen
+    assert "antes 9 EUR" in resumen, (
+        "sin el punto de referencia, un descuento es solo un precio"
+    )
+
+
+def test_without_an_offer_the_summary_is_the_one_of_always():
+    resumen = cr.format_plans_summary([
+        plan_row(1, "Mensual", 15, "eur", 30),
+    ])
+
+    assert "• Mensual — 15 EUR · 1 mes" in resumen
+    assert "🔥" not in resumen
+
+
+def test_the_purchase_screen_is_titled_with_the_community(clean_db):
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active) "
+            "VALUES (55, 'StarsVip', -1055, TRUE)"
+        )
+
+    assert cr._nombre_de_comunidad(55) == "StarsVip"
+
+    fuente = open("callback_router.py", encoding="utf-8").read()
+
+    assert "— elige tu acceso" in fuente, (
+        "el nombre de la comunidad encabeza la pantalla donde se paga"
+    )
+
+
+def test_a_nameless_community_does_not_break_the_screen(clean_db):
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active) "
+            "VALUES (56, '', -1056, TRUE)"
+        )
+
+    assert cr._nombre_de_comunidad(56) is None, (
+        "quedarse sin título es un texto más pobre; quedarse sin la pantalla "
+        "de compra es una venta perdida"
+    )
+    assert cr._nombre_de_comunidad(999999) is None
+
+
+def test_the_card_price_matches_the_shop_window(clean_db, monkeypatch):
+    """Dos precios para lo mismo en dos pantallas seguidas es lo que hace que
+    alguien cierre el bot."""
+
+    import start_offer_service as sos
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active, "
+            "is_marketplace_visible) VALUES (57, 'StarsVip', -1057, TRUE, TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO plans (id, group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active) VALUES "
+            "(571, 57, 'Acceso 7 días', 'p_s', 'p_s', 7, 9, 'EUR', TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO plan_offers (plan_id, group_id, percent, amount, "
+            "base_amount, currency, stripe_price_id, starts_at, ends_at, "
+            "week_key) VALUES (571, 57, 60, 3.60, 9, 'EUR', 'p_of', NOW(), "
+            "NOW() + INTERVAL '3 days', 'w')"
+        )
+
+    ficha = cr.fetch_marketplace_group(57)
+    escaparate = sos.fetch_sellable_communities(0, limit=5, solo_grupo=57)[0]
+
+    assert float(ficha["entry_amount"]) == pytest.approx(3.60)
+    assert float(escaparate["amount"]) == pytest.approx(3.60)
+
+    # Y escrito igual en las dos: «3,60 EUR», no «3.6».
+    assert "3,60 EUR" in cr.format_marketplace_price(ficha)
+    assert "3,60 EUR" in escaparate["precio"]
