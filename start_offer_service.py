@@ -264,6 +264,7 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
     # resolverse de dos maneras. Se importa aquí dentro porque
     # plan_price_service usa este módulo para las monedas.
     from plan_price_service import sql_precio_efectivo
+    from weekly_offer_service import sql_solo_si_cobra_por_stripe
 
     try:
 
@@ -331,6 +332,7 @@ def fetch_sellable_communities(user_id, limit=MAX_OFERTAS, solo_grupo=None,
                           -- Solo públicas: una oferta personal no le baja el
                           -- precio a todo el mundo.
                           AND po.user_id IS NULL
+                          """ + sql_solo_si_cobra_por_stripe("p") + """
                           AND po.starts_at <= NOW()
                           AND po.ends_at > NOW()
                           AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''

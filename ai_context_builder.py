@@ -185,11 +185,17 @@ def get_group_ai_payment_methods(group_id):
 
 def build_public_marketplace_context(user_id):
 
+    # El precio que le dice la IA a alguien que pregunta «¿cuánto cuesta?»
+    # tiene que ser el mismo que ve en la tienda. Leía plans.amount a secas, así
+    # que con una oferta viva la IA contestaba 9 mientras el botón ponía 3,60 —
+    # y quien pregunta el precio a un bot se cree lo que le contesta.
+    from weekly_offer_service import sql_importe_vigente
+
     groups = fetch_all("""
         SELECT g.id,
                COALESCE(g.name, 'Comunidad'),
                COUNT(p.id) FILTER (WHERE p.is_active=TRUE),
-               MIN(p.amount) FILTER (WHERE p.is_active=TRUE),
+               MIN(""" + sql_importe_vigente("p") + """) FILTER (WHERE p.is_active=TRUE),
                MIN(p.currency) FILTER (WHERE p.is_active=TRUE)
         FROM groups g
         LEFT JOIN plans p ON p.group_id=g.id
@@ -225,8 +231,15 @@ def build_public_marketplace_context(user_id):
         "Comunidades visibles recientes:"
     ]
 
+    from start_offer_service import formato_importe
+
     for group_id, name, plan_count, min_amount, min_currency in groups:
-        price = f"desde {min_amount} {min_currency}" if min_amount and min_currency else "sin precio mínimo visible"
+        # El importe ya viene de una oferta viva si la hay, así que puede traer
+        # céntimos. Se escribe con el mismo formateador que la tienda: si el
+        # botón dice «3,60 EUR», la IA no puede decir «3.60» ni «4».
+        escrito = (formato_importe(min_amount, min_currency)
+                   if min_amount and min_currency else None)
+        price = f"desde {escrito}" if escrito else "sin precio mínimo visible"
         lines.append(f"- {name} (id {group_id}): {plan_count or 0} planes activos, {price}.")
 
     lines.append("Accesos activos del usuario:")

@@ -24403,6 +24403,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 from weekly_offer_service import (
                     sql_importe_vigente,
                     sql_precio_vigente,
+                    sql_solo_si_cobra_por_stripe,
                 )
 
                 cur.execute("""
@@ -24417,6 +24418,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                            p.amount,
                            (SELECT po.percent FROM plan_offers po
                              WHERE po.plan_id = p.id
+                               """ + sql_solo_si_cobra_por_stripe("p") + """
                                AND (po.user_id IS NULL
                                     OR po.user_id = %(comprador)s)
                                AND po.starts_at <= NOW()
