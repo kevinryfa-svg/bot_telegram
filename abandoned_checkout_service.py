@@ -32,11 +32,18 @@ ABANDONED_MAX_AGE_DAYS = int(
 # gente que llegó a la pantalla de Stripe con la tarjeta fuera— y encima
 # abandonaron cuando el cobro estaba roto.
 #
-# Con esta variable la ventana se abre una vez hasta esos días. No hace falta
-# cerrarla a mano: la tabla de recordatorios tiene clave única por intento, así
-# que cada uno recibe UNO y nunca más.
+# La ventana se abre hasta esos días. No hace falta cerrarla a mano ni vigilarla:
+# la tabla de recordatorios tiene clave única por intento, así que cada uno
+# recibe UNO y nunca más. Cuando esos 72 estén escritos, esta ventana no vuelve
+# a encontrar a nadie por su cuenta y el recuperador sigue trabajando solo con
+# los intentos del día.
+#
+# Venía en 0 —apagado— esperando a que alguien pusiera la variable en el
+# servidor. Un rescate que depende de que alguien se acuerde de encender una
+# variable es un rescate que no ocurre, y mientras tanto esos 72 seguían ahí sin
+# que nadie les dijera nada.
 ABANDONED_RESCUE_DAYS = int(
-    os.environ.get("ABANDONED_RESCUE_DAYS", "0")
+    os.environ.get("ABANDONED_RESCUE_DAYS", "180")
 )
 
 
@@ -675,6 +682,8 @@ async def process_abandoned_checkouts(context):
             metadata=summary
         )
 
+        avisar_del_rescate(summary)
+
 
     # El segundo toque (24 h, con cupón) viaja en el mismo job.
     descuentos = await process_abandoned_discounts(context)
@@ -683,3 +692,48 @@ async def process_abandoned_checkouts(context):
     summary["failed"] += descuentos["failed"]
 
     return summary
+
+
+# =========================
+# QUE EL DUEÑO SE ENTERE DE QUE SE HA ESCRITO
+# =========================
+# El rescate le escribe a gente que intentó pagar hace meses. Eso son personas
+# de verdad contestando a un bot, y el dueño tiene que saber que ha salido ANTES
+# de que le lleguen las respuestas —no enterarse por ellas—. Se avisa solo
+# cuando hay rescates de verdad en la tanda: un aviso por cada ronda vacía es
+# ruido, y el ruido es como se deja de leer el aviso que importa.
+
+def avisar_del_rescate(summary):
+    """True si se avisó. Un mensaje al admin por tanda con rescates."""
+
+    rescatados = int((summary or {}).get("rescatados") or 0)
+
+    if rescatados <= 0:
+        return False
+
+    try:
+
+        from bot_config import ADMIN_ID, TOKEN
+        from notification_service import send_telegram_message
+
+        if not (ADMIN_ID and TOKEN):
+            return False
+
+        send_telegram_message(
+            TOKEN,
+            int(ADMIN_ID),
+            f"📨 Rescate de carritos: {rescatados} persona(s) que se quedaron "
+            "a medias en la pantalla de pago hace tiempo acaban de recibir un "
+            "mensaje con la oferta de esta semana.\n\n"
+            "Cada intento recibe UNO y solo uno, así que a estos ya no se les "
+            "vuelve a escribir. Si contestan, son la gente con más intención de "
+            "comprar que hay en la base de datos: llegaron a sacar la tarjeta."
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Rescate: no se pudo avisar al admin:", str(e)[:200])
+
+        return False
