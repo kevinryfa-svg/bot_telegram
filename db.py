@@ -2973,6 +2973,46 @@ def create_tables():
         # =========================
         # TABLA PLANES COMERCIALES
         # =========================
+        # EL AVISO DE ÚLTIMO DÍA (UNO POR OFERTA Y PERSONA)
+        # =========================
+        # La cuenta atrás solo vende si alguien la ve terminar. Esta tabla es
+        # lo que impide que ese empujón se convierta en spam: clave única por
+        # (oferta, persona), así que el aviso del último día se manda UNA vez
+        # por oferta, aunque el job corra cada hora o el contenedor reinicie.
+
+        cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS plan_offer_last_calls (
+
+            id SERIAL PRIMARY KEY,
+
+            offer_id INTEGER,
+
+            user_id BIGINT,
+
+            group_id INTEGER,
+
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+        """)
+
+        try:
+
+            cur.execute("""
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_offer_last_call_unico
+                ON plan_offer_last_calls (offer_id, user_id)
+
+            """)
+
+        except Exception as e:
+
+            print("Índice de avisos de último día:", e)
+
+
+        # =========================
         # OFERTAS DE PLAN (LAS SEMANALES QUE SE AUTOGESTIONAN)
         # =========================
         # Una oferta NO toca el plan: vive aparte, con su ventana de fechas y su

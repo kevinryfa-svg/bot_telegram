@@ -1315,6 +1315,49 @@ def schedule_weekly_offers(application):
     return True
 
 
+async def offer_last_call_job(context: ContextTypes.DEFAULT_TYPE):
+    """El empujón del último día de la oferta."""
+
+    try:
+
+        from weekly_offer_service import process_offer_last_calls
+
+        await process_offer_last_calls(context)
+
+    except Exception as e:
+
+        print("Último día: no se pudo avisar:", str(e)[:200])
+
+
+def schedule_offer_last_calls(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print("Último día: JobQueue no disponible. No se avisará a nadie.")
+
+        return False
+
+
+    import datetime as dt
+
+    # Todos los días a las 10:00 UTC: el job mira si hay alguna oferta a la que
+    # le queden menos de 24 horas. Con la oferta semanal empezando el lunes a
+    # las 08:00, eso cae en domingo — pero sirve igual para cualquier oferta con
+    # otra duración, sin tener que saber su calendario.
+    job_queue.run_daily(
+        offer_last_call_job,
+        time=dt.time(hour=10, minute=0),
+        name="offer_last_calls"
+    )
+
+    print("Aviso de último día de oferta programado (10:00 UTC).")
+
+    return True
+
+
 def schedule_owner_weekly_digest(application):
 
     job_queue = getattr(application, "job_queue", None)
@@ -3392,6 +3435,7 @@ def main():
     schedule_stripe_webhook_config_check(telegram_app)
     schedule_paypal_webhook_config_check(telegram_app)
     schedule_weekly_offers(telegram_app)
+    schedule_offer_last_calls(telegram_app)
     schedule_owner_weekly_digest(telegram_app)
     schedule_business_alerts_job(telegram_app)
     schedule_stripe_reconcile_job(telegram_app)
