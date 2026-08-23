@@ -198,17 +198,15 @@ def resolve_incidents_for(user_id, group_id):
 
 def fetch_group_name(group_id):
 
+    from group_service import nombre_de_comunidad
+
     try:
 
-        with conn.cursor() as cur:
+        nombre = nombre_de_comunidad(group_id)
 
-            cur.execute("SELECT name FROM groups WHERE id = %s", (group_id,))
+        if nombre:
 
-            row = cur.fetchone()
-
-        if row and row[0]:
-
-            return row[0]
+            return nombre
 
     except Exception as e:
 

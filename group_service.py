@@ -380,3 +380,44 @@ def group_exists(group_id):
 
 
     return group is not None
+
+
+# =========================
+# CÓMO SE LLAMA ESTA COMUNIDAD
+# =========================
+# Preguntar el nombre de un grupo estaba escrito tres veces —en el router de
+# botones, en el expulsador y en el creador de precios de Stripe— y las tres
+# resolvían cosas distintas cuando el nombre estaba vacío: una devolvía None,
+# otra «la comunidad» y la tercera ni preguntaba. Se nota donde más duele: el
+# producto que se crea en Stripe se queda sin el nombre de la comunidad y el
+# comprador llega a la pantalla de pago sin saber qué está comprando.
+
+def nombre_de_comunidad(group_id, por_defecto=None):
+    """El nombre de una comunidad, o `por_defecto` si no lo hay.
+
+    Nunca lanza: quedarse sin el nombre es un texto más pobre; quedarse sin la
+    pantalla es una venta perdida.
+    """
+
+    if not group_id:
+        return por_defecto
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT NULLIF(name, '') FROM groups WHERE id = %s",
+                (group_id,),
+            )
+
+            fila = cur.fetchone()
+
+        if fila and fila[0]:
+            return fila[0]
+
+    except Exception as e:
+
+        print("No se pudo leer el nombre de la comunidad:", str(e)[:160])
+
+    return por_defecto

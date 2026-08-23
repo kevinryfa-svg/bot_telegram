@@ -414,3 +414,60 @@ def test_a_database_error_archives_nothing(catalogo, monkeypatch):
     monkeypatch.setattr(pps, "identificadores_de_precio_en_uso", lambda: None)
 
     assert pps.precios_huerfanos() == []
+
+
+# =========================
+# LA PÁGINA DE PAGO TIENE QUE DECIR QUÉ SE COMPRA
+# =========================
+# En producción el producto de Stripe se llamaba «Acceso 7 días». La página de
+# pago decía eso, un importe, y arriba el nombre de la cuenta —que ni se parece
+# al de la comunidad—. Quien llega ahí con la tarjeta en la mano no tiene una
+# sola pista de a QUÉ está pagando por acceder. Es la misma queja que ya se
+# arregló en la pantalla de planes, un paso más adelante en el embudo.
+
+def test_the_stripe_product_names_the_community(catalogo):
+    pps.reparar_precios_de_planes()
+
+    nombres = [c["name"] for c in catalogo["creados"]]
+
+    assert nombres, "tiene que haber creado el precio"
+    assert nombres[0] == "StarsVip · VIP", (
+        "el producto de Stripe es la línea grande de la página de pago: si no "
+        "dice la comunidad, el comprador no sabe qué está comprando"
+    )
+
+
+def test_the_community_name_is_not_repeated():
+    """«StarsVip · StarsVip VIP» se lee peor que cualquiera de las dos mitades."""
+
+    assert pps.nombre_para_stripe({
+        "name": "StarsVip VIP", "group_name": "StarsVip",
+    }) == "StarsVip VIP"
+
+
+def test_without_a_community_the_plan_name_stands_alone():
+    assert pps.nombre_para_stripe({"name": "VIP"}) == "VIP"
+    assert pps.nombre_para_stripe({}) == "Plan"
+
+
+def test_the_discount_survives_the_community_name():
+    """El descuento viaja al producto: es lo que se lee ya con la tarjeta fuera."""
+
+    assert pps.nombre_para_stripe({
+        "name": "Acceso 7 días · -60%", "group_name": "StarsVip",
+    }) == "StarsVip · Acceso 7 días · -60%"
+
+
+def test_a_caller_with_the_name_does_not_ask_the_database_again(monkeypatch):
+    """Reparar cien planes de golpe no puede ser cien consultas evitables."""
+
+    import group_service
+
+    def no_preguntes(*a, **k):
+        raise AssertionError("ya traía el nombre")
+
+    monkeypatch.setattr(group_service, "nombre_de_comunidad", no_preguntes)
+
+    assert pps.nombre_para_stripe({
+        "name": "VIP", "group_id": 61, "group_name": "StarsVip",
+    }) == "StarsVip · VIP"

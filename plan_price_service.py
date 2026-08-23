@@ -155,6 +155,37 @@ def moneda_valida_para_stripe(currency):
     return moneda
 
 
+def nombre_para_stripe(plan):
+    """«StarsVip · Acceso 7 días». Lo que se lee en la pantalla de pago.
+
+    El nombre del producto es la línea grande de la página de Stripe, y hasta
+    ahora era solo el del plan: «Acceso 7 días». Un producto que no dice a QUÉ
+    se accede, en una página que además lleva arriba el nombre de la cuenta
+    —que puede no parecerse en nada—, deja al comprador sin ninguna pista de
+    qué está pagando justo cuando tiene la tarjeta en la mano. Es la misma
+    queja que ya se arregló en la pantalla de planes, un paso más adelante.
+    """
+
+    from group_service import nombre_de_comunidad
+
+    plan_nombre = (plan.get("name") or "").strip() or "Plan"
+
+    # Quien ya trae el nombre no vuelve a preguntarlo: crear un precio ya hace
+    # una llamada a Stripe, y añadirle una consulta evitable es gratis solo
+    # hasta que hay cien planes que reparar de golpe.
+    comunidad = (plan.get("group_name") or "").strip()
+
+    if not comunidad or comunidad == "la comunidad":
+        comunidad = (nombre_de_comunidad(plan.get("group_id")) or "").strip()
+
+    # Si el plan ya lleva el nombre de la comunidad, no se repite: «StarsVip ·
+    # StarsVip VIP» se lee peor que cualquiera de las dos mitades sola.
+    if not comunidad or comunidad.lower() in plan_nombre.lower():
+        return plan_nombre
+
+    return f"{comunidad} · {plan_nombre}"
+
+
 def crear_precio_stripe_para_plan(plan, amount_major):
     """Crea en Stripe un precio que dice exactamente lo que se va a enseñar.
 
@@ -174,7 +205,7 @@ def crear_precio_stripe_para_plan(plan, amount_major):
     moneda = moneda_valida_para_stripe(plan.get("currency"))
 
     _producto, price_id = create_stripe_product_and_price(
-        plan.get("name") or "Plan",
+        nombre_para_stripe(plan),
         amount_major,
         moneda,
         metadata={

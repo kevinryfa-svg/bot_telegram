@@ -264,8 +264,11 @@ def test_choosing_auto_really_creates_the_price_at_the_end(clean_db, monkeypatch
     assert price_id == "price_creado_1", (
         "sin esto, «auto» dejaba el plan sin precio y sin poder cobrar"
     )
-    assert creados[-1]["name"] == "Acceso 30 días", (
+    assert creados[-1]["name"].endswith("Acceso 30 días"), (
         "y con el nombre nuevo, que es lo que se lee en la página de pago"
+    )
+    assert creados[-1]["name"].startswith("StarsVip · "), (
+        "la página de pago tiene que decir a QUÉ comunidad se accede"
     )
     assert creados[-1]["amount_major"] == pytest.approx(29.0)
     assert any("Precio de Stripe" in (r or "") for r in respuestas)

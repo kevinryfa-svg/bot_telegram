@@ -84,23 +84,9 @@ def _idioma_del_comprador(telegram_id):
 def _concepto_del_cobro(group_id, plan_nombre=None):
     """Lo que se lee en el extracto y en el recibo, si Stripe lo manda."""
 
-    nombre = None
+    from group_service import nombre_de_comunidad
 
-    try:
-
-        with conn.cursor() as cur:
-
-            cur.execute(
-                "SELECT NULLIF(name, '') FROM groups WHERE id = %s",
-                (group_id,),
-            )
-
-            fila = cur.fetchone()
-            nombre = fila[0] if fila else None
-
-    except Exception:
-
-        nombre = None
+    nombre = nombre_de_comunidad(group_id)
 
     partes = [p for p in (nombre, plan_nombre) if p]
 
@@ -115,24 +101,9 @@ def _texto_de_confianza(group_id):
     promesas sobre el contenido, que no lo conoce este código.
     """
 
-    nombre = None
+    from group_service import nombre_de_comunidad
 
-    try:
-
-        with conn.cursor() as cur:
-
-            cur.execute(
-                "SELECT NULLIF(name, '') FROM groups WHERE id = %s",
-                (group_id,),
-            )
-
-            fila = cur.fetchone()
-
-            nombre = fila[0] if fila else None
-
-    except Exception as e:
-
-        print("Cobro: no se pudo leer el nombre de la comunidad:", str(e)[:160])
+    nombre = nombre_de_comunidad(group_id)
 
     entrada = f"Acceso a {nombre}." if nombre else "Acceso a la comunidad."
 
