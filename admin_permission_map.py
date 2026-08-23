@@ -114,6 +114,8 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_smoke_clear": (SUPER_ADMIN_ONLY,),
 
     "admin_global_panel": (SUPER_ADMIN_ONLY,),
+    # El embudo de la plataforma entera: mismos ojos que el panel global.
+    "admin_platform_funnel": (SUPER_ADMIN_ONLY,),
     "admin_global_marketplace": (SUPER_ADMIN_ONLY,),
     "admin_global_commercial_plans": (SUPER_ADMIN_ONLY,),
     "admin_payment_providers": (SUPER_ADMIN_ONLY,),

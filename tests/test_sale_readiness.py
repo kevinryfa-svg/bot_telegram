@@ -383,3 +383,73 @@ def test_the_alert_says_it_ends_in_a_refund(monkeypatch):
     assert "COBRO ROTO" in linea
     assert "anuncia un precio y Stripe cobraría otro" in linea
     assert "devolución garantizada" in linea
+
+
+# =========================
+# VIGILARLO, NO SOLO MIRARLO AL ARRANCAR
+# =========================
+# Esto solo corría al arrancar. Con despliegues de vez en cuando, es enterarse
+# días después — y así es exactamente como este bot estuvo meses sin poder
+# cobrar: nadie lo miró.
+
+def test_it_only_speaks_when_the_state_changes(monkeypatch):
+    avisos = []
+
+    monkeypatch.setattr(srs, "_ultimo_estado_del_cobro", {"roto": None})
+    monkeypatch.setattr(
+        srs, "describe_sale_readiness",
+        lambda avisar=True: "🚨 COBRO ROTO — el servidor no contesta"
+    )
+
+    import notification_service
+
+    monkeypatch.setattr(
+        notification_service, "send_telegram_message",
+        lambda token, chat, texto, *a, **k: avisos.append(texto)
+    )
+    monkeypatch.setenv("ADMIN_ID", "1")
+
+    roto, _linea = srs.vigilar_cobro(avisar=False)
+
+    assert roto is True
+
+    # Segunda pasada con el mismo estado: ni una palabra más.
+    antes = len(avisos)
+
+    srs.vigilar_cobro(avisar=False)
+
+    assert len(avisos) == antes, (
+        "un aviso cada hora es ruido que se ignora, y así pasa desapercibido "
+        "el que importa"
+    )
+
+
+def test_a_recovery_is_only_announced_after_a_break(monkeypatch):
+    monkeypatch.setattr(srs, "_ultimo_estado_del_cobro", {"roto": None})
+    monkeypatch.setattr(
+        srs, "describe_sale_readiness", lambda avisar=True: "Cobro: listo."
+    )
+
+    roto, _ = srs.vigilar_cobro(avisar=False)
+
+    assert roto is False
+
+
+def test_the_watchdog_never_takes_down_what_it_watches(monkeypatch):
+    def revienta(avisar=True):
+        raise RuntimeError("stripe no contesta")
+
+    monkeypatch.setattr(srs, "describe_sale_readiness", revienta)
+
+    assert srs.vigilar_cobro(avisar=False) == (None, None)
+
+
+def test_the_watch_is_scheduled_every_hour():
+    fuente = open("main.py", encoding="utf-8").read()
+
+    assert "schedule_sale_readiness_watch" in fuente
+    assert "vigilar_cobro" in fuente
+
+    pos = fuente.index("sale_readiness_watch_job,")
+
+    assert "interval=3600" in fuente[pos:pos + 200]
