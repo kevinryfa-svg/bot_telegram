@@ -976,7 +976,68 @@ def stripe_webhook():
         return "OK"
 
 
-    if event["type"] == "checkout.session.completed":
+    # =========================
+    # EL PAGO QUE CONFIRMA DESPUÉS
+    # =========================
+    # No todos los métodos confirman en el acto. Con Bancontact o iDEAL, Stripe
+    # manda «completed» con la sesión SIN pagar —y ahí no se concede nada, que
+    # para eso está la comprobación de más abajo— y horas después manda
+    # «async_payment_succeeded» con el dinero ya dentro. Ese segundo evento
+    # entra por la MISMA puerta: el acceso se concede igual, con el mismo
+    # camino, la misma idempotencia y el mismo aviso.
+    if event["type"] == "checkout.session.async_payment_failed":
+
+        sesion_fallida = event["data"]["object"]
+        metadata_fallida = sesion_fallida.get("metadata") or {}
+
+        try:
+
+            comprador = int(metadata_fallida.get("telegram_id") or 0)
+
+        except (TypeError, ValueError):
+
+            comprador = 0
+
+        log_event(
+            "checkout_async_payment_failed",
+            category="payment",
+            severity="warning",
+            scope="global",
+            actor_user_id=comprador or None,
+            target_user_id=comprador or None,
+            message="El pago diferido de una sesión no llegó a confirmarse.",
+            metadata={
+                "session": sesion_fallida.get("id"),
+                "group_id": metadata_fallida.get("group_id"),
+            },
+        )
+
+        # Se le dice. Quedarse callado deja a alguien esperando un acceso que
+        # no va a llegar, convencido de que ha pagado.
+        if comprador and TOKEN:
+
+            try:
+
+                send_telegram_message(
+                    TOKEN,
+                    comprador,
+                    "❌ Tu pago no se ha completado\n\n"
+                    "El banco no lo ha confirmado, así que no se te ha cobrado "
+                    "nada y no se ha activado ningún acceso.\n\n"
+                    "Puedes volver a intentarlo cuando quieras."
+                )
+
+            except Exception as e:
+
+                print("No se pudo avisar del pago diferido fallido:", str(e)[:160])
+
+        return "OK"
+
+
+    if event["type"] in (
+        "checkout.session.completed",
+        "checkout.session.async_payment_succeeded",
+    ):
 
         session = event["data"]["object"]
         metadata = session.get("metadata") or {}

@@ -333,9 +333,27 @@ def register_checkout_routes(app):
                 # extracto, «por qué cobré 4 y no 10» tiene respuesta.
                 metadata_session["offer_percent"] = str(plan_oferta_percent)
 
-            session_kwargs = dict(
+            # LOS MÉTODOS DE PAGO LOS DECIDE LA CUENTA, NO ESTA LÍNEA.
+            # Aquí ponía payment_method_types=["card"], y esa lista tapaba todo
+            # lo demás: la cuenta de Stripe de este bot tiene ACTIVOS Link,
+            # Revolut Pay, Klarna, Bancontact, Amazon Pay y varios más, y
+            # ninguno se le ofrecía a nadie. Link, en particular, es un toque
+            # para quien ya ha pagado alguna vez en cualquier sitio con Stripe.
+            #
+            # Sin esa lista, Stripe usa los del panel y descarta solos los que
+            # no encajan con el importe, la moneda o el modo (una suscripción no
+            # admite los mismos que un pago único). Y los que confirman DESPUÉS
+            # ya están cubiertos: el acceso solo se concede con la sesión
+            # pagada, y el evento diferido entra por la misma puerta.
+            #
+            # STRIPE_FORCE_CARD_ONLY=1 vuelve al comportamiento de antes sin
+            # tocar código, por si algún método diera problemas.
+            solo_tarjeta = (
+                os.environ.get("STRIPE_FORCE_CARD_ONLY", "")
+                .strip().lower() in ("1", "true", "yes", "si", "sí")
+            )
 
-                payment_method_types=["card"],
+            session_kwargs = dict(
 
                 line_items=[{
                     "price": price_id,
@@ -377,6 +395,9 @@ def register_checkout_routes(app):
                 }
 
             )
+
+            if solo_tarjeta:
+                session_kwargs["payment_method_types"] = ["card"]
 
             if plan_es_recurrente:
 
