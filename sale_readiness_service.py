@@ -391,15 +391,37 @@ def describe_sale_readiness(avisar=True):
             )
 
 
+    # El nombre de la página de pago NO es un cobro roto: se cobra
+    # perfectamente. Es peor de otra manera —se pierde al comprador sin que
+    # nada falle— así que se dice aparte y no dispara la alarma de avería.
+    avisos = []
+
+    try:
+
+        ok_nombre, detalle_nombre = check_nombre_de_la_pagina_de_pago()
+
+        if not ok_nombre:
+            avisos.append(f"Nombre en la página de pago: {detalle_nombre}")
+
+    except Exception as e:
+
+        print("Cobro: no se pudo comprobar el nombre de pago:", str(e)[:200])
+
+
     if not problemas:
 
-        return (
+        linea_ok = (
             f"Cobro: listo (servidor de pago accesible, {comprobados} "
             "precio(s) de Stripe verificado(s))."
         )
 
+        if avisos:
+            return linea_ok + " ⚠️ " + " | ".join(avisos)
 
-    linea = "🚨 COBRO ROTO — " + " | ".join(problemas)
+        return linea_ok
+
+
+    linea = "🚨 COBRO ROTO — " + " | ".join(problemas + avisos)
 
     log_event(
         "sale_readiness_broken",
@@ -525,3 +547,132 @@ def vigilar_cobro(avisar=True):
         print("Cobro: no se pudo avisar del cambio de estado:", str(e)[:200])
 
     return (roto, linea)
+
+
+# =========================
+# EL NOMBRE QUE SE LEE CON LA TARJETA EN LA MANO
+# =========================
+# El cobro puede funcionar perfectamente y aun así no cobrar nada. La página de
+# Stripe lleva un nombre de negocio arriba, y en producción ese nombre era
+# «TIENDA INFORMATICA»: alguien que iba a pagar por entrar a una comunidad de
+# Telegram llegaba a una página que decía el nombre de una tienda de
+# ordenadores. Eso no da un error, no sale en ningún log y no lo ve nadie desde
+# dentro del bot —solo lo ve el comprador, en el único segundo en el que puede
+# arrepentirse—. Se cierra la pestaña y en las métricas queda como «no compró».
+#
+# El nombre sale de una cadena de reservas de Stripe: primero el nombre público
+# de la cuenta, y si está vacío, el concepto que aparece en el extracto del
+# banco. Por eso se puede tener el nombre de marca bien puesto en un sitio y la
+# página enseñando otro: son campos distintos.
+
+NOMBRE_DE_PAGO_TIMEOUT = float(
+    os.environ.get("NOMBRE_DE_PAGO_TIMEOUT", "10")
+)
+
+
+def nombre_que_vera_el_comprador(cuenta):
+    """El nombre que Stripe pinta arriba en la página de pago.
+
+    Mismo orden de reservas que usa Stripe: el nombre público de la cuenta y,
+    si no lo hay, el concepto del extracto bancario.
+    """
+
+    perfil = (cuenta.get("business_profile") or {})
+    ajustes = (cuenta.get("settings") or {})
+    pagos = (ajustes.get("payments") or {})
+
+    for candidato in (perfil.get("name"), pagos.get("statement_descriptor")):
+
+        if (candidato or "").strip():
+            return candidato.strip()
+
+    return None
+
+
+def nombre_de_marca_de_la_cuenta(cuenta):
+    """Cómo se llama a sí misma la cuenta. La referencia para comparar."""
+
+    panel = ((cuenta.get("settings") or {}).get("dashboard") or {})
+
+    return (panel.get("display_name") or "").strip() or None
+
+
+def _mismo_nombre(uno, otro):
+    """«thestarvip.online» y «TheStarVip» son el mismo negocio; la tienda de
+    ordenadores no."""
+
+    def limpio(texto):
+
+        return "".join(
+            c for c in (texto or "").lower() if c.isalnum()
+        )
+
+    a, b = limpio(uno), limpio(otro)
+
+    if not a or not b:
+        return False
+
+    return a.startswith(b) or b.startswith(a)
+
+
+def _leer_cuenta_de_stripe():
+    """Los datos de la cuenta, o None. Con plazo, porque esto corre al arrancar.
+
+    Se pregunta a mano en vez de con la librería de Stripe por una razón sola:
+    el plazo. La librería espera hasta 80 segundos por defecto, y esto se
+    ejecuta en el arranque del bot —80 segundos de bot parado por una
+    comprobación cosmética es peor que no hacerla.
+    """
+
+    clave = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+
+    if not clave:
+        return None
+
+    respuesta = requests.get(
+        "https://api.stripe.com/v1/account",
+        headers={"Authorization": f"Bearer {clave}"},
+        timeout=NOMBRE_DE_PAGO_TIMEOUT,
+    )
+
+    respuesta.raise_for_status()
+
+    return respuesta.json()
+
+
+def check_nombre_de_la_pagina_de_pago():
+    """(ok, detalle). ¿La página de pago dice el nombre del negocio?
+
+    Un fallo de red no es un nombre mal puesto: si no se puede preguntar, se
+    calla. Este aviso solo tiene sentido si se está seguro.
+    """
+
+    try:
+
+        cuenta = _leer_cuenta_de_stripe()
+
+    except Exception as e:
+
+        return (True, f"no se pudo preguntar a Stripe: {str(e)[:120]}")
+
+    if not cuenta:
+        return (True, "sin credenciales de Stripe: no se comprueba")
+
+    visible = nombre_que_vera_el_comprador(cuenta)
+    marca = nombre_de_marca_de_la_cuenta(cuenta)
+
+    if not visible:
+
+        return (True, "Stripe no enseña ningún nombre de negocio")
+
+    if not marca or _mismo_nombre(visible, marca):
+
+        return (True, f"la página de pago dice «{visible}»")
+
+    return (False, (
+        f"la página de pago dice «{visible}» y el negocio se llama «{marca}». "
+        "Quien va a pagar lee un nombre que no reconoce justo antes de poner "
+        "la tarjeta, y se va. Se arregla poniendo el nombre público de la "
+        "cuenta en Stripe (Configuración → Empresa → Nombre público) o "
+        f"cambiando el concepto del extracto, que ahora es «{visible}»."
+    ))
