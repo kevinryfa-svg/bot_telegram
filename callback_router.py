@@ -16398,30 +16398,11 @@ def format_plan_duration_short(duration_days):
 
 
 def _nombre_de_comunidad(group_id):
-    """El nombre de una comunidad para encabezar una pantalla. None si no hay.
+    """El nombre de una comunidad para encabezar una pantalla. None si no hay."""
 
-    Nunca lanza: quedarse sin título es un texto más pobre; quedarse sin la
-    pantalla de compra es una venta perdida.
-    """
+    from group_service import nombre_de_comunidad
 
-    try:
-
-        with conn.cursor() as cur:
-
-            cur.execute(
-                "SELECT NULLIF(name, '') FROM groups WHERE id = %s",
-                (group_id,),
-            )
-
-            fila = cur.fetchone()
-
-            return fila[0] if fila else None
-
-    except Exception as e:
-
-        print("No se pudo leer el nombre de la comunidad:", str(e)[:160])
-
-        return None
+    return nombre_de_comunidad(group_id)
 
 
 def format_plans_summary(plans):

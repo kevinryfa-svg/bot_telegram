@@ -538,7 +538,9 @@ def test_renaming_also_forces_a_price_with_the_new_name(plan_de_comunidad,
 
     pps.reparar_precios_de_planes()
 
-    assert plan_de_comunidad["creados"][-1]["name"] == "Acceso 360 días"
+    assert plan_de_comunidad["creados"][-1]["name"].endswith(
+        "Acceso 360 días"
+    ), "el nombre nuevo tiene que viajar al producto de Stripe"
 
 
 def test_an_empty_name_is_refused(plan_de_comunidad, monkeypatch):

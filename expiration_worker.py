@@ -21,28 +21,9 @@ revoke_link = partial(revoke_telegram_invite_link, TOKEN)
 def group_name_for_notice(group_id):
     """Nombre de la comunidad para el aviso, con respaldo si no se encuentra."""
 
-    try:
+    from group_service import nombre_de_comunidad
 
-        with conn.cursor() as cur:
-
-            cur.execute(
-                "SELECT name FROM groups WHERE id=%s",
-                (group_id,)
-            )
-
-            row = cur.fetchone()
-
-
-        if row and row[0]:
-
-            return row[0]
-
-    except Exception as e:
-
-        print("No se pudo leer el nombre de la comunidad:", e)
-
-
-    return "la comunidad"
+    return nombre_de_comunidad(group_id, por_defecto="la comunidad")
 
 
 def is_protected_group_admin(user_id, group_id):

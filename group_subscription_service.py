@@ -281,14 +281,11 @@ def align_expiration_with_trial(user_id, group_id, stripe_subscription_id):
 
 
 def fetch_group_name(group_id):
+    from group_service import nombre_de_comunidad
+
     try:
 
-        with conn.cursor() as cur:
-
-            cur.execute("SELECT name FROM groups WHERE id=%s", (group_id,))
-            row = cur.fetchone()
-
-        return (row[0] if row else None) or f"Comunidad {group_id}"
+        return nombre_de_comunidad(group_id) or f"Comunidad {group_id}"
 
     except Exception:
 
