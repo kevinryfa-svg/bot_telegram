@@ -77,6 +77,40 @@ def clave_de_semana(momento=None):
     return f"{año}-W{semana:02d}"
 
 
+# A qué hora del lunes sale la oferta de la semana. Tiene que ser la misma que
+# usa el job de main.py: es la hora a la que una oferta muere y nace la
+# siguiente, y si no coinciden se abre un hueco entre las dos.
+LANZAMIENTO_HORA = int(os.environ.get("OFERTA_HORA_LANZAMIENTO", "8"))
+
+
+def fin_de_ciclo(momento=None):
+    """Cuándo muere la oferta de esta semana: cuando nace la de la siguiente.
+
+    Duraban SIETE DÍAS contados desde que se creaban, y eso solo cuadra si se
+    crean un lunes a las ocho. La de producción se creó un sábado por la tarde,
+    así que moría el sábado siguiente y la próxima no salía hasta el lunes:
+    39 HORAS con la tienda a precio de tarifa y sin ninguna razón para comprar
+    hoy. Y volvía a pasar cada vez que una oferta naciera fuera del lunes —un
+    plan nuevo, una comunidad nueva, un despliegue en martes.
+
+    Atándola al lunes siguiente, una oferta creada a mitad de semana dura menos
+    (que es lo correcto: es la oferta DE ESA SEMANA) y nunca queda un hueco.
+    """
+
+    momento = momento or datetime.now()
+
+    # El lunes de la semana SIGUIENTE a la de este momento. Se calcula desde el
+    # lunes de su propia semana para que un momento anterior a las ocho de un
+    # lunes no se quede con una oferta de una hora.
+    lunes = momento - timedelta(days=momento.weekday())
+
+    siguiente = lunes + timedelta(days=7)
+
+    return siguiente.replace(
+        hour=LANZAMIENTO_HORA, minute=0, second=0, microsecond=0
+    )
+
+
 def tramo_de_plan(duration_days):
     """«semana», «mes» o None si ese plan no entra en las ofertas."""
 
@@ -267,9 +301,16 @@ def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None,
         return (None, f"el plan #{plan.get('id')} no es de semana ni de mes")
 
     percent = int(percent or descuento_de_tramo(tramo))
-    dias = int(dias or DIAS_DE_OFERTA)
     momento = momento or datetime.now()
     week_key = week_key or clave_de_semana(momento)
+
+    # Sin días, la oferta muere cuando nace la de la semana siguiente. Con
+    # días, manda quien llama: la oferta anual es de UNA PERSONA y no sigue el
+    # calendario del escaparate.
+    termina = (
+        momento + timedelta(days=int(dias)) if dias
+        else fin_de_ciclo(momento)
+    )
 
     base = plan.get("amount")
     rebajado = importe_con_descuento(base, percent)
@@ -299,8 +340,6 @@ def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None,
     except Exception as e:
 
         return (None, f"Stripe no aceptó el precio de oferta: {str(e)[:160]}")
-
-    termina = momento + timedelta(days=dias)
 
     try:
 
