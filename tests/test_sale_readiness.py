@@ -586,3 +586,83 @@ def test_asking_stripe_has_a_deadline(monkeypatch):
     assert llamadas[0].get("timeout"), (
         "una petición sin plazo en el arranque puede dejar el bot colgado"
     )
+
+
+# =========================
+# UN NOMBRE DISTINTO NO SIEMPRE ES UN DESCUIDO
+# =========================
+# Quien vende acceso a una comunidad privada puede querer A PROPÓSITO que en el
+# extracto del banco de su comprador salga algo neutro. Eso es una decisión
+# suya, no una avería. Sin poder decirlo, este aviso saltaría cada hora para
+# siempre por algo elegido — y un aviso que se sabe que hay que ignorar es el
+# que hace que se ignoren todos.
+
+def test_a_chosen_name_is_not_an_alarm(monkeypatch):
+    monkeypatch.setenv("NOMBRE_DE_PAGO_ESPERADO", "TIENDA INFORMATICA")
+    monkeypatch.setattr(srs, "_leer_cuenta_de_stripe", lambda: _cuenta(
+        extracto="TIENDA INFORMATICA", marca="thestarvip.online"
+    ))
+
+    ok, detalle = srs.check_nombre_de_la_pagina_de_pago()
+
+    assert ok is True, (
+        "el dueño ha dicho que quiere ese nombre; repetírselo cada hora es "
+        "enseñarle a ignorar los avisos"
+    )
+    assert "TIENDA INFORMATICA" in detalle
+
+
+def test_with_a_chosen_name_the_account_name_stops_mattering(monkeypatch):
+    """La decisión ya está tomada: la referencia es lo que se pidió."""
+
+    monkeypatch.setenv("NOMBRE_DE_PAGO_ESPERADO", "TIENDA INFORMATICA")
+    monkeypatch.setattr(srs, "_leer_cuenta_de_stripe", lambda: _cuenta(
+        extracto="TIENDA INFORMATICA", marca="cualquier-otra-cosa.com"
+    ))
+
+    ok, _ = srs.check_nombre_de_la_pagina_de_pago()
+
+    assert ok is True
+
+
+def test_someone_changing_it_behind_your_back_is_still_reported(monkeypatch):
+    """Justo por eso vale la pena declararlo: se vigila que siga estando."""
+
+    monkeypatch.setenv("NOMBRE_DE_PAGO_ESPERADO", "TIENDA INFORMATICA")
+    monkeypatch.setattr(srs, "_leer_cuenta_de_stripe", lambda: _cuenta(
+        extracto="OTRA COSA", marca="thestarvip.online"
+    ))
+
+    ok, detalle = srs.check_nombre_de_la_pagina_de_pago()
+
+    assert ok is False
+    assert "OTRA COSA" in detalle
+    assert "TIENDA INFORMATICA" in detalle
+    assert "cambiado" in detalle
+
+
+def test_without_the_variable_nothing_changes(monkeypatch):
+    monkeypatch.delenv("NOMBRE_DE_PAGO_ESPERADO", raising=False)
+    monkeypatch.setattr(srs, "_leer_cuenta_de_stripe", lambda: _cuenta(
+        extracto="TIENDA INFORMATICA", marca="thestarvip.online"
+    ))
+
+    ok, _ = srs.check_nombre_de_la_pagina_de_pago()
+
+    assert ok is False, "sin declarar nada, sigue siendo un descuadre"
+
+
+def test_it_is_read_on_every_check(monkeypatch):
+    """Cambiarlo en el servidor tiene que valer sin reiniciar el bot."""
+
+    monkeypatch.setattr(srs, "_leer_cuenta_de_stripe", lambda: _cuenta(
+        extracto="TIENDA INFORMATICA", marca="thestarvip.online"
+    ))
+
+    monkeypatch.delenv("NOMBRE_DE_PAGO_ESPERADO", raising=False)
+
+    assert srs.check_nombre_de_la_pagina_de_pago()[0] is False
+
+    monkeypatch.setenv("NOMBRE_DE_PAGO_ESPERADO", "TIENDA INFORMATICA")
+
+    assert srs.check_nombre_de_la_pagina_de_pago()[0] is True
