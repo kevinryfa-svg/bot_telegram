@@ -504,3 +504,95 @@ def test_the_bot_knows_what_to_do_with_that_payload():
     assert pcp.CARGA_DE_PUBLICAR in start_handler.CARGAS_DE_PUBLICAR, (
         "la página genera una carga que /start tiene que saber atender"
     )
+
+
+# =========================
+# LO QUE SE LEE ANTES DE ABRIR EL ENLACE
+# =========================
+# El respaldo de la descripción era el MISMO texto para todas: «Elige una
+# comunidad, paga con tarjeta...». Eso es lo que sale debajo del resultado en un
+# buscador y en la vista previa cuando alguien pega el enlace en Telegram. O sea
+# que un enlace de StarsVip compartido no decía NADA de StarsVip.
+
+def test_a_community_without_a_description_still_says_what_it_is():
+    descripcion = pcp._descripcion_de_comunidad({
+        "nombre": "StarsVip", "precio": "3,60 EUR/semana",
+        "oferta_percent": 60,
+    })
+
+    assert "StarsVip" in descripcion
+    assert "3,60 EUR/semana" in descripcion
+    assert "-60%" in descripcion, "el descuento es lo que decide el clic"
+    assert "enlace de entrada" in descripcion
+
+    assert descripcion != pcp.DESCRIPCION
+
+
+def test_it_invents_nothing_about_the_content():
+    """Yo no sé qué hay dentro de la comunidad de nadie."""
+
+    descripcion = pcp._descripcion_de_comunidad({
+        "nombre": "StarsVip", "precio": "3,60 EUR/semana",
+    })
+
+    for inventado in ("señales", "exclusivo", "vídeos", "premium", "diario",
+                      "análisis", "contenido"):
+        assert inventado not in descripcion.lower(), inventado
+
+
+def test_what_the_owner_wrote_always_wins():
+    descripcion = pcp._descripcion_de_comunidad({
+        "nombre": "StarsVip", "precio": "3,60 EUR/semana",
+        "descripcion": "Sala de trading con dos directos a la semana.",
+    })
+
+    assert descripcion == "Sala de trading con dos directos a la semana."
+
+
+def test_filler_text_is_not_a_description(monkeypatch):
+    """Con el relleno, mejor los hechos que un texto que no dice nada."""
+
+    import bootstrap_tasks
+
+    relleno = bootstrap_tasks.descripcion_minima("StarsVip")
+
+    descripcion = pcp._descripcion_de_comunidad({
+        "nombre": "StarsVip", "precio": "3,60 EUR/semana",
+        "descripcion": relleno,
+    })
+
+    assert descripcion != relleno
+    assert "3,60 EUR/semana" in descripcion
+
+
+def test_without_even_a_name_it_falls_back_to_the_generic_one():
+    assert pcp._descripcion_de_comunidad({}) == pcp.DESCRIPCION
+
+
+def test_the_description_fits_where_it_is_read():
+    """Un buscador corta por ahí: lo importante va delante."""
+
+    descripcion = pcp._descripcion_de_comunidad({
+        "nombre": "N" * 300, "precio": "3,60 EUR/semana",
+    })
+
+    assert len(descripcion) <= 200
+
+
+def test_a_shared_link_carries_its_own_address(catalogo):
+    """Sin og:url, un enlace con basura pegada detrás se propaga con ella."""
+
+    pagina = pcp.build_community_page_html(61, base_url="https://ejemplo.test")
+
+    assert 'property="og:url"' in pagina
+    assert 'property="og:site_name"' in pagina
+    assert "https://ejemplo.test/comunidades/" in pagina
+
+
+def test_the_catalogue_page_still_works_without_a_canonical():
+    pagina = pcp.build_public_catalog_html()
+
+    assert "<title>" in pagina
+    assert 'property="og:url"' not in pagina, (
+        "sin dirección canónica no hay og:url que poner"
+    )

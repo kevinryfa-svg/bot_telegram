@@ -319,6 +319,15 @@ def _pagina(cuerpo, url_canonica=None, titulo=None, descripcion=None):
         if url_canonica else ""
     )
 
+    # og:url es la dirección que se guarda cuando alguien comparte el enlace
+    # compartido: sin ella, un enlace con parámetros pegados detrás se propaga
+    # con la basura incluida y las estadísticas quedan repartidas entre varias
+    # direcciones que son la misma página.
+    og_url = (
+        f'<meta property="og:url" content="{html.escape(url_canonica)}">'
+        if url_canonica else ""
+    )
+
     return f"""<!doctype html>
 <html lang="es">
 <head>
@@ -329,6 +338,8 @@ def _pagina(cuerpo, url_canonica=None, titulo=None, descripcion=None):
 <meta property="og:type" content="website">
 <meta property="og:title" content="{html.escape(titulo)}">
 <meta property="og:description" content="{html.escape(descripcion)}">
+<meta property="og:site_name" content="{html.escape(TITULO)}">
+{og_url}
 <meta name="twitter:card" content="summary">
 {canonica}
 <style>{CSS}</style>
@@ -452,7 +463,42 @@ def _descripcion_de_comunidad(oferta):
     if descripcion:
         return descripcion[:200]
 
-    return DESCRIPCION
+    return _descripcion_de_respaldo(oferta)
+
+
+def _descripcion_de_respaldo(oferta):
+    """Cuando el propietario no ha escrito nada, con lo que SÍ se sabe.
+
+    El respaldo era el mismo texto para todas: «Elige una comunidad, paga con
+    tarjeta...». Eso es lo que se lee debajo del resultado en un buscador y en
+    la vista previa cuando alguien pega el enlace en Telegram — o sea, que un
+    enlace de StarsVip compartido no decía NADA de StarsVip.
+
+    No hace falta inventarse el contenido —eso no lo sabe este código— para
+    decir algo útil: el nombre, lo que cuesta, el descuento si lo hay, y qué
+    pasa al pagar. Son los cuatro hechos que deciden el clic, y los cuatro son
+    comprobables.
+    """
+
+    nombre = (oferta.get("nombre") or "").strip()
+    precio = (oferta.get("precio") or "").strip()
+
+    if not nombre:
+        return DESCRIPCION
+
+    partes = [f"{nombre}: acceso por {precio}."] if precio else [f"{nombre}."]
+
+    percent = oferta.get("oferta_percent")
+
+    if percent:
+        partes.append(f"Esta semana con -{int(percent)}%.")
+
+    partes.append(
+        "Pagas con tarjeta y el bot te manda el enlace de entrada en Telegram "
+        "al confirmarse el pago."
+    )
+
+    return " ".join(partes)[:200]
 
 
 def build_community_page_html(group_id, base_url=None):
