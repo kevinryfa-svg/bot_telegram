@@ -687,3 +687,299 @@ def frase_cuenta_atras(ends_at, momento=None):
     dias = int(-(-horas // 24))
 
     return "queda 1 día" if dias == 1 else f"quedan {dias} días"
+
+
+# =========================
+# EL AVISO DE ÚLTIMO DÍA
+# =========================
+# Una cuenta atrás solo vende si alguien la ve terminar. Pero esto no puede
+# convertirse en otro envío masivo —de 306 personas, 176 ya habían bloqueado
+# este bot— así que va a quien de verdad se lo ha ganado:
+#
+#   MIRÓ Y NO COMPRÓ    Abrió la ficha de ESA comunidad (community_viewed) y no
+#                       tiene acceso. No se escribe a quien nunca la miró.
+#
+#   EL ÚLTIMO DÍA       Solo cuando quedan menos de 24 horas. Antes no es
+#                       urgente, y después ya no existe.
+#
+#   UNA VEZ POR OFERTA  Clave única (oferta, persona): el job puede correr cada
+#                       hora y el contenedor reiniciarse, y el aviso sale uno.
+#
+#   Y RESPETA EL «NO»   Quien se dio de baja, bloqueó el bot o está baneado no
+#                       entra, igual que en el resto del bot.
+
+ULTIMO_DIA_HORAS = int(os.environ.get("OFERTA_ULTIMO_DIA_HORAS", "24"))
+
+ULTIMO_DIA_TANDA = int(os.environ.get("OFERTA_ULTIMO_DIA_TANDA", "40"))
+
+
+def ofertas_que_terminan(horas=None):
+    """Las ofertas públicas vivas a las que les quedan menos de N horas."""
+
+    horas = int(horas or ULTIMO_DIA_HORAS)
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT po.id, po.plan_id, po.group_id, po.percent, po.amount,
+                       COALESCE(po.currency, 'EUR'), po.ends_at,
+                       COALESCE(NULLIF(g.name, ''), 'la comunidad')
+                FROM plan_offers po
+                JOIN plans p ON p.id = po.plan_id
+                JOIN groups g ON g.id = po.group_id
+                WHERE po.user_id IS NULL
+                  AND po.starts_at <= NOW()
+                  AND po.ends_at > NOW()
+                  AND po.ends_at <= NOW() + (%s || ' hours')::interval
+                  AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''
+                  AND COALESCE(p.is_active, TRUE) = TRUE
+                  AND COALESCE(g.is_active, TRUE) = TRUE
+
+            """, (horas,))
+
+            filas = cur.fetchall() or []
+
+    except Exception as e:
+
+        print("Último día: error buscando ofertas que terminan:", str(e)[:160])
+
+        return []
+
+    return [
+        {
+            "id": f[0], "plan_id": f[1], "group_id": f[2], "percent": f[3],
+            "amount": f[4], "currency": f[5], "ends_at": f[6],
+            "group_name": f[7],
+        }
+        for f in filas
+    ]
+
+
+def interesados_sin_comprar(oferta, limite=None):
+    """Quién abrió la ficha de esa comunidad, no tiene acceso y no dijo que no."""
+
+    limite = int(limite or ULTIMO_DIA_TANDA)
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT DISTINCT e.user_id
+                FROM bot_user_events e
+                WHERE e.event_type = 'community_viewed'
+                  AND e.group_id = %(grupo)s
+                  AND e.user_id IS NOT NULL
+                  AND e.user_id > 0
+
+                  AND NOT EXISTS (
+                      SELECT 1 FROM users u
+                      WHERE u.user_id = e.user_id
+                        AND u.group_id = %(grupo)s
+                        AND (
+                            COALESCE(u.subscription_active, FALSE) = TRUE
+                            OR (u.expiration IS NOT NULL
+                                AND u.expiration > NOW())
+                        )
+                  )
+
+                  AND NOT EXISTS (
+                      SELECT 1 FROM banned_users b WHERE b.user_id = e.user_id
+                  )
+
+                  AND NOT EXISTS (
+                      SELECT 1 FROM user_reengagement r
+                      WHERE r.user_id = e.user_id
+                        AND (
+                            COALESCE(r.opted_out, FALSE) = TRUE
+                            OR COALESCE(r.is_blocked, FALSE) = TRUE
+                        )
+                  )
+
+                  AND NOT EXISTS (
+                      SELECT 1 FROM plan_offer_last_calls c
+                      WHERE c.offer_id = %(oferta)s
+                        AND c.user_id = e.user_id
+                  )
+
+                ORDER BY 1
+                LIMIT %(limite)s
+
+            """, {
+                "grupo": oferta["group_id"],
+                "oferta": oferta["id"],
+                "limite": limite,
+            })
+
+            return [f[0] for f in (cur.fetchall() or []) if f[0]]
+
+    except Exception as e:
+
+        print("Último día: error buscando interesados:", str(e)[:160])
+
+        return []
+
+
+def marcar_ultimo_dia(offer_id, user_id, group_id):
+    """True si quedó registrado (y por tanto toca enviarlo)."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                INSERT INTO plan_offer_last_calls (offer_id, user_id, group_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (offer_id, user_id) DO NOTHING
+
+            """, (offer_id, user_id, group_id))
+
+            cambiado = cur.rowcount > 0
+            conn.commit()
+
+            return cambiado
+
+    except Exception as e:
+
+        conn.rollback()
+
+        print("Último día: error registrando el aviso:", str(e)[:160])
+
+        return False
+
+
+def texto_de_ultimo_dia(oferta):
+    """Corto y con la única información que importa hoy: se acaba."""
+
+    from start_offer_service import formato_importe
+
+    importe = formato_importe(oferta.get("amount"), oferta.get("currency"))
+
+    lineas = [
+        f"⏳ Hoy es el último día del -{int(oferta.get('percent') or 0)}%",
+        "",
+        f"La oferta de {oferta.get('group_name')} termina hoy.",
+    ]
+
+    if importe:
+        lineas.extend(["", f"Entrar cuesta {importe} hasta que acabe."])
+
+    lineas.extend([
+        "",
+        "Después vuelve a su precio de siempre.",
+    ])
+
+    return "\n".join(lineas)
+
+
+async def process_offer_last_calls(context):
+    """El empujón del último día. Idempotente y con la misma puerta de siempre."""
+
+    import asyncio
+
+    resumen = {"ofertas": 0, "enviados": 0, "fallidos": 0}
+
+    try:
+
+        from reengagement_service import merece_la_pena_escribir
+
+        ok_para_escribir, motivo = merece_la_pena_escribir()
+
+    except Exception as e:
+
+        ok_para_escribir, motivo = False, f"no se pudo comprobar ({str(e)[:80]})"
+
+    if not ok_para_escribir:
+
+        print("Último día: no se avisa a nadie —", motivo)
+
+        return resumen
+
+
+    from renewal_service import is_unreachable_error
+
+    ofertas = ofertas_que_terminan()
+
+    resumen["ofertas"] = len(ofertas)
+
+    for oferta in ofertas:
+
+        texto = texto_de_ultimo_dia(oferta)
+
+        for user_id in interesados_sin_comprar(oferta):
+
+            # Se marca ANTES de enviar: si el envío falla, esa persona no
+            # recibe dos avisos en la siguiente pasada.
+            if not marcar_ultimo_dia(oferta["id"], user_id, oferta["group_id"]):
+                continue
+
+            try:
+
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=texto,
+                    reply_markup=_teclado_de_ultimo_dia(oferta),
+                )
+
+                resumen["enviados"] += 1
+
+            except Exception as e:
+
+                resumen["fallidos"] += 1
+
+                if not is_unreachable_error(e):
+
+                    print(
+                        "Último día: no se pudo avisar a", user_id, "-",
+                        str(e)[:160]
+                    )
+
+            await asyncio.sleep(0.6)
+
+
+    if resumen["enviados"] or resumen["fallidos"]:
+
+        print(
+            "Último día:", resumen["enviados"], "avisos enviados,",
+            resumen["fallidos"], "fallidos"
+        )
+
+        log_event(
+            "offer_last_call_sent",
+            category="marketing",
+            severity="info",
+            scope="global",
+            message="Aviso de último día de oferta.",
+            metadata=resumen,
+        )
+
+    return resumen
+
+
+def _teclado_de_ultimo_dia(oferta):
+    """Un botón: entrar al precio de la oferta. Nada más que decidir."""
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from start_offer_service import formato_importe
+
+    importe = formato_importe(oferta.get("amount"), oferta.get("currency"))
+
+    etiqueta = (
+        f"🔥 Entrar por {importe}" if importe else "🔥 Entrar con el descuento"
+    )
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            etiqueta,
+            callback_data=f"startbuy_{oferta['group_id']}_{oferta['plan_id']}"
+        )],
+        [InlineKeyboardButton(
+            "🛟 Tengo una duda", callback_data="public_support"
+        )],
+    ])

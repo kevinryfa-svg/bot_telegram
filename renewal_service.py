@@ -473,10 +473,30 @@ def mark_renewal_reminder_sent(user_id, group_id, stage, expiration):
 # =========================
 
 def format_amount(amount, currency):
+    """El dinero se escribe en UN sitio, y este era el cuarto.
+
+    Aquí ponía «3,6 EUR» donde la tienda dice «3,60 EUR». Los planes se tarifan
+    en euros redondos, así que no se notaba — hasta que una oferta rebajada trajo
+    céntimos. Por esta función pasan el aviso de renovación, el de carrito
+    abandonado y el de recuperación: los tres decían el precio de otra manera.
+    """
 
     if amount is None:
 
         return None
+
+    try:
+
+        from start_offer_service import formato_importe
+
+        escrito = formato_importe(amount, currency)
+
+        if escrito:
+            return escrito
+
+    except Exception:
+
+        pass
 
 
     try:

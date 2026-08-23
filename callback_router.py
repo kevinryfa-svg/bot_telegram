@@ -6162,6 +6162,7 @@ def build_admin_home_text(user_id):
 def build_admin_global_panel_keyboard():
 
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Embudo del bot", callback_data="admin_platform_funnel")],
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
         [InlineKeyboardButton("😊 Satisfacción de clientes", callback_data="admin_customer_satisfaction")],
         [InlineKeyboardButton("🛟 Solicitudes de soporte", callback_data="admin_support_tickets")],
@@ -22768,6 +22769,35 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await enforce_ad_promo_owner_addon_gate(query, context, data, user_id):
 
             return
+
+
+    if data == "admin_platform_funnel":
+
+        # El embudo de TODO el bot. El de cada comunidad responde «por qué no
+        # vende esta»; este responde la pregunta de arriba: si no viene nadie,
+        # si se caen al ver el precio o si es el cobro el que los pierde. Son
+        # tres problemas con tres arreglos distintos.
+        from platform_funnel_service import build_platform_funnel_text
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            build_platform_funnel_text(),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🔄 Actualizar", callback_data="admin_platform_funnel"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ Volver al panel global",
+                    callback_data="admin_global_panel"
+                )],
+                [InlineKeyboardButton(
+                    "🏠 Inicio", callback_data="public_back_start"
+                )],
+            ])
+        )
+
+        return
 
 
     if data == "admin_global_panel":

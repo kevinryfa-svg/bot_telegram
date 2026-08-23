@@ -32,6 +32,12 @@ from notification_service import notify_super_admins
 # justamente para que no se separen.
 REQUIRED_EVENTS = (
     "checkout.session.completed",
+    # Los métodos que NO confirman en el acto (Bancontact, iDEAL y compañía)
+    # terminan la sesión sin pagar y avisan después, en estos dos eventos. Sin
+    # el primero, quien paga con uno de ellos no entra nunca; sin el segundo, se
+    # queda esperando un acceso que no va a llegar y sin saber por qué.
+    "checkout.session.async_payment_succeeded",
+    "checkout.session.async_payment_failed",
     "customer.subscription.updated",
     "customer.subscription.deleted",
     "invoice.paid",

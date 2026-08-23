@@ -302,3 +302,115 @@ def test_an_orphan_plan_is_explained_not_shrugged_at(catalogo):
     assert diagnostico["vendible"] is False
     assert "huérfano" in diagnostico["motivo"]
     assert "999999" in diagnostico["motivo"]
+
+
+# =========================
+# PRECIOS QUE NO USA NADIE
+# =========================
+# Crear el precio en Stripe y guardarlo en la base son dos pasos, y entre uno y
+# otro se puede fallar: pasó de verdad el día que el índice de ofertas no
+# encajaba, y quedaron precios que ningún plan ni oferta menciona.
+
+def test_a_price_in_use_is_never_archived(catalogo, monkeypatch):
+    import stripe
+
+    listados = {
+        "data": [
+            {
+                "id": "price_creado_1", "type": "one_time", "created": 0,
+                "unit_amount": 700, "currency": "eur",
+                "metadata": {"purpose": "group_access", "plan_id": "661"},
+            },
+        ]
+    }
+
+    monkeypatch.setattr(stripe.Price, "list", staticmethod(lambda **k: listados))
+
+    pps.reparar_precios_de_planes()   # deja price_creado_1 en uso
+
+    assert pps.precios_huerfanos() == [], (
+        "archivar un precio que un plan está usando rompe su cobro"
+    )
+
+
+def test_an_orphan_price_is_archived(catalogo, monkeypatch):
+    import stripe
+
+    archivados = []
+
+    listados = {
+        "data": [
+            {
+                "id": "price_suelto", "type": "one_time", "created": 0,
+                "unit_amount": 360, "currency": "eur",
+                "metadata": {"purpose": "group_access", "plan_id": "999"},
+            },
+        ]
+    }
+
+    monkeypatch.setattr(stripe.Price, "list", staticmethod(lambda **k: listados))
+    monkeypatch.setattr(
+        stripe.Price, "modify",
+        staticmethod(lambda pid, **k: archivados.append((pid, k)))
+    )
+
+    assert [h["id"] for h in pps.precios_huerfanos()] == ["price_suelto"]
+
+    pps.archivar_precios_huerfanos()
+
+    assert archivados == [("price_suelto", {"active": False})]
+
+
+def test_a_fresh_price_is_left_alone(catalogo, monkeypatch):
+    """Uno recién creado puede estar guardándose en este mismo instante."""
+
+    import time
+
+    import stripe
+
+    listados = {
+        "data": [
+            {
+                "id": "price_recien_hecho", "type": "one_time",
+                "created": int(time.time()), "unit_amount": 360,
+                "currency": "eur",
+                "metadata": {"purpose": "group_access"},
+            },
+        ]
+    }
+
+    monkeypatch.setattr(stripe.Price, "list", staticmethod(lambda **k: listados))
+
+    assert pps.precios_huerfanos() == []
+
+
+def test_prices_that_are_not_ours_are_left_alone(catalogo, monkeypatch):
+    import stripe
+
+    listados = {
+        "data": [
+            {
+                "id": "price_de_otra_cosa", "type": "one_time", "created": 0,
+                "unit_amount": 1999, "currency": "eur", "metadata": {},
+            },
+            {
+                "id": "price_de_suscripcion", "type": "recurring", "created": 0,
+                "unit_amount": 999, "currency": "eur",
+                "metadata": {"purpose": "group_access"},
+            },
+        ]
+    }
+
+    monkeypatch.setattr(stripe.Price, "list", staticmethod(lambda **k: listados))
+
+    assert pps.precios_huerfanos() == [], (
+        "ni lo que no creó este bot ni el precio de una suscripción viva"
+    )
+
+
+def test_a_database_error_archives_nothing(catalogo, monkeypatch):
+    """Archivar por no haber podido leer la base sería romper lo que funciona."""
+
+    monkeypatch.setattr(pps, "identificadores_de_precio_en_uso", lambda: None)
+
+    assert pps.precios_huerfanos() == []

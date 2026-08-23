@@ -1315,6 +1315,129 @@ def schedule_weekly_offers(application):
     return True
 
 
+async def daily_pulse_job(context: ContextTypes.DEFAULT_TYPE):
+    """El negocio entero en seis líneas, cada mañana."""
+
+    try:
+
+        from daily_pulse_service import enviar_pulso_diario
+
+        enviar_pulso_diario()
+
+    except Exception as e:
+
+        print("Pulso diario: no se pudo enviar:", str(e)[:200])
+
+
+def schedule_daily_pulse(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print("Pulso diario: JobQueue no disponible. No se enviará.")
+
+        return False
+
+
+    import datetime as dt
+
+    job_queue.run_daily(
+        daily_pulse_job,
+        time=dt.time(hour=8, minute=30),
+        name="daily_pulse"
+    )
+
+    print("Pulso diario del negocio programado (08:30 UTC).")
+
+    return True
+
+
+async def sale_readiness_watch_job(context: ContextTypes.DEFAULT_TYPE):
+    """Cada hora: ¿se puede cobrar? Solo habla cuando el estado cambia."""
+
+    try:
+
+        from sale_readiness_service import vigilar_cobro
+
+        vigilar_cobro()
+
+    except Exception as e:
+
+        print("Cobro: no se pudo vigilar:", str(e)[:200])
+
+
+def schedule_sale_readiness_watch(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print("Cobro: JobQueue no disponible. No se vigilará.")
+
+        return False
+
+
+    # Cada hora. Este bot estuvo MESES sin poder cobrar porque esto solo se
+    # miraba al arrancar y los despliegues son de vez en cuando: con una hora
+    # de margen, lo peor que puede pasar es perder una hora de ventas.
+    job_queue.run_repeating(
+        sale_readiness_watch_job,
+        interval=3600,
+        first=600,
+        name="sale_readiness_watch"
+    )
+
+    print("Vigilancia del cobro programada (cada hora).")
+
+    return True
+
+
+async def offer_last_call_job(context: ContextTypes.DEFAULT_TYPE):
+    """El empujón del último día de la oferta."""
+
+    try:
+
+        from weekly_offer_service import process_offer_last_calls
+
+        await process_offer_last_calls(context)
+
+    except Exception as e:
+
+        print("Último día: no se pudo avisar:", str(e)[:200])
+
+
+def schedule_offer_last_calls(application):
+
+    job_queue = getattr(application, "job_queue", None)
+
+
+    if not job_queue:
+
+        print("Último día: JobQueue no disponible. No se avisará a nadie.")
+
+        return False
+
+
+    import datetime as dt
+
+    # Todos los días a las 10:00 UTC: el job mira si hay alguna oferta a la que
+    # le queden menos de 24 horas. Con la oferta semanal empezando el lunes a
+    # las 08:00, eso cae en domingo — pero sirve igual para cualquier oferta con
+    # otra duración, sin tener que saber su calendario.
+    job_queue.run_daily(
+        offer_last_call_job,
+        time=dt.time(hour=10, minute=0),
+        name="offer_last_calls"
+    )
+
+    print("Aviso de último día de oferta programado (10:00 UTC).")
+
+    return True
+
+
 def schedule_owner_weekly_digest(application):
 
     job_queue = getattr(application, "job_queue", None)
@@ -3391,7 +3514,10 @@ def main():
     schedule_group_delivery_health_job(telegram_app)
     schedule_stripe_webhook_config_check(telegram_app)
     schedule_paypal_webhook_config_check(telegram_app)
+    schedule_sale_readiness_watch(telegram_app)
+    schedule_daily_pulse(telegram_app)
     schedule_weekly_offers(telegram_app)
+    schedule_offer_last_calls(telegram_app)
     schedule_owner_weekly_digest(telegram_app)
     schedule_business_alerts_job(telegram_app)
     schedule_stripe_reconcile_job(telegram_app)
@@ -3439,6 +3565,23 @@ def main():
     except Exception as e:
 
         print("Precios de plan: no se pudieron revisar:", str(e)[:200])
+
+
+    # Precios de Stripe que no usa nadie: quedan cuando el precio se crea y el
+    # guardado falla a medias. Sueltos no cobran, pero ensucian el panel — y en
+    # un panel sucio es más fácil copiar el precio equivocado.
+    try:
+
+        from plan_price_service import describe_orphan_prices
+
+        aviso_sueltos = describe_orphan_prices()
+
+        if aviso_sueltos:
+            print(aviso_sueltos)
+
+    except Exception as e:
+
+        print("Precios sueltos: no se pudieron revisar:", str(e)[:200])
 
 
     # Las ofertas de esta semana, ya. Si se dejaran solo al job del lunes, una

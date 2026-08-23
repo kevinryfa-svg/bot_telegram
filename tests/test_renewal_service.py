@@ -13,7 +13,9 @@ def test_defaults_are_sane():
 
 def test_amount_formatting():
     assert rs.format_amount(15, "EUR") == "15 EUR"
-    assert rs.format_amount(9.5, "EUR") == "9,5 EUR"
+    # Con sus dos cifras: es la MISMA definición que usan la tienda, la web y
+    # los avisos. Este era el cuarto sitio que escribía un euro a su manera.
+    assert rs.format_amount(9.5, "EUR") == "9,50 EUR"
     assert rs.format_amount(10, None) == "10 EUR"
     assert rs.format_amount(None, "EUR") is None
     assert rs.format_amount("x", "EUR") is None

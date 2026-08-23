@@ -92,6 +92,7 @@ def clean_db(db_module):
         "payment_transactions",
         # Regla 8: toda tabla en la que una prueba escribe entra en esta lista,
         # o su basura se filtra a las demás pruebas.
+        "plan_offer_last_calls",
         "plan_offers",
         "abandoned_checkout_reminders",
         "abandoned_discount_reminders",

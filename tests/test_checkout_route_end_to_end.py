@@ -287,3 +287,40 @@ def test_the_trust_line_survives_a_nameless_community(tienda):
     assert respuesta.status_code == 200, (
         "un nombre vacío no puede tumbar un cobro"
     )
+
+
+def test_the_payment_page_is_in_the_buyers_language(tienda, monkeypatch):
+    """Quien lee una pantalla de pago en un idioma que no es el suyo desconfía
+    justo en el segundo en el que hay que confiar."""
+
+    import i18n_service
+
+    ofertas = sos.fetch_sellable_communities(0, limit=5, solo_grupo=91)
+
+    monkeypatch.setattr(i18n_service, "load_user_language", lambda uid: "en")
+
+    cobrar(tienda, ofertas[0]["price_id"])
+
+    assert tienda["creadas"][-1]["locale"] == "en"
+
+    # Un idioma que Stripe no conoce no puede tumbar la venta. Con OTRO
+    # comprador: el mismo no puede volver a pagar lo que ya está pagando.
+    monkeypatch.setattr(i18n_service, "load_user_language", lambda uid: "eu")
+
+    respuesta = cobrar(tienda, ofertas[0]["price_id"], user_id=9102)
+
+    assert respuesta.status_code == 200
+    assert tienda["creadas"][-1]["locale"] == "auto"
+
+
+def test_the_charge_carries_a_readable_concept(tienda):
+    """«TIENDA INFORMATICA» a secas no le dice nada a nadie tres semanas
+    después, y así nacen las reclamaciones de «yo no he comprado esto»."""
+
+    ofertas = sos.fetch_sellable_communities(0, limit=5, solo_grupo=91)
+
+    cobrar(tienda, ofertas[0]["price_id"])
+
+    descripcion = tienda["creadas"][-1]["payment_intent_data"]["description"]
+
+    assert "StarsVip" in descripcion

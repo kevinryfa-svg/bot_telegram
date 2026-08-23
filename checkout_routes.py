@@ -55,6 +55,58 @@ from payment_providers.guardarian_provider import (
 )
 
 
+# Los idiomas del bot que Stripe también sabe hablar. Los cinco coinciden, pero
+# la lista va explícita: mandarle a Stripe un código que no conoce hace fallar
+# la creación de la sesión entera, y eso es una venta perdida por un adorno.
+LOCALES_DE_STRIPE = ("es", "en", "pt", "fr", "it")
+
+
+def _idioma_del_comprador(telegram_id):
+    """El idioma de la página de pago. «auto» si no se sabe.
+
+    Quien llega a una pantalla de pago en un idioma que no es el suyo lee menos
+    y desconfía más, justo en el segundo en el que hay que confiar.
+    """
+
+    try:
+
+        from i18n_service import load_user_language
+
+        idioma = (load_user_language(telegram_id) or "").strip().lower()
+
+    except Exception:
+
+        return "auto"
+
+    return idioma if idioma in LOCALES_DE_STRIPE else "auto"
+
+
+def _concepto_del_cobro(group_id, plan_nombre=None):
+    """Lo que se lee en el extracto y en el recibo, si Stripe lo manda."""
+
+    nombre = None
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT NULLIF(name, '') FROM groups WHERE id = %s",
+                (group_id,),
+            )
+
+            fila = cur.fetchone()
+            nombre = fila[0] if fila else None
+
+    except Exception:
+
+        nombre = None
+
+    partes = [p for p in (nombre, plan_nombre) if p]
+
+    return " · ".join(partes) if partes else "Acceso a comunidad privada"
+
+
 def _texto_de_confianza(group_id):
     """La línea que va junto al botón de pagar. Solo hechos comprobables.
 
@@ -333,9 +385,27 @@ def register_checkout_routes(app):
                 # extracto, «por qué cobré 4 y no 10» tiene respuesta.
                 metadata_session["offer_percent"] = str(plan_oferta_percent)
 
-            session_kwargs = dict(
+            # LOS MÉTODOS DE PAGO LOS DECIDE LA CUENTA, NO ESTA LÍNEA.
+            # Aquí ponía payment_method_types=["card"], y esa lista tapaba todo
+            # lo demás: la cuenta de Stripe de este bot tiene ACTIVOS Link,
+            # Revolut Pay, Klarna, Bancontact, Amazon Pay y varios más, y
+            # ninguno se le ofrecía a nadie. Link, en particular, es un toque
+            # para quien ya ha pagado alguna vez en cualquier sitio con Stripe.
+            #
+            # Sin esa lista, Stripe usa los del panel y descarta solos los que
+            # no encajan con el importe, la moneda o el modo (una suscripción no
+            # admite los mismos que un pago único). Y los que confirman DESPUÉS
+            # ya están cubiertos: el acceso solo se concede con la sesión
+            # pagada, y el evento diferido entra por la misma puerta.
+            #
+            # STRIPE_FORCE_CARD_ONLY=1 vuelve al comportamiento de antes sin
+            # tocar código, por si algún método diera problemas.
+            solo_tarjeta = (
+                os.environ.get("STRIPE_FORCE_CARD_ONLY", "")
+                .strip().lower() in ("1", "true", "yes", "si", "sí")
+            )
 
-                payment_method_types=["card"],
+            session_kwargs = dict(
 
                 line_items=[{
                     "price": price_id,
@@ -374,9 +444,25 @@ def register_checkout_routes(app):
                     "submit": {
                         "message": _texto_de_confianza(group_id)
                     }
-                }
+                },
+
+                # La página de pago, en el idioma de quien la lee.
+                locale=_idioma_del_comprador(telegram_id)
 
             )
+
+            if not plan_es_recurrente:
+
+                # El concepto viaja al pago: es lo que se lee en el extracto y
+                # en el panel de Stripe. «TIENDA INFORMATICA» a secas no le dice
+                # nada a nadie tres semanas después, y así nacen las
+                # reclamaciones de «yo no he comprado esto».
+                session_kwargs["payment_intent_data"] = {
+                    "description": _concepto_del_cobro(group_id)
+                }
+
+            if solo_tarjeta:
+                session_kwargs["payment_method_types"] = ["card"]
 
             if plan_es_recurrente:
 

@@ -322,3 +322,73 @@ def test_the_buyer_screen_and_the_owner_switch_exist():
     assert "se quedan como están" in trozo, (
         "hay que decirle qué pasa con los días ya regalados"
     )
+
+
+# =========================
+# EL MOMENTO DE PEDIR LA RECOMENDACIÓN
+# =========================
+# El programa de referidos existía y funcionaba, pero vivía enterrado dentro de
+# «Mis accesos», donde hay que ir a buscarlo. El único minuto en que a alguien
+# le apetece recomendar una comunidad es el que acaba de entrar en ella.
+
+def test_the_purchase_message_offers_to_invite(clean_db, monkeypatch):
+    import purchase_message_service as pms
+
+    monkeypatch.setattr(pms, "_referidos_activos", lambda group_id: True)
+
+    _texto, teclado = pms.build_buyer_message(
+        group_name="StarsVip",
+        plan_name="Acceso 7 días",
+        amount_total=360,
+        currency="EUR",
+        expiration=None,
+        expire_seconds=None,
+        link="https://t.me/joinchat/X",
+        telegram_group_id=-1001,
+        group_id=31,
+    )
+
+    callbacks = [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert "mysub_invite_-1001" in callbacks, (
+        "la MISMA pantalla que ya existe, no una segunda que mantener"
+    )
+
+
+def test_without_referrals_there_is_no_button(clean_db, monkeypatch):
+    """El propietario puede apagar el programa: los días los regala él."""
+
+    import purchase_message_service as pms
+
+    monkeypatch.setattr(pms, "_referidos_activos", lambda group_id: False)
+
+    _texto, teclado = pms.build_buyer_message(
+        group_name="StarsVip", plan_name="P", amount_total=360, currency="EUR",
+        expiration=None, expire_seconds=None, link="https://t.me/joinchat/X",
+        telegram_group_id=-1001, group_id=31,
+    )
+
+    callbacks = [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert not any(c.startswith("mysub_invite_") for c in callbacks)
+
+
+def test_a_failure_looking_it_up_does_not_break_the_purchase(clean_db,
+                                                             monkeypatch):
+    """Sin botón se vive; sin el mensaje del acceso, no."""
+
+    import purchase_message_service as pms
+    import referral_service as rs
+
+    def revienta(*a, **k):
+        raise RuntimeError("la base no contesta")
+
+    monkeypatch.setattr(rs, "referrals_enabled_for_group", revienta)
+
+    texto, teclado = pms.build_buyer_message(
+        group_name="StarsVip", plan_name="P", amount_total=360, currency="EUR",
+        expiration=None, expire_seconds=None, link="https://t.me/joinchat/X",
+        telegram_group_id=-1001, group_id=31,
+    )
+
+    assert texto and teclado

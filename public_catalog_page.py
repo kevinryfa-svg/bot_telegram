@@ -67,6 +67,8 @@ border-radius:999px;padding:4px 12px;margin:0 0 14px;font-size:.95rem}
 .rebaja{display:inline-block;font-weight:700;background:#ffeceb;color:#c2321f;
 border-radius:999px;padding:4px 12px;margin:0 8px 14px 0;font-size:.95rem}
 .antes{color:#78848f;text-decoration:line-through;font-weight:500}
+.suya{margin:12px 0 0;font-size:.9rem}
+.suya a{color:#1a4fbf}
 a.cta{display:block;text-align:center;text-decoration:none;font-weight:600;
 background:#1a4fbf;color:#fff;border-radius:10px;padding:13px 16px}
 a.cta:hover{background:#153f9c}
@@ -137,7 +139,7 @@ def _insignia_de_oferta(oferta):
     return '<p class="rebaja">' + " · ".join(trozos) + "</p>"
 
 
-def _tarjeta(oferta):
+def _tarjeta(oferta, solo_esta=False):
     """El HTML de una comunidad. Todo lo del propietario va escapado.
 
     El nombre y la descripción los escribe una persona en Telegram: si eso
@@ -177,6 +179,15 @@ def _tarjeta(oferta):
         if precio else
         f'<a class="cta" href="{enlace}" rel="nofollow">Ver esta comunidad</a>'
     )
+
+    # El enlace a su página propia: es el que se comparte y el que un buscador
+    # indexa por lo que ESTA comunidad es. En su propia página no se repite.
+    if not solo_esta:
+
+        partes.append(
+            f'<p class="suya"><a href="{html.escape(ruta_de_comunidad(oferta))}">'
+            "Página de esta comunidad</a></p>"
+        )
 
     partes.append("</article>")
 
@@ -265,13 +276,17 @@ def _seccion_para_creadores():
     return "".join(partes)
 
 
-def _pagina(cuerpo, url_canonica=None):
+def _pagina(cuerpo, url_canonica=None, titulo=None, descripcion=None):
     """El envoltorio: cabecera, estilos y las etiquetas para compartir.
 
     Las etiquetas Open Graph no son adorno: sin ellas, un enlace pegado en
     WhatsApp o Telegram aparece como una dirección pelada, y una dirección
-    pelada no la abre nadie.
+    pelada no la abre nadie. Con título y descripción propios, la página de una
+    comunidad se comparte con SU nombre y SU precio en la vista previa.
     """
+
+    titulo = titulo or TITULO
+    descripcion = descripcion or DESCRIPCION
 
     canonica = (
         f'<link rel="canonical" href="{html.escape(url_canonica)}">'
@@ -283,19 +298,19 @@ def _pagina(cuerpo, url_canonica=None):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(TITULO)}</title>
-<meta name="description" content="{html.escape(DESCRIPCION)}">
+<title>{html.escape(titulo)}</title>
+<meta name="description" content="{html.escape(descripcion)}">
 <meta property="og:type" content="website">
-<meta property="og:title" content="{html.escape(TITULO)}">
-<meta property="og:description" content="{html.escape(DESCRIPCION)}">
+<meta property="og:title" content="{html.escape(titulo)}">
+<meta property="og:description" content="{html.escape(descripcion)}">
 <meta name="twitter:card" content="summary">
 {canonica}
 <style>{CSS}</style>
 </head>
 <body>
 <main>
-<h1>{html.escape(TITULO)}</h1>
-<p class="sub">{html.escape(DESCRIPCION)}</p>
+<h1>{html.escape(titulo)}</h1>
+<p class="sub">{html.escape(descripcion)}</p>
 {cuerpo}
 <footer>
 El acceso lo entrega el bot automáticamente al confirmarse el pago ·
@@ -345,6 +360,121 @@ def build_public_catalog_html(base_url=None):
     return _pagina(tarjetas + _seccion_para_creadores(), canonica)
 
 
+# =========================
+# UNA PÁGINA POR COMUNIDAD
+# =========================
+# Hasta ahora había UNA dirección para todo el catálogo. Eso sirve para
+# enseñar la lista, pero no para compartir: quien quiere recomendar SU
+# comunidad manda un enlace donde hay que buscarla entre las demás, y el
+# buscador solo tiene una página que indexar para todo el escaparate.
+#
+# Con dirección propia, cada comunidad tiene un enlace que se pega en WhatsApp
+# con su nombre y su precio en la vista previa, y una página que un buscador
+# puede encontrar por lo que esa comunidad es.
+
+
+def ruta_de_comunidad(oferta):
+    """«/comunidades/1159-starsvip». El número manda; el texto es para leer.
+
+    El identificador va DELANTE y es el único que se usa para buscar: si el
+    propietario cambia el nombre, el enlace viejo que alguien pegó en un chat
+    sigue funcionando. Un enlace compartido que caduca porque otro editó un
+    campo no es un enlace.
+    """
+
+    import re
+    import unicodedata
+
+    nombre = (oferta.get("nombre") or "").strip()
+
+    sin_tildes = "".join(
+        c for c in unicodedata.normalize("NFKD", nombre)
+        if not unicodedata.combining(c)
+    )
+
+    trozo = re.sub(r"[^a-zA-Z0-9]+", "-", sin_tildes).strip("-").lower()
+
+    return f"/comunidades/{int(oferta['group_id'])}" + (f"-{trozo}" if trozo else "")
+
+
+def _titulo_de_comunidad(oferta):
+
+    precio = oferta.get("precio")
+
+    return (
+        f"{oferta.get('nombre') or 'Comunidad privada'}"
+        + (f" — {precio}" if precio else "")
+    )
+
+
+def _descripcion_de_comunidad(oferta):
+    """Lo que se lee en la vista previa al compartir. Solo hechos."""
+
+    descripcion = (oferta.get("descripcion") or "").strip()
+
+    try:
+
+        from bootstrap_tasks import es_descripcion_de_relleno
+
+        if descripcion and es_descripcion_de_relleno(descripcion):
+            descripcion = ""
+
+    except Exception:
+
+        pass
+
+    if descripcion:
+        return descripcion[:200]
+
+    return DESCRIPCION
+
+
+def build_community_page_html(group_id, base_url=None):
+    """La página de UNA comunidad. None si no se puede comprar ahora mismo.
+
+    Se pregunta sin exigir visibilidad de mercado: una comunidad puede estar
+    lista para cobrar y no estar publicada en el escaparate, y su propietario
+    tiene que poder compartir su enlace igualmente. Lo que NO se sirve es una
+    página de algo que no se puede pagar.
+    """
+
+    try:
+
+        ofertas = fetch_sellable_communities(
+            0, limit=1, solo_grupo=int(group_id), exigir_visibilidad=False
+        )
+
+    except Exception as e:
+
+        print("Página de comunidad: error leyendo la oferta:", str(e)[:200])
+
+        return None
+
+    if not ofertas:
+        return None
+
+    oferta = ofertas[0]
+
+    canonica = (
+        f"{base_url.rstrip('/')}{ruta_de_comunidad(oferta)}" if base_url else None
+    )
+
+    cuerpo = (
+        _tarjeta(oferta, solo_esta=True)
+        + '<p class="sub" style="margin-top:22px">'
+        + "El acceso lo entrega el bot automáticamente al confirmarse el pago."
+        + "</p>"
+        + _seccion_para_creadores()
+    )
+
+    return _pagina(
+        cuerpo,
+        canonica,
+        titulo=_titulo_de_comunidad(oferta),
+        descripcion=_descripcion_de_comunidad(oferta),
+    )
+
+
 def build_robots_txt(base_url):
     """robots.txt: permite indexar y dice dónde está el mapa.
 
@@ -359,6 +489,9 @@ def build_robots_txt(base_url):
     lineas = [
         "User-agent: *",
         "Allow: /comunidades",
+        # Y la página de cada una: es la que un buscador puede encontrar por lo
+        # que ESA comunidad es, no por el escaparate entero.
+        "Allow: /comunidades/",
         "Disallow: /create-checkout-session",
         "Disallow: /create-paypal-group-order",
         "Disallow: /create-revolut-group-order",
@@ -380,21 +513,41 @@ def build_robots_txt(base_url):
 
 
 def build_sitemap_xml(base_url):
-    """El mapa: el catálogo. Una sola dirección, que es la que importa.
+    """El mapa: el catálogo y la página de cada comunidad.
 
-    No se listan las comunidades una a una: sus enlaces llevan a Telegram, no a
-    esta web, así que en un mapa de este sitio no pintan nada.
+    Antes solo iba el catálogo, y era verdad que las comunidades no tenían
+    página propia: sus enlaces llevaban a Telegram. Ahora sí la tienen, y una
+    página que existe y no está en el mapa es una página que nadie encuentra.
     """
 
     base = (base_url or "").rstrip("/")
-    url = html.escape(f"{base}/comunidades") if base else "/comunidades"
 
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-        f"  <url><loc>{url}</loc><changefreq>daily</changefreq></url>\n"
-        "</urlset>\n"
-    )
+    def loc(ruta):
+        return html.escape(f"{base}{ruta}") if base else ruta
+
+    lineas = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+        f"  <url><loc>{loc('/comunidades')}</loc>"
+        "<changefreq>daily</changefreq></url>",
+    ]
+
+    try:
+
+        for oferta in fetch_sellable_communities(0, limit=MAX_EN_PAGINA):
+
+            lineas.append(
+                f"  <url><loc>{loc(ruta_de_comunidad(oferta))}</loc>"
+                "<changefreq>daily</changefreq></url>"
+            )
+
+    except Exception as e:
+
+        print("Mapa del sitio: error listando comunidades:", str(e)[:200])
+
+    lineas.append("</urlset>")
+
+    return "\n".join(lineas) + "\n"
 
 
 def register_public_catalog_routes(app):
@@ -417,6 +570,49 @@ def register_public_catalog_routes(app):
                 "Cache-Control": "public, max-age=60",
             },
         )
+
+    @app.route("/comunidades/<path:referencia>", methods=["GET"])
+    def comunidad_publica(referencia):
+
+        # Del «1159-starsvip» solo manda el número: si el propietario cambia el
+        # nombre, el enlace que alguien pegó en un chat sigue funcionando.
+        numero = referencia.split("-", 1)[0]
+
+        try:
+
+            group_id = int(numero)
+
+        except (TypeError, ValueError):
+
+            return Response(
+                build_public_catalog_html(
+                    base_url=os.environ.get("SERVER_URL") or request.url_root
+                ),
+                status=404,
+                mimetype="text/html; charset=utf-8",
+            )
+
+        base = os.environ.get("SERVER_URL") or request.url_root
+
+        pagina = build_community_page_html(group_id, base_url=base)
+
+        if not pagina:
+
+            # No se puede comprar: en vez de una página rota o una promesa
+            # muerta, el catálogo con lo que sí hay.
+            return Response(
+                build_public_catalog_html(base_url=base),
+                status=404,
+                mimetype="text/html; charset=utf-8",
+                headers={"Cache-Control": "public, max-age=60"},
+            )
+
+        return Response(
+            pagina,
+            mimetype="text/html; charset=utf-8",
+            headers={"Cache-Control": "public, max-age=60"},
+        )
+
 
     @app.route("/robots.txt", methods=["GET"])
     def robots_publico():

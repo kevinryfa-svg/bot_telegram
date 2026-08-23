@@ -13,6 +13,7 @@ HTML, y que sin nada que vender la página siga siendo honesta en vez de rompers
 import pytest
 
 import public_catalog_page as pcp
+import start_offer_service as sos
 
 
 @pytest.fixture
@@ -324,3 +325,126 @@ def test_without_an_offer_there_is_no_badge(catalogo):
     html_page = pcp.build_public_catalog_html(base_url="https://bot.ejemplo")
 
     assert "rebaja" not in html_page or "-60%" not in html_page
+
+
+# =========================
+# UNA PÁGINA POR COMUNIDAD
+# =========================
+# Había UNA dirección para todo el catálogo: sirve para enseñar la lista, no
+# para compartir. Quien quiere recomendar SU comunidad mandaba un enlace donde
+# había que buscarla entre las demás, y un buscador solo tenía una página que
+# indexar para todo el escaparate.
+
+def test_a_community_has_its_own_address(catalogo):
+    ofertas = sos.fetch_sellable_communities(0, limit=5)
+    oferta = ofertas[0]
+
+    ruta = pcp.ruta_de_comunidad(oferta)
+
+    assert ruta.startswith(f"/comunidades/{oferta['group_id']}"), (
+        "el número va delante: es lo único que se usa para buscar"
+    )
+
+    pagina = pcp.build_community_page_html(
+        oferta["group_id"], base_url="https://bot.ejemplo"
+    )
+
+    assert pagina is not None
+    assert oferta["nombre"] in pagina
+
+
+def test_the_preview_carries_its_name_and_price(catalogo):
+    oferta = sos.fetch_sellable_communities(0, limit=5)[0]
+
+    pagina = pcp.build_community_page_html(
+        oferta["group_id"], base_url="https://bot.ejemplo"
+    )
+
+    import re
+
+    titulo = re.search(r'<meta property="og:title" content="([^"]*)"', pagina)
+
+    assert titulo, "sin og:title, el enlace se pega como una dirección pelada"
+    assert oferta["nombre"] in titulo.group(1)
+    assert oferta["precio"] in titulo.group(1), (
+        "el precio en la vista previa: es lo que hace abrir el enlace"
+    )
+
+
+def test_the_link_survives_a_rename(catalogo):
+    """Un enlace compartido que caduca porque otro editó un campo no es un
+    enlace."""
+
+    oferta = sos.fetch_sellable_communities(0, limit=5)[0]
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE groups SET name='Otro nombre distinto' WHERE id=%s",
+            (oferta["group_id"],)
+        )
+
+    pagina = pcp.build_community_page_html(
+        oferta["group_id"], base_url="https://bot.ejemplo"
+    )
+
+    assert pagina is not None, "el enlace viejo tiene que seguir funcionando"
+    assert "Otro nombre distinto" in pagina
+
+
+def test_a_community_that_cannot_be_bought_has_no_page(catalogo):
+    oferta = sos.fetch_sellable_communities(0, limit=5)[0]
+
+    with catalogo.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET is_active=FALSE WHERE group_id=%s",
+            (oferta["group_id"],)
+        )
+
+    assert pcp.build_community_page_html(oferta["group_id"]) is None, (
+        "una página de algo que no se puede pagar es una promesa muerta"
+    )
+
+
+def test_the_sitemap_lists_every_community(catalogo):
+    oferta = sos.fetch_sellable_communities(0, limit=5)[0]
+
+    mapa = pcp.build_sitemap_xml("https://bot.ejemplo")
+
+    assert "https://bot.ejemplo/comunidades<" in mapa.replace("</loc>", "<")
+    assert pcp.ruta_de_comunidad(oferta) in mapa, (
+        "una página que existe y no está en el mapa no la encuentra nadie"
+    )
+
+
+def test_the_catalogue_links_to_each_page(catalogo):
+    html_page = pcp.build_public_catalog_html(base_url="https://bot.ejemplo")
+
+    oferta = sos.fetch_sellable_communities(0, limit=5)[0]
+
+    assert pcp.ruta_de_comunidad(oferta) in html_page
+
+
+def test_the_route_answers_and_falls_back_to_the_catalogue(catalogo):
+    import flask
+
+    app = flask.Flask(__name__)
+    pcp.register_public_catalog_routes(app)
+    cliente = app.test_client()
+
+    oferta = sos.fetch_sellable_communities(0, limit=5)[0]
+
+    buena = cliente.get(pcp.ruta_de_comunidad(oferta))
+
+    assert buena.status_code == 200
+    assert oferta["nombre"] in buena.get_data(as_text=True)
+
+    perdida = cliente.get("/comunidades/999999-lo-que-sea")
+
+    assert perdida.status_code == 404
+    assert "comunidad" in perdida.get_data(as_text=True).lower(), (
+        "en vez de una página rota, el catálogo con lo que sí hay"
+    )
+
+    rara = cliente.get("/comunidades/esto-no-es-un-numero")
+
+    assert rara.status_code == 404

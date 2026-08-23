@@ -525,3 +525,93 @@ def test_a_full_discount_is_not_treated_as_unpaid(stripe_env):
         )
 
         assert cur.fetchone() is not None
+
+
+# =========================
+# EL PAGO QUE CONFIRMA DESPUÉS
+# =========================
+# No todos los métodos confirman en el acto. Con Bancontact o iDEAL, Stripe
+# manda «completed» con la sesión SIN pagar y horas después manda
+# «async_payment_succeeded» con el dinero ya dentro. Sin atender ese segundo
+# evento, quien paga con uno de ellos no entra nunca — y la cuenta de este bot
+# los tiene activos.
+
+def test_a_payment_that_confirms_later_grants_access(stripe_env):
+    env = stripe_env
+
+    # Primero llega «completed» sin pagar: no se concede nada.
+    sin_pagar = make_event(env["user_id"], env["group_id"])
+    sin_pagar["data"]["object"]["payment_status"] = "unpaid"
+
+    run_webhook(env["sh"], sin_pagar)
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM users WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+        assert cur.fetchone() is None
+
+    # Y horas después, el banco confirma.
+    confirmado = make_event(env["user_id"], env["group_id"])
+    confirmado["type"] = "checkout.session.async_payment_succeeded"
+    confirmado["data"]["object"]["payment_status"] = "paid"
+
+    run_webhook(env["sh"], confirmado)
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT expiration FROM users WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+        fila = cur.fetchone()
+
+    assert fila is not None and fila[0] is not None, (
+        "pagó con un método que confirma después y no entró nunca"
+    )
+
+
+def test_a_deferred_payment_that_fails_is_told(stripe_env, monkeypatch):
+    """Quedarse callado deja a alguien esperando un acceso que no llegará."""
+
+    env = stripe_env
+    avisos = []
+
+    monkeypatch.setattr(
+        env["sh"], "send_telegram_message",
+        lambda token, chat_id, texto, *a, **k: avisos.append((chat_id, texto))
+    )
+    monkeypatch.setattr(env["sh"], "TOKEN", "x")
+
+    fallido = make_event(env["user_id"], env["group_id"])
+    fallido["type"] = "checkout.session.async_payment_failed"
+
+    run_webhook(env["sh"], fallido)
+
+    assert avisos, "no se le dijo nada a quien creía haber pagado"
+    assert "no se ha completado" in avisos[0][1]
+    assert "no se te ha cobrado" in avisos[0][1]
+
+    with env["db"].conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM users WHERE user_id=%s AND group_id=%s",
+            (env["user_id"], env["group_id"]),
+        )
+        assert cur.fetchone() is None, "y desde luego no se le da acceso"
+
+
+def test_the_checkout_does_not_pin_the_payment_methods():
+    """La cuenta tiene Link, Revolut Pay, Klarna y Bancontact activos, y una
+    lista fija de «card» los tapaba todos."""
+
+    fuente = open("checkout_routes.py", encoding="utf-8").read()
+
+    pos = fuente.index("session_kwargs = dict(")
+    bloque = fuente[pos:pos + 1200]
+
+    assert 'payment_method_types=["card"]' not in bloque, (
+        "esa lista deja fuera todo lo que la cuenta tiene activado"
+    )
+    assert "STRIPE_FORCE_CARD_ONLY" in fuente, (
+        "con una vuelta atrás sin tocar código"
+    )

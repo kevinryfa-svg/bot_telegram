@@ -612,3 +612,114 @@ def test_every_message_quotes_the_price_the_shop_charges(catalogo):
     assert float(despues[0]) == pytest.approx(4.00), (
         "con la oferta viva, el precio que se escribe es el de la oferta"
     )
+
+
+# =========================
+# EL AVISO DE ÚLTIMO DÍA
+# =========================
+# Una cuenta atrás solo vende si alguien la ve terminar. Pero de 306 personas,
+# 176 ya habían bloqueado este bot: el empujón va a quien se lo ha ganado —miró
+# esa comunidad y no compró— y una sola vez por oferta.
+
+@pytest.fixture
+def con_interesados(catalogo):
+    db = catalogo["db"]
+
+    plan = [p for p in ofs.planes_ofertables(31) if p["id"] == 311][0]
+    oferta, _ = ofs.crear_oferta(plan, percent=60, dias=7)
+
+    with db.conn.cursor() as cur:
+        # Termina dentro de 5 horas: hoy es el último día.
+        cur.execute(
+            "UPDATE plan_offers SET ends_at = NOW() + INTERVAL '5 hours' "
+            "WHERE id = %s", (oferta["id"],)
+        )
+        cur.execute(
+            "INSERT INTO bot_user_events (user_id, event_type, group_id) VALUES "
+            "(9001, 'community_viewed', 31), "   # miró y no compró
+            "(9002, 'community_viewed', 31), "   # ya está dentro
+            "(9003, 'community_viewed', 31), "   # se dio de baja
+            "(9004, 'community_viewed', 99)"     # miró OTRA comunidad
+        )
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, "
+            "subscription_active) VALUES (9002, 31, NOW() + INTERVAL '9 days', TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO user_reengagement (user_id, opted_out) VALUES (9003, TRUE)"
+        )
+
+    return {**catalogo, "oferta": ofs.oferta_viva(311)}
+
+
+def test_only_the_offers_about_to_end_are_picked(con_interesados):
+    terminan = [o["id"] for o in ofs.ofertas_que_terminan()]
+
+    assert con_interesados["oferta"]["id"] in terminan
+
+    with con_interesados["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plan_offers SET ends_at = NOW() + INTERVAL '4 days'")
+
+    assert ofs.ofertas_que_terminan() == [], (
+        "avisar cuatro días antes no es un último día"
+    )
+
+
+def test_it_goes_to_whoever_looked_and_did_not_buy(con_interesados):
+    interesados = ofs.interesados_sin_comprar(con_interesados["oferta"])
+
+    assert 9001 in interesados
+    assert 9002 not in interesados, "ya está dentro"
+    assert 9003 not in interesados, "dijo que no quería avisos"
+    assert 9004 not in interesados, "miró otra comunidad"
+
+
+def test_nobody_gets_the_same_last_call_twice(con_interesados):
+    oferta = con_interesados["oferta"]
+
+    assert ofs.marcar_ultimo_dia(oferta["id"], 9001, 31) is True
+    assert ofs.marcar_ultimo_dia(oferta["id"], 9001, 31) is False, (
+        "el job corre cada día y el contenedor reinicia"
+    )
+
+    assert 9001 not in ofs.interesados_sin_comprar(oferta)
+
+
+def test_the_text_says_the_only_thing_that_matters_today(con_interesados):
+    texto = ofs.texto_de_ultimo_dia({
+        "percent": 60, "amount": 4, "currency": "EUR",
+        "group_name": "StarsVip", "group_id": 31, "plan_id": 311,
+    })
+
+    assert "último día" in texto.lower()
+    assert "-60%" in texto
+    assert "4 EUR" in texto
+    assert "precio de siempre" in texto
+
+
+def test_the_button_goes_straight_to_paying(con_interesados):
+    teclado = ofs._teclado_de_ultimo_dia({
+        "percent": 60, "amount": 4, "currency": "EUR",
+        "group_name": "StarsVip", "group_id": 31, "plan_id": 311,
+    })
+
+    callbacks = [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert "startbuy_31_311" in callbacks, (
+        "un aviso de último día que lleva a un menú pierde el último día"
+    )
+
+
+def test_no_last_calls_when_the_shop_cannot_sell(con_interesados, monkeypatch):
+    import asyncio
+
+    import reengagement_service as rs
+
+    monkeypatch.setattr(rs, "merece_la_pena_escribir", lambda: (False, "roto"))
+
+    class FakeContext:
+        bot = None
+
+    resumen = asyncio.run(ofs.process_offer_last_calls(FakeContext()))
+
+    assert resumen["enviados"] == 0

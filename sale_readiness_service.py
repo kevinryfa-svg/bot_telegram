@@ -440,3 +440,88 @@ def describe_sale_readiness(avisar=True):
 
 
     return linea
+
+
+# =========================
+# VIGILARLO, NO SOLO MIRARLO AL ARRANCAR
+# =========================
+# Esta comprobación solo corría al arrancar. Con despliegues de vez en cuando,
+# eso significa enterarse de que el cobro está roto días después — y así es
+# exactamente como este bot estuvo meses sin poder cobrar: nadie lo miró.
+#
+# Ahora se mira cada hora. Y se avisa por CAMBIO DE ESTADO, no cada vez: un
+# aviso cada hora se convierte en ruido que se ignora, que es justo lo que hace
+# que el aviso importante pase desapercibido.
+
+_ultimo_estado_del_cobro = {"roto": None}
+
+
+def vigilar_cobro(avisar=True):
+    """(roto, linea). Comprueba el cobro y avisa SOLO cuando el estado cambia.
+
+    Devuelve `roto=True/False` y la línea que describe el estado, para que quien
+    llame pueda registrarla. Nunca lanza: es un vigilante, y un vigilante que
+    tumba el proceso que vigila no sirve de nada.
+    """
+
+    try:
+
+        linea = describe_sale_readiness(avisar=False)
+
+    except Exception as e:
+
+        print("Cobro: la vigilancia falló:", str(e)[:200])
+
+        return (None, None)
+
+    roto = linea.startswith("🚨")
+
+    antes = _ultimo_estado_del_cobro.get("roto")
+
+    _ultimo_estado_del_cobro["roto"] = roto
+
+    if antes == roto:
+
+        # Sin cambios: ni ruido ni aviso. El estado ya está donde tiene que
+        # estar y quien tenía que enterarse ya se enteró.
+        return (roto, linea)
+
+    print(linea)
+
+    if not avisar:
+        return (roto, linea)
+
+    try:
+
+        from bot_config import ADMIN_ID, TOKEN
+        from notification_service import send_telegram_message
+
+        if not (ADMIN_ID and TOKEN):
+            return (roto, linea)
+
+        if roto:
+
+            send_telegram_message(
+                TOKEN,
+                int(ADMIN_ID),
+                "🚨 El bot ha dejado de poder cobrar\n\n"
+                + linea.replace("🚨 COBRO ROTO — ", "")
+                + "\n\nMientras siga así, cada persona que pulse comprar se "
+                "encuentra un error y se va."
+            )
+
+        elif antes is not None:
+
+            # Solo cuando venimos de estar rotos: un «ya funciona» sin haber
+            # avisado antes de que no funcionaba no le dice nada a nadie.
+            send_telegram_message(
+                TOKEN,
+                int(ADMIN_ID),
+                "✅ El cobro vuelve a funcionar\n\n" + linea
+            )
+
+    except Exception as e:
+
+        print("Cobro: no se pudo avisar del cambio de estado:", str(e)[:200])
+
+    return (roto, linea)

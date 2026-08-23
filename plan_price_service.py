@@ -20,6 +20,7 @@ solo afecta a las altas NUEVAS, que es justo la regla 4 del documento de reglas
 del dinero. Ni un socio actual paga un céntimo distinto por esto.
 """
 
+import os
 import re
 
 from audit_log_service import log_event
@@ -770,4 +771,178 @@ def sql_precio_efectivo(alias=None):
     return (
         f"COALESCE(NULLIF({prefijo}stripe_price_id, ''), "
         f"NULLIF({prefijo}price_id, ''))"
+    )
+
+
+# =========================
+# PRECIOS QUE NO USA NADIE
+# =========================
+# Crear el precio en Stripe y guardarlo en la base son dos pasos, y entre uno y
+# otro se puede fallar: pasó de verdad el día que el índice de ofertas no
+# encajaba, y quedaron precios creados que ningún plan ni oferta menciona.
+#
+# Sueltos no cobran nada —nadie puede llegar a ellos— pero ensucian el panel de
+# Stripe, y en un panel sucio es más fácil copiar el precio equivocado. Se
+# archivan, que en Stripe significa «no se puede usar más» y es reversible.
+
+# Solo se toca lo que lleva un día suelto: un precio recién creado puede estar a
+# medio guardar en este mismo instante.
+HORAS_PARA_CONSIDERAR_HUERFANO = int(
+    os.environ.get("PRECIO_HUERFANO_HORAS", "24")
+)
+
+
+def identificadores_de_precio_en_uso():
+    """Todos los identificadores de precio que la base menciona."""
+
+    en_uso = set()
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT stripe_price_id FROM plans
+                 WHERE COALESCE(NULLIF(stripe_price_id, ''), '') <> ''
+                UNION
+                SELECT price_id FROM plans
+                 WHERE COALESCE(NULLIF(price_id, ''), '') <> ''
+                UNION
+                SELECT provider_price_id FROM plans
+                 WHERE COALESCE(NULLIF(provider_price_id, ''), '') <> ''
+                UNION
+                SELECT stripe_price_id FROM plan_offers
+                 WHERE COALESCE(NULLIF(stripe_price_id, ''), '') <> ''
+                UNION
+                SELECT stripe_price_id FROM commercial_plans
+                 WHERE COALESCE(NULLIF(stripe_price_id, ''), '') <> ''
+
+            """)
+
+            for fila in cur.fetchall() or []:
+
+                if fila[0]:
+                    en_uso.add(str(fila[0]).strip())
+
+    except Exception as e:
+
+        print("Precios huérfanos: error leyendo los que se usan:", str(e)[:160])
+
+        # Ante la duda, se devuelve None y NO se archiva nada: archivar por no
+        # haber podido leer la base sería romper lo que funciona.
+        return None
+
+    return en_uso
+
+
+def precios_huerfanos(limite=100):
+    """Precios nuestros que ninguna fila menciona. Lista vacía ante la duda."""
+
+    import time
+
+    import stripe
+
+    en_uso = identificadores_de_precio_en_uso()
+
+    if en_uso is None:
+        return []
+
+    corte = time.time() - HORAS_PARA_CONSIDERAR_HUERFANO * 3600
+
+    huerfanos = []
+
+    try:
+
+        precios = stripe.Price.list(active=True, limit=int(limite))
+
+    except Exception as e:
+
+        print("Precios huérfanos: no se pudieron listar:", str(e)[:160])
+
+        return []
+
+    for precio in (precios.get("data") if hasattr(precios, "get") else []) or []:
+
+        identificador = precio.get("id")
+        metadata = precio.get("metadata") or {}
+
+        # Solo lo que creó este bot para acceso a comunidades, y solo pagos
+        # únicos: archivar el precio de una suscripción viva es meterse donde no
+        # hay que meterse.
+        if metadata.get("purpose") != "group_access":
+            continue
+
+        if precio.get("type") != "one_time":
+            continue
+
+        if int(precio.get("created") or 0) > corte:
+            continue
+
+        if identificador in en_uso:
+            continue
+
+        huerfanos.append({
+            "id": identificador,
+            "amount": precio.get("unit_amount"),
+            "currency": precio.get("currency"),
+            "plan_id": metadata.get("plan_id"),
+        })
+
+    return huerfanos
+
+
+def archivar_precios_huerfanos():
+    """Los desactiva en Stripe. Devuelve los archivados."""
+
+    import stripe
+
+    archivados = []
+
+    for huerfano in precios_huerfanos():
+
+        try:
+
+            stripe.Price.modify(huerfano["id"], active=False)
+
+        except Exception as e:
+
+            print(
+                "Precios huérfanos: no se pudo archivar", huerfano["id"], "-",
+                str(e)[:160]
+            )
+
+            continue
+
+        archivados.append(huerfano)
+
+        log_event(
+            "stripe_price_archived",
+            category="billing",
+            severity="info",
+            scope="global",
+            message="Precio de Stripe sin usar archivado.",
+            metadata=huerfano,
+        )
+
+    return archivados
+
+
+def describe_orphan_prices():
+    """Una línea para el arranque. Calla cuando no hay nada suelto."""
+
+    try:
+
+        archivados = archivar_precios_huerfanos()
+
+    except Exception as e:
+
+        return f"Precios sueltos: no se pudieron revisar ({str(e)[:120]})."
+
+    if not archivados:
+        return None
+
+    return (
+        f"Precios sueltos: {len(archivados)} precio(s) de Stripe que no usaba "
+        "nadie se han archivado (quedaron de un guardado que falló a medias)."
     )
