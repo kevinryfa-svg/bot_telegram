@@ -97,15 +97,41 @@ footer{color:#7b8794}
 """
 
 
-def enlace_del_bot(group_id=None):
-    """El enlace al bot. Con comunidad, el enlace directo a su oferta."""
+# Lo que se le pone al enlace para que quien tiene SU comunidad aterrice donde
+# se publica, y no en la bienvenida del comprador.
+CARGA_DE_PUBLICAR = "publicar"
+
+
+def enlace_del_bot(group_id=None, carga=None):
+    """El enlace al bot. Con comunidad, el enlace directo a su oferta.
+
+    Con `carga`, aterriza en la pantalla que corresponda. El enlace pelado deja
+    a quien lo pulsa en la bienvenida genérica, y desde ahí tiene que volver a
+    buscar lo que venía a hacer: el clic ya está conseguido, y perderlo en la
+    puerta es lo más caro que hace este bot.
+    """
 
     base = f"https://t.me/{BOT_USERNAME}"
 
     if group_id:
         return f"{base}?start=group_{int(group_id)}"
 
+    if carga:
+        return f"{base}?start={carga}"
+
     return base
+
+
+def enlace_para_publicar():
+    """El enlace de «publicar mi comunidad». Va directo a esa pantalla.
+
+    Quien pulsa esto tiene un canal privado y quiere cobrar por él: vale más
+    para el negocio que una entrada suelta, porque paga todos los meses. Hasta
+    ahora caía en «elige tu acceso» —la pantalla de COMPRAR— y tenía que
+    encontrar solo el tercer botón del menú.
+    """
+
+    return enlace_del_bot(carga=CARGA_DE_PUBLICAR)
 
 
 def _insignia_de_oferta(oferta):
@@ -267,7 +293,7 @@ def _seccion_para_creadores():
         )
 
     partes.append(
-        f'<a class="cta" href="{html.escape(enlace_del_bot())}" '
+        f'<a class="cta" href="{html.escape(enlace_para_publicar())}" '
         'rel="nofollow">Publicar mi comunidad</a>'
     )
 
@@ -347,7 +373,7 @@ def build_public_catalog_html(base_url=None):
             "<p>Todavía no hay comunidades publicadas con acceso inmediato.</p>"
             "<p>Si tienes una comunidad privada en Telegram, puedes publicarla "
             "aquí y cobrar suscripciones con acceso automático.</p>"
-            f'<p><a class="cta" href="{html.escape(enlace_del_bot())}" '
+            f'<p><a class="cta" href="{html.escape(enlace_para_publicar())}" '
             'rel="nofollow">Publicar mi comunidad</a></p>'
             "</div>"
         )

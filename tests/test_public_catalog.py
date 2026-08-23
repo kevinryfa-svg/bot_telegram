@@ -448,3 +448,59 @@ def test_the_route_answers_and_falls_back_to_the_catalogue(catalogo):
     rara = cliente.get("/comunidades/esto-no-es-un-numero")
 
     assert rara.status_code == 404
+
+
+# =========================
+# EL CLIC QUE MÁS VALE
+# =========================
+# «Publicar mi comunidad» llevaba al bot PELADO. Quien lo pulsaba aterrizaba en
+# «elige tu acceso» —la pantalla de COMPRAR— y tenía que encontrar solo el
+# tercer botón del menú para hacer lo que venía a hacer. Y es el clic más caro
+# que hay en esta página: quien tiene su propio canal privado paga TODOS LOS
+# MESES, no una entrada suelta.
+
+def test_the_creator_link_lands_where_you_publish():
+    enlace = pcp.enlace_para_publicar()
+
+    assert enlace.endswith("?start=publicar"), (
+        "el enlace pelado deja al creador en la pantalla de comprar"
+    )
+
+
+def test_the_creators_section_uses_it():
+    seccion = pcp._seccion_para_creadores()
+
+    assert "Publicar mi comunidad" in seccion
+    assert "?start=publicar" in seccion
+
+
+def test_the_empty_catalogue_uses_it_too(clean_db):
+    """Sin comunidades, lo único que queda por vender es publicar una."""
+
+    pagina = pcp.build_public_catalog_html()
+
+    if "Publicar mi comunidad" in pagina:
+        assert "?start=publicar" in pagina
+
+
+def test_the_community_link_is_untouched(catalogo):
+    """Al comprador se le sigue llevando a SU comunidad, no a publicar."""
+
+    assert pcp.enlace_del_bot(61).endswith("?start=group_61")
+    assert "publicar" not in pcp.enlace_del_bot(61)
+
+
+def test_the_bare_link_is_still_bare():
+    assert pcp.enlace_del_bot().endswith("/TheStarVipBOT") or (
+        "?start=" not in pcp.enlace_del_bot()
+    )
+
+
+def test_the_bot_knows_what_to_do_with_that_payload():
+    """Un enlace que el bot no entiende es peor que no ponerlo."""
+
+    import start_handler
+
+    assert pcp.CARGA_DE_PUBLICAR in start_handler.CARGAS_DE_PUBLICAR, (
+        "la página genera una carga que /start tiene que saber atender"
+    )

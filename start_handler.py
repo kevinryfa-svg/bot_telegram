@@ -198,6 +198,19 @@ def expired_community_message(days_left=None):
     return text
 
 
+# Las cargas de /start que llevan a publicar comunidad. Son varias porque el
+# enlace lo copia y lo pega gente: la que genera la página es «publicar», y las
+# otras son las formas en que se escribe sola cuando alguien la teclea o la
+# traduce. Mandar a «no te he entendido» a quien viene a PAGAR todos los meses
+# sale carísimo, y aceptar tres palabras no cuesta nada.
+CARGAS_DE_PUBLICAR = (
+    "publicar",
+    "publish",
+    "crear",
+    "monetizar",
+)
+
+
 RECOVERABLE_CREATOR_STATUSES = (
     "approved",
     "trial_active",
@@ -1366,6 +1379,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
 
             print("Deep link de pago: error, cayendo al menú:", str(e)[:200])
+
+
+    # DEEP LINK DE PUBLICAR (?start=publicar): el botón «Publicar mi comunidad»
+    # de la página pública llevaba al bot PELADO, y quien lo pulsaba aterrizaba
+    # en «elige tu acceso» —la pantalla de COMPRAR— teniendo que encontrar solo
+    # el tercer botón del menú para hacer lo que venía a hacer. Y es el clic que
+    # más vale: quien tiene su propio canal privado paga TODOS LOS MESES, no una
+    # entrada suelta.
+    #
+    # Se pinta la misma pantalla que el menú, no una copia: el día que cambie
+    # la oferta de publicar, cambia en los dos sitios a la vez.
+    if carga.strip().lower() in CARGAS_DE_PUBLICAR:
+
+        try:
+
+            from callback_router import build_commercial_menu_keyboard
+            from commercial_catalog import COMMERCIAL_MENU_TEXT_ES
+
+            log_user_event(update, "start", event_key="/start publicar")
+
+            await update.message.reply_text(
+                COMMERCIAL_MENU_TEXT_ES,
+                reply_markup=InlineKeyboardMarkup(
+                    build_commercial_menu_keyboard()
+                )
+            )
+
+            return
+
+        except Exception as e:
+
+            # Nunca un callejón: si algo falla, se sigue al menú de siempre.
+            print("Start publicar: no se pudo abrir la pantalla:", str(e)[:160])
 
 
     # DEEP LINK DE REFERIDO (?start=ref_<grupo>_<socio>): el invitado
