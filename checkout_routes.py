@@ -225,6 +225,7 @@ def register_checkout_routes(app):
                 from weekly_offer_service import (
                     sql_importe_vigente,
                     sql_precio_vigente,
+                    sql_solo_si_cobra_por_stripe,
                 )
 
                 # Se cobra SIEMPRE el precio vigente —el de la oferta mientras
@@ -243,6 +244,7 @@ def register_checkout_routes(app):
                            p.id,
                            (SELECT po.percent FROM plan_offers po
                              WHERE po.plan_id = p.id
+                               """ + sql_solo_si_cobra_por_stripe("p") + """
                                AND (po.user_id IS NULL
                                     OR po.user_id = %(comprador)s)
                                AND po.starts_at <= NOW()

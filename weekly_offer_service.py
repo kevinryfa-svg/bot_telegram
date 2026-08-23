@@ -454,6 +454,24 @@ def _de_quien(param_persona):
     return f" AND (po.user_id IS NULL OR po.user_id = %({param_persona})s)"
 
 
+def sql_solo_si_cobra_por_stripe(alias):
+    """La oferta solo vale si el plan sigue cobrándose por Stripe.
+
+    El precio de una oferta es un precio de STRIPE. Si el plan cambiara de
+    proveedor con la oferta viva, el escaparate anunciaría el importe rebajado y
+    PayPal cobraría el de tarifa: cobrar más de lo anunciado, que es lo único
+    que este bot no se puede permitir. Las ofertas solo se crean sobre planes de
+    Stripe, pero un cambio de proveedor posterior no puede abrir esa puerta.
+    """
+
+    prefijo = f"{alias}." if alias else ""
+
+    return (
+        f" AND COALESCE(NULLIF({prefijo}payment_provider, ''), 'stripe')"
+        " = 'stripe'"
+    )
+
+
 def _orden_de_oferta(param_persona):
 
     if not param_persona:
@@ -472,6 +490,7 @@ def sql_precio_vigente(alias="p", param_persona=None):
     return (
         "COALESCE((SELECT po.stripe_price_id FROM plan_offers po"
         f" WHERE po.plan_id = {prefijo}id"
+        + sql_solo_si_cobra_por_stripe(alias)
         + _de_quien(param_persona) +
         "   AND po.starts_at <= NOW() AND po.ends_at > NOW()"
         "   AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''"
@@ -488,6 +507,7 @@ def sql_importe_vigente(alias="p", param_persona=None):
     return (
         "COALESCE((SELECT po.amount FROM plan_offers po"
         f" WHERE po.plan_id = {prefijo}id"
+        + sql_solo_si_cobra_por_stripe(alias)
         + _de_quien(param_persona) +
         "   AND po.starts_at <= NOW() AND po.ends_at > NOW()"
         "   AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''"

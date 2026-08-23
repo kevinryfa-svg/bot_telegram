@@ -723,3 +723,86 @@ def test_no_last_calls_when_the_shop_cannot_sell(con_interesados, monkeypatch):
     resumen = asyncio.run(ofs.process_offer_last_calls(FakeContext()))
 
     assert resumen["enviados"] == 0
+
+
+# =========================
+# EL PRECIO QUE SE DICE ES EL PRECIO QUE SE COBRA
+# =========================
+# Estas dos son la misma avería vista por dos sitios: un sitio que enseña un
+# precio y otro que cobra otro. Da igual quién enseñe el número —un botón, una
+# página o la IA contestando «¿cuánto cuesta?»—: si no coincide con el cobro,
+# el que compra se siente engañado y no vuelve.
+
+def test_the_ai_quotes_the_price_the_shop_is_charging(catalogo):
+    """Quien le pregunta el precio a un bot se cree lo que le contesta."""
+
+    import ai_context_builder as ctx
+
+    plan = [p for p in ofs.planes_ofertables(31) if p["id"] == 311][0]
+    ofs.crear_oferta(plan, percent=60, dias=7)
+
+    contexto = ctx.build_public_marketplace_context(7001)
+
+    assert "desde 4 EUR" in contexto, (
+        "la semana está a 10 de tarifa y a 4 con la oferta viva; la IA tiene "
+        "que decir el 4, que es lo que dice el botón"
+    )
+    assert "desde 10 EUR" not in contexto
+
+
+def test_the_ai_writes_the_cents_the_way_the_shop_writes_them(catalogo):
+    """«3.6 EUR» no es un precio en ningún sitio donde se hable español."""
+
+    import ai_context_builder as ctx
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("UPDATE plans SET amount=9 WHERE id=311")
+
+    plan = [p for p in ofs.planes_ofertables(31) if p["id"] == 311][0]
+    ofs.crear_oferta(plan, percent=60, dias=7)
+
+    contexto = ctx.build_public_marketplace_context(7002)
+
+    assert "desde 3,60 EUR" in contexto
+    assert "3.60" not in contexto and "3.6 " not in contexto
+
+
+def test_an_offer_stops_applying_if_the_plan_leaves_stripe(catalogo):
+    """El precio de una oferta es un precio de Stripe y de nadie más.
+
+    Si el plan se pasara a PayPal con la oferta viva, el escaparate seguiría
+    anunciando el importe rebajado y el cobro se haría por el de tarifa: cobrar
+    más de lo anunciado es lo único que este bot no se puede permitir.
+    """
+
+    import ai_context_builder as ctx
+    import start_offer_service as sos
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("UPDATE groups SET is_marketplace_visible=TRUE WHERE id=31")
+        cur.execute("DELETE FROM plans WHERE id IN (312, 313)")
+
+    plan = [p for p in ofs.planes_ofertables(31) if p["id"] == 311][0]
+    ofs.crear_oferta(plan, percent=60, dias=7)
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET payment_provider='paypal' WHERE id=311"
+        )
+
+    oferta = ofs.oferta_viva(311)
+
+    assert oferta, "la fila de la oferta sigue ahí, no se borra sola"
+
+    escaparate = sos.fetch_sellable_communities(0, limit=5, solo_grupo=31)
+
+    if escaparate:
+        assert escaparate[0]["oferta_percent"] is None, (
+            "un plan que ya no cobra por Stripe no puede anunciar un precio "
+            "de Stripe"
+        )
+        assert float(escaparate[0]["amount"]) == pytest.approx(10), (
+            "vuelve a valer lo que dice la tarifa"
+        )
+
+    assert "desde 10 EUR" in ctx.build_public_marketplace_context(7003)

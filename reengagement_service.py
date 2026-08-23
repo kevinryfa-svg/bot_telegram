@@ -536,7 +536,10 @@ def fetch_offer_snapshot(limit=3):
         # Con el importe VIGENTE: si hay una oferta viva, el mensaje tiene que
         # decir el precio de la oferta. Decir 9 EUR mientras la tienda vende a
         # 3,60 es perder la venta y quedar mal a la vez.
-        from weekly_offer_service import sql_importe_vigente
+        from weekly_offer_service import (
+            sql_importe_vigente,
+            sql_solo_si_cobra_por_stripe,
+        )
 
         cur.execute(f"""
 
@@ -599,6 +602,7 @@ def fetch_offer_snapshot(limit=3):
             JOIN groups g ON g.id = p.group_id
             WHERE {VISIBLE_GROUP_CONDITIONS}
               AND po.user_id IS NULL
+              {sql_solo_si_cobra_por_stripe("p")}
               AND po.starts_at <= NOW()
               AND po.ends_at > NOW()
               AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''

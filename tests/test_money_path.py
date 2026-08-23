@@ -461,6 +461,50 @@ def test_nobody_writes_that_coalesce_by_hand_any_more():
     )
 
 
+def test_every_offer_query_checks_the_plan_still_charges_through_stripe():
+    """El precio de una oferta es un precio de Stripe y de nadie más.
+
+    Cada sitio que lee una oferta viva para enseñar un precio o un -60% se
+    escribió a mano, y la condición «además el plan tiene que seguir cobrando
+    por Stripe» se puede olvidar en el siguiente que se escriba. Si se olvida,
+    el escaparate anuncia el importe rebajado y PayPal cobra el de tarifa:
+    cobrar más de lo anunciado, que es lo único que este bot no se puede
+    permitir. Esto obliga a que la condición esté, sin depender de acordarse.
+    """
+
+    import pathlib
+
+    culpables = []
+
+    for ruta in sorted(pathlib.Path(".").glob("*.py")):
+
+        # Donde vive la definición de la condición.
+        if ruta.name == "weekly_offer_service.py":
+            continue
+
+        lineas = ruta.read_text(encoding="utf-8").splitlines()
+
+        for numero, linea in enumerate(lineas, start=1):
+
+            # El alias `po` marca las consultas que sacan de la oferta algo que
+            # se le acaba enseñando a alguien. Las que solo comprueban si una
+            # fila existe (una oferta caducada, un precio archivado) no
+            # prometen ningún importe y no hacen falta aquí.
+            if "FROM plan_offers po" not in linea:
+                continue
+
+            ventana = "\n".join(lineas[numero - 1:numero + 20])
+
+            if "sql_solo_si_cobra_por_stripe" not in ventana:
+                culpables.append(f"{ruta.name}:{numero}")
+
+    assert culpables == [], (
+        "esa consulta lee una oferta viva sin comprobar que el plan siga "
+        "cobrando por Stripe; mete sql_solo_si_cobra_por_stripe(alias): "
+        + ", ".join(culpables)
+    )
+
+
 # =========================
 # «TERMINADO» NO ES «PAGADO»
 # =========================
