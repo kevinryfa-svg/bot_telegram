@@ -1303,14 +1303,20 @@ def schedule_weekly_offers(application):
     # Lunes a las 08:00 UTC, una hora antes del resumen al propietario: así el
     # resumen del lunes ya habla de la oferta que acaba de empezar. La clave de
     # semana hace inocuo cualquier reinicio del contenedor ese mismo día.
+    #
+    # La hora la decide weekly_offer_service, que es quien la usa para calcular
+    # cuándo MUERE la oferta anterior. Si estos dos números se separan, queda un
+    # hueco con la tienda a precio de tarifa entre una oferta y la siguiente.
+    from weekly_offer_service import LANZAMIENTO_HORA
+
     job_queue.run_daily(
         weekly_offers_job,
-        time=dt.time(hour=8, minute=0),
+        time=dt.time(hour=LANZAMIENTO_HORA, minute=0),
         days=(1,),
         name="weekly_offers"
     )
 
-    print("Ofertas semanales programadas (lunes 08:00 UTC).")
+    print(f"Ofertas semanales programadas (lunes {LANZAMIENTO_HORA:02d}:00 UTC).")
 
     return True
 

@@ -806,3 +806,122 @@ def test_an_offer_stops_applying_if_the_plan_leaves_stripe(catalogo):
         )
 
     assert "desde 10 EUR" in ctx.build_public_marketplace_context(7003)
+
+
+# =========================
+# ENTRE UNA OFERTA Y LA SIGUIENTE NO PUEDE HABER UN HUECO
+# =========================
+# Duraban SIETE DÍAS contados desde que se creaban, y eso solo cuadra si nacen
+# un lunes a las ocho. La de producción nació un sábado por la tarde: moría el
+# sábado siguiente y la próxima no salía hasta el lunes. 39 horas con la tienda
+# a precio de tarifa y sin ninguna razón para comprar hoy — y volvía a pasar
+# cada vez que una oferta naciera fuera del lunes.
+
+def test_an_offer_dies_exactly_when_the_next_one_is_born():
+    from datetime import datetime, timedelta
+
+    sabado = datetime(2026, 8, 22, 16, 49)
+
+    assert sabado.weekday() == 5, "la de producción nació un sábado"
+
+    fin = ofs.fin_de_ciclo(sabado)
+
+    assert fin.weekday() == 0, "muere un lunes"
+    assert fin.hour == ofs.LANZAMIENTO_HORA
+    assert fin == datetime(2026, 8, 24, 8, 0), (
+        "el lunes SIGUIENTE, no el de dentro de siete días"
+    )
+
+    # Y con los siete días de antes había 39 horas de tienda a precio normal.
+    viejo_final = sabado + timedelta(days=7)
+
+    assert viejo_final > fin
+
+
+def test_the_monday_launch_lasts_the_whole_week():
+    from datetime import datetime
+
+    lunes = datetime(2026, 8, 24, 8, 0)
+
+    assert ofs.fin_de_ciclo(lunes) == datetime(2026, 8, 31, 8, 0)
+
+
+def test_an_early_monday_does_not_get_a_one_hour_offer():
+    """Si muriera a las ocho, el job de las ocho no podría crear otra —misma
+    clave de semana— y la tienda se quedaría SIN oferta toda la semana."""
+
+    from datetime import datetime
+
+    casi = datetime(2026, 8, 24, 7, 59)
+
+    assert ofs.fin_de_ciclo(casi) == datetime(2026, 8, 31, 8, 0)
+
+
+def test_every_day_of_the_week_ends_on_the_same_monday():
+    from datetime import datetime, timedelta
+
+    lunes = datetime(2026, 8, 24, 8, 0)
+
+    # De ese lunes a las ocho hasta el domingo a las once de la noche: toda la
+    # semana ISO. La hora siguiente ya es otro lunes y otra oferta.
+    horas_de_la_semana = 24 * 6 + 16
+
+    finales = {
+        ofs.fin_de_ciclo(lunes + timedelta(hours=h))
+        for h in range(0, horas_de_la_semana)
+    }
+
+    assert finales == {datetime(2026, 8, 31, 8, 0)}, (
+        "toda la semana comparte la misma oferta y el mismo final"
+    )
+
+
+def test_the_offer_it_creates_ends_on_the_cycle(catalogo):
+    from datetime import datetime
+
+    sabado = datetime(2026, 8, 22, 16, 49)
+
+    plan = [p for p in ofs.planes_ofertables(31) if p["id"] == 311][0]
+
+    oferta, _detalle = ofs.crear_oferta(plan, momento=sabado)
+
+    assert oferta
+    assert oferta["ends_at"].replace(tzinfo=None) == ofs.fin_de_ciclo(sabado)
+
+
+def test_a_personal_offer_still_follows_whoever_asks(catalogo):
+    """La oferta anual es de UNA PERSONA: no sigue el calendario del escaparate."""
+
+    from datetime import datetime, timedelta
+
+    sabado = datetime(2026, 8, 22, 16, 49)
+
+    anual = [p for p in ofs.planes_ofertables(31)] + [{
+        "id": 313, "group_id": 31, "group_name": "StarsVip", "name": "Año",
+        "amount": 29, "currency": "EUR", "duration_days": 360,
+        "is_recurring": False,
+    }]
+
+    oferta, _detalle = ofs.crear_oferta(
+        anual[-1], percent=50, dias=7, user_id=7777, momento=sabado,
+        permitir_cualquier_duracion=True,
+    )
+
+    assert oferta
+    assert oferta["ends_at"].replace(tzinfo=None) == sabado + timedelta(days=7)
+
+
+def test_the_job_and_the_expiry_read_the_same_hour():
+    """Si estos dos números se separan, vuelve el hueco."""
+
+    fuente = open("main.py", encoding="utf-8").read()
+
+    assert "from weekly_offer_service import LANZAMIENTO_HORA" in fuente
+
+    bloque = fuente[fuente.index("def schedule_weekly_offers"):]
+    bloque = bloque[:bloque.index('name="weekly_offers"')]
+
+    assert "hour=LANZAMIENTO_HORA" in bloque
+    assert "hour=8" not in bloque, (
+        "la hora escrita a mano en main.py es justo lo que se separa"
+    )
