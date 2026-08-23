@@ -118,24 +118,63 @@ def build_purchase_confirmation_text(group_name, plan_name, amount_total,
     return "\n".join(lines)
 
 
-def build_purchase_confirmation_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
+def build_purchase_confirmation_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE,
+                                         group_id=None):
     """
-    Botones del mensaje de compra: pedir otro enlace y hablar con soporte.
+    Botones del mensaje de compra: su acceso, invitar a alguien y soporte.
 
     Sin esto, alguien cuyo enlace fallara no tenía a dónde ir desde el propio
     mensaje del pago.
+
+    EL BOTÓN DE INVITAR VA AQUÍ POR UN MOTIVO. El sistema de referidos existe
+    desde hace tiempo —el que invita y el invitado se llevan días gratis cuando
+    el segundo paga— pero vivía enterrado dentro de «Mis accesos», donde hay que
+    ir a buscarlo. El único momento en que a alguien le apetece recomendar una
+    comunidad es el minuto en que acaba de entrar, y ese minuto es este.
     """
 
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            t("button.my_access_now", language),
-            callback_data=f"mysub_{telegram_group_id}"
-        )],
-        [InlineKeyboardButton(
-            t("button.support", language),
-            callback_data="public_support"
-        )]
-    ])
+    filas = [[InlineKeyboardButton(
+        t("button.my_access_now", language),
+        callback_data=f"mysub_{telegram_group_id}"
+    )]]
+
+    if group_id and telegram_group_id and _referidos_activos(group_id):
+
+        # La MISMA pantalla que ya existe en «Mis accesos» (mysub_invite_...):
+        # tiene su texto, sus estadísticas y su comprobación de que el
+        # propietario no ha apagado el programa. Inventar aquí otro camino
+        # habría sido una segunda pantalla que mantener y que se separaría.
+        filas.append([InlineKeyboardButton(
+            "🎁 Invitar y ganar días gratis",
+            callback_data=f"mysub_invite_{telegram_group_id}"
+        )])
+
+    filas.append([InlineKeyboardButton(
+        t("button.support", language),
+        callback_data="public_support"
+    )])
+
+    return InlineKeyboardMarkup(filas)
+
+
+def _referidos_activos(group_id):
+    """¿Esta comunidad tiene los referidos encendidos? Nunca lanza.
+
+    Un fallo mirando esto no puede impedir que alguien reciba el mensaje con su
+    enlace de entrada: sin botón se vive, sin acceso no.
+    """
+
+    try:
+
+        from referral_service import referrals_enabled_for_group
+
+        return bool(referrals_enabled_for_group(group_id))
+
+    except Exception as e:
+
+        print("Compra: no se pudo mirar si hay referidos:", str(e)[:160])
+
+        return False
 
 
 # =========================
@@ -210,7 +249,8 @@ def build_link_pending_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
 
 def build_buyer_message(group_name, plan_name, amount_total, currency,
                         expiration, expire_seconds, link,
-                        telegram_group_id, language=DEFAULT_LANGUAGE):
+                        telegram_group_id, language=DEFAULT_LANGUAGE,
+                        group_id=None):
     """
     Devuelve (texto, teclado) según haya enlace o no.
 
@@ -233,7 +273,8 @@ def build_buyer_message(group_name, plan_name, amount_total, currency,
             ),
             build_purchase_confirmation_keyboard(
                 telegram_group_id,
-                language=language
+                language=language,
+                group_id=group_id
             )
         )
 

@@ -1372,7 +1372,10 @@ def grant_group_access_after_payment(
         expire_seconds=expire_seconds,
         link=link,
         telegram_group_id=telegram_group_id,
-        language=load_user_language(user_id)
+        language=load_user_language(user_id),
+        # Para el botón de invitar: el momento en que a alguien le apetece
+        # recomendar una comunidad es el minuto en que acaba de entrar.
+        group_id=group_id
     )
 
     send_telegram_message(
