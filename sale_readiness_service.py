@@ -569,6 +569,24 @@ NOMBRE_DE_PAGO_TIMEOUT = float(
     os.environ.get("NOMBRE_DE_PAGO_TIMEOUT", "10")
 )
 
+# EL NOMBRE QUE SE QUIERE QUE SALGA. Con esto puesto, se avisa solo cuando la
+# página se aparta de ÉL, y no de cómo se llame la cuenta en Stripe.
+#
+# Porque un nombre distinto no siempre es un descuido: quien vende acceso a una
+# comunidad privada puede querer a propósito que en el extracto del banco de su
+# comprador salga algo neutro, y esa es una decisión suya, no una avería. Sin
+# esta variable, el aviso saltaría cada hora para siempre por algo elegido — y
+# un aviso que se sabe que hay que ignorar es el que hace que se ignoren todos.
+def nombre_de_pago_esperado():
+    """El nombre que se quiere ver, o cadena vacía. Se lee cada vez.
+
+    Al leerlo en cada comprobación, cambiarlo en el servidor surte efecto en la
+    siguiente ronda: no hace falta reiniciar el bot para dejar de recibir —o
+    volver a recibir— este aviso.
+    """
+
+    return (os.environ.get("NOMBRE_DE_PAGO_ESPERADO") or "").strip()
+
 
 def nombre_que_vera_el_comprador(cuenta):
     """El nombre que Stripe pinta arriba en la página de pago.
@@ -659,7 +677,12 @@ def check_nombre_de_la_pagina_de_pago():
         return (True, "sin credenciales de Stripe: no se comprueba")
 
     visible = nombre_que_vera_el_comprador(cuenta)
-    marca = nombre_de_marca_de_la_cuenta(cuenta)
+
+    # Con un nombre esperado puesto, ÉL es la referencia: el de la cuenta deja
+    # de importar, porque la decisión ya está tomada.
+    esperado = nombre_de_pago_esperado()
+
+    marca = esperado or nombre_de_marca_de_la_cuenta(cuenta)
 
     if not visible:
 
@@ -668,6 +691,13 @@ def check_nombre_de_la_pagina_de_pago():
     if not marca or _mismo_nombre(visible, marca):
 
         return (True, f"la página de pago dice «{visible}»")
+
+    if esperado:
+
+        return (False, (
+            f"la página de pago dice «{visible}» y se esperaba «{esperado}». "
+            "Alguien lo ha cambiado en Stripe."
+        ))
 
     return (False, (
         f"la página de pago dice «{visible}» y el negocio se llama «{marca}». "
