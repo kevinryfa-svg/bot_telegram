@@ -284,6 +284,40 @@ def planes_ofertables(group_id=None):
     ]
 
 
+def oferta_de_la_semana(plan_id, week_key, user_id=None):
+    """La oferta de ese plan en esa semana, viva o no. None si no hubo.
+
+    `oferta_viva` responde «¿hay algo que enseñar AHORA?». Esta responde «¿ya se
+    gastó la oferta de esta semana?», que es otra pregunta: una que ya caducó
+    sigue ocupando su semana, porque la clave única no distingue.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT id
+                FROM plan_offers
+                WHERE plan_id = %s
+                  AND week_key = %s
+                  AND COALESCE(user_id, 0) = %s
+                LIMIT 1
+
+            """, (int(plan_id), week_key, int(user_id or 0)))
+
+            return cur.fetchone()
+
+    except Exception as e:
+
+        print("Ofertas: error mirando la semana:", str(e)[:160])
+
+        # Ante la duda, que siga: perder una oferta por un fallo de lectura es
+        # peor que un precio de más en Stripe.
+        return None
+
+
 def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None,
                  user_id=None, permitir_cualquier_duracion=False):
     """(oferta, detalle). Crea la oferta de un plan con su precio real.
@@ -327,6 +361,19 @@ def crear_oferta(plan, percent=None, dias=None, week_key=None, momento=None,
 
     if ya and bool(ya.get("user_id")) == bool(user_id):
         return (ya, f"el plan #{plan['id']} ya tiene una oferta viva")
+
+    # ¿Y una de esta misma semana que ya no esté viva? El INSERT tiene clave
+    # única por (plan, semana), así que esa fila no va a entrar — pero el precio
+    # de Stripe se crea ANTES, y sin esta comprobación cada repaso diario dejaría
+    # un precio nuevo en la cuenta para tirarlo acto seguido.
+    dela_semana = oferta_de_la_semana(plan["id"], week_key, user_id=user_id)
+
+    if dela_semana:
+
+        return (
+            None,
+            f"el plan #{plan['id']} ya tuvo su oferta de {week_key}"
+        )
 
     # El nombre viaja al producto de Stripe: es lo que se lee con la tarjeta ya
     # en la mano, y ahí el descuento tiene que seguir estando.

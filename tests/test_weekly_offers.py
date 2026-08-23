@@ -302,16 +302,29 @@ def test_a_community_with_an_offer_is_still_sellable_without_one(catalogo):
     assert float(oferta["amount"]) == pytest.approx(10)
 
 
-def test_the_startup_and_the_monday_job_both_launch_them():
-    """Solo con el job del lunes, una semana estrenada por un despliegue del
-    martes se quedaría sin oferta hasta siete días después."""
+def test_the_launcher_runs_every_day_not_only_on_mondays():
+    """Solo el lunes, cualquier cosa que salga mal deja la tienda a precio de
+    tarifa hasta el lunes SIGUIENTE.
+
+    El contenedor caído a las ocho, un plan dado de alta el miércoles, una
+    comunidad nueva, o una oferta nacida fuera de ciclo que muere antes de
+    tiempo. Con oferta viva el repaso diario no hace nada —se corta en la
+    primera consulta y no toca Stripe—, así que corre gratis.
+    """
 
     fuente = open("main.py", encoding="utf-8").read()
 
     assert "schedule_weekly_offers" in fuente
-    assert "days=(1,)" in fuente
+
+    bloque = fuente[fuente.index("def schedule_weekly_offers"):]
+    bloque = bloque[:bloque.index('name="weekly_offers"')]
+
+    assert "days=" not in bloque, (
+        "restringirlo a un día de la semana es lo que abre el hueco"
+    )
+
     assert fuente.count("describe_weekly_offers") >= 2, (
-        "una vez en el arranque y otra en el job del lunes"
+        "una vez en el arranque y otra en el job"
     )
 
     pos = fuente.index("describe_weekly_offers")
@@ -925,3 +938,84 @@ def test_the_job_and_the_expiry_read_the_same_hour():
     assert "hour=8" not in bloque, (
         "la hora escrita a mano en main.py es justo lo que se separa"
     )
+
+
+def test_a_daily_run_with_a_live_offer_creates_nothing(catalogo):
+    """El repaso diario tiene que ser gratis mientras haya oferta."""
+
+    ofs.lanzar_ofertas_de_la_semana()
+
+    tras_la_primera = len(catalogo["creados"])
+
+    assert tras_la_primera == 2, "una por plan corto"
+
+    for _dia in range(5):
+        ofs.lanzar_ofertas_de_la_semana()
+
+    assert len(catalogo["creados"]) == tras_la_primera, (
+        "ni un precio más en Stripe mientras la oferta siga viva"
+    )
+
+
+def test_a_dead_offer_does_not_leak_a_price_every_day(catalogo):
+    """La fila no entra —clave única por semana— pero el precio se crea ANTES.
+
+    Sin comprobarlo, cada repaso diario dejaría un precio nuevo en la cuenta de
+    Stripe para tirarlo acto seguido.
+    """
+
+    ofs.lanzar_ofertas_de_la_semana()
+
+    tras_la_primera = len(catalogo["creados"])
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plan_offers SET ends_at = NOW() - INTERVAL '1 hour'"
+        )
+
+    assert ofs.oferta_viva(311) is None, "muerta, pero su semana sigue ocupada"
+
+    for _dia in range(5):
+        ofs.lanzar_ofertas_de_la_semana()
+
+    assert len(catalogo["creados"]) == tras_la_primera, (
+        "cinco precios de Stripe tirados a la basura en cinco días"
+    )
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM plan_offers WHERE plan_id=311")
+
+        assert cur.fetchone()[0] == 1
+
+
+def test_the_daily_run_refills_a_gap(catalogo):
+    """Una oferta de la semana pasada que ya murió no espera al lunes.
+
+    Es el caso de producción: nacida fuera de ciclo, con los siete días viejos,
+    muriendo en mitad de la semana siguiente a la suya.
+    """
+
+    plan = [p for p in ofs.planes_ofertables(31) if p["id"] == 311][0]
+
+    ofs.crear_oferta(plan, dias=7)
+
+    with catalogo["db"].conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plan_offers SET week_key='2000-W01', "
+            "ends_at = NOW() - INTERVAL '1 hour' WHERE plan_id=311"
+        )
+
+    antes = len(catalogo["creados"])
+
+    assert ofs.oferta_viva(311) is None
+
+    ofs.lanzar_ofertas_de_la_semana()
+
+    assert len(catalogo["creados"]) > antes, (
+        "sin repaso diario, la tienda estaría a precio de tarifa hasta el lunes"
+    )
+
+    viva = ofs.oferta_viva(311)
+
+    assert viva, "y vuelve a haber algo que enseñar hoy"
+    assert viva["ends_at"].replace(tzinfo=None) == ofs.fin_de_ciclo()

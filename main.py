@@ -1300,23 +1300,32 @@ def schedule_weekly_offers(application):
 
     import datetime as dt
 
-    # Lunes a las 08:00 UTC, una hora antes del resumen al propietario: así el
-    # resumen del lunes ya habla de la oferta que acaba de empezar. La clave de
-    # semana hace inocuo cualquier reinicio del contenedor ese mismo día.
+    # A las 08:00 UTC, una hora antes del resumen al propietario: así el resumen
+    # del lunes ya habla de la oferta que acaba de empezar. La clave de semana
+    # hace inocuo cualquier reinicio del contenedor ese mismo día.
     #
     # La hora la decide weekly_offer_service, que es quien la usa para calcular
     # cuándo MUERE la oferta anterior. Si estos dos números se separan, queda un
     # hueco con la tienda a precio de tarifa entre una oferta y la siguiente.
+    #
+    # TODOS LOS DÍAS, no solo el lunes. Mientras hay oferta viva esto no hace
+    # nada —se corta en la primera consulta y no toca Stripe—, así que corre
+    # gratis. Y el día que SÍ falta una, la pone: el contenedor caído el lunes,
+    # un plan dado de alta el miércoles, una comunidad nueva, o una oferta que
+    # nació fuera de ciclo y murió antes de tiempo. Solo el lunes, cualquiera de
+    # esas cosas deja la tienda a precio de tarifa hasta el lunes siguiente.
     from weekly_offer_service import LANZAMIENTO_HORA
 
     job_queue.run_daily(
         weekly_offers_job,
         time=dt.time(hour=LANZAMIENTO_HORA, minute=0),
-        days=(1,),
         name="weekly_offers"
     )
 
-    print(f"Ofertas semanales programadas (lunes {LANZAMIENTO_HORA:02d}:00 UTC).")
+    print(
+        f"Ofertas semanales programadas ({LANZAMIENTO_HORA:02d}:00 UTC, "
+        "con repaso diario)."
+    )
 
     return True
 
