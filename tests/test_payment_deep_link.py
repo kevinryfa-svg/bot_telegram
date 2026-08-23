@@ -129,3 +129,85 @@ def test_the_checkout_returns_with_the_payload():
 
     assert 'success_url=f"https://t.me/TheStarVipBOT?start=pagado_{group_id}"' in source
     assert 'cancel_url=f"https://t.me/TheStarVipBOT?start=cancelado_{group_id}"' in source
+
+
+# =========================
+# EL DEEP LINK DE PUBLICAR
+# =========================
+# «Publicar mi comunidad», en la página pública, llevaba al bot PELADO: quien lo
+# pulsaba aterrizaba en «elige tu acceso» —la pantalla de COMPRAR— y tenía que
+# encontrar solo el tercer botón del menú. Es el clic más caro que hay: quien
+# tiene su propio canal privado paga todos los meses, no una entrada suelta.
+
+def test_whoever_comes_to_publish_lands_on_publishing(comunidad):
+    update, contexto = FakeUpdate(), FakeContext(args=["publicar"])
+
+    asyncio.run(sh.start(update, contexto))
+
+    assert not comunidad["menus"], (
+        "el menú genérico es justo lo que le hacía perder el sitio"
+    )
+
+    texto, teclado = update.message.enviados[0]
+
+    assert "comunidad" in texto.lower()
+
+    etiquetas = [b.text for fila in teclado.inline_keyboard for b in fila]
+
+    assert any("Publicar mi comunidad" in e for e in etiquetas), (
+        "tiene que aterrizar con el botón de publicar delante"
+    )
+
+
+def test_it_is_the_same_screen_as_the_menu(comunidad):
+    """Una copia de la pantalla se queda vieja el día que cambie la oferta."""
+
+    from callback_router import build_commercial_menu_keyboard
+    from commercial_catalog import COMMERCIAL_MENU_TEXT_ES
+
+    update, contexto = FakeUpdate(), FakeContext(args=["publicar"])
+
+    asyncio.run(sh.start(update, contexto))
+
+    texto, teclado = update.message.enviados[0]
+
+    assert texto == COMMERCIAL_MENU_TEXT_ES
+
+    esperadas = [
+        b.text for fila in build_commercial_menu_keyboard() for b in fila
+    ]
+    puestas = [b.text for fila in teclado.inline_keyboard for b in fila]
+
+    assert puestas == esperadas
+
+
+def test_the_payload_is_read_as_it_is_typed(comunidad):
+    """El enlace lo copia y lo pega gente."""
+
+    for escrito in ("Publicar", " publicar ", "PUBLICAR", "monetizar"):
+
+        update, contexto = FakeUpdate(), FakeContext(args=[escrito])
+
+        asyncio.run(sh.start(update, contexto))
+
+        assert update.message.enviados, escrito
+
+
+def test_a_broken_publishing_screen_still_reaches_the_menu(comunidad,
+                                                           monkeypatch):
+    """Nunca un callejón: es la regla de todas las cargas de /start."""
+
+    import callback_router
+
+    def revienta():
+        raise RuntimeError("sin teclado")
+
+    monkeypatch.setattr(
+        callback_router, "build_commercial_menu_keyboard", revienta
+    )
+
+    update, contexto = FakeUpdate(), FakeContext(args=["publicar"])
+
+    asyncio.run(sh.start(update, contexto))
+
+    assert comunidad["menus"], "si falla la pantalla, queda el menú de siempre"
