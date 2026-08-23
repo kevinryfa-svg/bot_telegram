@@ -15884,6 +15884,11 @@ def row_to_marketplace_group(row):
 
 def get_marketplace_group_select():
 
+    # El precio de entrada de la ficha sale del importe VIGENTE (con la oferta
+    # aplicada si la hay): es la misma definición que usan el escaparate y el
+    # cobro, para que no haya dos precios de lo mismo en dos pantallas seguidas.
+    from weekly_offer_service import sql_importe_vigente
+
     return """
         SELECT g.id,
                g.name,
@@ -15918,14 +15923,18 @@ def get_marketplace_group_select():
                -- lista y la ficha puedan mostrar el precio sin una consulta
                -- por comunidad: antes el cliente no veía cuánto costaba hasta
                -- pulsar "Comprar acceso", dos toques más adelante.
+               -- Con el importe VIGENTE, y ordenando por él: con una oferta
+               -- viva, la ficha decía 9 EUR mientras el escaparate anunciaba
+               -- 3,60. Dos precios para lo mismo en dos pantallas seguidas es
+               -- lo que hace que alguien cierre el bot.
                (
-                   SELECT p.amount
+                   SELECT """ + sql_importe_vigente("p") + """
                    FROM plans p
                    WHERE p.group_id = g.id
                      AND COALESCE(p.is_active, TRUE)=TRUE
                      AND p.amount IS NOT NULL
                      AND p.amount > 0
-                   ORDER BY p.amount ASC
+                   ORDER BY 1 ASC
                    LIMIT 1
                ) AS entry_amount,
                (
@@ -15935,7 +15944,7 @@ def get_marketplace_group_select():
                      AND COALESCE(p.is_active, TRUE)=TRUE
                      AND p.amount IS NOT NULL
                      AND p.amount > 0
-                   ORDER BY p.amount ASC
+                   ORDER BY """ + sql_importe_vigente("p") + """ ASC
                    LIMIT 1
                ) AS entry_currency,
                (
@@ -15945,7 +15954,7 @@ def get_marketplace_group_select():
                      AND COALESCE(p.is_active, TRUE)=TRUE
                      AND p.amount IS NOT NULL
                      AND p.amount > 0
-                   ORDER BY p.amount ASC
+                   ORDER BY """ + sql_importe_vigente("p") + """ ASC
                    LIMIT 1
                ) AS entry_duration_days,
                (
@@ -16388,13 +16397,41 @@ def format_plan_duration_short(duration_days):
     return f"{dias} días"
 
 
+def _nombre_de_comunidad(group_id):
+    """El nombre de una comunidad para encabezar una pantalla. None si no hay.
+
+    Nunca lanza: quedarse sin título es un texto más pobre; quedarse sin la
+    pantalla de compra es una venta perdida.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT NULLIF(name, '') FROM groups WHERE id = %s",
+                (group_id,),
+            )
+
+            fila = cur.fetchone()
+
+            return fila[0] if fila else None
+
+    except Exception as e:
+
+        print("No se pudo leer el nombre de la comunidad:", str(e)[:160])
+
+        return None
+
+
 def format_plans_summary(plans):
     """
     Los planes en texto, para que se lean antes de tocar ningún botón.
 
-    Las filas llegan como (id, nombre, price_id, importe, moneda, proveedor,
-    duración). Se resume una vez por plan: en los botones cada plan puede
-    aparecer varias veces, una por método de pago disponible.
+    Las filas llegan como (id, nombre, price_id, importe VIGENTE, moneda,
+    proveedor, duración, importe de tarifa, % de oferta). Se resume una vez por
+    plan: en los botones cada plan puede aparecer varias veces, una por método
+    de pago disponible.
     """
 
     vistos = set()
@@ -16404,7 +16441,8 @@ def format_plans_summary(plans):
 
         try:
 
-            _, name, _, amount, currency, _, duration_days = plan
+            (_, name, _, amount, currency, _, duration_days,
+             amount_tarifa, oferta_percent) = plan
 
         except Exception:
 
@@ -16424,7 +16462,12 @@ def format_plans_summary(plans):
 
         if amount and currency:
 
-            linea += f" — {amount} {str(currency).upper()}"
+            from start_offer_service import formato_importe
+
+            linea += " — " + (
+                formato_importe(amount, currency)
+                or f"{amount} {str(currency).upper()}"
+            )
 
 
         duracion = format_plan_duration_short(duration_days)
@@ -16432,6 +16475,20 @@ def format_plans_summary(plans):
         if duracion:
 
             linea += f" · {duracion}"
+
+
+        # Lo que costaba antes, tachado con palabras: sin el punto de
+        # referencia, un descuento es solo un precio.
+        if oferta_percent and amount_tarifa:
+
+            from start_offer_service import formato_importe
+
+            antes = formato_importe(amount_tarifa, currency)
+
+            linea += (
+                f"  🔥 -{int(oferta_percent)}%"
+                + (f" (antes {antes})" if antes else "")
+            )
 
 
         lineas.append(linea)
@@ -16465,16 +16522,25 @@ def format_marketplace_price(group):
 
     currency = (group.get("entry_currency") or "EUR").upper()
 
-    try:
+    # El dinero se escribe en UN sitio. Este era el quinto: enseñaba «3.60 EUR»
+    # con punto, y con céntimos —que es lo que traen las ofertas— se notaba.
+    from start_offer_service import formato_importe
 
-        amount_text = f"{int(amount)}" if float(amount) == int(amount) else f"{amount}"
+    precio = formato_importe(amount, currency)
 
-    except Exception:
+    if not precio:
 
-        amount_text = str(amount)
+        try:
 
+            amount_text = (
+                f"{int(amount)}" if float(amount) == int(amount) else f"{amount}"
+            )
 
-    precio = f"{amount_text} {currency}"
+        except Exception:
+
+            amount_text = str(amount)
+
+        precio = f"{amount_text} {currency}"
 
     # "desde" solo si hay más de un plan; con uno solo sería engañoso.
     try:
@@ -24328,24 +24394,45 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 increment_community_stat(group_id, "access_clicks")
 
+                # EL PRECIO Y EL IDENTIFICADOR, LOS VIGENTES.
+                # Esta lista leía plans.amount y plans.price_id a secas: con una
+                # oferta viva, el escaparate anunciaba 3,60 y aquí se leía 9. El
+                # cobro sí aplicaba la oferta, así que nadie pagaba de más —pero
+                # quien llegaba a esta pantalla veía otro precio del que le
+                # habían prometido y se iba, con razón.
+                from weekly_offer_service import (
+                    sql_importe_vigente,
+                    sql_precio_vigente,
+                )
+
                 cur.execute("""
 
-                    SELECT id,
-                           name,
-                           price_id,
-                           amount,
-                           currency,
-                           COALESCE(NULLIF(payment_provider, ''), 'stripe'),
-                           duration_days
+                    SELECT p.id,
+                           p.name,
+                           """ + sql_precio_vigente("p", "comprador") + """,
+                           """ + sql_importe_vigente("p", "comprador") + """,
+                           p.currency,
+                           COALESCE(NULLIF(p.payment_provider, ''), 'stripe'),
+                           p.duration_days,
+                           p.amount,
+                           (SELECT po.percent FROM plan_offers po
+                             WHERE po.plan_id = p.id
+                               AND (po.user_id IS NULL
+                                    OR po.user_id = %(comprador)s)
+                               AND po.starts_at <= NOW()
+                               AND po.ends_at > NOW()
+                               AND COALESCE(NULLIF(po.stripe_price_id, ''), '') <> ''
+                             ORDER BY (po.user_id IS NOT NULL) DESC,
+                                      po.ends_at DESC LIMIT 1)
 
-                    FROM plans
+                    FROM plans p
 
-                    WHERE group_id=%s
-                    AND is_active=TRUE
+                    WHERE p.group_id=%(grupo)s
+                    AND p.is_active=TRUE
 
-                    ORDER BY amount ASC NULLS LAST, id ASC
+                    ORDER BY 4 ASC NULLS LAST, p.id ASC
 
-                """, (group_id,))
+                """, {"grupo": group_id, "comprador": user_id})
 
                 plans = cur.fetchall()
 
@@ -24426,7 +24513,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         guardarian_available = is_guardarian_group_checkout_available(group_id)
 
 
-        for plan_id, name, price_id, amount, currency, payment_provider, duration_days in plans:
+        for (plan_id, name, price_id, amount, currency, payment_provider,
+             duration_days, amount_tarifa, oferta_percent) in plans:
 
             payment_provider = normalize_plan_payment_provider(payment_provider)
 
@@ -24437,11 +24525,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if amount and currency:
 
-                button_text = f"{name} — {amount} {currency}"
+                from start_offer_service import formato_importe
+
+                importe_texto = formato_importe(amount, currency) or (
+                    f"{amount} {currency}"
+                )
+
+                button_text = f"{name} — {importe_texto}"
 
                 if duracion_texto:
 
                     button_text += f" · {duracion_texto}"
+
+                # El descuento, en el propio botón. Sin esto, quien viene del
+                # escaparate con un «-60%» en la cabeza ve aquí un precio a
+                # secas y no sabe si es el bueno.
+                if oferta_percent:
+
+                    button_text = f"🔥 -{int(oferta_percent)}% · " + button_text
 
             else:
 
@@ -24569,9 +24670,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Antes esto abría con tres líneas sobre familias de métodos de pago,
         # que el cliente no ha preguntado, y los planes quedaban debajo. Ahora
         # primero va lo que compra y luego, en corto, cómo puede pagarlo.
+        # DE QUÉ COMUNIDAD ES ESTA PANTALLA.
+        # Ponía «💳 Elige tu acceso» y una lista de precios, sin nombrar la
+        # comunidad ni una vez. Quien llega aquí desde un mensaje, desde un
+        # enlace compartido o después de mirar dos o tres comunidades, se
+        # encuentra unos precios sueltos y no sabe qué está comprando.
+        nombre_comunidad = _nombre_de_comunidad(group_id)
+
         intro_text = (
-            "💳 Elige tu acceso\n\n"
-            f"{format_plans_summary(plans)}\n\n"
+            (f"💳 {nombre_comunidad} — elige tu acceso\n\n"
+             if nombre_comunidad else "💳 Elige tu acceso\n\n")
+            + f"{format_plans_summary(plans)}\n\n"
             "Recibes tu enlace de entrada al instante tras el pago.\n"
             "Puedes pagar con tarjeta, PayPal, Revolut o cripto, según lo que "
             "tenga activo esta comunidad."
@@ -24582,8 +24691,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             intro_text = (
                 "⚠️ Tu acceso anterior ha caducado\n\n"
-                "Puedes recuperarlo eligiendo un plan:\n\n"
-                f"{format_plans_summary(plans)}\n\n"
+                + (f"Comunidad: {nombre_comunidad}\n\n"
+                   if nombre_comunidad else "")
+                + "Puedes recuperarlo eligiendo un plan:\n\n"
+                + f"{format_plans_summary(plans)}\n\n"
                 "Recuperas el acceso al instante tras el pago."
             )
 
