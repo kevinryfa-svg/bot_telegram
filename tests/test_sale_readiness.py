@@ -453,3 +453,136 @@ def test_the_watch_is_scheduled_every_hour():
     pos = fuente.index("sale_readiness_watch_job,")
 
     assert "interval=3600" in fuente[pos:pos + 200]
+
+
+# =========================
+# EL NOMBRE QUE SE LEE CON LA TARJETA EN LA MANO
+# =========================
+# La página de pago de producción decía «TIENDA INFORMATICA» a gente que iba a
+# pagar por entrar a una comunidad de Telegram. El cobro funcionaba: lo que
+# fallaba era que el comprador leía el nombre de otro negocio en el único
+# segundo en el que puede arrepentirse. Eso no da error, no sale en ningún log y
+# desde dentro del bot no lo ve nadie.
+
+def _cuenta(publico=None, extracto=None, marca=None):
+
+    return {
+        "business_profile": {"name": publico},
+        "settings": {
+            "payments": {"statement_descriptor": extracto},
+            "dashboard": {"display_name": marca},
+        },
+    }
+
+
+def test_the_buyer_reads_the_statement_descriptor_when_there_is_no_public_name():
+    """Es la cadena de reservas de Stripe, y es de donde salió el problema."""
+
+    assert srs.nombre_que_vera_el_comprador(
+        _cuenta(publico=None, extracto="TIENDA INFORMATICA")
+    ) == "TIENDA INFORMATICA"
+
+    assert srs.nombre_que_vera_el_comprador(
+        _cuenta(publico="TheStarVip", extracto="TIENDA INFORMATICA")
+    ) == "TheStarVip", "el nombre público manda sobre el del extracto"
+
+
+def test_a_name_from_another_business_is_reported(monkeypatch):
+    monkeypatch.setattr(srs, "_leer_cuenta_de_stripe", lambda: _cuenta(
+        extracto="TIENDA INFORMATICA", marca="thestarvip.online"
+    ))
+
+    ok, detalle = srs.check_nombre_de_la_pagina_de_pago()
+
+    assert ok is False
+    assert "TIENDA INFORMATICA" in detalle
+    assert "thestarvip.online" in detalle
+    assert "se va" in detalle, (
+        "el aviso tiene que decir qué se pierde, no solo qué está distinto"
+    )
+
+
+def test_the_same_business_written_two_ways_is_not_an_alarm(monkeypatch):
+    monkeypatch.setattr(srs, "_leer_cuenta_de_stripe", lambda: _cuenta(
+        publico="TheStarVip", marca="thestarvip.online"
+    ))
+
+    ok, _ = srs.check_nombre_de_la_pagina_de_pago()
+
+    assert ok is True, (
+        "«TheStarVip» y «thestarvip.online» son el mismo negocio; un aviso "
+        "que salta con esto se ignora y se lleva por delante al de verdad"
+    )
+
+
+def test_a_network_failure_is_not_a_wrong_name(monkeypatch):
+
+    def revienta():
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(srs, "_leer_cuenta_de_stripe", revienta)
+
+    ok, _ = srs.check_nombre_de_la_pagina_de_pago()
+
+    assert ok is True, "sin poder preguntar no se acusa a nadie"
+
+
+def test_without_credentials_it_stays_quiet(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "")
+
+    ok, _ = srs.check_nombre_de_la_pagina_de_pago()
+
+    assert ok is True
+
+
+def test_the_wrong_name_is_a_warning_and_not_a_broken_checkout(monkeypatch):
+    """Se cobra perfectamente: decir «COBRO ROTO» mandaría a mirar donde no es."""
+
+    monkeypatch.setenv("SERVER_URL", "https://ejemplo.test")
+    monkeypatch.setattr(srs.requests, "post", lambda url, **k: FakeResp(400))
+    monkeypatch.setattr(srs, "check_stripe_prices", lambda ofertas=None: ([], 2))
+    monkeypatch.setattr(
+        srs, "check_nombre_de_la_pagina_de_pago",
+        lambda: (False, "la página de pago dice «TIENDA INFORMATICA»")
+    )
+
+    linea = srs.describe_sale_readiness(avisar=False)
+
+    assert linea.startswith("Cobro: listo")
+    assert "COBRO ROTO" not in linea
+    assert "TIENDA INFORMATICA" in linea, (
+        "y aun así tiene que salir: es dinero que se pierde en silencio"
+    )
+
+
+def test_asking_stripe_has_a_deadline(monkeypatch):
+    """Esto corre en el ARRANQUE. Sin plazo, el bot se queda parado esperando.
+
+    La librería de Stripe espera hasta 80 segundos por defecto, y son 80
+    segundos de bot sin atender a nadie por una comprobación que solo mira un
+    nombre. Por eso se pregunta a mano.
+    """
+
+    llamadas = []
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_live_de_mentira")
+
+    class Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
+
+    def falso_get(url, **kwargs):
+        llamadas.append(kwargs)
+        return Resp()
+
+    monkeypatch.setattr(srs.requests, "get", falso_get)
+
+    srs._leer_cuenta_de_stripe()
+
+    assert llamadas, "tiene que preguntar"
+    assert llamadas[0].get("timeout"), (
+        "una petición sin plazo en el arranque puede dejar el bot colgado"
+    )
