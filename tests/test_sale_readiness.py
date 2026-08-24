@@ -666,3 +666,109 @@ def test_it_is_read_on_every_check(monkeypatch):
     monkeypatch.setenv("NOMBRE_DE_PAGO_ESPERADO", "TIENDA INFORMATICA")
 
     assert srs.check_nombre_de_la_pagina_de_pago()[0] is True
+
+
+# =========================
+# TRES PLANES A LA VENTA, UN PRECIO COMPROBADO
+# =========================
+# El log de producción decía «Cobro: listo (1 precio(s) de Stripe verificado(s))»
+# con TRES planes vendibles: 9, 15 y 29 €. El diagnóstico miraba el escaparate, y
+# el escaparate enseña UNA entrada por comunidad, la más barata. Un precio roto
+# en los otros dos solo se descubre con el comprador ya decidido — justo el
+# fallo para el que existe este fichero.
+
+@pytest.fixture
+def tres_planes(clean_db, monkeypatch):
+    db = clean_db
+
+    with db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active, "
+            "is_marketplace_visible) VALUES (91, 'StarsVip', -1091, TRUE, TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO plans (id, group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active) VALUES "
+            "(911, 91, 'Acceso 7 días',   'price_a', 'price_a', 7,   9, 'EUR', TRUE), "
+            "(912, 91, 'Acceso 30 días',  'price_b', 'price_b', 30, 15, 'EUR', TRUE), "
+            "(913, 91, 'Acceso 360 días', 'price_c', 'price_c', 360, 29, 'EUR', TRUE)"
+        )
+
+    return db
+
+
+def test_every_price_a_buyer_can_reach_is_checked(tres_planes):
+    cobrables = srs.todo_lo_que_se_puede_cobrar()
+
+    ids = {o.get("price_id") for o in cobrables}
+
+    assert {"price_a", "price_b", "price_c"} <= ids, (
+        "el de 15 y el de 29 también se pagan; nadie los miraba"
+    )
+
+
+def test_the_same_price_is_not_checked_twice(tres_planes):
+    cobrables = srs.todo_lo_que_se_puede_cobrar()
+
+    ids = [o.get("price_id") for o in cobrables]
+
+    assert len(ids) == len(set(ids)), (
+        "el escaparate y la lista de planes se solapan en el más barato"
+    )
+
+
+def test_a_broken_price_on_the_expensive_plan_is_reported(tres_planes,
+                                                          monkeypatch):
+    import stripe
+
+    class NoExiste(Exception):
+        pass
+
+    def falso_retrieve(price_id, **kwargs):
+
+        if price_id == "price_c":
+            raise stripe.error.InvalidRequestError(
+                f"No such price: '{price_id}'", None
+            )
+
+        return {"unit_amount": 900 if price_id == "price_a" else 1500}
+
+    monkeypatch.setattr(stripe.Price, "retrieve", staticmethod(falso_retrieve))
+
+    rotos, comprobados = srs.check_stripe_prices()
+
+    assert comprobados >= 2
+    assert any(r.get("price_id") == "price_c" for r in rotos), (
+        "el plan de 29 estaba roto y el diagnóstico decía «listo»"
+    )
+
+
+def test_the_alert_says_which_plan_is_broken(tres_planes):
+    cobrables = srs.todo_lo_que_se_puede_cobrar()
+
+    extras = [o for o in cobrables if o.get("price_id") in ("price_b", "price_c")]
+
+    assert extras
+
+    for extra in extras:
+        assert "StarsVip" in extra["nombre"]
+        assert "Acceso" in extra["nombre"], (
+            "«StarsVip» a secas no dice CUÁL de los tres está roto"
+        )
+
+
+def test_each_price_is_matched_against_its_own_amount(tres_planes, monkeypatch):
+    """El de 29 comparado contra los 9 del escaparate sería un falso positivo."""
+
+    import stripe
+
+    monkeypatch.setattr(
+        stripe.Price, "retrieve",
+        staticmethod(lambda price_id, **k: {
+            "unit_amount": {"price_a": 900, "price_b": 1500, "price_c": 2900}[price_id]
+        })
+    )
+
+    rotos, _comprobados = srs.check_stripe_prices()
+
+    assert rotos == [], "los tres cuadran con SU importe"

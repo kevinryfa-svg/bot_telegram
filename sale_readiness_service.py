@@ -233,6 +233,73 @@ def _descuadre_de_importe(oferta, precio_stripe):
     }
 
 
+def todo_lo_que_se_puede_cobrar():
+    """Todos los precios a los que puede llegar un comprador. Sin repetidos.
+
+    El diagnóstico miraba el escaparate, y el escaparate enseña UNA entrada por
+    comunidad: la más barata. En producción eso significaba «1 precio de Stripe
+    verificado» teniendo TRES planes a la venta —9, 15 y 29 €—: los otros dos no
+    los comprobaba nadie, y un precio roto ahí solo se descubre con el comprador
+    ya decidido, que es exactamente el fallo para el que existe este fichero.
+
+    Se juntan las dos listas porque dicen cosas distintas: la del escaparate
+    lleva el precio de la OFERTA cuando hay una viva, y la de planes lleva el de
+    tarifa. A los dos se puede llegar pagando, así que los dos se comprueban.
+    """
+
+    from start_offer_service import fetch_sellable_communities
+
+    try:
+
+        ofertas = list(fetch_sellable_communities(0, limit=100) or [])
+
+    except Exception as e:
+
+        print("Cobro: no se pudo leer el escaparate:", str(e)[:200])
+
+        ofertas = []
+
+    vistos = {
+        o.get("price_id") for o in ofertas if o.get("price_id")
+    }
+
+    try:
+
+        from plan_price_service import planes_stripe_vendibles
+
+        planes = planes_stripe_vendibles()
+
+    except Exception as e:
+
+        print("Cobro: no se pudieron listar los planes vendibles:", str(e)[:200])
+
+        return ofertas
+
+    for plan in planes:
+
+        price_id = plan.get("stripe_price_id")
+
+        if not price_id or price_id in vistos:
+            continue
+
+        vistos.add(price_id)
+
+        ofertas.append({
+            "group_id": plan.get("group_id"),
+            # Con el nombre del plan: «StarsVip» a secas no dice CUÁL de los
+            # tres está roto, y con tres planes eso es media hora de buscar.
+            "nombre": " · ".join(
+                p for p in (plan.get("group_name"), plan.get("name")) if p
+            ) or "Plan",
+            "price_id": price_id,
+            "provider": "stripe",
+            "amount": plan.get("amount"),
+            "currency": plan.get("currency"),
+        })
+
+    return ofertas
+
+
 def check_stripe_prices(ofertas=None):
     """(rotos, comprobados). Precios que Stripe dice que NO existen.
 
@@ -244,10 +311,7 @@ def check_stripe_prices(ofertas=None):
     import stripe
 
     if ofertas is None:
-
-        from start_offer_service import fetch_sellable_communities
-
-        ofertas = fetch_sellable_communities(0, limit=100)
+        ofertas = todo_lo_que_se_puede_cobrar()
 
     rotos = []
     comprobados = 0
