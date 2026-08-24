@@ -237,7 +237,14 @@ def planes_stripe_vendibles():
                        COALESCE(NULLIF(p.currency, ''), 'EUR'),
                        p.duration_days,
                        COALESCE(p.is_recurring, FALSE),
-                       COALESCE(NULLIF(p.stripe_price_id, ''), '')
+                       COALESCE(NULLIF(p.stripe_price_id, ''), ''),
+                       -- El de arriba es la COLUMNA; este es CON QUÉ SE
+                       -- COBRA, que no es lo mismo: con la columna vacía
+                       -- el cobro resuelve por price_id, y ese
+                       -- identificador cobra igual. Quien repara escribe
+                       -- en la columna; quien comprueba que se puede
+                       -- cobrar tiene que mirar este.
+                       COALESCE(""" + sql_precio_efectivo("p") + """, '')
                 FROM plans p
                 JOIN groups g ON g.id = p.group_id
                 WHERE COALESCE(p.is_active, TRUE) = TRUE
@@ -264,6 +271,7 @@ def planes_stripe_vendibles():
             "id": f[0], "group_id": f[1], "group_name": f[2], "name": f[3],
             "amount": f[4], "currency": f[5], "duration_days": f[6],
             "is_recurring": bool(f[7]), "stripe_price_id": f[8] or None,
+            "precio_efectivo": f[9] or None,
         }
         for f in filas
     ]

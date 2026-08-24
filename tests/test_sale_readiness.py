@@ -772,3 +772,22 @@ def test_each_price_is_matched_against_its_own_amount(tres_planes, monkeypatch):
     rotos, _comprobados = srs.check_stripe_prices()
 
     assert rotos == [], "los tres cuadran con SU importe"
+
+
+def test_a_plan_that_charges_by_the_old_column_is_checked_too(tres_planes):
+    """Con stripe_price_id vacío, el cobro resuelve por price_id — y cobra.
+
+    Mirar solo la columna dejaba fuera justo los planes con la configuración
+    más vieja, que son los que más papeletas tienen de estar rotos.
+    """
+
+    with tres_planes.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plans SET stripe_price_id='' WHERE id=913"
+        )
+
+    ids = {o.get("price_id") for o in srs.todo_lo_que_se_puede_cobrar()}
+
+    assert "price_c" in ids, (
+        "ese plan se sigue pudiendo pagar y nadie comprobaba su precio"
+    )

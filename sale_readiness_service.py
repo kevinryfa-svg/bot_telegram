@@ -277,7 +277,11 @@ def todo_lo_que_se_puede_cobrar():
 
     for plan in planes:
 
-        price_id = plan.get("stripe_price_id")
+        # El efectivo, no la columna: si stripe_price_id está vacío, el cobro
+        # resuelve por price_id y a ESE identificador llega un comprador. Mirar
+        # solo la columna dejaba fuera justo los planes con la configuración más
+        # vieja, que son los que más papeletas tienen de estar rotos.
+        price_id = plan.get("precio_efectivo") or plan.get("stripe_price_id")
 
         if not price_id or price_id in vistos:
             continue
