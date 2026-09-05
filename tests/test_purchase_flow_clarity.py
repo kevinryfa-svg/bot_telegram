@@ -418,3 +418,86 @@ def test_the_card_price_matches_the_shop_window(clean_db, monkeypatch):
     # Y escrito igual en las dos: «3,60 EUR», no «3.6».
     assert "3,60 EUR" in cr.format_marketplace_price(ficha)
     assert "3,60 EUR" in escaparate["precio"]
+
+
+# =========================
+# CUANDO EL BOT SE NIEGA A COBRAR, QUE SE SEPA
+# =========================
+# «Me comentan que intentan pagar y no pueden». El escaparate anunciaba bien, el
+# servidor de cobro respondía, Stripe funcionaba y en los registros no había ni
+# una línea: el bot corta la compra ANTES de pedirle nada a Stripe —ya tienes
+# acceso, la comunidad no puede entregar, el cobro está apagado— y ninguno de
+# los tres cortes escribía nada. Desde fuera, «no compra nadie» y «no puede
+# comprar nadie» se ven exactamente igual.
+
+def test_a_refused_sale_leaves_a_trace(capsys, monkeypatch):
+    eventos = []
+
+    monkeypatch.setattr(cr, "log_event", lambda *a, **k: eventos.append((a, k)))
+
+    cr.registrar_venta_rechazada(707, 31, "ya_tiene_acceso", "active_until")
+
+    salida = capsys.readouterr().out
+
+    assert "707" in salida and "31" in salida, (
+        "por pantalla, que es lo que se lee sin credenciales de base de datos"
+    )
+    assert "ya_tiene_acceso" in salida
+
+    assert eventos, "y en el historial, que es lo que aguanta"
+
+    _args, kwargs = eventos[0]
+
+    assert kwargs["metadata"]["motivo"] == "ya_tiene_acceso"
+    assert kwargs["severity"] == "warning"
+
+
+def test_recording_the_refusal_can_never_become_another_failure(capsys,
+                                                                monkeypatch):
+    def revienta(*a, **k):
+        raise RuntimeError("historial caído")
+
+    monkeypatch.setattr(cr, "log_event", revienta)
+
+    cr.registrar_venta_rechazada(707, 31, "no_puede_entregar")
+
+    assert "707" in capsys.readouterr().out
+
+
+def test_every_branch_that_refuses_for_existing_access_is_covered():
+    """Son veinte ramas; el aviso compartido es el único sitio donde ponerlo.
+
+    Tarjeta, PayPal, Revolut, acceso gratis, cambio de plan: todas llaman a
+    send_existing_group_access_notice. Registrarlo en cada sitio de llamada
+    habría dejado muda la que se olvidara.
+    """
+
+    fuente = open("callback_router.py", encoding="utf-8").read()
+
+    pos = fuente.index("async def send_existing_group_access_notice")
+    trozo = fuente[pos:pos + 1600]
+
+    assert "registrar_venta_rechazada" in trozo
+
+    ramas = fuente.count("should_block_new_group_purchase(access_state)")
+
+    assert ramas >= 15, (
+        "si alguien deja de pasar por el aviso compartido, esto se entera"
+    )
+
+
+def test_the_two_reasons_nobody_can_buy_are_recorded_too():
+    """«Ya tienes acceso» es de UNA persona; estas dos son de todo el mundo."""
+
+    fuente = open("callback_router.py", encoding="utf-8").read()
+
+    pos = fuente.index("async def create_checkout_for_user")
+    trozo = fuente[pos:pos + 3000]
+
+    assert 'registrar_venta_rechazada' in trozo
+    assert '"stripe_apagado"' in trozo
+
+    pos2 = fuente.index("async def group_delivery_blocks_purchase")
+    trozo2 = fuente[pos2:pos2 + 3000]
+
+    assert '"no_puede_entregar"' in trozo2

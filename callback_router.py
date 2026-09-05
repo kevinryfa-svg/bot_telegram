@@ -1476,6 +1476,51 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
     return InlineKeyboardMarkup(keyboard)
 
 
+def registrar_venta_rechazada(user_id, group_id, motivo, detalle=None,
+                              proveedor="stripe"):
+    """Deja constancia de que el bot se ha negado a cobrar, y por qué.
+
+    Un comprador puede quedarse sin pagar por tres motivos que NO son un error
+    de Stripe —ya tiene acceso, la comunidad no puede entregar, el cobro está
+    apagado— y los tres cortaban antes de la petición, sin escribir nada en
+    ninguna parte. Desde fuera todo se ve perfecto: el escaparate anuncia, el
+    servidor de cobro responde, Stripe funciona. Y el dueño solo tiene «me dicen
+    que no pueden pagar», que es lo que hay que poder contestar en un minuto.
+
+    Se escribe en DOS sitios a propósito: por pantalla, que es lo que se lee en
+    los registros del servidor sin credenciales de base de datos, y en el
+    historial, que es lo que aguanta.
+    """
+
+    print(
+        f"Venta rechazada: usuario {user_id}, comunidad {group_id}, "
+        f"motivo {motivo}" + (f" ({detalle})" if detalle else "")
+    )
+
+    try:
+
+        log_event(
+            "purchase_refused_before_checkout",
+            category="payment",
+            severity="warning",
+            scope="group",
+            group_id=group_id,
+            actor_user_id=user_id,
+            target_user_id=user_id,
+            message="El bot no ha dejado llegar esta compra al cobro.",
+            metadata={
+                "motivo": motivo,
+                "detalle": str(detalle or "")[:200],
+                "proveedor": proveedor,
+            },
+        )
+
+    except Exception as e:
+
+        # Registrar el rechazo no puede convertirse en otro fallo.
+        print("Venta rechazada: no se pudo dejar constancia:", str(e)[:160])
+
+
 async def send_existing_group_access_notice(context, chat_id, user_id, group_id, provider="unknown", event_type="purchase_blocked_existing_access", retry_callback=None, access_state=None):
 
     access_state = access_state or await resolve_group_access_state_for_user(
@@ -1489,6 +1534,17 @@ async def send_existing_group_access_notice(context, chat_id, user_id, group_id,
         provider=provider,
         event_type=event_type,
         access_state=access_state
+    )
+
+    # Por aquí pasan TODAS las ramas que rechazan a alguien por tener ya
+    # acceso —tarjeta, PayPal, Revolut, acceso gratis, cambio de plan—, así que
+    # es el único sitio donde ponerlo para que ninguna se quede muda.
+    registrar_venta_rechazada(
+        user_id,
+        group_id,
+        "ya_tiene_acceso",
+        (access_state or {}).get("reason"),
+        proveedor=provider,
     )
 
     await context.bot.send_message(
@@ -19825,16 +19881,8 @@ async def group_delivery_blocks_purchase(context, chat_id, user_id, group_id):
         return False
 
 
-    log_event(
-        "purchase_blocked_no_delivery",
-        category="payment",
-        severity="warning",
-        scope="group",
-        group_id=group_id,
-        actor_user_id=user_id,
-        target_user_id=user_id,
-        message="Compra rechazada: la comunidad no puede crear enlaces de acceso.",
-        metadata={"group_name": str(group_name)[:80]}
+    registrar_venta_rechazada(
+        user_id, group_id, "no_puede_entregar", str(group_name)[:80]
     )
 
     language = load_user_language(user_id)
@@ -19882,6 +19930,13 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
 
     if not is_stripe_payments_enabled():
+
+        # Esto no es de una persona: si el cobro está apagado, NADIE puede
+        # pagar. Se dice bien alto, porque el escaparate sigue anunciando.
+        registrar_venta_rechazada(
+            user_id, group_id, "stripe_apagado",
+            "no hay credenciales de Stripe o está deshabilitado",
+        )
 
         await context.bot.send_message(
             chat_id=chat_id,
