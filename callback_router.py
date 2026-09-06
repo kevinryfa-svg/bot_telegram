@@ -1377,7 +1377,41 @@ async def resolve_group_access_state_for_user(context, user_id, group_id):
     return access_state
 
 
-def build_existing_group_access_keyboard(group_id, access_state, retry_callback=None):
+def _boton_de_cambio_de_plan(user_id, group_id, telegram_group_id):
+    """El botón de cambiar de plan, si esa persona puede de verdad. O None.
+
+    Se pregunta antes de pintarlo porque un botón que contesta «no puedes» es
+    peor que no tenerlo: en esta pantalla ya se le acaba de decir que no a algo.
+    """
+
+    if not user_id or not group_id:
+        return None
+
+    try:
+
+        from plan_switch_service import fetch_switch_options, switch_is_allowed
+
+        permitido, _motivo = switch_is_allowed(user_id, group_id)
+
+        if not permitido or not fetch_switch_options(user_id, group_id):
+            return None
+
+    except Exception as e:
+
+        # Sin el botón se vive; sin la pantalla, quien ya es cliente se queda
+        # sin saber ni cómo recuperar su enlace.
+        print("Acceso existente: no se pudo mirar el cambio de plan:", str(e)[:160])
+
+        return None
+
+    return InlineKeyboardButton(
+        "🔀 Cambiar a otro plan",
+        callback_data=f"mysub_switch_{telegram_group_id or group_id}"
+    )
+
+
+def build_existing_group_access_keyboard(group_id, access_state, retry_callback=None,
+                                         user_id=None):
 
     keyboard = []
     telegram_group_id = access_state.get("telegram_group_id")
@@ -1395,6 +1429,17 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
         )])
 
     elif access_state.get("has_active_access"):
+
+        # PRIMERO EL ÚNICO BOTÓN QUE COBRA. A esta pantalla se llega porque
+        # alguien acaba de pulsar comprar, y lo único que se le ofrecía era
+        # recuperar su enlace: quien ya es cliente y quiere pagarte MÁS —el
+        # año, un plan más largo— se encontraba un callejón en el momento de
+        # más intención que va a haber. El cambio de plan ya existía, pero solo
+        # se llegaba a él desde «Mis accesos», que es donde nadie lo busca.
+        cambio = _boton_de_cambio_de_plan(user_id, group_id, telegram_group_id)
+
+        if cambio:
+            keyboard.append([cambio])
 
         keyboard.append([InlineKeyboardButton(
             "🔗 Recuperar/Reenviar enlace",
@@ -1553,7 +1598,8 @@ async def send_existing_group_access_notice(context, chat_id, user_id, group_id,
         reply_markup=build_existing_group_access_keyboard(
             group_id,
             access_state,
-            retry_callback=retry_callback
+            retry_callback=retry_callback,
+            user_id=user_id
         )
     )
 
@@ -15794,7 +15840,9 @@ def build_marketplace_access_keyboard(
 
     if access_state and should_block_new_group_purchase(access_state):
 
-        keyboard.extend(build_existing_group_access_keyboard(group_id, access_state).inline_keyboard)
+        keyboard.extend(build_existing_group_access_keyboard(
+            group_id, access_state, user_id=user_id
+        ).inline_keyboard)
 
         return InlineKeyboardMarkup(keyboard)
 
@@ -15845,7 +15893,9 @@ def build_marketplace_preview_keyboard(group, user_id=None):
 
     if access_state and should_block_new_group_purchase(access_state):
 
-        keyboard.extend(build_existing_group_access_keyboard(group_id, access_state).inline_keyboard)
+        keyboard.extend(build_existing_group_access_keyboard(
+            group_id, access_state, user_id=user_id
+        ).inline_keyboard)
 
         return InlineKeyboardMarkup(keyboard)
 
@@ -16729,7 +16779,9 @@ def build_marketplace_group_keyboard(group, user_id=None):
 
     if access_state and should_block_new_group_purchase(access_state):
 
-        keyboard.extend(build_existing_group_access_keyboard(group_id, access_state).inline_keyboard)
+        keyboard.extend(build_existing_group_access_keyboard(
+            group_id, access_state, user_id=user_id
+        ).inline_keyboard)
 
         return InlineKeyboardMarkup(keyboard)
 
@@ -16839,7 +16891,9 @@ def build_dynamic_preview_access_keyboard(group, user_id=None):
 
     if access_state and should_block_new_group_purchase(access_state):
 
-        return build_existing_group_access_keyboard(group_id, access_state)
+        return build_existing_group_access_keyboard(
+            group_id, access_state, user_id=user_id
+        )
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
@@ -24793,7 +24847,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             build_existing_group_access_text(access_state),
             reply_markup=build_existing_group_access_keyboard(
                 group_id,
-                access_state
+                access_state,
+                user_id=user_id
             )
         )
 
