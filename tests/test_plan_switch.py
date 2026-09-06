@@ -193,3 +193,136 @@ def test_the_button_lives_in_the_access_screen():
         pantalla.index('if data.startswith("mysub_"):'), (
         "la rama del cambio caería en la genérica"
     )
+
+
+# =========================
+# EL CALLEJÓN DE QUIEN YA ES CLIENTE
+# =========================
+# A la pantalla de «ya tienes acceso» se llega porque alguien ACABA DE PULSAR
+# COMPRAR. Y lo único que se le ofrecía era recuperar su enlace y ver su
+# suscripción: quien ya es cliente y quiere pagar MÁS —el año, un plan más
+# largo— se encontraba un callejón en el momento de más intención que va a
+# haber. El cambio de plan ya existía, pero solo se llegaba desde «Mis
+# accesos», que es donde nadie lo busca.
+
+def test_a_member_who_presses_buy_is_offered_the_upgrade(socio):
+    import callback_router as cr
+
+    teclado = cr.build_existing_group_access_keyboard(
+        78,
+        {"has_active_access": True, "telegram_group_id": -1078},
+        user_id=7801,
+    )
+
+    callbacks = [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert "mysub_switch_-1078" in callbacks, (
+        "el que ya es cliente y quiere pagarte más se quedaba sin camino"
+    )
+
+    assert callbacks[0] == "mysub_switch_-1078", (
+        "el único botón que cobra va primero"
+    )
+
+
+def test_the_link_and_the_subscription_are_still_there(socio):
+    """Quien solo quiere volver a entrar no puede perder su botón."""
+
+    import callback_router as cr
+
+    teclado = cr.build_existing_group_access_keyboard(
+        78,
+        {"has_active_access": True, "telegram_group_id": -1078},
+        user_id=7801,
+    )
+
+    callbacks = [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert "mysub_-1078" in callbacks
+    assert "mis_subs" in callbacks
+
+
+def test_nothing_is_offered_to_whoever_cannot_switch(socio):
+    """Un botón que contesta «no puedes» es peor que no tenerlo: en esta
+    pantalla ya se le acaba de decir que no a algo."""
+
+    import callback_router as cr
+
+    # Sin acceso a esa comunidad: switch_is_allowed dice que no.
+    teclado = cr.build_existing_group_access_keyboard(
+        78,
+        {"has_active_access": True, "telegram_group_id": -1078},
+        user_id=9999,
+    )
+
+    callbacks = [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert not any(c.startswith("mysub_switch_") for c in callbacks)
+
+
+def test_without_another_plan_there_is_nothing_to_switch_to(socio):
+    import callback_router as cr
+
+    with socio.conn.cursor() as cur:
+        cur.execute("DELETE FROM plans WHERE group_id=78 AND name='Anual'")
+
+    teclado = cr.build_existing_group_access_keyboard(
+        78,
+        {"has_active_access": True, "telegram_group_id": -1078},
+        user_id=7801,
+    )
+
+    callbacks = [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert not any(c.startswith("mysub_switch_") for c in callbacks)
+
+
+def test_an_owner_screen_is_untouched(socio):
+    import callback_router as cr
+
+    teclado = cr.build_existing_group_access_keyboard(
+        78,
+        {"reason": "owner_access", "telegram_group_id": -1078},
+        user_id=7801,
+    )
+
+    callbacks = [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert "admin_edit_group" in callbacks
+    assert not any(c.startswith("mysub_switch_") for c in callbacks)
+
+
+def test_a_broken_lookup_does_not_take_down_the_screen(socio, monkeypatch):
+    """Sin el botón se vive; sin la pantalla, quien ya es cliente se queda sin
+    saber ni cómo recuperar su enlace."""
+
+    import callback_router as cr
+    import plan_switch_service as pss
+
+    def revienta(*a, **k):
+        raise RuntimeError("base caída")
+
+    monkeypatch.setattr(pss, "switch_is_allowed", revienta)
+
+    teclado = cr.build_existing_group_access_keyboard(
+        78,
+        {"has_active_access": True, "telegram_group_id": -1078},
+        user_id=7801,
+    )
+
+    callbacks = [b.callback_data for fila in teclado.inline_keyboard for b in fila]
+
+    assert "mysub_-1078" in callbacks
+
+
+def test_every_screen_that_says_you_already_have_access_passes_the_person():
+    """Si un sitio no pasa el user_id, ahí el botón nunca sale."""
+
+    fuente = open("callback_router.py", encoding="utf-8").read()
+
+    llamadas = fuente.count("build_existing_group_access_keyboard(")
+
+    # La definición no cuenta.
+    assert fuente.count("user_id=user_id") >= llamadas - 2, (
+        "hay pantallas de «ya tienes acceso» que no saben quién está delante"
+    )
