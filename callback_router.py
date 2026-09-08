@@ -27873,7 +27873,54 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # que teclear /admin y navegar otra vez.
         await query.message.reply_text(
             build_platform_health_text(),
-            reply_markup=build_admin_screen_keyboard("admin_health")
+            reply_markup=build_admin_screen_keyboard(
+                "admin_health",
+                extra=[[InlineKeyboardButton(
+                    "💳 ¿Se puede cobrar ahora?",
+                    callback_data="admin_sale_readiness"
+                )]]
+            )
+        )
+
+        return
+
+
+    # =========================
+    # ¿SE PUEDE COBRAR AHORA MISMO?
+    # =========================
+    # Esta comprobación existía y NO tenía botón en ningún sitio: solo corría en
+    # el arranque —un print que no lee nadie— y en el vigilante horario, que
+    # calla mientras el estado no cambie. Es la que caza «el precio no existe en
+    # Stripe», «no se llega al servidor de cobro» y «se anuncia un importe y
+    # Stripe cobraría otro»: justo lo que hay que poder preguntar cuando alguien
+    # dice que no puede pagar.
+
+    if data == "admin_sale_readiness":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        try:
+
+            from sale_readiness_service import describe_sale_readiness
+
+            # avisar=False: se está mirando a propósito, no hace falta que
+            # además llegue un mensaje.
+            linea = describe_sale_readiness(avisar=False)
+
+        except Exception as e:
+
+            linea = f"No se pudo comprobar: {str(e)[:200]}"
+
+        await query.message.reply_text(
+            "💳 ¿Se puede cobrar ahora mismo?\n\n" + linea,
+            reply_markup=build_admin_screen_keyboard("admin_sale_readiness")
         )
 
         return

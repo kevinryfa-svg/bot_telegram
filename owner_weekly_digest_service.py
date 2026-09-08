@@ -239,6 +239,42 @@ def mark_digest_sent(owner_user_id, group_id, week_key):
         return False
 
 
+def liberar_marca_de_digest(owner_user_id, group_id, week_key):
+    """Devuelve la semana al estado «sin enviar», para que se reintente.
+
+    Marcar antes de enviar es lo correcto contra los duplicados: si el
+    contenedor se reinicia a mitad de la tanda, nadie recibe dos. Pero un envío
+    FALLIDO quemaba la semana igual, y ese propietario se quedaba sin su
+    resumen para siempre —no hasta el lunes siguiente: para siempre, porque la
+    clave de esa semana ya estaba puesta—.
+
+    Solo se suelta cuando el fallo merece otra oportunidad (un 429, un tiempo
+    de espera). Si el propietario ha bloqueado el bot, reintentar cada semana
+    es ruido y la marca se queda donde está.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                DELETE FROM owner_weekly_digests
+                WHERE owner_user_id=%s AND group_id=%s AND week_key=%s
+
+            """, (owner_user_id, group_id, week_key))
+
+            conn.commit()
+
+            return True
+
+    except Exception as e:
+
+        print("Resumen semanal: no se pudo liberar la semana:", str(e)[:200])
+
+        return False
+
+
 def formato_semana(filas):
 
     if not filas:
@@ -487,6 +523,15 @@ async def process_weekly_digests(context):
             print(f"Resumen semanal: no se pudo enviar a {owner_user_id}:",
                   str(e)[:200])
             summary["failed"] += 1
+
+            from renewal_service import is_unreachable_error
+
+            if not is_unreachable_error(e):
+
+                # Un 429 o un tiempo de espera no puede costarle el resumen de
+                # esta semana: se suelta la marca y la próxima ronda lo intenta.
+                if liberar_marca_de_digest(owner_user_id, group_id, week_key):
+                    summary["reintentable"] = summary.get("reintentable", 0) + 1
 
         await asyncio.sleep(DIGEST_SEND_DELAY_SECONDS)
 

@@ -44,7 +44,7 @@ def check_delivery(group_id):
 
             cur.execute("""
 
-                SELECT can_deliver, bot_status, detail
+                SELECT can_deliver, bot_status, detail, checked_at
                 FROM group_delivery_health
                 WHERE group_id = %s
 
@@ -67,11 +67,20 @@ def check_delivery(group_id):
             "bot; si acabas de crearla, dale unos minutos."
         )
 
-    can_deliver, bot_status, detail = fila
+    can_deliver, bot_status, detail, checked_at = fila
 
     if can_deliver:
 
-        return (True, "El bot puede crear enlaces de entrada.")
+        # CON LA HORA. Este dato lo escribe un trabajo que pasa cada 6 horas en
+        # tandas, así que un bot al que le han quitado el permiso hace un rato
+        # sigue saliendo con su ✅. Decir cuándo se comprobó es la diferencia
+        # entre un dato y una promesa.
+        return (
+            True,
+            "El bot puede crear enlaces de entrada"
+            + antiguedad_de_la_comprobacion(checked_at)
+            + "."
+        )
 
     return (
         False,
@@ -80,6 +89,43 @@ def check_delivery(group_id):
         "sin eso no se puede entregar lo que se cobre."
         + (f" Detalle: {str(detail)[:120]}" if detail else "")
     )
+
+
+def antiguedad_de_la_comprobacion(checked_at):
+    """« (comprobado hace 2 h)». Cadena vacía si no se sabe cuándo fue.
+
+    El estado de entrega lo escribe un trabajo que pasa cada 6 horas y en
+    tandas: un ✅ puede tener horas. Sin la hora, esta línea se lee como «lo
+    acabo de comprobar», que no es lo que dice.
+    """
+
+    if not checked_at:
+        return ""
+
+    try:
+
+        from datetime import datetime
+
+        minutos = int(
+            (datetime.now() - checked_at).total_seconds() // 60
+        )
+
+    except Exception:
+
+        return ""
+
+    if minutos < 0:
+        return ""
+
+    if minutos < 60:
+        return f" (comprobado hace {minutos} min)"
+
+    horas = minutos // 60
+
+    if horas < 24:
+        return f" (comprobado hace {horas} h)"
+
+    return f" (comprobado hace {horas // 24} día(s))"
 
 
 def check_plans(group_id):

@@ -484,6 +484,29 @@ def describe_sale_readiness(avisar=True):
         )
 
         if avisos:
+
+            if avisar:
+
+                # No es «no puede cobrar», así que no se grita: pero tampoco se
+                # queda solo en el log del arranque.
+                try:
+
+                    from bot_config import ADMIN_ID, TOKEN
+                    from notification_service import send_telegram_message
+
+                    if ADMIN_ID and TOKEN:
+
+                        send_telegram_message(
+                            TOKEN,
+                            int(ADMIN_ID),
+                            "⚠️ Se puede cobrar, pero hay algo que hace "
+                            "perder compradores\n\n" + "\n\n".join(avisos)
+                        )
+
+                except Exception as e:
+
+                    print("Cobro: no se pudo avisar del aviso:", str(e)[:200])
+
             return linea_ok + " ⚠️ " + " | ".join(avisos)
 
         return linea_ok
@@ -515,11 +538,18 @@ def describe_sale_readiness(avisar=True):
 
             if ADMIN_ID and TOKEN:
 
+                # Los avisos van TAMBIÉN. Antes solo se mandaban `problemas`,
+                # así que si lo único que fallaba era el nombre de la página de
+                # pago —que no rompe el cobro pero pierde al comprador— nadie
+                # se enteraba nunca: no salta la alarma y el aviso se quedaba
+                # en una línea del arranque que no lee nadie.
+                cuerpo = "\n\n".join(problemas + avisos)
+
                 send_telegram_message(
                     TOKEN,
                     int(ADMIN_ID),
                     "🚨 El bot no puede cobrar\n\n"
-                    + "\n\n".join(problemas)
+                    + cuerpo
                     + "\n\nMientras siga así, cada persona que pulse comprar "
                     "se encuentra un error y se va."
                 )
