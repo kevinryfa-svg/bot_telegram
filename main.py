@@ -103,6 +103,7 @@ from ai_handler import (
     handle_ai_context_text
 )
 from start_handler import start
+from help_handler import idioma_command
 from code_admin_handler import (
     generar_codigo,
     crear_codigo_callback
@@ -129,7 +130,7 @@ from callback_router import (
     receive_location_manual_review_form,
     receive_location_gate
 )
-from code_flow_handler import receive_code
+from code_flow_handler import receive_code, hay_asistente_abierto
 from admin_input_handler import receive_admin_inputs
 from commercial_form_handler import (
     receive_commercial_form,
@@ -180,6 +181,20 @@ def build_telegram_app():
     """
 
     builder = ApplicationBuilder().token(TOKEN)
+
+    # EL BOTÓN «/» ESTABA VACÍO. Telegram enseña la lista de comandos de un bot
+    # si el bot la registra con setMyCommands, y en todo el proyecto no había
+    # una sola llamada: los comandos existían y no había cómo descubrirlos, ni
+    # el único desde el que se puede cambiar el idioma. Va en el post_init, que
+    # es el momento en que ya hay bot con el que hablar.
+    async def poner_el_menu_de_comandos(application):
+
+        from bot_commands_service import registrar_menu_de_comandos
+
+        await registrar_menu_de_comandos(application)
+
+
+    builder = builder.post_init(poner_el_menu_de_comandos)
 
     try:
 
@@ -2241,7 +2256,23 @@ async def handle_text(update, context):
         await handle_ai_context_text(update, context)
         return
 
+    manejado = hay_asistente_abierto(context)
+
     await receive_code(update, context)
+
+    # EL SILENCIO. `receive_code`, a pesar del nombre, solo atiende asistentes
+    # de ADMINISTRACIÓN —borrar código, buscar usuario, expulsar, banear,
+    # desbanear, crear grupo—. Si no había ninguno abierto, la función se
+    # acababa y devolvía None: un comprador que escribía al bot «hola», «no
+    # puedo pagar», «quiero comprar» o su código pegado NO RECIBÍA NADA. Ni
+    # acuse, ni error, ni un botón. El silencio de un bot se lee como que está
+    # roto, y quien lo lee así no vuelve.
+    if manejado:
+        return
+
+    from private_text_fallback_service import responder_al_texto_suelto
+
+    await responder_al_texto_suelto(update, context)
 
 
 async def handle_private_ad_promo_forward(update, context):
@@ -3399,6 +3430,16 @@ def main():
 
     telegram_app.add_handler(
         CommandHandler("salir", salir_command)
+    )
+
+    # /IDIOMA, QUE NUNCA SE REGISTRÓ. `idioma_command` existe en
+    # help_handler.py desde siempre y no había un solo `add_handler` que lo
+    # abriera, igual que `/ayuda` y `/manual`. El idioma se detectaba del móvil
+    # y no se podía cambiar en ningún sitio del bot — con portugués, francés e
+    # italiano al 6%, un comprador leyendo la pantalla de pago en un idioma que
+    # no eligió.
+    telegram_app.add_handler(
+        CommandHandler("idioma", idioma_command)
     )
 
     telegram_app.add_handler(

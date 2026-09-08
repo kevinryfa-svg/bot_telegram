@@ -83,6 +83,30 @@ def get_scoped_admin_groups(context, user_id, permissions):
 # USAR CÓDIGO
 # =========================
 
+# LOS ESTADOS QUE ESTA FUNCIÓN ATIENDE, EN UN SITIO.
+# `receive_code` es el último eslabón de `handle_text` y, a pesar del nombre,
+# solo atiende asistentes de ADMINISTRACIÓN. Si no hay ninguno abierto se
+# acababa y devolvía None sin contestar: el comprador que escribía al bot se
+# quedaba en silencio. Quien llama necesita saber si esto se ha ocupado del
+# mensaje o si le toca contestar a él, y para eso hace falta la lista.
+ESTADOS_DE_ESTE_ASISTENTE = (
+    "delete_code",
+    "search_user",
+    "kick_user",
+    "ban_user",
+    "unban_user",
+    "creating_group",
+)
+
+
+def hay_asistente_abierto(context):
+    """True si `receive_code` va a ocuparse del mensaje."""
+
+    datos = getattr(context, "user_data", None) or {}
+
+    return any(datos.get(clave) for clave in ESTADOS_DE_ESTE_ASISTENTE)
+
+
 async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # =========================

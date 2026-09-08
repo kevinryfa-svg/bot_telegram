@@ -114,6 +114,16 @@ from commercial_form_handler import (
 from db import conn
 from formatters import format_tiempo_restante
 from i18n_service import DEFAULT_LANGUAGE, load_user_language, t
+
+from language_menu_service import (
+    CALLBACK_MENU as LANG_CALLBACK_MENU,
+    CALLBACK_PREFIX as LANG_CALLBACK_PREFIX,
+    aplicar_idioma,
+    build_language_menu_keyboard,
+    build_language_menu_text,
+    build_partial_warning_keyboard,
+    parse_language_callback
+)
 from owner_addon_service import (
     activate_owner_addon_manual_trial,
     owner_addon_is_purchase_allowed,
@@ -21444,6 +21454,70 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )]
             ])
         )
+
+        return
+
+
+    # =========================
+    # EL IDIOMA, QUE NO SE PODÍA CAMBIAR DESDE NINGÚN SITIO
+    # =========================
+    # El idioma salía del `language_code` de Telegram, se guardaba, y no había
+    # una sola pantalla viva para cambiarlo: la que existía vive en
+    # `help_handler.py` —módulo sin ningún handler registrado— y su callback
+    # `set_language_` está en la lista de legacy, que contesta «esta opción ya
+    # no está disponible». Con portugués, francés e italiano al 6%, eso era un
+    # comprador leyendo la pantalla de pago en un idioma que no eligió.
+
+    if data == LANG_CALLBACK_MENU:
+
+        idioma = load_user_language(user_id)
+
+        await query.message.reply_text(
+            build_language_menu_text(idioma),
+            reply_markup=build_language_menu_keyboard(idioma)
+        )
+
+        return
+
+
+    if data.startswith(LANG_CALLBACK_PREFIX):
+
+        codigo = parse_language_callback(data)
+
+        if not codigo:
+
+            await query.message.reply_text(
+                "🌍 Ese idioma no está disponible.",
+                reply_markup=build_language_menu_keyboard(
+                    load_user_language(user_id)
+                )
+            )
+
+            return
+
+
+        idioma, confirmacion, aviso = aplicar_idioma(user_id, codigo)
+
+        try:
+            await query.answer(confirmacion)
+        except Exception:
+            pass
+
+        # La pantalla se repinta con la marca en el idioma nuevo: es la prueba
+        # de que el cambio ha surtido efecto, que si no hay que adivinarlo.
+        await query.message.reply_text(
+            build_language_menu_text(idioma),
+            reply_markup=build_language_menu_keyboard(idioma)
+        )
+
+        # Y si el idioma está a medias se dice AHORA, en su idioma, con el
+        # inglés a un toque. Antes se descubría solo, mensaje a mensaje.
+        if aviso:
+
+            await query.message.reply_text(
+                aviso,
+                reply_markup=build_partial_warning_keyboard()
+            )
 
         return
 

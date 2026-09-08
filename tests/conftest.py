@@ -100,6 +100,8 @@ def clean_db(db_module):
         "user_reengagement",
         "group_delivery_health",
         "guardian_group_settings",
+        "group_user_promo_codes",
+        "user_preferences",
         "payment_incidents",
         "interest_followups",
         "group_payment_provider_configs",

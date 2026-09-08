@@ -12,6 +12,7 @@ from commercial_catalog import (
     PUBLIC_START_TEXT_ES,
     CALLBACK_MONETIZE_COMMUNITY,
     CALLBACK_SUPPORT,
+    CALLBACK_LANGUAGE_MENU,
     CALLBACK_AI_HELP,
     CALLBACK_ADMIN_PANEL
 )
@@ -1105,6 +1106,34 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
             "🛟 Soporte",
 
             callback_data=CALLBACK_SUPPORT
+
+        )
+
+    ])
+
+
+    # =========================
+    # EL IDIOMA, QUE NO SE PODÍA CAMBIAR
+    # =========================
+    # El idioma se detecta del `language_code` de Telegram y se guarda, y ahí
+    # se acababa: NO había un solo botón para cambiarlo en todo el bot. La
+    # única pantalla que lo hacía vive en `help_handler.py`, un módulo al que
+    # no apunta ningún handler —`/idioma` nunca se registró— y cuyo callback
+    # `set_language_` está encima en la lista de legacy, que contesta «esta
+    # opción ya no está disponible».
+    #
+    # Con portugués, francés e italiano al 6%, eso es un comprador con el móvil
+    # en italiano leyendo la pantalla de pago en español y sin manera de
+    # arreglarlo. La etiqueta va en dos idiomas porque es la que tiene que
+    # entender justamente quien no entiende el resto.
+
+    keyboard.append([
+
+        InlineKeyboardButton(
+
+            "🌍 Idioma / Language",
+
+            callback_data=CALLBACK_LANGUAGE_MENU
 
         )
 

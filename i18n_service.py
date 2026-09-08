@@ -251,6 +251,158 @@ TRANSLATIONS = {
     # Lo que faltaba en el mensaje más importante del bot: que la tarjeta se
     # va a volver a cobrar. Sin esta línea, quien compraba una suscripción
     # entendía que pagaba una vez, y el cargo siguiente le llegaba de sorpresa.
+    # LA UNICA frase que TIENE que existir en los cinco idiomas: es la que
+    # explica por qué el resto no está. En su idioma, siempre.
+    # =========================
+    # CUANDO EL COMPRADOR ESCRIBE Y EL BOT NO SABÍA QUÉ CONTESTAR
+    # =========================
+    # Antes no contestaba nada: silencio. Es la primera cosa que hace mucha
+    # gente al abrir un bot —escribir— así que va traducido al camino del
+    # cliente entero.
+    "fallback.not_understood": {
+        "es": (
+            "No he entendido eso, pero estoy aquí. 👋\n\n"
+            "Puedo enseñarte las comunidades y sus precios, mirar tus accesos, "
+            "o pasarte con soporte si algo del pago ha salido mal.\n\n"
+            "Si tienes un código de invitación, pégalo tal cual y te digo de "
+            "qué comunidad es."
+        ),
+        "en": (
+            "I didn't catch that, but I'm here. 👋\n\n"
+            "I can show you the communities and their prices, check your "
+            "access, or put you through to support if something went wrong "
+            "with a payment.\n\n"
+            "If you have an invite code, paste it as is and I'll tell you "
+            "which community it's for."
+        ),
+        "pt": (
+            "Não entendi isso, mas estou aqui. 👋\n\n"
+            "Posso mostrar-lhe as comunidades e os seus preços, ver os seus "
+            "acessos, ou encaminhá-lo para o suporte se algo do pagamento "
+            "correu mal.\n\n"
+            "Se tem um código de convite, cole-o tal como está e digo-lhe a "
+            "que comunidade pertence."
+        ),
+        "fr": (
+            "Je n'ai pas compris, mais je suis là. 👋\n\n"
+            "Je peux vous montrer les communautés et leurs prix, vérifier vos "
+            "accès, ou vous mettre en contact avec le support si un paiement "
+            "s'est mal passé.\n\n"
+            "Si vous avez un code d'invitation, collez-le tel quel et je vous "
+            "dirai à quelle communauté il appartient."
+        ),
+        "it": (
+            "Non ho capito, ma sono qui. 👋\n\n"
+            "Posso mostrarti le comunità e i loro prezzi, controllare i tuoi "
+            "accessi, o metterti in contatto con l'assistenza se qualcosa nel "
+            "pagamento è andato storto.\n\n"
+            "Se hai un codice di invito, incollalo così com'è e ti dico a "
+            "quale comunità appartiene."
+        )
+    },
+
+    "fallback.looks_like_code": {
+        "es": (
+            "🎟 Ese código es de «{comunidad}».\n\n"
+            "Pégalo en el canje de esa comunidad y te doy el acceso. No lo "
+            "canjeo desde aquí a propósito: así ves antes dónde vas a entrar."
+        ),
+        "en": (
+            "🎟 That code belongs to «{comunidad}».\n\n"
+            "Redeem it in that community and I'll grant your access. I don't "
+            "redeem it from here on purpose: this way you see where you're "
+            "getting in first."
+        ),
+        "pt": (
+            "🎟 Esse código é de «{comunidad}».\n\n"
+            "Use-o no resgate dessa comunidade e dou-lhe o acesso."
+        ),
+        "fr": (
+            "🎟 Ce code appartient à «{comunidad}».\n\n"
+            "Utilisez-le dans cette communauté et je vous donne l'accès."
+        ),
+        "it": (
+            "🎟 Quel codice è di «{comunidad}».\n\n"
+            "Usalo nel riscatto di quella comunità e ti dò l'accesso."
+        )
+    },
+
+    "fallback.btn_redeem": {
+        "es": "🎟 Canjear en esa comunidad",
+        "en": "🎟 Redeem in that community",
+        "pt": "🎟 Resgatar nessa comunidade",
+        "fr": "🎟 Utiliser dans cette communauté",
+        "it": "🎟 Riscatta in quella comunità"
+    },
+
+    "fallback.btn_explore": {
+        "es": "🔎 Ver comunidades y precios",
+        "en": "🔎 See communities and prices",
+        "pt": "🔎 Ver comunidades e preços",
+        "fr": "🔎 Voir les communautés et les prix",
+        "it": "🔎 Vedi comunità e prezzi"
+    },
+
+    "fallback.btn_my_access": {
+        "es": "🎟 Mis accesos",
+        "en": "🎟 My access",
+        "pt": "🎟 Os meus acessos",
+        "fr": "🎟 Mes accès",
+        "it": "🎟 I miei accessi"
+    },
+
+    "fallback.btn_ai": {
+        "es": "🤖 Resolver una duda",
+        "en": "🤖 Ask a question",
+        "pt": "🤖 Tirar uma dúvida",
+        "fr": "🤖 Poser une question",
+        "it": "🤖 Fai una domanda"
+    },
+
+    "fallback.btn_support": {
+        "es": "🛟 Soporte",
+        "en": "🛟 Support",
+        "pt": "🛟 Suporte",
+        "fr": "🛟 Support",
+        "it": "🛟 Assistenza"
+    },
+
+    "fallback.btn_home": {
+        "es": "🏠 Inicio",
+        "en": "🏠 Home",
+        "pt": "🏠 Início",
+        "fr": "🏠 Accueil",
+        "it": "🏠 Inizio"
+    },
+
+    "language.partial_warning": {
+        "es": (
+            "ℹ️ {idioma} está traducido al {porcentaje}%: lo importante del "
+            "pago sí, el resto te llegará en español. Si lo prefieres, el "
+            "inglés está completo."
+        ),
+        "en": (
+            "ℹ️ {idioma} is {porcentaje}% translated: the payment messages "
+            "are, the rest will reach you in Spanish. English is complete if "
+            "you prefer it."
+        ),
+        "pt": (
+            "ℹ️ {idioma} está traduzido a {porcentaje}%: as mensagens de "
+            "pagamento sim, o resto chega-lhe em espanhol. O inglês está "
+            "completo, se preferir."
+        ),
+        "fr": (
+            "ℹ️ {idioma} est traduit à {porcentaje} % : les messages de "
+            "paiement oui, le reste vous arrivera en espagnol. L'anglais est "
+            "complet, si vous préférez."
+        ),
+        "it": (
+            "ℹ️ {idioma} è tradotto al {porcentaje}%: i messaggi di pagamento "
+            "sì, il resto ti arriverà in spagnolo. L'inglese è completo, se "
+            "preferisci."
+        )
+    },
+
     "purchase.renews": {
         "es": (
             "🔁 Es una suscripción: el {date} se te vuelve a cobrar "
@@ -1884,3 +2036,80 @@ def t(key, language="es", **kwargs):
 
 
     return text
+
+
+# =========================
+# LA COBERTURA DE VERDAD DE CADA IDIOMA
+# =========================
+# El menú de /idioma ofrece cinco idiomas como si fueran cinco idiomas. No lo
+# son: de las 173 frases, portugués, francés e italiano tienen DIEZ. Quien elige
+# «Português» recibe un «Idioma: Português» y a partir de ahí 163 mensajes en
+# español, sin una sola señal de que la traducción no existe. Se queda pensando
+# que el bot está roto, y en el camino del comprador eso es una venta menos.
+#
+# No se van a esconder —las diez frases que hay son las del pago, que son las
+# que más falta hacen— pero se dice la verdad: cuánto hay traducido, y que el
+# resto llega en español. El porcentaje se CUENTA, no se escribe a mano: el día
+# que alguien traduzca el resto, la etiqueta desaparece sola.
+
+# Por debajo de esto un idioma no está «disponible», está empezado.
+UMBRAL_DE_IDIOMA_COMPLETO = 90
+
+
+def cobertura_de_idioma(language):
+    """Porcentaje entero de frases traducidas a este idioma (0..100)."""
+
+    language = normalize_language(language)
+
+    total = len(TRANSLATIONS)
+
+    if not total:
+        return 100
+
+    traducidas = sum(
+        1 for v in TRANSLATIONS.values()
+        if isinstance(v, dict) and v.get(language)
+    )
+
+    return int(round(100.0 * traducidas / total))
+
+
+def idioma_esta_completo(language):
+
+    return cobertura_de_idioma(language) >= UMBRAL_DE_IDIOMA_COMPLETO
+
+
+def nombre_de_idioma_con_aviso(language):
+    """«Português (6%)» cuando lo es, «English» cuando no.
+
+    El aviso es un porcentaje y no una palabra a propósito: «(parcial)» sería
+    español metido en el nombre de un idioma que no es español, y justo aquí
+    eso es el chiste. Un número se lee en los cinco.
+    """
+
+    nombre = get_language_name(language)
+
+    if idioma_esta_completo(language):
+        return nombre
+
+    return f"{nombre} ({cobertura_de_idioma(language)}%)"
+
+
+def aviso_de_idioma_parcial(language):
+    """
+    La frase que se le dice a quien acaba de elegir un idioma a medias, en SU
+    idioma cuando existe la frase y en español cuando no. Devuelve None si el
+    idioma está completo: no hay nada que avisar.
+    """
+
+    if idioma_esta_completo(language):
+        return None
+
+    porcentaje = cobertura_de_idioma(language)
+
+    return t(
+        "language.partial_warning",
+        language,
+        idioma=get_language_name(language),
+        porcentaje=porcentaje
+    )
