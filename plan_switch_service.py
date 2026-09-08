@@ -226,6 +226,10 @@ def formato_duracion(duration_days):
 def build_switch_text(group_name, opciones, current_plan=None):
     """La pantalla del cambio de plan, con lo que pasa dicho antes de pulsar."""
 
+    # El dinero por el formateador de siempre: a mano salía «3.6 EUR» en la
+    # última pantalla antes de pagar.
+    from start_offer_service import formato_importe
+
     lineas = [f"🔀 Cambiar de plan en {group_name}", ""]
 
     if current_plan:
@@ -244,7 +248,8 @@ def build_switch_text(group_name, opciones, current_plan=None):
     for _plan_id, nombre, amount, currency, duration_days, _price, _prov in opciones:
 
         lineas.append(
-            f"• {nombre} — {amount} {currency} / {formato_duracion(duration_days)}"
+            f"• {nombre} — {formato_importe(amount, currency)}"
+            f" / {formato_duracion(duration_days)}"
         )
 
     return "\n".join(lineas)

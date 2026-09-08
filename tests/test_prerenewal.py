@@ -165,7 +165,11 @@ def test_the_notice_says_price_date_and_offers_the_switch(comunidad):
     texto, teclado = por_usuario[9301]
 
     assert "se renovará el" in texto
-    assert "15.00 EUR" in texto, "el precio es el SUYO: su último cobro"
+    assert "15 EUR" in texto, "el precio es el SUYO: su último cobro"
+    assert "15.00" not in texto, (
+        "el dinero se escribe como en la tienda —«15 EUR», «3,60 EUR»— y no "
+        "con el punto de la base de datos"
+    )
 
     with comunidad["db"].conn.cursor() as cur:
         cur.execute("SELECT expiration FROM users WHERE user_id=9301 AND group_id=93")

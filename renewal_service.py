@@ -768,7 +768,7 @@ def build_renewal_keyboard(group_id, stage=RENEWAL_STAGE_EARLY,
                     t(
                         "button.renew_same_plan", language,
                         plan=nombre,
-                        price=f"{amount} {currency}"
+                        price=format_amount(amount, currency)
                     ),
                     callback_data=callback
                 )])
@@ -843,7 +843,13 @@ async def send_renewal_stage(context, stage):
             continue
 
 
-        price = fetch_group_entry_price(group_id)
+        # EL PRECIO DEL AVISO ES EL DEL BOTON QUE LLEVA DEBAJO. Decia
+        # fetch_group_entry_price, que es el plan mas BARATO de la comunidad,
+        # mientras el boton de un toque lleva el plan que compro esta persona:
+        # un socio anual leia «Renovar cuesta 15 EUR» encima de un boton que
+        # decia 120 EUR. Dos precios en el mismo mensaje es un mensaje que no
+        # se cree nadie.
+        price = precio_de_renovacion(user_id, group_id)
 
         # En el idioma del cliente: un comprador inglés que recibe el aviso en
         # español es un comprador que no renueva.
@@ -974,13 +980,68 @@ def fetch_member_last_price(user_id, group_id):
         if not row or row[0] is None:
             return None
 
-        return f"{int(row[0]) / 100:.2f} {(row[1] or 'EUR').upper()}"
+        # En céntimos en la base; a unidades mayores por el formateador de
+        # siempre. A mano salía «3.60 EUR», con punto, que no es un precio en
+        # ningún sitio donde se hable español.
+        from start_offer_service import formato_importe
+
+        return formato_importe(int(row[0]) / 100.0, row[1] or "EUR")
 
     except Exception as e:
 
         print("Pre-renovación: error leyendo el último cobro:", e)
 
         return None
+
+
+def precio_de_renovacion(user_id, group_id):
+    """Lo que le va a costar renovar A ESTA PERSONA. None si no se sabe.
+
+    Tres fuentes, en el orden en que dicen la verdad:
+
+      SU PLAN        el que compró, si sigue activo. Es EXACTAMENTE el importe
+                     que lleva el botón de un toque, así que el texto y el
+                     botón no pueden contradecirse.
+      SU ÚLTIMO COBRO quien se suscribió antes de una subida conserva su
+                     precio, y el plan de lista ya no lo dice.
+      LA ENTRADA     lo de siempre: el plan más barato. Solo cuando no se sabe
+                     nada de esta persona.
+    """
+
+    try:
+
+        plan = fetch_same_plan_for_member(user_id, group_id)
+
+        if plan:
+
+            _plan_id, _nombre, amount, currency, _price_id, _provider = plan
+
+            escrito = format_amount(amount, currency)
+
+            if escrito:
+                return escrito
+
+    except Exception as e:
+
+        print("Renovación: no se pudo leer el plan del socio:", str(e)[:160])
+
+    try:
+
+        ultimo = fetch_member_last_price(user_id, group_id)
+
+        if ultimo:
+            return ultimo
+
+    except Exception as e:
+
+        print("Renovación: no se pudo leer su último cobro:", str(e)[:160])
+
+    entrada = fetch_group_entry_price(group_id)
+
+    if not entrada:
+        return None
+
+    return format_amount(entrada[0], entrada[1])
 
 
 def build_prerenewal_text(group_name, expiration, price, language=DEFAULT_LANGUAGE):

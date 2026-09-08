@@ -341,9 +341,13 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
             return
 
+        # El dinero por el formateador de siempre. A mano, una oferta con
+        # céntimos salía «3.6 EUR» en el último botón antes de pagar.
+        from start_offer_service import formato_importe
+
         teclado = [
             [InlineKeyboardButton(
-                f"{nombre} — {amount} {currency}",
+                f"{nombre} — {formato_importe(amount, currency)}",
                 callback_data=f"switchplan_{grupo[0]}_{plan_id}"
             )]
             for plan_id, nombre, amount, currency, _dias, _price, _prov in opciones

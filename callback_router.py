@@ -247,6 +247,7 @@ from group_delivery_health_service import (
     recheck_group_delivery_live
 )
 from payment_access_service import (
+    MAX_PLAN_DURATION_DAYS,
     get_user_group_access_state,
     grant_group_access_after_payment,
     log_purchase_blocked_existing_access,
@@ -1489,12 +1490,12 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
 
     elif access_state.get("subscription_status") == "expired":
 
+        # UN SOLO BOTÓN. Había dos —«Renovar acceso» y «Ver planes»— con el
+        # MISMO destino: se pulsa uno, sale la lista de planes, y quien creía
+        # haberse equivocado pulsa el otro y le sale lo mismo. Y ninguna de las
+        # dos etiquetas decía que ahí se ven los precios.
         keyboard.append([InlineKeyboardButton(
-            "🔄 Renovar acceso",
-            callback_data=f"group_{group_id}"
-        )])
-        keyboard.append([InlineKeyboardButton(
-            "📋 Ver planes",
+            "🔄 Renovar — ver planes y precios",
             callback_data=f"group_{group_id}"
         )])
 
@@ -24522,9 +24523,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     WHERE p.group_id=%(grupo)s
                     AND p.is_active=TRUE
 
+                    -- SOLO LO QUE SE PUEDE ENTREGAR. La concesión de acceso
+                    -- rechaza una duración fuera de rango (payment_access_
+                    -- service lanza «Duración de plan fuera de rango»), y el
+                    -- escaparate ya lo filtraba. Aquí no: esta pantalla
+                    -- enseñaba el plan con su botón de pagar, el comprador
+                    -- pagaba y el acceso no se le podía dar. En producción hay
+                    -- uno de 1.300.000 días.
+                    AND p.duration_days IS NOT NULL
+                    AND p.duration_days >= 1
+                    AND p.duration_days <= %(max_dias)s
+
                     ORDER BY 4 ASC NULLS LAST, p.id ASC
 
-                """, {"grupo": group_id, "comprador": user_id})
+                """, {
+                    "grupo": group_id,
+                    "comprador": user_id,
+                    "max_dias": MAX_PLAN_DURATION_DAYS,
+                })
 
                 plans = cur.fetchall()
 
@@ -29078,6 +29094,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             event_key=f"startbuy_{group_id}_{plan_id}",
             group_id=group_id
         )
+
+        # LA PUERTA DE REGIÓN, TAMBIÉN AQUÍ. Todos los demás caminos al cobro
+        # la piden —PayPal, Revolut, ChangeNOW, Guardarian y el de precio de
+        # Stripe— y este no. Y este es justo el más usado: el botón de un toque
+        # de /start, el enlace de un anuncio (?start=group_N) y los dos botones
+        # del aviso de renovación. O sea que la comunidad con región restringida
+        # se colaba precisamente por la vía de los compradores más decididos, y
+        # al dueño le tocaba echarlos a mano o devolverles el dinero.
+        if group_requires_location_gate(group_id):
+
+            await request_location_verification(
+                context,
+                query.message.chat_id,
+                group_id,
+                "checkout",
+                price_id=fila[0],
+                telegram_user=query.from_user
+            )
+
+            return
+
 
         await create_checkout_for_user(
             context,
