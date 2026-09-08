@@ -869,7 +869,9 @@ def tarea_crear_planes():
         if len(partes) < 4:
 
             resultados.append(
-                f"«{trozo}» no tiene la forma g<grupo>:<días>:<euros>:<nombre>"
+                f"«{trozo}» no tiene la forma "
+                "g<grupo>:<días>:<euros>:<nombre> (la coma separa planes, así "
+                "que el precio se escribe con punto: 9.99, no 9,99)"
             )
             continue
 
@@ -880,12 +882,44 @@ def tarea_crear_planes():
 
             group_id = int(grupo_txt.strip().lstrip("gG"))
             dias = int(dias_txt.strip())
-            euros = int(euros_txt.strip())
 
         except (TypeError, ValueError):
 
-            resultados.append(f"«{trozo}»: grupo, días y euros son números")
+            resultados.append(f"«{trozo}»: el grupo y los días son números")
             continue
+
+        # EL PRECIO CON CÉNTIMOS. Aquí había un `int(euros_txt)` que reventaba
+        # con «9.99» y contestaba «grupo, días y euros son números» — mentira:
+        # 9,99 ES un número, y el que lo escribió se quedaba sin saber qué
+        # estaba mal. Un precio de 9,99 es de los más normales que existen.
+        #
+        # Lo que NO se puede es guardarlo: `plans.amount` es INTEGER en euros
+        # enteros, así que un plan de 9,99 se guardaría como 9 mientras Stripe
+        # cobraría 9,99 — anunciar un precio y cobrar otro, que es exactamente
+        # la avería que este bot ya ha tenido. Así que se dice la verdad y se
+        # dice cuál es la salida.
+        try:
+
+            euros_dec = float(euros_txt.strip().replace(",", "."))
+
+        except (TypeError, ValueError):
+
+            resultados.append(
+                f"«{trozo}»: «{euros_txt.strip()}» no es un precio"
+            )
+            continue
+
+        if abs(euros_dec - round(euros_dec)) > 0.0001:
+
+            resultados.append(
+                f"«{nombre or trozo}»: {euros_txt.strip()} tiene céntimos y "
+                "aquí solo caben euros enteros (la columna del precio es "
+                "entera). Créalo entero y ajústalo luego en «Planes», o pon "
+                f"{int(euros_dec)} o {int(euros_dec) + 1}"
+            )
+            continue
+
+        euros = int(round(euros_dec))
 
         if not nombre:
 
@@ -1020,35 +1054,88 @@ TAREAS = {
 }
 
 
+# =========================
+# QUE SE PUEDA VER LO QUE HIZO
+# =========================
+# El resultado de estas tareas iba a un `print` del arranque y a nada más. Dos
+# cosas que un operador no podía saber de ninguna manera:
+#
+#   - si BOOTSTRAP_TASKS está puesta AHORA MISMO en el servidor. Una tarea que
+#     alguien dejó armada se vuelve a ejecutar en CADA despliegue y en cada
+#     reinicio, para siempre, y no hay una sola pantalla que lo diga.
+#   - qué contestó la última vez. Si una tarea dijo «el grupo 4 no existe», eso
+#     se lo llevó el log del contenedor anterior.
+#
+# Se guarda en memoria: se pierde al reiniciar, y eso está bien —lo que importa
+# es el arranque de ESTE proceso, que es el que dejó los datos como están—. Los
+# cambios en sí siguen en audit_logs, que es donde tienen que estar.
+
+_ULTIMA_EJECUCION = {"cuando": None, "lineas": []}
+
+
+def ultima_ejecucion_de_puesta_a_punto():
+    """{'cuando': datetime|None, 'lineas': [...]} del arranque de este proceso."""
+
+    return {
+        "cuando": _ULTIMA_EJECUCION["cuando"],
+        "lineas": list(_ULTIMA_EJECUCION["lineas"]),
+    }
+
+
+def nombres_de_tareas():
+    """Los nombres válidos, para poder enseñarlos sin copiarlos a mano."""
+
+    return sorted(TAREAS)
+
+
+def ejecutar_una_tarea(nombre):
+    """
+    Ejecuta UNA tarea por su nombre y devuelve su línea de resultado.
+
+    Es la puerta para el panel. No comprueba permisos ni si la tarea es
+    inofensiva: eso lo decide quien llama, que es el único que sabe quién está
+    pulsando.
+    """
+
+    tarea = TAREAS.get(nombre)
+
+    if not tarea:
+
+        return (
+            f"{nombre}: no existe esa tarea. Disponibles: "
+            + ", ".join(nombres_de_tareas())
+        )
+
+    try:
+        return tarea()
+
+    except Exception as e:
+        return f"{nombre}: ERROR inesperado ({str(e)[:160]})"
+
+
 def run_bootstrap_tasks():
     """Ejecuta lo pedido. Devuelve una línea por tarea, para el arranque."""
 
+    from datetime import datetime
+
     pedidas = tareas_pedidas()
 
+    _ULTIMA_EJECUCION["cuando"] = datetime.now()
+
     if not pedidas:
+
+        _ULTIMA_EJECUCION["lineas"] = []
+
         return []
 
     lineas = []
 
+    # Una sola definición de «ejecutar una tarea y no reventar»: la usa el
+    # arranque y la usa el panel.
     for nombre in pedidas:
 
-        tarea = TAREAS.get(nombre)
+        lineas.append(ejecutar_una_tarea(nombre))
 
-        if not tarea:
-
-            lineas.append(
-                f"{nombre}: no existe esa tarea. Disponibles: "
-                + ", ".join(sorted(TAREAS))
-            )
-
-            continue
-
-        try:
-
-            lineas.append(tarea())
-
-        except Exception as e:
-
-            lineas.append(f"{nombre}: ERROR inesperado ({str(e)[:160]})")
+    _ULTIMA_EJECUCION["lineas"] = list(lineas)
 
     return lineas

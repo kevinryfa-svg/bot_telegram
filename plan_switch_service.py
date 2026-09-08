@@ -223,26 +223,26 @@ def formato_duracion(duration_days):
     return f"{dias} días"
 
 
-def build_switch_text(group_name, opciones, current_plan=None):
+def build_switch_text(group_name, opciones, current_plan=None, language="es"):
     """La pantalla del cambio de plan, con lo que pasa dicho antes de pulsar."""
 
     # El dinero por el formateador de siempre: a mano salía «3.6 EUR» en la
     # última pantalla antes de pagar.
     from start_offer_service import formato_importe
 
-    lineas = [f"🔀 Cambiar de plan en {group_name}", ""]
+    from i18n_service import t
+
+    lineas = [t("switch.title", language, group=group_name), ""]
 
     if current_plan:
 
-        lineas.append(f"Tu plan ahora: {current_plan}")
+        lineas.append(t("switch.current", language, plan=current_plan))
         lineas.append("")
 
     lineas.extend([
-        "Al activarse el plan nuevo, tu suscripción actual se apaga sola "
-        "al final del periodo que ya tienes pagado: no se te cobra dos "
-        "veces y no pierdes ni un día de acceso.",
+        t("switch.how_it_works", language),
         "",
-        "Planes disponibles:",
+        t("switch.available", language),
     ])
 
     for _plan_id, nombre, amount, currency, duration_days, _price, _prov in opciones:

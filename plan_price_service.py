@@ -830,6 +830,13 @@ HORAS_PARA_CONSIDERAR_HUERFANO = int(
     os.environ.get("PRECIO_HUERFANO_HORAS", "24")
 )
 
+# Cuántos precios se revisan como máximo en una pasada. Es una red, no un
+# límite de negocio: sin él, una cuenta con miles de precios dejaría el
+# arranque paginando.
+MAXIMO_PRECIOS_A_REVISAR = int(
+    os.environ.get("MAXIMO_PRECIOS_A_REVISAR", "2000")
+)
+
 
 def identificadores_de_precio_en_uso():
     """Todos los identificadores de precio que la base menciona."""
@@ -875,6 +882,27 @@ def identificadores_de_precio_en_uso():
     return en_uso
 
 
+def _recorrer_paginas(pagina):
+    """Todos los precios de la respuesta, paginando si se puede.
+
+    El SDK de Stripe devuelve un objeto con `auto_paging_iter()`, que es lo que
+    hace falta para ver más de cien. Pero esta función también recibe
+    diccionarios planos —los dobles de los tests, y cualquier versión del SDK
+    que cambie de forma, que ya pasó una vez y rompió TODOS los cobros—, así
+    que se prueba la paginación y se cae al listado suelto.
+    """
+
+    paginar = getattr(pagina, "auto_paging_iter", None)
+
+    if callable(paginar):
+        return paginar()
+
+    if hasattr(pagina, "get"):
+        return (pagina.get("data") or [])
+
+    return []
+
+
 def precios_huerfanos(limite=100):
     """Precios nuestros que ninguna fila menciona. Lista vacía ante la duda."""
 
@@ -891,17 +919,34 @@ def precios_huerfanos(limite=100):
 
     huerfanos = []
 
+    # TODAS LAS PÁGINAS, NO LA PRIMERA. Esto pedía una sola página de 100 y
+    # decidía sobre ella: con más de cien precios en la cuenta —producción ya
+    # los tiene— los más viejos no se miraban nunca, que son justo los que
+    # llevan más tiempo sueltos. Se pagina con un techo para que un fallo de la
+    # cuenta no convierta esto en un bucle infinito.
     try:
 
-        precios = stripe.Price.list(active=True, limit=int(limite))
+        pagina = stripe.Price.list(active=True, limit=100)
+
+        recorridos = []
+
+        for precio in _recorrer_paginas(pagina):
+
+            recorridos.append(precio)
+
+            if len(recorridos) >= MAXIMO_PRECIOS_A_REVISAR:
+                break
 
     except Exception as e:
 
         print("Precios huérfanos: no se pudieron listar:", str(e)[:160])
 
-        return []
+        # None es «no se pudo saber». Devolver [] hacía que un fallo de Stripe
+        # se leyera EXACTAMENTE igual que «no hay ninguno suelto», y esta
+        # función archiva cosas: no puede confundir las dos.
+        return None
 
-    for precio in (precios.get("data") if hasattr(precios, "get") else []) or []:
+    for precio in recorridos:
 
         identificador = precio.get("id")
         metadata = precio.get("metadata") or {}
@@ -932,13 +977,22 @@ def precios_huerfanos(limite=100):
 
 
 def archivar_precios_huerfanos():
-    """Los desactiva en Stripe. Devuelve los archivados."""
+    """Los desactiva en Stripe. Devuelve los archivados, o None si no se supo.
+
+    None se propaga desde precios_huerfanos(): esto ARCHIVA cosas, y «no se
+    pudo mirar» no puede acabar leyéndose como «no había nada que archivar».
+    """
 
     import stripe
 
+    huerfanos = precios_huerfanos()
+
+    if huerfanos is None:
+        return None
+
     archivados = []
 
-    for huerfano in precios_huerfanos():
+    for huerfano in huerfanos:
 
         try:
 
@@ -977,6 +1031,15 @@ def describe_orphan_prices():
     except Exception as e:
 
         return f"Precios sueltos: no se pudieron revisar ({str(e)[:120]})."
+
+    if archivados is None:
+
+        # Antes esto era indistinguible de «no hay ninguno»: la función
+        # devolvía [] al fallar y el arranque no imprimía nada.
+        return (
+            "Precios sueltos: NO SE HAN PODIDO REVISAR (Stripe no contestó). "
+            "Puede haber precios sueltos sin archivar."
+        )
 
     if not archivados:
         return None

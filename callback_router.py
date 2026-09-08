@@ -40,10 +40,12 @@ from admin_button_audit import (
 from admin_menu_catalog import (
     build_admin_menu_button_rows,
     build_admin_screen_keyboard,
+    nota_de_recorte,
 )
 from audit_log_service import (
     complete_active_beta_cycle,
     complete_expired_beta_cycles,
+    contar_eventos,
     create_beta_cycle,
     get_active_beta_cycle,
     get_beta_cycle_monitor_counts,
@@ -114,6 +116,16 @@ from commercial_form_handler import (
 from db import conn
 from formatters import format_tiempo_restante
 from i18n_service import DEFAULT_LANGUAGE, load_user_language, t
+
+from language_menu_service import (
+    CALLBACK_MENU as LANG_CALLBACK_MENU,
+    CALLBACK_PREFIX as LANG_CALLBACK_PREFIX,
+    aplicar_idioma,
+    build_language_menu_keyboard,
+    build_language_menu_text,
+    build_partial_warning_keyboard,
+    parse_language_callback
+)
 from owner_addon_service import (
     activate_owner_addon_manual_trial,
     owner_addon_is_purchase_allowed,
@@ -1045,6 +1057,94 @@ def build_payment_link_keyboard(group_id):
     return InlineKeyboardMarkup(keyboard)
 
 
+def importe_vigente_de_plan(group_id, plan_id, user_id=None):
+    """(importe, moneda) del plan, con su oferta viva si la tiene. (None, None).
+
+    La pantalla de «paga aquí» de PayPal, Revolut y las de cripto no decía el
+    importe porque en esas funciones solo llega el número del plan. Decir el
+    precio justo antes de irse a pagar es lo mínimo: es el último sitio donde
+    se puede comprobar que es el que se anunciaba.
+    """
+
+    try:
+
+        from weekly_offer_service import sql_importe_vigente
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT """ + sql_importe_vigente("p", "comprador") + """,
+                       COALESCE(NULLIF(p.currency, ''), 'EUR')
+                FROM plans p
+                WHERE p.id = %(plan)s AND p.group_id = %(grupo)s
+                LIMIT 1
+
+            """, {
+                "plan": plan_id,
+                "grupo": group_id,
+                "comprador": user_id,
+            })
+
+            fila = cur.fetchone()
+
+            return (fila[0], fila[1]) if fila else (None, None)
+
+    except Exception as e:
+
+        print("Pago: no se pudo leer el importe del plan:", str(e)[:160])
+
+        return (None, None)
+
+
+def build_pay_here_text(nombre_proveedor, url, group_id=None, importe=None,
+                        moneda=None):
+    """El mensaje de «paga aquí», igual para los cinco proveedores.
+
+    Cada uno lo escribía a su manera y con lo que le apetecía. El de Revolut
+    era «Paga con Revolut aquí: <url>» y quitaba el teclado —cero botones—, y
+    el de PayPal decía «Checkout PayPal creado» y «el acceso se enviará cuando
+    PayPal confirme el pago por webhook verificado»: «checkout» y «webhook» no
+    significan nada para quien está comprando, y ninguno de los dos decía QUÉ
+    se está pagando ni CUÁNTO.
+
+    Aquí se dice lo mismo siempre: qué comunidad, cuánto, qué pasa al pagar y
+    qué pasa si cierras sin pagar.
+    """
+
+    from group_service import nombre_de_comunidad
+
+    comunidad = nombre_de_comunidad(group_id) if group_id else None
+
+    lineas = [f"💳 Último paso: el pago con {nombre_proveedor}", ""]
+
+    if comunidad:
+        lineas.append(f"Comunidad: {comunidad}")
+
+    if importe is not None:
+
+        from start_offer_service import formato_importe
+
+        escrito = formato_importe(importe, moneda)
+
+        if escrito:
+            lineas.append(f"Importe: {escrito}")
+
+    if len(lineas) > 2:
+        lineas.append("")
+
+    lineas.extend([
+        str(url or ""),
+        "",
+        "En cuanto el pago se confirme, recibes aquí mismo tu enlace de "
+        "entrada, sin tener que hacer nada más.",
+        "",
+        "Si cierras sin pagar, no se te cobra nada.",
+    ])
+
+    return "\n".join(lineas)
+
+
 PAYMENT_FAILED_TEXT = (
     "❌ No he podido abrir la pasarela de pago\n\n"
     "No se te ha cobrado nada.\n\n"
@@ -1054,12 +1154,18 @@ PAYMENT_FAILED_TEXT = (
 
 
 def format_access_expiration(expires_at):
+    """«hasta el 08/10/2026» o «permanente».
+
+    Devolvía «2026-10-08 15:22»: una marca de tiempo de máquina, con la hora
+    —que no le importa a nadie— y en el orden que no se usa en español. Y la
+    pantalla lo pegaba detrás de «Acceso:», así que se leía como un código.
+    """
 
     if not expires_at:
         return "permanente"
 
     try:
-        return expires_at.strftime("%Y-%m-%d %H:%M")
+        return "hasta el " + expires_at.strftime("%d/%m/%Y")
     except Exception:
         return str(expires_at)
 
@@ -1084,9 +1190,10 @@ def build_existing_group_access_text(access_state):
 
         return (
             f"✅ Ya tienes acceso activo a {group_name}.\n\n"
-            f"Acceso: {format_access_expiration(expires_at)}\n\n"
-            f"Si necesitas volver a entrar al {community_kind}, usa Recuperar/Reenviar enlace.\n"
-            "Si crees que esto es un error, abre soporte."
+            f"📅 Tu acceso vale {format_access_expiration(expires_at)}.\n\n"
+            f"Si necesitas volver a entrar al {community_kind}, pide otro "
+            "enlace con el botón de abajo.\n"
+            "Si crees que esto es un error, escríbenos."
         )
 
     if access_state.get("reason") == "payment_pending_stale":
@@ -1639,6 +1746,14 @@ async def send_existing_group_access_notice(context, chat_id, user_id, group_id,
             user_id=user_id
         )
     )
+
+
+# Cuántos eventos de registro se piden y cuántos caben en la pantalla: los dos
+# números, con nombre y juntos. Estaban a noventa líneas de distancia —50
+# arriba, 30 abajo— y nadie los había visto a la vez, que es por lo que veinte
+# se perdían sin decirlo.
+MAXIMO_EVENTOS_DE_LOG = 50
+MAXIMO_EVENTOS_EN_PANTALLA_DE_LOG = 30
 
 
 LEGACY_CALLBACK_PREFIXES = (
@@ -5896,11 +6011,16 @@ async def request_location_verification(
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            "📍 Esta comunidad requiere verificar tu ubicación.\n\n"
+            "📍 Esta comunidad solo admite a gente de una zona\n\n"
             f"Región permitida: {region_label}\n\n"
-            "Pulsa el botón de Telegram “📍 Enviar ubicación”. No escribas tu ciudad manualmente.\n\n"
-            "Usaremos tu ubicación solo para comprobar la región y no guardaremos tus coordenadas exactas.\n\n"
-            "Si estás dentro de la zona permitida y te rechaza, contacta con soporte."
+            "Antes de cobrarte nada hay que comprobarlo. Pulsa el botón "
+            "“📍 Enviar ubicación” que te sale abajo (el de Telegram, no "
+            "escribas tu ciudad a mano).\n\n"
+            "Solo se usa para comprobar la región: no se guardan tus "
+            "coordenadas.\n\n"
+            "No se te ha cobrado nada todavía. Si no quieres compartir la "
+            "ubicación, con /start vuelves al inicio y puedes mirar otras "
+            "comunidades."
         ),
         reply_markup=keyboard
     )
@@ -6308,6 +6428,11 @@ def build_admin_global_panel_keyboard():
         [InlineKeyboardButton("🏪 Marketplace global", callback_data="admin_global_marketplace")],
         [InlineKeyboardButton("👥 Propietarios / solicitudes comerciales", callback_data="admin_owners_panel")],
         [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
+        # DINERO COBRADO SIN ENTREGAR. Estas incidencias solo se podían tocar
+        # desde el MENSAJE que las anunció: si el aviso se perdió en el scroll
+        # o le llegó a otro responsable, la incidencia quedaba inalcanzable con
+        # el pago ya hecho. No había ninguna pantalla que las listara.
+        [InlineKeyboardButton("🚨 Incidencias de cobro", callback_data="admin_incidents")],
         [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_panel")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")],
@@ -6342,6 +6467,10 @@ def build_admin_global_tools_keyboard():
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
         [InlineKeyboardButton("🗄️ Copia de la base de datos", callback_data="admin_db_backup")],
         [InlineKeyboardButton("🧱 Migraciones de base de datos", callback_data="admin_db_migrations")],
+        # Los arreglos de DATOS de producción no se veían en ningún sitio: iban
+        # a un print del arranque. Lo grave era no poder saber si alguna estaba
+        # ARMADA, porque armada significa que se repite en cada despliegue.
+        [InlineKeyboardButton("🧰 Puesta a punto", callback_data="admin_bootstrap")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_tools")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
@@ -15593,7 +15722,7 @@ def marketplace_access_text(group):
         return "🔓 Entrar gratis"
 
 
-    return "💳 Ver acceso"
+    return "💳 Ver planes y precios"
 
 
 def format_marketplace_number(value):
@@ -15885,7 +16014,7 @@ def build_marketplace_access_keyboard(
 
 
     keyboard.append([InlineKeyboardButton(
-        f"🔓 Entrar al {kind}" if is_free_group else "💳 Ver acceso",
+        f"🔓 Entrar al {kind}" if is_free_group else "💳 Ver planes y precios",
         callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
     )])
 
@@ -15938,7 +16067,7 @@ def build_marketplace_preview_keyboard(group, user_id=None):
 
 
     keyboard.append([InlineKeyboardButton(
-        f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Ver acceso",
+        f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Ver planes y precios",
         callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
     )])
 
@@ -16739,6 +16868,35 @@ def format_marketplace_card(group):
     )
 
 
+def linea_de_region_restringida(group_id):
+    """[«📍 Solo desde X»] si la comunidad pide ubicación. [] si no.
+
+    La restricción de región solo aparecía DESPUÉS de elegir un plan, cuando
+    ya se había decidido comprar: ni la ficha de la comunidad ni el precio la
+    mencionaban. Quien no puede o no quiere compartir su ubicación llegaba
+    hasta el último paso para enterarse — y el que está fuera de la zona
+    recorría el embudo entero para nada.
+    """
+
+    if not group_id:
+        return []
+
+    try:
+
+        activada, region = get_group_location_gate_display(group_id)
+
+    except Exception as e:
+
+        print("Ficha: no se pudo leer la región:", str(e)[:160])
+
+        return []
+
+    if not activada:
+        return []
+
+    return [f"📍 Solo desde {region}" if region else "📍 Solo desde una zona"]
+
+
 def format_marketplace_group_caption(group):
 
     preview_mode = group.get("preview_mode") or "manual"
@@ -16754,6 +16912,7 @@ def format_marketplace_group_caption(group):
             f"📡 Tipo: {kind_cap}",
             f"📂 {format_marketplace_category(group)}"
         ]
+        + linea_de_region_restringida(group.get("id"))
         + format_marketplace_social_proof(group, members_label)
         + [format_marketplace_kind(group)]
     )
@@ -16824,7 +16983,7 @@ def build_marketplace_group_keyboard(group, user_id=None):
 
 
     keyboard.append([InlineKeyboardButton(
-        f"🔓 Entrar al {kind}" if is_free_group else "💳 Comprar acceso",
+        f"🔓 Entrar al {kind}" if is_free_group else "💳 Ver planes y precios",
         callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
     )])
 
@@ -16934,7 +17093,7 @@ def build_dynamic_preview_access_keyboard(group, user_id=None):
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Comprar acceso",
+            f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Ver planes y precios",
             callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
         )],
         [InlineKeyboardButton(
@@ -20037,7 +20196,13 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Este método de pago aún no está disponible.",
+            # Era el único error de pago que NO decía que no se ha cobrado.
+            text=(
+                "❌ El pago con tarjeta no está disponible ahora mismo.\n\n"
+                "No se te ha cobrado nada.\n\n"
+                "Ya hemos avisado a quien puede arreglarlo. Prueba con otro "
+                "método si esta comunidad tiene alguno, o inténtalo más tarde."
+            ),
             reply_markup=build_group_recovery_keyboard(group_id)
         )
 
@@ -20113,6 +20278,11 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
 async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
 
+    # El importe, para poder decirlo en la pantalla de pago.
+    importe_del_plan, moneda_del_plan = importe_vigente_de_plan(
+        group_id, plan_id, user_id
+    )
+
     access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
@@ -20177,7 +20347,17 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=response_data.get("error") or "PayPal no está disponible para esta comunidad.",
+                # EL ERROR DE ARRIBA NO SE LE SUELTA AL COMPRADOR. Aquí se
+                # reenviaba `error` tal cual como lo devuelve el servidor: al
+                # que está comprando no le dice nada, y lo único que necesita
+                # saber —que no se le ha cobrado— no aparecía.
+                text=(
+                    f"❌ No he podido abrir el pago con PayPal.\n\n"
+                    "No se te ha cobrado nada.\n\n"
+                    "Prueba con otro método de pago o vuelve a intentarlo en "
+                    "un momento. Si sigue igual, escríbenos: puede ser algo de "
+                    "la comunidad y no tuyo."
+                ),
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 
@@ -20186,13 +20366,19 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text=(
-                "✅ Checkout PayPal creado. Completa el pago para recibir acceso.\n\n"
-                "El acceso se enviará cuando PayPal confirme el pago por webhook verificado."
+            text=build_pay_here_text(
+                "PayPal",
+                response_data["url"],
+                group_id=group_id,
+                importe=importe_del_plan,
+                moneda=moneda_del_plan,
             ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🅿️ Pagar con PayPal", url=response_data["url"])]
-            ])
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton(
+                    "🅿️ Pagar con PayPal", url=response_data["url"]
+                )]]
+                + list(build_payment_link_keyboard(group_id).inline_keyboard)
+            )
         )
 
     except Exception as e:
@@ -20220,6 +20406,11 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
 
 async def create_revolut_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
+
+    # El importe, para poder decirlo en la pantalla de pago.
+    importe_del_plan, moneda_del_plan = importe_vigente_de_plan(
+        group_id, plan_id, user_id
+    )
 
     access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
@@ -20269,7 +20460,17 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=response_data.get("error") or "Revolut no está disponible para esta comunidad.",
+                # EL ERROR DE ARRIBA NO SE LE SUELTA AL COMPRADOR. Aquí se
+                # reenviaba `error` tal cual como lo devuelve el servidor: al
+                # que está comprando no le dice nada, y lo único que necesita
+                # saber —que no se le ha cobrado— no aparecía.
+                text=(
+                    f"❌ No he podido abrir el pago con Revolut.\n\n"
+                    "No se te ha cobrado nada.\n\n"
+                    "Prueba con otro método de pago o vuelve a intentarlo en "
+                    "un momento. Si sigue igual, escríbenos: puede ser algo de "
+                    "la comunidad y no tuyo."
+                ),
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 
@@ -20278,12 +20479,14 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text=(
-                "🏦 Paga con Revolut aquí:\n"
-                f"{response_data['url']}\n\n"
-                "El acceso se enviará cuando Revolut confirme el pago por webhook verificado."
+            text=build_pay_here_text(
+                "Revolut",
+                response_data["url"],
+                group_id=group_id,
+                importe=importe_del_plan,
+                moneda=moneda_del_plan,
             ),
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=build_payment_link_keyboard(group_id)
         )
 
     except Exception as e:
@@ -20360,7 +20563,17 @@ async def create_changenow_group_checkout_for_user(context, chat_id, user_id, gr
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=response_data.get("error") or "ChangeNOW no está disponible para esta comunidad.",
+                # EL ERROR DE ARRIBA NO SE LE SUELTA AL COMPRADOR. Aquí se
+                # reenviaba `error` tal cual como lo devuelve el servidor: al
+                # que está comprando no le dice nada, y lo único que necesita
+                # saber —que no se le ha cobrado— no aparecía.
+                text=(
+                    f"❌ No he podido abrir el pago con ChangeNOW.\n\n"
+                    "No se te ha cobrado nada.\n\n"
+                    "Prueba con otro método de pago o vuelve a intentarlo en "
+                    "un momento. Si sigue igual, escríbenos: puede ser algo de "
+                    "la comunidad y no tuyo."
+                ),
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 
@@ -20450,7 +20663,17 @@ async def create_guardarian_group_checkout_for_user(context, chat_id, user_id, g
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=response_data.get("error") or "Guardarian no está disponible para esta comunidad.",
+                # EL ERROR DE ARRIBA NO SE LE SUELTA AL COMPRADOR. Aquí se
+                # reenviaba `error` tal cual como lo devuelve el servidor: al
+                # que está comprando no le dice nada, y lo único que necesita
+                # saber —que no se le ha cobrado— no aparecía.
+                text=(
+                    f"❌ No he podido abrir el pago con Guardarian.\n\n"
+                    "No se te ha cobrado nada.\n\n"
+                    "Prueba con otro método de pago o vuelve a intentarlo en "
+                    "un momento. Si sigue igual, escríbenos: puede ser algo de "
+                    "la comunidad y no tuyo."
+                ),
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 
@@ -21254,6 +21477,70 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    # =========================
+    # EL IDIOMA, QUE NO SE PODÍA CAMBIAR DESDE NINGÚN SITIO
+    # =========================
+    # El idioma salía del `language_code` de Telegram, se guardaba, y no había
+    # una sola pantalla viva para cambiarlo: la que existía vive en
+    # `help_handler.py` —módulo sin ningún handler registrado— y su callback
+    # `set_language_` está en la lista de legacy, que contesta «esta opción ya
+    # no está disponible». Con portugués, francés e italiano al 6%, eso era un
+    # comprador leyendo la pantalla de pago en un idioma que no eligió.
+
+    if data == LANG_CALLBACK_MENU:
+
+        idioma = load_user_language(user_id)
+
+        await query.message.reply_text(
+            build_language_menu_text(idioma),
+            reply_markup=build_language_menu_keyboard(idioma)
+        )
+
+        return
+
+
+    if data.startswith(LANG_CALLBACK_PREFIX):
+
+        codigo = parse_language_callback(data)
+
+        if not codigo:
+
+            await query.message.reply_text(
+                "🌍 Ese idioma no está disponible.",
+                reply_markup=build_language_menu_keyboard(
+                    load_user_language(user_id)
+                )
+            )
+
+            return
+
+
+        idioma, confirmacion, aviso = aplicar_idioma(user_id, codigo)
+
+        try:
+            await query.answer(confirmacion)
+        except Exception:
+            pass
+
+        # La pantalla se repinta con la marca en el idioma nuevo: es la prueba
+        # de que el cambio ha surtido efecto, que si no hay que adivinarlo.
+        await query.message.reply_text(
+            build_language_menu_text(idioma),
+            reply_markup=build_language_menu_keyboard(idioma)
+        )
+
+        # Y si el idioma está a medias se dice AHORA, en su idioma, con el
+        # inglés a un toque. Antes se descubría solo, mensaje a mensaje.
+        if aviso:
+
+            await query.message.reply_text(
+                aviso,
+                reply_markup=build_partial_warning_keyboard()
+            )
+
+        return
+
+
     if data in (
         "public_back_start",
         CALLBACK_COMMERCIAL_BACK_START
@@ -21523,9 +21810,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # dice el importe exacto y a quién, y el segundo toque es el que mueve el
     # dinero.
 
+    # Y CON SALIDA. Las once salidas de este tramo —resuelta ya, no se pudo,
+    # devolución pedida, acceso concedido, sin plan válido— contestaban con un
+    # texto pelado y CERO botones. El operador acababa de mover dinero de
+    # verdad y se quedaba sin manera de ver si quedan más incidencias ni de
+    # volver al panel: había que teclear /admin y navegar otra vez.
     if data.startswith("incident_refund_go_"):
 
-        from incident_repair_service import close_incident, fetch_open_incident
+        from incident_repair_service import (
+            build_open_incidents_keyboard,
+            close_incident,
+            fetch_open_incident
+        )
         from refund_request_service import refund_last_payment
 
         resto = data[len("incident_refund_go_"):]
@@ -21547,7 +21843,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "✅ Esa incidencia ya estaba resuelta. No se ha devuelto nada "
-                "otra vez."
+                "otra vez.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21586,7 +21883,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "❌ " + motivos.get(resultado["reason"], "No se ha podido "
-                                   "devolver el pago.")
+                                   "devolver el pago."),
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21602,7 +21900,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{comprador_id}.\n\n"
             "Cuando Stripe la confirme, el bot retira el acceso, revoca sus "
             "enlaces y avisa a la persona: eso ya lo hace el webhook de "
-            "devoluciones, no hace falta tocar nada más."
+            "devoluciones, no hace falta tocar nada más.",
+            reply_markup=build_open_incidents_keyboard()
         )
 
         return
@@ -21610,7 +21909,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("incident_refund_"):
 
-        from incident_repair_service import fetch_open_incident
+        from incident_repair_service import (
+            build_open_incidents_keyboard,
+            fetch_open_incident
+        )
         from refund_request_service import describe_refundable
 
         resto = data[len("incident_refund_"):]
@@ -21630,7 +21932,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not incidencia:
 
-            await query.message.reply_text("✅ Esa incidencia ya estaba resuelta.")
+            await query.message.reply_text("✅ Esa incidencia ya estaba resuelta.",
+                reply_markup=build_open_incidents_keyboard()
+            )
 
             return
 
@@ -21654,7 +21958,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 f"No hay ningún pago cobrado de {comprador_id} en "
-                f"{group_name} que devolver."
+                f"{group_name} que devolver.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21667,7 +21972,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "no se puede devolver desde aquí: la referencia guardada no "
                 f"permite pedirlo por API ({devolvible['referencia']}).\n\n"
                 "Hazlo en el panel del proveedor y resuelve la incidencia "
-                "después."
+                "después.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21697,7 +22003,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("incident_fix_go_"):
 
-        from incident_repair_service import fetch_open_incident, repair_incident
+        from incident_repair_service import (
+            build_open_incidents_keyboard,
+            fetch_open_incident,
+            repair_incident
+        )
 
         resto = data[len("incident_fix_go_"):].split("_")
 
@@ -21718,7 +22028,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "✅ Esa incidencia ya estaba resuelta. No se ha concedido "
-                "nada otra vez."
+                "nada otra vez.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21744,7 +22055,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "❌ No se ha podido conceder el acceso "
                 f"({resultado['reason']}). El pago sigue registrado y la "
-                "incidencia, abierta."
+                "incidencia, abierta.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21759,7 +22071,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Acceso concedido a {resultado['user_id']} durante "
             f"{duration_days} días.\n\n{entrega}\n\n"
             "No se ha registrado ningún pago nuevo: el cobro original ya "
-            "estaba contado."
+            "estaba contado.",
+            reply_markup=build_open_incidents_keyboard()
         )
 
         return
@@ -21768,6 +22081,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("incident_fix_"):
 
         from incident_repair_service import (
+            build_open_incidents_keyboard,
             fetch_open_incident,
             fetch_repair_durations,
         )
@@ -21790,7 +22104,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not incidencia:
 
             await query.message.reply_text(
-                "✅ Esa incidencia ya estaba resuelta."
+                "✅ Esa incidencia ya estaba resuelta.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21814,7 +22129,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 f"⚠️ {group_name} no tiene ningún plan activo con duración "
                 "válida, así que no hay duración que conceder. Arregla el "
-                "plan y vuelve a pulsar."
+                "plan y vuelve a pulsar.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -25537,7 +25853,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("👥 Usuarios activos", callback_data="admin_active_users")],
 
-            [InlineKeyboardButton("💰 Ingresos", callback_data="admin_income")]
+            [InlineKeyboardButton("💰 Ingresos", callback_data="admin_income")],
+
+            # Mil líneas escribiéndole a gente que casi paga, y su resultado
+            # no se veía en ninguna pantalla.
+            [InlineKeyboardButton("🛒 Ventas recuperadas",
+                                  callback_data="admin_recovery")]
 
         ]
 
@@ -27919,6 +28240,98 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    # =========================
+    # LOS ARREGLOS DE DATOS DE PRODUCCIÓN, VISIBLES
+    # =========================
+    # `bootstrap_tasks` reescribe precios, descripciones y proveedores de cobro
+    # en producción, y se activa poniendo BOOTSTRAP_TASKS en el servidor. Su
+    # resultado iba a un `print` del arranque y a nada más: no había forma de
+    # saber si alguna tarea seguía ARMADA —lo que significa que se ejecuta otra
+    # vez en CADA despliegue— ni qué contestó la última.
+
+    # =========================
+    # LAS INCIDENCIAS DE COBRO, ALCANZABLES
+    # =========================
+    # Cada incidencia es alguien que PAGÓ y no tiene acceso. Los dos botones
+    # que las arreglan —conceder el acceso, devolver el pago— vivían solo en el
+    # aviso de Telegram que las anunció. Perdido el aviso, perdida la
+    # incidencia: ni panel, ni lista, ni forma de saber cuántas hay.
+
+    if data == "admin_incidents":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from incident_repair_service import (
+            build_open_incidents_keyboard,
+            build_open_incidents_text
+        )
+
+        await query.message.reply_text(
+            build_open_incidents_text()[:3800],
+            reply_markup=build_open_incidents_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_bootstrap":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from bootstrap_panel_service import (
+            build_bootstrap_panel_keyboard,
+            build_bootstrap_panel_text
+        )
+
+        await query.message.reply_text(
+            build_bootstrap_panel_text(),
+            reply_markup=build_bootstrap_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_bootstrap_list_plans":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from bootstrap_panel_service import (
+            build_bootstrap_panel_keyboard,
+            ejecutar_listado_de_planes
+        )
+
+        # La única de las ocho que no escribe nada. Las demás cambian datos de
+        # producción y siguen necesitando la variable y un despliegue: un botón
+        # que reescribe precios a un toque es justo lo que no debe existir.
+        await query.message.reply_text(
+            "📋 Planes de la comunidad\n\n" + ejecutar_listado_de_planes()[:3800],
+            reply_markup=build_bootstrap_panel_keyboard()
+        )
+
+        return
+
+
     if data == "admin_health":
 
         # Solo plataforma: es la foto de TODAS las comunidades, incluidas las
@@ -27987,6 +28400,44 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "💳 ¿Se puede cobrar ahora mismo?\n\n" + linea,
             reply_markup=build_admin_screen_keyboard("admin_sale_readiness")
+        )
+
+        return
+
+
+    # =========================
+    # LO QUE SE RECUPERA DE LOS QUE CASI PAGAN
+    # =========================
+    # Los dos recuperadores —carritos abandonados e interesados que no llegaron
+    # a la pantalla de pago— llevan meses escribiéndole a clientes de verdad sin
+    # que su resultado apareciera en ningún sitio: vivía en `log_event` y en un
+    # `print` del servidor. Ni siquiera se podía saber si estaban ENCENDIDOS,
+    # porque se apagan con una variable de entorno y apagados no dicen nada.
+
+    if data == "admin_recovery":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        try:
+
+            from recovery_report_service import build_recovery_report_text
+
+            texto = build_recovery_report_text()
+
+        except Exception as e:
+
+            texto = f"🛒 No se pudo montar el informe: {str(e)[:200]}"
+
+        await query.message.reply_text(
+            texto,
+            reply_markup=build_admin_screen_keyboard("admin_recovery")
         )
 
         return
@@ -28312,19 +28763,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             category_filter = "user"
 
 
+        # EL FILTRO IBA DESPUÉS DEL LÍMITE. Se pedían los últimos 50 eventos
+        # de TODO y luego se descartaban los de otra categoría: si los últimos
+        # 50 eran de pagos, «Logs de usuarios» contestaba «Sin actividad
+        # registrada» con la tabla llena. Ahora filtra la consulta.
         rows = list_recent_events(
-            limit=50,
-            group_ids=group_ids
+            limit=MAXIMO_EVENTOS_DE_LOG,
+            group_ids=group_ids,
+            category=category_filter
         )
 
-
-        if category_filter:
-
-            rows = [
-                row
-                for row in rows
-                if row[2] == category_filter
-            ]
+        cuantos_hay = contar_eventos(
+            group_ids=group_ids,
+            category=category_filter
+        )
 
 
         if not rows:
@@ -28342,6 +28794,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else "📜 Logs de mi grupo\n\n"
         )
 
+        pintados = 0
+
 
         for (
             created_at,
@@ -28353,7 +28807,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             actor_user_id,
             target_user_id,
             message
-        ) in rows[:30]:
+        ) in rows[:MAXIMO_EVENTOS_EN_PANTALLA_DE_LOG]:
+
+            pintados += 1
 
             text += (
                 f"Evento: {event_type or '-'}\n"
@@ -28365,6 +28821,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Detalle: {message or '-'}\n"
                 f"Fecha: {created_at or '-'}\n\n"
             )
+
+
+        # Y SE DICE CUÁNTOS FALTAN. Se pintaban 30 y no había una sola señal
+        # de que hubiera más: el operador cree estar viendo el registro entero.
+        text += nota_de_recorte(
+            pintados,
+            cuantos_hay,
+            "Filtra por categoría para ver más."
+        )
 
 
         await query.message.reply_text(

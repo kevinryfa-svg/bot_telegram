@@ -23,6 +23,10 @@ CALLBACK_SUPPORT = "public_support"
 CALLBACK_AI_HELP = "public_ai_help"
 CALLBACK_ADMIN_PANEL = "public_admin_panel"
 
+# El interruptor del idioma: la pantalla de /start es el único sitio donde lo
+# ve todo el mundo, comprador nuevo incluido.
+CALLBACK_LANGUAGE_MENU = "lang_menu"
+
 CALLBACK_SHARED_BOT_SPACE = "commercial_shared_bot_space"
 CALLBACK_CUSTOM_BOT = "commercial_custom_bot"
 CALLBACK_COMMERCIAL_CONTACT = "commercial_contact"

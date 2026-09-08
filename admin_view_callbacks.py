@@ -106,12 +106,28 @@ async def handle_admin_view_callbacks(update, context, query, user_id, data):
             return
 
 
+        # TELEGRAM CORTA EL MENSAJE A 4096 CARACTERES. Esto concatenaba ~60 por
+        # grupo sin límite y llamaba a reply_text FUERA del try, así que a
+        # partir de unos 65 grupos la pantalla entera reventaba y el operador
+        # no veía nada: no una lista cortada, NADA. Ahora se enseña lo que cabe
+        # y se dice cuántos hay en total.
+        TOPE = 40
+
+        mostrados = list(groups)[:TOPE]
+
         texto = "📋 GRUPOS REGISTRADOS\n\n"
+
+        if len(groups) > len(mostrados):
+
+            texto += (
+                f"Se enseñan {len(mostrados)} de {len(groups)}. "
+                "Para uno concreto, búscalo por su id.\n\n"
+            )
 
 
         try:
 
-            for group_id, name, telegram_id in groups:
+            for group_id, name, telegram_id in mostrados:
 
                 texto += (
 
@@ -142,13 +158,27 @@ async def handle_admin_view_callbacks(update, context, query, user_id, data):
         ]
 
 
-        await query.message.reply_text(
+        # Y el envío va dentro de un try: era lo único que quedaba fuera, así
+        # que un mensaje demasiado largo se llevaba la pantalla por delante.
+        try:
 
-            texto,
+            await query.message.reply_text(
 
-            reply_markup=InlineKeyboardMarkup(keyboard)
+                texto[:3900],
 
-        )
+                reply_markup=InlineKeyboardMarkup(keyboard)
+
+            )
+
+        except Exception as e:
+
+            print("Ver grupos: no se pudo enviar la lista:", str(e)[:200])
+
+            await query.message.reply_text(
+                f"❌ No he podido enviar la lista ({len(groups)} grupos). "
+                "Busca uno concreto por su id.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
 
         return
 

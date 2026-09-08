@@ -178,7 +178,9 @@ def test_start_uses_the_offer_and_never_loses_its_exits():
     assert "etiqueta_de_oferta" in fuente
     assert "build_single_offer_text" in fuente
 
-    pos = fuente.index("fetch_sellable_communities")
+    # Se ancla en la LLAMADA, no en cualquier mención del nombre: un docstring
+    # que lo nombre movía la ventana a otro sitio del fichero.
+    pos = fuente.index("ofertas = fetch_sellable_communities(")
     trozo = fuente[pos - 600:pos + 2500]
 
     assert "except Exception" in trozo, (

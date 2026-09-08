@@ -218,6 +218,49 @@ def linea_de_renovacion_activa(user_id, group_id, expiration, language):
     return t("mysub.renewal_active_date_only", language, date=fecha)
 
 
+def avisar_al_operador_de_la_devolucion(user_id, group_id, group_name,
+                                        devolvible):
+    """Le dice al admin que hay una petición esperando. Nunca lanza.
+
+    La petición ya está registrada cuando se llama a esto: si el aviso falla,
+    lo que no puede pasar es que se pierda la petición.
+    """
+
+    try:
+
+        # TOKEN ya viene del módulo: reimportarlo aquí lo haría local a toda
+        # la función y los usos de arriba reventarían con UnboundLocalError.
+        from bot_config import ADMIN_ID
+        from notification_service import send_telegram_message
+
+        if not (ADMIN_ID and TOKEN):
+            return False
+
+        send_telegram_message(
+            TOKEN,
+            int(ADMIN_ID),
+            "💸 Petición de devolución\n\n"
+            f"Comunidad: {group_name or group_id}\n"
+            f"Usuario: {user_id}\n"
+            f"Plan: {devolvible.get('plan')}\n"
+            f"Importe: {devolvible.get('importe')}\n"
+            f"Pago: #{devolvible.get('payment_id')}\n\n"
+            + (
+                "Se puede devolver desde el bot."
+                if devolvible.get("puede_api")
+                else "Esta hay que hacerla en el panel del proveedor."
+            )
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("Devolución: no se pudo avisar al admin:", str(e)[:160])
+
+        return False
+
+
 def buscar_enlace_vivo(user_id, group_id, telegram_group_id):
     """El enlace de esta persona que todavía sirve, o None.
 
@@ -450,7 +493,8 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
             build_switch_text(
                 grupo[1] or "",
                 opciones,
-                current_plan=fetch_current_plan_name(user_id, grupo[0])
+                current_plan=fetch_current_plan_name(user_id, grupo[0]),
+                language=language
             ),
             reply_markup=InlineKeyboardMarkup(teclado)
         )
@@ -990,6 +1034,116 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
     # otra pantalla— el bot revocaba y BORRABA todos sus enlaces y creaba uno
     # nuevo. Quien tenía guardado o reenviado el enlace de su compra se lo
     # encontraba muerto sin que nadie le hubiera avisado.
+    # =========================
+    # PEDIR DEVOLUCIÓN
+    # =========================
+    # No había ninguna forma de pedirla desde el bot: el servicio existía
+    # entero —describe_refundable, refund_last_payment— y solo se llegaba a él
+    # desde el flujo de incidencias del operador. Quien quería su dinero tenía
+    # que escribir a soporte y esperar, o irse al banco a reclamar, que le
+    # cuesta al vendedor la comisión ADEMÁS del reembolso.
+    #
+    # Esto NO devuelve el dinero: registra la petición y avisa. La decisión
+    # sigue siendo de una persona.
+    if data.startswith("mysubrefund_"):
+
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        resto = data[len("mysubrefund_"):]
+        confirmado = resto.startswith("go_")
+        ref = resto[3:] if confirmado else resto[len("ask_"):]
+
+        language = load_user_language(user_id)
+
+        grupo = (
+            _resolver_grupo_por_ref(int(ref))
+            if ref.lstrip("-").isdigit() else None
+        )
+
+        if not grupo:
+
+            await reply_with_recover_navigation(
+                query, t("mysub.not_found", language)
+            )
+
+            return
+
+
+        group_id, group_name, telegram_group_id = grupo[0], grupo[1], grupo[2]
+
+        from refund_request_service import describe_refundable
+
+        devolvible = describe_refundable(user_id, group_id)
+
+        if not devolvible:
+
+            await query.message.reply_text(
+                t("mysub.refund_none", language, group=group_name or ""),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        t("mysub.btn_back_access", language),
+                        callback_data=f"mysub_{telegram_group_id}"
+                    )
+                ]])
+            )
+
+            return
+
+
+        if not confirmado:
+
+            await query.message.reply_text(
+                t(
+                    "mysub.refund_ask", language,
+                    group=group_name or "",
+                    plan=devolvible["plan"],
+                    price=devolvible["importe"],
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        t("mysub.btn_refund_yes", language),
+                        callback_data=f"mysubrefund_go_{ref}"
+                    )],
+                    [InlineKeyboardButton(
+                        t("mysub.btn_back_access", language),
+                        callback_data=f"mysub_{telegram_group_id}"
+                    )],
+                ])
+            )
+
+            return
+
+
+        from refund_request_service import mark_refund_requested
+
+        primera = mark_refund_requested(devolvible["payment_id"], user_id)
+
+        if primera:
+
+            avisar_al_operador_de_la_devolucion(
+                user_id, group_id, group_name, devolvible
+            )
+
+        await query.message.reply_text(
+            t(
+                "mysub.refund_sent" if primera else "mysub.refund_already",
+                language,
+                group=group_name or "",
+            ),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    t("mysub.btn_back_access", language),
+                    callback_data=f"mysub_{telegram_group_id}"
+                )
+            ]])
+        )
+
+        return
+
+
     if data.startswith("mysubnew_"):
 
         data = "mysub_" + data[len("mysubnew_"):]
@@ -1462,6 +1616,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
             ],
 
+
             [
 
                 # El canal de venta más barato: un socio contento con un
@@ -1485,6 +1640,18 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
                     t("mysub.btn_switch", language),
 
                     callback_data=f"mysub_switch_{telegram_group_id}"
+
+                )
+
+            ],
+
+            [
+
+                InlineKeyboardButton(
+
+                    t("mysub.btn_refund", language),
+
+                    callback_data=f"mysubrefund_ask_{telegram_group_id}"
 
                 )
 

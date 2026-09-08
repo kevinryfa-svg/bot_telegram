@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import ContextTypes
 
 from help_menu_service import (
@@ -15,11 +15,9 @@ from help_roles import (
 
 from i18n_service import (
     DEFAULT_LANGUAGE,
-    list_supported_languages,
     load_user_language,
     normalize_language,
-    save_user_language,
-    get_language_name
+    save_user_language
 )
 
 
@@ -107,30 +105,35 @@ async def manual_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def idioma_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    UNA sola pantalla de idioma en todo el bot.
 
-    user_id = update.effective_user.id
-    language = get_user_language(
-        user_id,
-        telegram_language_code=getattr(update.effective_user, "language_code", None)
+    Aquí vivía su propia copia, con sus propios botones `set_language_` —que
+    además están en la lista de callbacks legacy y contestan «esta opción ya no
+    está disponible»—. El texto y el teclado viven ahora en
+    `language_menu_service`, que es lo que usa el panel vivo: así este comando
+    —que además ahora SÍ está registrado en main.py, que era la otra mitad del
+    problema— abre la MISMA pantalla que el botón de /start y no una segunda
+    que se queda atrás.
+    """
+
+    from language_menu_service import (
+        build_language_menu_keyboard,
+        build_language_menu_text
     )
 
-    keyboard = []
+    user_id = update.effective_user.id
 
-    for lang_code, lang_name in list_supported_languages().items():
-
-        prefix = "✅ " if lang_code == language else "🌍 "
-
-        keyboard.append([
-            InlineKeyboardButton(
-                f"{prefix}{lang_name}",
-                callback_data=f"set_language_{lang_code}"
-            )
-        ])
-
+    language = get_user_language(
+        user_id,
+        telegram_language_code=getattr(
+            update.effective_user, "language_code", None
+        )
+    )
 
     await update.message.reply_text(
-        "🌍 Elige tu idioma / Choose your language:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        build_language_menu_text(language),
+        reply_markup=build_language_menu_keyboard(language)
     )
 
 
@@ -213,37 +216,11 @@ async def handle_help_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return True
 
 
-    if data.startswith("set_language_"):
+    # `set_language_` ya no se despacha aquí: el idioma se cambia en
+    # `language_menu_service` con el prefijo `lang_set_`, que sí llega al
+    # router vivo. Este prefijo sigue en la lista de legacy y contesta que la
+    # opción no está disponible, que es la verdad para los mensajes viejos.
 
-        language = data.replace(
-            "set_language_",
-            "",
-            1
-        )
-
-        set_user_language(
-            user_id,
-            language
-        )
-
-        language = get_user_language(user_id)
-
-        await query.answer(
-            f"Idioma: {get_language_name(language)}"
-        )
-
-        await query.edit_message_text(
-            build_help_main_text(
-                role,
-                language
-            ),
-            reply_markup=build_help_main_keyboard(
-                role,
-                language
-            )
-        )
-
-        return True
 
 
     return False

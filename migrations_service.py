@@ -257,6 +257,29 @@ def release_lock():
 # APLICAR
 # =========================
 
+# El último fallo de migración, en memoria del proceso. No hace falta más: el
+# arranque las reintenta, así que si sigue fallando se vuelve a poner sola, y
+# si ya se arregló desaparece al reiniciar. Guardarlo en la base sería guardar
+# un fallo de la base en la base.
+_ULTIMO_FALLO = {"version": None, "name": None, "detail": None}
+
+
+def _recordar_fallo_de_migracion(version, name, detail):
+
+    _ULTIMO_FALLO["version"] = version
+    _ULTIMO_FALLO["name"] = name
+    _ULTIMO_FALLO["detail"] = str(detail or "")[:400]
+
+
+def ultimo_fallo_de_migracion():
+    """{version, name, detail} del último fallo, o None si no hubo."""
+
+    if not _ULTIMO_FALLO.get("version"):
+        return None
+
+    return dict(_ULTIMO_FALLO)
+
+
 def apply_migration(version, name, statements):
     """
     Aplica una migración en una única transacción.
@@ -365,6 +388,14 @@ def run_migrations():
                     detail
                 )
 
+                # SE GUARDA EL FALLO. El detalle solo se imprimía, así que la
+                # pantalla del panel listaba esa versión bajo «Pendientes:» sin
+                # más: una migración atascada en una violación de constraint se
+                # leía IGUAL que una que simplemente no ha corrido todavía. Y
+                # el arranque la reintenta y vuelve a fallar cada vez, en
+                # silencio.
+                _recordar_fallo_de_migracion(version, name, detail)
+
                 break
 
 
@@ -413,6 +444,18 @@ def describe_migrations():
         f"Aplicadas: {len(applied)} de {len(MIGRATIONS)}"
     ]
 
+    fallo = ultimo_fallo_de_migracion()
+
+    if fallo:
+
+        lines.extend([
+            "",
+            f"🚨 La {fallo['version']} ({fallo['name']}) está FALLANDO:",
+            f"   {fallo['detail']}",
+            "   Se reintenta en cada arranque y vuelve a fallar, así que las "
+            "siguientes tampoco entran.",
+        ])
+
     if pending:
 
         lines.append("")
@@ -420,7 +463,12 @@ def describe_migrations():
 
         for version, name, _ in pending:
 
-            lines.append(f"  • {version} · {name}")
+            marca_fallo = (
+                " ← esta es la que falla"
+                if fallo and fallo["version"] == version else ""
+            )
+
+            lines.append(f"  • {version} · {name}{marca_fallo}")
 
     else:
 

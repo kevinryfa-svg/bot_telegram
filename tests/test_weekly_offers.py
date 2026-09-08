@@ -513,43 +513,67 @@ def test_an_index_that_changed_shape_really_gets_replaced(db_module):
     corrige.
     """
 
-    with db_module.conn.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS plan_offers")
-        cur.execute("""
-            CREATE TABLE plan_offers (
-                id SERIAL PRIMARY KEY, plan_id INTEGER, group_id INTEGER,
-                percent INTEGER, amount NUMERIC(12, 2),
-                base_amount NUMERIC(12, 2), currency TEXT DEFAULT 'EUR',
-                stripe_price_id TEXT, starts_at TIMESTAMP, ends_at TIMESTAMP,
-                week_key TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    # ESTE TEST ROMPE EL ESQUEMA A PROPÓSITO, así que lo deja como estaba pase
+    # lo que pase. Sin el `finally`, cualquier fallo a mitad —o una migración
+    # que no llegue a añadir user_id— dejaba plan_offers sin esa columna para
+    # TODOS los tests siguientes: en una ejecución salieron 683 errores de
+    # «column does not exist» que no tenían nada que ver con lo que se estaba
+    # probando. Un test que puede tumbar la suite entera al azar no sirve para
+    # vigilar nada.
+    try:
+
+        with db_module.conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS plan_offers")
+            cur.execute("""
+                CREATE TABLE plan_offers (
+                    id SERIAL PRIMARY KEY, plan_id INTEGER, group_id INTEGER,
+                    percent INTEGER, amount NUMERIC(12, 2),
+                    base_amount NUMERIC(12, 2), currency TEXT DEFAULT 'EUR',
+                    stripe_price_id TEXT, starts_at TIMESTAMP, ends_at TIMESTAMP,
+                    week_key TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute(
+                "CREATE UNIQUE INDEX idx_plan_offers_semana "
+                "ON plan_offers (plan_id, week_key)"
             )
-        """)
-        cur.execute(
-            "CREATE UNIQUE INDEX idx_plan_offers_semana "
-            "ON plan_offers (plan_id, week_key)"
-        )
 
-    db_module.create_tables()
+        db_module.create_tables()
 
-    with db_module.conn.cursor() as cur:
-        cur.execute("""
-            SELECT indexdef FROM pg_indexes
-            WHERE tablename = 'plan_offers'
-              AND indexname = 'idx_plan_offers_semana_persona'
-        """)
-        fila = cur.fetchone()
+        with db_module.conn.cursor() as cur:
+            cur.execute("""
+                SELECT indexdef FROM pg_indexes
+                WHERE tablename = 'plan_offers'
+                  AND indexname = 'idx_plan_offers_semana_persona'
+            """)
+            fila = cur.fetchone()
 
-        cur.execute("""
-            SELECT 1 FROM pg_indexes
-            WHERE tablename = 'plan_offers'
-              AND indexname = 'idx_plan_offers_semana'
-        """)
-        viejo = cur.fetchone()
+            cur.execute("""
+                SELECT 1 FROM pg_indexes
+                WHERE tablename = 'plan_offers'
+                  AND indexname = 'idx_plan_offers_semana'
+            """)
+            viejo = cur.fetchone()
 
-    assert fila is not None, "el índice nuevo no llegó a crearse"
-    assert "user_id" in fila[0], "y tiene que incluir a la persona"
-    assert viejo is None, "el viejo se queda y vuelve a haber dos reglas"
+        assert fila is not None, "el índice nuevo no llegó a crearse"
+        assert "user_id" in fila[0], "y tiene que incluir a la persona"
+        assert viejo is None, "el viejo se queda y vuelve a haber dos reglas"
+
+    finally:
+
+        # Se reconstruye desde cero: si create_tables() se quedó a medias, la
+        # tabla que hay puede estar en cualquier estado.
+        try:
+            db_module.conn.rollback()
+        except Exception:
+            pass
+
+        with db_module.conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS plan_offers CASCADE")
+
+        db_module.conn.commit()
+        db_module.create_tables()
 
 
 # =========================

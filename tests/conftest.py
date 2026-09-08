@@ -100,6 +100,12 @@ def clean_db(db_module):
         "user_reengagement",
         "group_delivery_health",
         "guardian_group_settings",
+        # Regla 8 otra vez: `log_event` escribe aquí desde media plataforma, y
+        # sin limpiarla los recuentos de una prueba incluyen los eventos que
+        # dejaron las anteriores.
+        "audit_logs",
+        "group_user_promo_codes",
+        "user_preferences",
         "payment_incidents",
         "interest_followups",
         "group_payment_provider_configs",

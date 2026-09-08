@@ -301,3 +301,193 @@ async def repair_incident(context, incident_id, actor_user_id, duration_days):
     resultado["ok"] = True
 
     return resultado
+
+
+# =========================
+# LAS INCIDENCIAS ABIERTAS, QUE NO SE PODÍAN LISTAR
+# =========================
+# Una incidencia de cobro sin acceso solo se podía tocar desde el MENSAJE que la
+# anunció: los botones «Conceder el acceso» y «Devolver el pago» viven en ese
+# aviso y en ningún otro sitio. Si el aviso se perdió en el scroll, se borró o
+# le llegó a otro responsable, la incidencia quedaba inalcanzable — con el
+# dinero ya cobrado y el comprador esperando su acceso.
+#
+# No había NINGUNA pantalla del panel que las listara.
+
+def contar_incidencias_abiertas():
+    """Cuántas hay sin resolver. None si no se pudo contar."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT COUNT(*)::bigint FROM payment_incidents "
+                "WHERE resolved_at IS NULL"
+            )
+
+            return int((cur.fetchone() or [0])[0] or 0)
+
+    except Exception as e:
+
+        print("Incidencias: no se pudieron contar:", str(e)[:200])
+
+        return None
+
+
+def listar_incidencias_abiertas(limit=20):
+    """
+    [(id, kind, user_id, group_id, nombre, provider, detail, created_at)].
+
+    Las más viejas PRIMERO, al contrario que casi todas las listas del panel:
+    aquí lo urgente no es lo último que ha pasado, es el comprador que lleva más
+    tiempo pagado y sin acceso.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT i.id,
+                       i.kind,
+                       i.user_id,
+                       i.group_id,
+                       COALESCE(g.name, 'la comunidad'),
+                       i.provider,
+                       i.detail,
+                       i.created_at
+                FROM payment_incidents i
+                LEFT JOIN groups g ON g.id = i.group_id
+                WHERE i.resolved_at IS NULL
+                ORDER BY i.created_at ASC
+                LIMIT %s
+
+            """, (int(limit),))
+
+            return cur.fetchall() or []
+
+    except Exception as e:
+
+        print("Incidencias: no se pudieron listar:", str(e)[:200])
+
+        return []
+
+
+def antiguedad_en_palabras(created_at):
+    """«hace 3 h», «hace 2 días». Vacío si no se sabe."""
+
+    if not created_at:
+        return ""
+
+    try:
+        segundos = (datetime.now() - created_at).total_seconds()
+
+    except Exception:
+        return ""
+
+
+    if segundos < 3600:
+        return f"hace {int(segundos // 60)} min"
+
+    if segundos < 86400:
+        return f"hace {int(segundos // 3600)} h"
+
+    return f"hace {int(segundos // 86400)} día(s)"
+
+
+def build_open_incidents_text(limit=20):
+    """La pantalla entera. Nunca lanza."""
+
+    try:
+
+        filas = listar_incidencias_abiertas(limit=limit)
+        total = contar_incidencias_abiertas()
+
+    except Exception as e:
+
+        return f"🚨 No se pudo leer las incidencias: {str(e)[:200]}"
+
+
+    if not filas:
+
+        if total is None:
+            return (
+                "🚨 Incidencias de cobro\n\n"
+                "No se ha podido comprobar. Vuelve a intentarlo."
+            )
+
+        return (
+            "🚨 Incidencias de cobro\n\n"
+            "✅ Ninguna abierta: nadie ha pagado sin recibir su acceso."
+        )
+
+
+    lineas = [
+        "🚨 Incidencias de cobro sin resolver",
+        "",
+        "Cada una es alguien que PAGÓ y no tiene acceso. Las más antiguas "
+        "primero.",
+        "",
+    ]
+
+    for (
+        incident_id, kind, incident_user_id, group_id, nombre,
+        provider, detail, created_at
+    ) in filas:
+
+        edad = antiguedad_en_palabras(created_at)
+
+        lineas.append(
+            f"#{incident_id} · {nombre} · {kind or '-'}"
+            + (f" · {edad}" if edad else "")
+        )
+
+        lineas.append(
+            f"   Comprador {incident_user_id or '-'}"
+            + (f" · {provider}" if provider else "")
+        )
+
+        if detail:
+            lineas.append(f"   {str(detail)[:160]}")
+
+        lineas.append("")
+
+
+    from admin_menu_catalog import nota_de_recorte
+
+    recorte = nota_de_recorte(len(filas), total)
+
+    if recorte:
+        lineas.append(recorte.rstrip("\n"))
+
+    return "\n".join(lineas)
+
+
+def build_open_incidents_keyboard(limit=20):
+    """Un botón por incidencia, que era lo que no existía en ningún sitio."""
+
+    from telegram import InlineKeyboardButton
+
+    from payment_incident_service import INCIDENT_BANNED_BUYER
+
+    from admin_menu_catalog import build_admin_screen_keyboard
+
+    extra = []
+
+    for fila in listar_incidencias_abiertas(limit=limit):
+
+        incident_id, kind, incident_user_id, _group_id, nombre = fila[:5]
+
+        extra.append([InlineKeyboardButton(
+            f"#{incident_id} · {str(nombre)[:18]} · {incident_user_id}",
+            # Al vetado no se le ofrece conceder acceso: el botón es el
+            # de devolver, la misma regla que en el aviso. La constante se
+            # importa para que sea LA misma y no una copia del texto.
+            callback_data=f"incident_fix_{incident_id}"
+            if kind != INCIDENT_BANNED_BUYER
+            else f"incident_refund_{incident_id}"
+        )])
+
+    return build_admin_screen_keyboard("admin_incidents", extra=extra)

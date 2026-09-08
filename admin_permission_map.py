@@ -82,6 +82,10 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "menu_business": ("can_view_stats",),
     "admin_stats": ("can_view_stats",),
     "admin_income": ("can_view_stats",),
+    "admin_recovery": (SUPER_ADMIN_ONLY,),
+    "admin_incidents": (SUPER_ADMIN_ONLY,),
+    "admin_bootstrap": (SUPER_ADMIN_ONLY,),
+    "admin_bootstrap_list_plans": (SUPER_ADMIN_ONLY,),
     "admin_active_users": ("can_view_stats",),
 
     "menu_logs": ("can_view_logs",),
@@ -222,7 +226,6 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     ),
     "owner_panel_security_info": ("can_manage_groups", "can_view_logs"),
     "owner_panel_location_info": ("can_manage_groups",),
-    "owner_panel_access_type_info": ("can_manage_groups",),
     "owner_panel_general_info": ("can_manage_groups", "can_edit_group_texts"),
     "owner_panel_audit": ("can_manage_groups", "can_view_logs"),
     "owner_panel_audit_detail": ("can_manage_groups", "can_view_logs"),
