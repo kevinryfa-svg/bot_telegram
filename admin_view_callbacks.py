@@ -12,6 +12,7 @@ capturar un callback de esta región, y que ninguna de estas puede capturar
 uno ajeno. Sin esas dos propiedades el orden importaría.
 """
 
+from admin_menu_catalog import build_admin_screen_keyboard
 from audit_log_service import log_event
 from db import conn
 from rbac_helpers import get_admin_group_ids
@@ -229,21 +230,42 @@ async def handle_admin_view_callbacks(update, context, query, user_id, data):
             return
 
 
+        # payments.amount ESTÁ EN CÉNTIMOS. Aquí se pintaba en crudo, así que
+        # una venta de 3,60 € se leía «Importe: 360 EUR» y una de 15 €, «1500
+        # EUR». Es la pantalla que se abre para echar un ojo a las ventas
+        # recientes: el operador miraba sus propios ingresos multiplicados por
+        # cien. El mismo error se arregló en el panel de ingresos y esta se
+        # quedó atrás.
+        from start_offer_service import formato_importe
+
         text = "💳 Últimos pagos\n\n"
 
 
         for payment_user_id, group_name, amount, currency, status, payment_date in payments:
 
+            importe = (
+                formato_importe(int(amount) / 100.0, currency)
+                if amount is not None else None
+            )
+
+            try:
+                fecha = payment_date.strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                fecha = str(payment_date or "-")
+
             text += (
                 f"Usuario: {payment_user_id}\n"
                 f"Grupo: {group_name or '-'}\n"
-                f"Importe: {amount or '-'} {currency or ''}\n"
+                f"Importe: {importe or '-'}\n"
                 f"Estado: {status or '-'}\n"
-                f"Fecha: {payment_date or '-'}\n\n"
+                f"Fecha: {fecha}\n\n"
             )
 
 
-        await query.message.reply_text(text)
+        await query.message.reply_text(
+            text,
+            reply_markup=build_admin_screen_keyboard("admin_view_payments")
+        )
 
         return
 

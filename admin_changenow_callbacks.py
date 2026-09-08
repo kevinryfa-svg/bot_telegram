@@ -15,6 +15,7 @@ uno ajeno. Sin esas dos propiedades el orden importaría.
 import json
 
 from admin_payment_provider_callbacks import OWNER_PAYMENT_PROVIDER_CHANGENOW
+from audit_log_service import log_event
 from db import conn
 from payment_access_service import grant_group_access_after_payment
 from telegram import (
@@ -106,7 +107,7 @@ async def handle_admin_changenow_callbacks(update, context, query, user_id, data
             ])
             keyboard.append([
                 InlineKeyboardButton(f"✅ Confirmar #{transaction_id}", callback_data=f"admin_changenow_mark_paid_{transaction_id}"),
-                InlineKeyboardButton(f"❌ Rechazar #{transaction_id}", callback_data=f"admin_changenow_reject_{transaction_id}")
+                InlineKeyboardButton(f"❌ Rechazar #{transaction_id}", callback_data=f"admin_changenow_reject_ask_{transaction_id}")
             ])
 
         keyboard.extend([
@@ -123,9 +124,51 @@ async def handle_admin_changenow_callbacks(update, context, query, user_id, data
 
         return
 
+    # PIDE CONFIRMACIÓN. Esto marca como fallido un pago de CRIPTO de una
+    # persona real, con un toque, sin paso intermedio, sin forma de deshacerlo
+    # y sin dejar rastro de quién lo hizo. Y estaba pegado al botón de
+    # confirmar en la misma pantalla.
+    if data.startswith("admin_changenow_reject_ask_"):
+
+        transaction_id = extract_commercial_request_id(
+            data, "admin_changenow_reject_ask_"
+        )
+
+        await send_clean_message(
+            context,
+            query.message.chat_id,
+            f"⚠️ Vas a marcar como FALLIDO el pago #{transaction_id}.\n\n"
+            "Si esa persona ha enviado la cripto de verdad, se queda sin "
+            "acceso y sin su dinero, y esto no se deshace desde aquí.\n\n"
+            "¿Seguro?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🔴 Sí, rechazarlo",
+                    callback_data=f"admin_changenow_reject_{transaction_id}"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ No, volver a revisión",
+                    callback_data="admin_changenow_manual_review"
+                )],
+            ])
+        )
+
+        return
+
+
     if data.startswith("admin_changenow_reject_"):
 
         transaction_id = extract_commercial_request_id(data, "admin_changenow_reject_")
+
+        log_event(
+            "changenow_payment_rejected",
+            category="payment",
+            severity="warning",
+            scope="global",
+            actor_user_id=query.from_user.id if query.from_user else None,
+            message="Pago ChangeNOW marcado como fallido a mano.",
+            metadata={"transaction_id": str(transaction_id)},
+        )
 
         with conn.cursor() as cur:
 
@@ -241,7 +284,16 @@ async def handle_admin_changenow_callbacks(update, context, query, user_id, data
         await send_clean_message(
             context,
             query.message.chat_id,
-            "✅ Pago ChangeNOW confirmado manualmente." if result.get("ok") else "⚠️ No pude conceder el acceso. El pago sigue en revisión.",
+            # CON EL MOTIVO. Decía «no pude conceder el acceso» y punto: la
+            # razón se guardaba en metadata_json y solo se podía leer con SQL,
+            # así que el operador se quedaba mirando un pago cobrado sin saber
+            # qué arreglar.
+            (
+                "✅ Pago ChangeNOW confirmado manualmente."
+                if result.get("ok") else
+                "⚠️ No pude conceder el acceso. El pago sigue en revisión.\n\n"
+                f"Motivo: {result.get('reason') or 'sin detalle'}"
+            ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🧪 Volver a revisión", callback_data="admin_changenow_manual_review")],
                 [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]

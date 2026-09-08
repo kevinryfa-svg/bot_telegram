@@ -37,6 +37,16 @@ def format_purchase_amount(amount, currency):
 
     try:
 
+        # Por el formateador de la tienda: a mano salía «3.60 EUR», con el
+        # punto de la base de datos, en el mensaje que lee alguien que ACABA de
+        # pagar. Es el momento en el que más se mira un número.
+        from start_offer_service import formato_importe
+
+        escrito = formato_importe(int(amount) / 100.0, currency)
+
+        if escrito:
+            return escrito
+
         return f"{int(amount) / 100:.2f} {(currency or '').upper()}".strip()
 
     except Exception:
@@ -50,12 +60,18 @@ def format_purchase_amount(amount, currency):
 
 def build_purchase_confirmation_text(group_name, plan_name, amount_total,
                                      currency, expiration, expire_seconds,
-                                     link, language=DEFAULT_LANGUAGE):
+                                     link, language=DEFAULT_LANGUAGE,
+                                     es_recurrente=False):
     """
     Mensaje de compra confirmada: lo lee alguien que acaba de pagar.
 
     Confirma el cobro, dice qué ha comprado y hasta cuándo, da el enlace con su
     validez real, y avisa de que es personal y de un solo uso.
+
+    Y SI SE VA A VOLVER A COBRAR, LO DICE. Con una suscripción decía «Tu acceso
+    dura hasta el 8/10» y nada más: quien lo leía entendía que pagaba una vez.
+    El cargo siguiente le llegaba de sorpresa, y una sorpresa en el banco es una
+    reclamación —que además cuesta comisión aparte del reembolso.
     """
 
     lines = [
@@ -99,6 +115,11 @@ def build_purchase_confirmation_text(group_name, plan_name, amount_total,
 
 
         lines.append(t("purchase.until", language, date=fecha))
+
+        if es_recurrente:
+
+            lines.append("")
+            lines.append(t("purchase.renews", language, date=fecha))
 
 
     lines.extend([
@@ -250,7 +271,7 @@ def build_link_pending_keyboard(telegram_group_id, language=DEFAULT_LANGUAGE):
 def build_buyer_message(group_name, plan_name, amount_total, currency,
                         expiration, expire_seconds, link,
                         telegram_group_id, language=DEFAULT_LANGUAGE,
-                        group_id=None):
+                        group_id=None, es_recurrente=False):
     """
     Devuelve (texto, teclado) según haya enlace o no.
 
@@ -269,7 +290,8 @@ def build_buyer_message(group_name, plan_name, amount_total, currency,
                 expiration=expiration,
                 expire_seconds=expire_seconds,
                 link=link,
-                language=language
+                language=language,
+                es_recurrente=es_recurrente
             ),
             build_purchase_confirmation_keyboard(
                 telegram_group_id,

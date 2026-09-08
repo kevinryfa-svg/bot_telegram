@@ -37,7 +37,10 @@ from admin_button_audit import (
     format_admin_button_audit_summary,
     load_callback_router_source
 )
-from admin_menu_catalog import build_admin_menu_button_rows
+from admin_menu_catalog import (
+    build_admin_menu_button_rows,
+    build_admin_screen_keyboard,
+)
 from audit_log_service import (
     complete_active_beta_cycle,
     complete_expired_beta_cycles,
@@ -247,6 +250,8 @@ from group_delivery_health_service import (
     recheck_group_delivery_live
 )
 from payment_access_service import (
+    MAX_PLAN_DURATION_DAYS,
+    PENDING_PAYMENT_STALE_AFTER,
     get_user_group_access_state,
     grant_group_access_after_payment,
     log_purchase_blocked_existing_access,
@@ -1108,12 +1113,20 @@ def build_existing_group_access_text(access_state):
                 "Si ya pagaste, revisa el estado o abre soporte."
             )
 
+        # Decía «puedes crear un nuevo intento desde Ver planes», y no se
+        # puede: la compra está bloqueada mientras ese intento siga pendiente.
+        # Ahora se dice cuánto hay que esperar, que es lo único útil aquí.
+        horas = int(PENDING_PAYMENT_STALE_AFTER.total_seconds() // 3600) or 1
+
         return (
-            f"⏳ Hay un intento de pago pendiente para {group_name}, pero no puedo recuperar el enlace de pago.\n\n"
-            f"Proveedor: {provider}\n"
-            f"Estado: {access_state.get('last_payment_status') or 'pending'}\n\n"
-            "Si ya pagaste, no crees otro pago: abre soporte para revisarlo y evitar duplicados.\n"
-            "Si no llegaste a pagar, puedes crear un nuevo intento desde Ver planes."
+            f"⏳ Hay un intento de pago pendiente para {group_name} y no "
+            "consigo recuperar su enlace.\n\n"
+            "Si ya pagaste, NO pagues otra vez: abre soporte y lo revisamos "
+            "—si el cobro está hecho, te damos el acceso sin cobrarte de "
+            "nuevo.\n\n"
+            f"Si no llegaste a pagar, el intento se libera solo en {horas} h y "
+            "podrás comprar con normalidad. Si tienes prisa, escríbenos y lo "
+            "soltamos al momento."
         )
 
     if access_state.get("reason") == "paid_without_access_record":
@@ -1410,6 +1423,30 @@ def _boton_de_cambio_de_plan(user_id, group_id, telegram_group_id):
     )
 
 
+def contar_enlaces_activos():
+    """Cuántos enlaces de invitación hay guardados. 0 si no se puede saber.
+
+    Se dice el número ANTES de preguntar si se revocan todos: «vas a revocar
+    todos» no da idea de nada, y «vas a revocar 412» sí.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("SELECT COUNT(*) FROM invite_links")
+
+            fila = cur.fetchone()
+
+            return int(fila[0]) if fila else 0
+
+    except Exception as e:
+
+        print("No se pudieron contar los enlaces:", str(e)[:160])
+
+        return 0
+
+
 def build_existing_group_access_keyboard(group_id, access_state, retry_callback=None,
                                          user_id=None):
 
@@ -1489,12 +1526,12 @@ def build_existing_group_access_keyboard(group_id, access_state, retry_callback=
 
     elif access_state.get("subscription_status") == "expired":
 
+        # UN SOLO BOTÓN. Había dos —«Renovar acceso» y «Ver planes»— con el
+        # MISMO destino: se pulsa uno, sale la lista de planes, y quien creía
+        # haberse equivocado pulsa el otro y le sale lo mismo. Y ninguna de las
+        # dos etiquetas decía que ahí se ven los precios.
         keyboard.append([InlineKeyboardButton(
-            "🔄 Renovar acceso",
-            callback_data=f"group_{group_id}"
-        )])
-        keyboard.append([InlineKeyboardButton(
-            "📋 Ver planes",
+            "🔄 Renovar — ver planes y precios",
             callback_data=f"group_{group_id}"
         )])
 
@@ -19782,7 +19819,13 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
 
         if reason == "not_free_group":
 
-            message = "Este grupo aún no está configurado como gratuito ni tiene planes activos."
+            # Decía cómo está la base de datos («configurado como gratuito»),
+            # no lo que le pasa a quien lo lee.
+            message = (
+                "Esta comunidad todavía no tiene ningún acceso a la venta ni "
+                "entrada gratuita. Mira las demás o escríbenos y te avisamos "
+                "cuando abra."
+            )
 
         elif reason == "telegram_error":
 
@@ -20029,8 +20072,14 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
                 "Se abre la página segura de Stripe. En cuanto el pago se "
                 "confirme, recibes aquí mismo tu enlace de entrada, sin tener "
                 "que hacer nada más.\n\n"
-                "Si cierras la página sin pagar, no se te cobra nada y puedes "
-                "volver a intentarlo cuando quieras."
+                # NO SE PROMETE LO QUE NO SE CUMPLE. Aquí decía «puedes volver
+                # a intentarlo cuando quieras», y el bot bloquea una compra
+                # nueva mientras el intento anterior siga pendiente —dos horas—
+                # para no cobrar dos veces con los métodos que confirman tarde.
+                # La contradicción caía justo en el momento de pagar.
+                "Si cierras la página sin pagar, no se te cobra nada: vuelve a "
+                "este mismo enlace para terminar, o pídelo otra vez desde "
+                "«Mis accesos»."
             ),
             reply_markup=build_payment_link_keyboard(group_id)
         )
@@ -21369,7 +21418,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -21422,7 +21472,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -21893,7 +21944,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -21936,7 +21988,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -22021,7 +22074,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -24474,7 +24528,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_clean_message(
             context,
             query.message.chat_id,
-                        "❌ Comunidad no encontrada o no disponible."
+                        "❌ Comunidad no encontrada o no disponible.",
+                        reply_markup=build_recover_navigation_keyboard()
                     )
 
                     return
@@ -24522,9 +24577,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     WHERE p.group_id=%(grupo)s
                     AND p.is_active=TRUE
 
+                    -- SOLO LO QUE SE PUEDE ENTREGAR. La concesión de acceso
+                    -- rechaza una duración fuera de rango (payment_access_
+                    -- service lanza «Duración de plan fuera de rango»), y el
+                    -- escaparate ya lo filtraba. Aquí no: esta pantalla
+                    -- enseñaba el plan con su botón de pagar, el comprador
+                    -- pagaba y el acceso no se le podía dar. En producción hay
+                    -- uno de 1.300.000 días.
+                    AND p.duration_days IS NOT NULL
+                    AND p.duration_days >= 1
+                    AND p.duration_days <= %(max_dias)s
+
                     ORDER BY 4 ASC NULLS LAST, p.id ASC
 
-                """, {"grupo": group_id, "comprador": user_id})
+                """, {
+                    "grupo": group_id,
+                    "comprador": user_id,
+                    "max_dias": MAX_PLAN_DURATION_DAYS,
+                })
 
                 plans = cur.fetchall()
 
@@ -24535,7 +24605,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
             context,
             query.message.chat_id,
-                "❌ Error cargando planes."
+                "❌ Error cargando planes. No se te ha cobrado nada.",
+                reply_markup=build_group_recovery_keyboard(group_id)
             )
 
             return
@@ -24592,7 +24663,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
             context,
             query.message.chat_id,
-                "Este grupo aún no está configurado como gratuito ni tiene planes activos."
+                "Esta comunidad todavía no tiene ningún acceso a la venta. "
+                "Mira las demás o escríbenos y te avisamos cuando abra.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -24604,9 +24677,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         changenow_available = is_changenow_group_checkout_available(group_id)
         guardarian_available = is_guardarian_group_checkout_available(group_id)
 
+        # EL RESUMEN SE HACE CON LOS QUE SE PUEDEN PAGAR. El texto de arriba
+        # listaba TODOS los planes activos, y este bucle se salta los que no
+        # tienen precio de Stripe o cuyo proveedor está apagado. Resultado: una
+        # pantalla que decía «Mensual — 15 EUR · Anual — 120 EUR» y debajo solo
+        # «Canjear código / Ayuda / Volver». Precios sin forma de pagarlos.
+        planes_con_boton = []
 
-        for (plan_id, name, price_id, amount, currency, payment_provider,
-             duration_days, amount_tarifa, oferta_percent) in plans:
+
+        for plan in plans:
+
+            (plan_id, name, price_id, amount, currency, payment_provider,
+             duration_days, amount_tarifa, oferta_percent) = plan
 
             payment_provider = normalize_plan_payment_provider(payment_provider)
 
@@ -24647,6 +24729,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     continue
 
+                planes_con_boton.append(plan)
+
                 keyboard.append([
 
                     InlineKeyboardButton(
@@ -24661,6 +24745,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
             if payment_provider == OWNER_PAYMENT_PROVIDER_PAYPAL and paypal_available:
+
+                planes_con_boton.append(plan)
 
                 keyboard.append([
 
@@ -24677,6 +24763,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if payment_provider == OWNER_PAYMENT_PROVIDER_REVOLUT and revolut_available:
 
+                planes_con_boton.append(plan)
+
                 keyboard.append([
 
                     InlineKeyboardButton(
@@ -24692,6 +24780,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if payment_provider == OWNER_PAYMENT_PROVIDER_CHANGENOW and changenow_available:
 
+                planes_con_boton.append(plan)
+
                 keyboard.append([
 
                     InlineKeyboardButton(
@@ -24706,6 +24796,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
             if payment_provider == OWNER_PAYMENT_PROVIDER_GUARDARIAN and guardarian_available:
+
+                planes_con_boton.append(plan)
 
                 keyboard.append([
 
@@ -24769,10 +24861,42 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # encuentra unos precios sueltos y no sabe qué está comprando.
         nombre_comunidad = _nombre_de_comunidad(group_id)
 
+        # Si NINGUNO se puede pagar, no se enseña una lista vacía con botones
+        # de ayuda: se dice lo que pasa. Antes esta pantalla podía salir con
+        # tres precios y ni una forma de pagarlos.
+        if not planes_con_boton:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                (f"⚠️ {nombre_comunidad}: los accesos están sin activar ahora "
+                 "mismo.\n\n" if nombre_comunidad else
+                 "⚠️ Los accesos de esta comunidad están sin activar ahora "
+                 "mismo.\n\n")
+                + "No es cosa tuya y no se te ha cobrado nada. Ya hemos "
+                "avisado a quien puede arreglarlo; mientras, puedes mirar las "
+                "demás comunidades.",
+                reply_markup=build_recover_navigation_keyboard()
+            )
+
+            log_event(
+                "plans_screen_without_payable_plan",
+                category="payment",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="La pantalla de planes no tenía ningún plan pagable.",
+                metadata={"planes_activos": len(plans)},
+            )
+
+            return
+
+
         intro_text = (
             (f"💳 {nombre_comunidad} — elige tu acceso\n\n"
              if nombre_comunidad else "💳 Elige tu acceso\n\n")
-            + f"{format_plans_summary(plans)}\n\n"
+            + f"{format_plans_summary(planes_con_boton)}\n\n"
             "Recibes tu enlace de entrada al instante tras el pago.\n"
             "Puedes pagar con tarjeta, PayPal, Revolut o cripto, según lo que "
             "tenga activo esta comunidad."
@@ -24786,7 +24910,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 + (f"Comunidad: {nombre_comunidad}\n\n"
                    if nombre_comunidad else "")
                 + "Puedes recuperarlo eligiendo un plan:\n\n"
-                + f"{format_plans_summary(plans)}\n\n"
+                + f"{format_plans_summary(planes_con_boton)}\n\n"
                 "Recuperas el acceso al instante tras el pago."
             )
 
@@ -26981,7 +27105,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Error cargando planes:", e)
 
             await query.message.reply_text(
-                "❌ Error cargando planes."
+                "❌ Error cargando planes. No se te ha cobrado nada.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -27809,7 +27934,60 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         from platform_health_service import build_platform_health_text
 
-        await query.message.reply_text(build_platform_health_text())
+        # CON BOTONES. Esta pantalla se mira DOS veces —antes y después de
+        # arreglar algo— y se enviaba sin uno solo: para volver a verla había
+        # que teclear /admin y navegar otra vez.
+        await query.message.reply_text(
+            build_platform_health_text(),
+            reply_markup=build_admin_screen_keyboard(
+                "admin_health",
+                extra=[[InlineKeyboardButton(
+                    "💳 ¿Se puede cobrar ahora?",
+                    callback_data="admin_sale_readiness"
+                )]]
+            )
+        )
+
+        return
+
+
+    # =========================
+    # ¿SE PUEDE COBRAR AHORA MISMO?
+    # =========================
+    # Esta comprobación existía y NO tenía botón en ningún sitio: solo corría en
+    # el arranque —un print que no lee nadie— y en el vigilante horario, que
+    # calla mientras el estado no cambie. Es la que caza «el precio no existe en
+    # Stripe», «no se llega al servidor de cobro» y «se anuncia un importe y
+    # Stripe cobraría otro»: justo lo que hay que poder preguntar cuando alguien
+    # dice que no puede pagar.
+
+    if data == "admin_sale_readiness":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        try:
+
+            from sale_readiness_service import describe_sale_readiness
+
+            # avisar=False: se está mirando a propósito, no hace falta que
+            # además llegue un mensaje.
+            linea = describe_sale_readiness(avisar=False)
+
+        except Exception as e:
+
+            linea = f"No se pudo comprobar: {str(e)[:200]}"
+
+        await query.message.reply_text(
+            "💳 ¿Se puede cobrar ahora mismo?\n\n" + linea,
+            reply_markup=build_admin_screen_keyboard("admin_sale_readiness")
+        )
 
         return
 
@@ -27843,7 +28021,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             texto = build_scoped_income_text(group_ids)
 
 
-        await query.message.reply_text(texto)
+        # El equivalente del propietario lleva exportar a CSV y desglose; esta
+        # no llevaba ni volver.
+        await query.message.reply_text(
+            texto,
+            reply_markup=build_admin_screen_keyboard("admin_income")
+        )
 
         return
 
@@ -28199,10 +28382,53 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # REVOCAR TODOS LOS LINKS
     # =========================
 
+    # PIDE CONFIRMACIÓN, Y DICE A CUÁNTOS AFECTA. Esto revoca TODOS los
+    # enlaces de invitación de TODA la plataforma —sin filtro, sin alcance de
+    # comunidad— y estaba a un solo toque desde el menú, justo encima de
+    # «Volver». Un dedo torcido dejaba sin entrada a todos los socios que
+    # pagan, de todas las comunidades, y no quedaba registro de quién lo hizo.
     if data == "admin_revoke_links":
 
         if not is_super_admin(query.from_user.id):
             return
+
+        cuantos = contar_enlaces_activos()
+
+        await query.message.reply_text(
+            "⚠️ Vas a revocar TODOS los enlaces de invitación de TODA la "
+            f"plataforma: {cuantos} enlace(s), de todas las comunidades.\n\n"
+            "Quien tenga uno guardado y no haya entrado todavía se queda "
+            "fuera, aunque haya pagado. Esto no se puede deshacer: los "
+            "enlaces nuevos hay que pedirlos de uno en uno.\n\n"
+            "¿Seguro?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"🔴 Sí, revocar los {cuantos}",
+                    callback_data="admin_revoke_links_yes"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ No, volver",
+                    callback_data="admin_back_main"
+                )],
+            ])
+        )
+
+        return
+
+
+    if data == "admin_revoke_links_yes":
+
+        if not is_super_admin(query.from_user.id):
+            return
+
+        log_event(
+            "admin_revoke_all_links",
+            category="access",
+            severity="warning",
+            scope="global",
+            actor_user_id=query.from_user.id,
+            message="Revocación masiva de enlaces de invitación.",
+        )
 
         try:
 
@@ -28264,10 +28490,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
 
+            fallidos = len(links) - total
+
+            resumen = f"🔄 {total} enlace(s) revocado(s)."
+
+            if fallidos > 0:
+
+                # Antes solo se contaban los que salieron bien, así que una
+                # revocación a medias se leía como completa: los que quedaron
+                # vivos seguían dando entrada sin que nadie lo supiera.
+                resumen += (
+                    f"\n\n⚠️ {fallidos} no se pudieron revocar y siguen "
+                    "dando acceso. Vuelve a lanzarlo o revísalos en el grupo."
+                )
+
             await query.message.reply_text(
-
-                f"🔄 {total} links revocados correctamente."
-
+                resumen,
+                reply_markup=build_admin_screen_keyboard()
             )
 
         except Exception as e:
@@ -29078,6 +29317,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             event_key=f"startbuy_{group_id}_{plan_id}",
             group_id=group_id
         )
+
+        # LA PUERTA DE REGIÓN, TAMBIÉN AQUÍ. Todos los demás caminos al cobro
+        # la piden —PayPal, Revolut, ChangeNOW, Guardarian y el de precio de
+        # Stripe— y este no. Y este es justo el más usado: el botón de un toque
+        # de /start, el enlace de un anuncio (?start=group_N) y los dos botones
+        # del aviso de renovación. O sea que la comunidad con región restringida
+        # se colaba precisamente por la vía de los compradores más decididos, y
+        # al dueño le tocaba echarlos a mano o devolverles el dinero.
+        if group_requires_location_gate(group_id):
+
+            await request_location_verification(
+                context,
+                query.message.chat_id,
+                group_id,
+                "checkout",
+                price_id=fila[0],
+                telegram_user=query.from_user
+            )
+
+            return
+
 
         await create_checkout_for_user(
             context,

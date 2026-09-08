@@ -213,7 +213,7 @@ def test_revolut_sends_the_converted_amount_to_its_api():
 def test_the_buyer_sees_the_price_the_owner_typed():
     """
     El propietario teclea 15. La transacción guarda 1500. El mensaje de compra
-    divide entre 100 y muestra "15.00 EUR". Si cualquier eslabón cambia de
+    divide entre 100 y lo escribe como la tienda: "15 EUR". Si cualquier eslabón cambia de
     unidad, esta prueba lo dice con el número exacto.
     """
 
@@ -222,7 +222,13 @@ def test_the_buyer_sees_the_price_the_owner_typed():
     tecleado = 15
     guardado = amount_to_minor_units(tecleado, "EUR")
 
-    assert format_purchase_amount(guardado, "EUR") == "15.00 EUR"
+    assert format_purchase_amount(guardado, "EUR") == "15 EUR", (
+        "el mismo formateador que la tienda: el comprador acaba de ver «15 EUR»"
+        " en el botón, no «15.00 EUR»"
+    )
+
+    # Y con céntimos, con coma: es lo que decía el botón de la oferta.
+    assert format_purchase_amount(360, "EUR") == "3,60 EUR"
 
 
 def test_the_wizard_still_stores_major_units():

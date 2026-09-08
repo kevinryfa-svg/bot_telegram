@@ -335,20 +335,53 @@ def build_owner_security_text(group_id):
     location_enabled, region_label = get_group_location_gate_display(group_id)
     location_status = "Activada" if location_enabled else "Desactivada"
 
+    # EL ESTADO SE LEE, NO SE AFIRMA. Aquí había dos líneas fijas diciendo que
+    # Guardian y el bloqueo de links estaban activos, escritas a pelo: un
+    # propietario que lo tenía APAGADO leía «activo» en la pantalla que existe
+    # justo para saber cómo está su comunidad protegida.
+    guardian_txt = "no se ha podido leer"
+    antilinks_txt = "no se ha podido leer"
+
+    try:
+
+        ajustes = fetch_guardian_settings(group_id) or {}
+
+        guardian_txt = (
+            "Activado" if ajustes.get("is_enabled") else "Desactivado"
+        )
+
+        if ajustes.get("anti_links_enabled"):
+
+            accion = (ajustes.get("action_mode") or "log_only")
+
+            antilinks_txt = (
+                "Activado (solo registrar)" if accion == "log_only"
+                else f"Activado ({accion})"
+            )
+
+        else:
+
+            antilinks_txt = "Desactivado"
+
+    except Exception as e:
+
+        print("Panel seguridad: no se pudo leer Guardian:", str(e)[:160])
+
     return (
         "🛡 Seguridad del grupo\n\n"
         f"Comunidad: {group_name or f'Grupo {group_id}'}\n\n"
         "Estado actual:\n"
-        "- Anti-intrusos: activo con validación de users e invite_links.\n"
-        "- Links no registrados: se bloquean desde el control de entrada.\n"
+        f"- Guardian: {guardian_txt}.\n"
+        f"- Bloqueo de enlaces: {antilinks_txt}.\n"
+        "- Entrada: solo con enlace registrado a nombre de quien ha pagado.\n"
         f"- Restricción por ubicación: {location_status}.\n"
         f"- Región permitida: {region_label}.\n\n"
         "Acciones disponibles ahora:\n"
         "- Gestionar ubicación permitida.\n"
         "- Revisar logs de accesos y bloqueos.\n"
         "- Gestionar usuarios/warnings desde Usuarios y accesos.\n\n"
-        "Próximamente: interruptores separados para anti-links y políticas avanzadas. "
-        "No aparecen como botones porque todavía no existen como configuración independiente segura."
+        "Los interruptores de Guardian y del bloqueo de enlaces están en el "
+        "botón «🛡 Guardian»."
     )
 
 

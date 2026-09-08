@@ -32,7 +32,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from audit_log_service import log_event
 from db import conn
 from payment_access_service import MAX_PLAN_DURATION_DAYS
-from owner_revenue_service import PAID_STATUSES, formato_importe
+from owner_revenue_service import PAID_STATUSES, formato_centimos
 from owner_weekly_digest_service import fetch_owned_active_groups
 
 
@@ -413,8 +413,8 @@ def collect_group_alerts(group_id, group_name):
         alertas.append((
             "revenue_drop", clave_semana(),
             f"📉 Los ingresos de {group_name} caen un {pct}%.\n\n"
-            f"Últimos 7 días: {formato_importe(actual, currency)} — "
-            f"los 7 anteriores fueron {formato_importe(anterior, currency)}."
+            f"Últimos 7 días: {formato_centimos(actual, currency)} — "
+            f"los 7 anteriores fueron {formato_centimos(anterior, currency)}."
         ))
 
 

@@ -104,6 +104,38 @@ def flatten_keyboard_buttons(menu_name, keyboard):
     return buttons
 
 
+def _formas_de_despacho(handler_source):
+    """Los callbacks que el router ATIENDE de verdad, leídos del código.
+
+    Antes esto buscaba la cadena del callback en el código a secas —y ese
+    código INCLUYE las definiciones de los teclados—, así que todo botón
+    encontraba su propia definición y la auditoría no podía decir «sin
+    handler» ni queriendo: salía ✅ por construcción, que es peor que no
+    tenerla, porque se le cree.
+
+    Ahora se buscan solo las tres formas con las que este router despacha:
+
+        if data == "x"          →  atiende exactamente «x»
+        if data in ("x", "y")   →  atiende «x» y «y»
+        data.startswith("x_")   →  atiende cualquiera que empiece por «x_»
+    """
+
+    import re
+
+    exactos = set(
+        re.findall(r'data\s*==\s*"([^"]+)"', handler_source)
+    )
+
+    for grupo in re.findall(r'data\s+in\s*\(([^)]*)\)', handler_source):
+        exactos.update(re.findall(r'"([^"]+)"', grupo))
+
+    prefijos = set(
+        re.findall(r'data\.startswith\(\s*"([^"]+)"', handler_source)
+    )
+
+    return exactos, prefijos
+
+
 def callback_has_handler(callback_data, handler_source):
 
     if not callback_data:
@@ -111,26 +143,16 @@ def callback_has_handler(callback_data, handler_source):
         return False
 
 
-    if f'"{callback_data}"' in handler_source:
+    exactos, prefijos = _formas_de_despacho(handler_source)
+
+    if callback_data in exactos:
 
         return True
 
 
-    parts = callback_data.split("_")
+    for prefijo in prefijos:
 
-
-    for index in range(len(parts), 1, -1):
-
-        base_prefix = "_".join(parts[:index])
-        prefix = base_prefix + "_"
-
-
-        if f'data.startswith("{prefix}")' in handler_source:
-
-            return True
-
-
-        if f'data.startswith("{base_prefix}")' in handler_source:
+        if prefijo and callback_data.startswith(prefijo):
 
             return True
 

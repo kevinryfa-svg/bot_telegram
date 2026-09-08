@@ -380,6 +380,41 @@ def fetch_archived_commercial_requests():
     ]
 
 
+def contar_solicitudes(statuses):
+    """Cuántas hay DE VERDAD con esos estados. None si no se puede saber.
+
+    El resumen contaba `len()` de listas topadas —LIMIT 10 las pendientes,
+    LIMIT 20 las demás— y lo presentaba como el total. Con 40 propietarios
+    esperando, la pantalla decía «Solicitudes pendientes: 10» y el operador se
+    creía que eran todas. Diez es el máximo que esa línea podía decir.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT COUNT(*) FROM commercial_requests WHERE status = ANY(%s)",
+                (list(statuses),),
+            )
+
+            fila = cur.fetchone()
+
+            return int(fila[0]) if fila else 0
+
+    except Exception as e:
+
+        print("Resumen propietarios: no se pudo contar:", str(e)[:160])
+
+        return None
+
+
+def numero_o_interrogacion(cuantos):
+    """El número, o «?» si la consulta no contestó. Nunca un cero inventado."""
+
+    return "?" if cuantos is None else str(cuantos)
+
+
 def fetch_commercial_requests_by_statuses(statuses, limit=20):
 
     with conn.cursor() as cur:
@@ -1416,33 +1451,32 @@ async def handle_admin_commercial_callbacks(update, context, query, user_id, dat
 
     if data == "admin_commercial_owner_summary":
 
-        pending_requests = fetch_pending_commercial_requests()
-        active_requests = fetch_commercial_requests_by_statuses([
+        # Se CUENTA, no se mide el largo de una lista topada.
+        pendientes = contar_solicitudes(["pending"])
+        activos = contar_solicitudes([
             "approved",
             "awaiting_creator_setup",
             "setup_in_progress",
             "setup_ready",
             "active"
         ])
-        trial_requests = fetch_commercial_requests_by_statuses([
-            "trial_active"
-        ])
-        subscription_requests = fetch_commercial_requests_by_statuses([
+        trials = contar_solicitudes(["trial_active"])
+        suscripciones = contar_solicitudes([
             "active",
             "trial_expired",
             "expired_pending_reactivation"
         ])
-        archived_requests = fetch_archived_commercial_requests()
+        archivados = contar_solicitudes(["archived", "closed"])
 
         await send_clean_message(
             context,
             query.message.chat_id,
             "📊 Resumen propietarios\n\n"
-            f"🕓 Solicitudes pendientes: {len(pending_requests)}\n"
-            f"✅ Propietarios activos/configurando: {len(active_requests)}\n"
-            f"🧪 Trials activos: {len(trial_requests)}\n"
-            f"💳 Suscripciones/recoveries: {len(subscription_requests)}\n"
-            f"📁 Archivados: {len(archived_requests)}\n\n"
+            f"🕓 Solicitudes pendientes: {numero_o_interrogacion(pendientes)}\n"
+            f"✅ Propietarios activos/configurando: {numero_o_interrogacion(activos)}\n"
+            f"🧪 Trials activos: {numero_o_interrogacion(trials)}\n"
+            f"💳 Suscripciones/recoveries: {numero_o_interrogacion(suscripciones)}\n"
+            f"📁 Archivados: {numero_o_interrogacion(archivados)}\n\n"
             "Usa los botones del panel de propietarios para abrir cada vista y revisar casos concretos.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🕓 Solicitudes pendientes", callback_data="admin_commercial_requests")],

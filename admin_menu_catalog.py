@@ -188,3 +188,37 @@ def build_admin_menu_button_rows(permissions=None, is_super_admin=False):
 def get_help_context_for_admin_callback(callback_data):
 
     return ADMIN_HELP_CONTEXT_BY_CALLBACK.get(callback_data)
+
+
+# =========================
+# QUE NINGUNA PANTALLA DEL PANEL SEA UN CALLEJÓN
+# =========================
+# Varias pantallas del panel se enviaban con un `reply_text(texto)` pelado, sin
+# un solo botón: salud de la plataforma, ingresos, últimos pagos. Desde ellas no
+# se puede ni volver ni recargar, así que el operador tiene que teclear /admin
+# otra vez — y en la de salud, que es la que se mira DOS veces (antes y después
+# de arreglar algo), recargar es justo lo que hace falta.
+#
+# El botón de recargar reenvía el MISMO callback que trajo aquí: así una
+# pantalla nueva no necesita nada más que pasar su propio nombre.
+
+def build_admin_screen_keyboard(callback_de_esta_pantalla=None, extra=None):
+    """Recargar (si se sabe cómo) y volver al panel. Nunca lanza."""
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    filas = list(extra or [])
+
+    if callback_de_esta_pantalla:
+
+        filas.append([InlineKeyboardButton(
+            "🔄 Actualizar",
+            callback_data=callback_de_esta_pantalla
+        )])
+
+    filas.append([InlineKeyboardButton(
+        "⬅️ Volver al panel",
+        callback_data="admin_back_main"
+    )])
+
+    return InlineKeyboardMarkup(filas)

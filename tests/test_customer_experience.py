@@ -136,7 +136,7 @@ def test_the_purchase_message_says_what_was_bought_and_for_how_much():
 
     assert "VIP Fitness" in text
     assert "Mensual" in text
-    assert "15.00 EUR" in text
+    assert "15 EUR" in text, "escrito como en la tienda"
 
 
 def test_the_purchase_message_says_until_when():
