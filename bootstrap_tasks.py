@@ -869,7 +869,9 @@ def tarea_crear_planes():
         if len(partes) < 4:
 
             resultados.append(
-                f"«{trozo}» no tiene la forma g<grupo>:<días>:<euros>:<nombre>"
+                f"«{trozo}» no tiene la forma "
+                "g<grupo>:<días>:<euros>:<nombre> (la coma separa planes, así "
+                "que el precio se escribe con punto: 9.99, no 9,99)"
             )
             continue
 
@@ -880,12 +882,44 @@ def tarea_crear_planes():
 
             group_id = int(grupo_txt.strip().lstrip("gG"))
             dias = int(dias_txt.strip())
-            euros = int(euros_txt.strip())
 
         except (TypeError, ValueError):
 
-            resultados.append(f"«{trozo}»: grupo, días y euros son números")
+            resultados.append(f"«{trozo}»: el grupo y los días son números")
             continue
+
+        # EL PRECIO CON CÉNTIMOS. Aquí había un `int(euros_txt)` que reventaba
+        # con «9.99» y contestaba «grupo, días y euros son números» — mentira:
+        # 9,99 ES un número, y el que lo escribió se quedaba sin saber qué
+        # estaba mal. Un precio de 9,99 es de los más normales que existen.
+        #
+        # Lo que NO se puede es guardarlo: `plans.amount` es INTEGER en euros
+        # enteros, así que un plan de 9,99 se guardaría como 9 mientras Stripe
+        # cobraría 9,99 — anunciar un precio y cobrar otro, que es exactamente
+        # la avería que este bot ya ha tenido. Así que se dice la verdad y se
+        # dice cuál es la salida.
+        try:
+
+            euros_dec = float(euros_txt.strip().replace(",", "."))
+
+        except (TypeError, ValueError):
+
+            resultados.append(
+                f"«{trozo}»: «{euros_txt.strip()}» no es un precio"
+            )
+            continue
+
+        if abs(euros_dec - round(euros_dec)) > 0.0001:
+
+            resultados.append(
+                f"«{nombre or trozo}»: {euros_txt.strip()} tiene céntimos y "
+                "aquí solo caben euros enteros (la columna del precio es "
+                "entera). Créalo entero y ajústalo luego en «Planes», o pon "
+                f"{int(euros_dec)} o {int(euros_dec) + 1}"
+            )
+            continue
+
+        euros = int(round(euros_dec))
 
         if not nombre:
 

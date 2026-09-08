@@ -687,7 +687,6 @@ def build_owner_panel_audit_report(user_id, group_id):
         "owner_panel_backup",
         "owner_panel_general",
         "owner_panel_commercial_config",
-        "owner_panel_access_type_info",
         "owner_panel_location_info",
         "owner_panel_security_info",
         "owner_support_tickets",
@@ -896,6 +895,20 @@ def _teclado_cupones(group_id):
 
 
 async def handle_owner_panel_callbacks(update, context, query, user_id, data):
+
+    # DOS ENTRADAS DE MENÚ, UNA PANTALLA. «🔎 Resumen de seguridad» tenía su
+    # propia rama, treinta líneas copiadas letra por letra de la de
+    # «Seguridad»: mismo texto, mismo teclado. Con una diferencia que no se
+    # veía y sí importaba: la copia NO guardaba la comunidad elegida, así que
+    # el siguiente botón del panel podía acabar operando sobre otra.
+    #
+    # El botón se queda —es un atajo útil desde otro menú— y pasa por la
+    # pantalla de verdad. Los mensajes viejos que ya llevan este callback
+    # siguen funcionando, que es la razón de aliasarlo en vez de borrarlo.
+    if data == "owner_panel_security_info":
+
+        data = "owner_panel_security"
+
 
     if data == "owner_panel_satisfaction":
 
@@ -1163,7 +1176,7 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
 
             return
 
-    if data == "owner_panel_commercial_config" or data == "owner_panel_access_type_info":
+    if data == "owner_panel_commercial_config":
 
         group_id = get_selected_group_for_permissions(
             context,
@@ -1944,45 +1957,11 @@ async def handle_owner_panel_callbacks(update, context, query, user_id, data):
 
         return
 
-    if data == "owner_panel_security_info":
-
-        group_id = get_selected_group_for_permissions(
-            context,
-            user_id,
-            ["can_manage_groups", "can_view_logs"]
-        )
-
-
-        if not group_id:
-
-            await query.message.reply_text(
-                "⛔ No tienes permiso para revisar seguridad en esta comunidad.",
-                reply_markup=build_owner_panel_nav_keyboard()
-            )
-
-            return
-
-
-        await send_clean_message(
-            context,
-            query.message.chat_id,
-            build_owner_security_text(group_id),
-            reply_markup=build_owner_security_keyboard(group_id)
-        )
-
-        return
-
-    if data in (
-        "owner_panel_access_type_info",
-        "owner_panel_general_info"
-    ):
+    # `owner_panel_access_type_info` vivía aquí y no llegaba nunca: ningún
+    # teclado lo pintaba, y la rama de arriba lo atrapaba antes que esta.
+    if data == "owner_panel_general_info":
 
         info_texts = {
-            "owner_panel_access_type_info": (
-                "🔓 Tipo gratis/pago\n\n"
-                "El tipo de acceso se revisa desde Configuración de pagos del grupo. "
-                "De pago no significa solo Stripe: puedes activar Stripe, PayPal, Revolut, ChangeNOW, Guardarian o códigos."
-            ),
             "owner_panel_general_info": (
                 "⚙️ Configuración general\n\n"
                 "Estos ajustes se gestionan con flujos seguros existentes. "

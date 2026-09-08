@@ -13,6 +13,7 @@ uno ajeno. Sin esas dos propiedades el orden importaría.
 """
 
 from audit_log_service import (
+    contar_eventos_sin_resolver,
     complete_active_beta_cycle,
     complete_expired_beta_cycles,
     create_beta_cycle,
@@ -62,9 +63,28 @@ def build_beta_monitor_keyboard():
         [InlineKeyboardButton("✅ Finalizar beta", callback_data="admin_beta_cycle_finish")],
         [InlineKeyboardButton("📋 Ver estado beta", callback_data="admin_beta_cycle_status")],
         [InlineKeyboardButton("🚀 Preparar lanzamiento final", callback_data="admin_beta_cycle_final_review")],
-        [InlineKeyboardButton("Marcar resueltos", callback_data="admin_beta_monitor_resolve_all")],
+        # A LA CONFIRMACIÓN, NO A LA ACCIÓN. Este teclado se reutiliza en TODAS
+        # las pantallas del monitor y este botón vive una fila encima de
+        # «Volver»: cerraba 24 h de eventos —accesos no autorizados, fallos de
+        # enlaces— de un toque y sin dejar constancia de quién lo hizo.
+        [InlineKeyboardButton(
+            "✔️ Marcar resueltos…",
+            callback_data="admin_beta_monitor_resolve_ask"
+        )],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")]
     ])
+
+
+# CUÁNTOS DE CUÁNTOS. Esta pantalla se traía 50 eventos, pintaba 30 y luego
+# cortaba el texto a 3900 caracteres a pelo: el último evento salía partido a
+# mitad de palabra y no había una sola señal de que faltaba nada. Quien la mira
+# está buscando la avería de hoy, y creía estar viendo TODO lo que hay.
+#
+# Ahora se dice el recuento y se corta por evento entero, nunca por la mitad.
+MAXIMO_EVENTOS_EN_PANTALLA = 30
+
+# El límite de Telegram es 4096; se deja aire para la nota del final.
+MAXIMO_CARACTERES = 3700
 
 
 def format_beta_monitor_events_text(title, rows):
@@ -74,7 +94,12 @@ def format_beta_monitor_events_text(title, rows):
         return f"{title}\n\nSin eventos registrados."
 
 
+    total = len(rows)
+
     text = f"{title}\n\n"
+
+    pintados = 0
+    cortado_por_tamano = False
 
 
     for (
@@ -87,11 +112,11 @@ def format_beta_monitor_events_text(title, rows):
         event_telegram_group_id,
         message,
         resolved
-    ) in rows[:30]:
+    ) in rows[:MAXIMO_EVENTOS_EN_PANTALLA]:
 
         status = "resuelto" if resolved else "pendiente"
 
-        text += (
+        bloque = (
             f"#{event_id} · {event_type or '-'} · {severity or '-'} · {status}\n"
             f"Usuario: {event_user_id or '-'}\n"
             f"Grupo: {event_group_id or '-'} / {event_telegram_group_id or '-'}\n"
@@ -99,8 +124,25 @@ def format_beta_monitor_events_text(title, rows):
             f"Fecha: {created_at or '-'}\n\n"
         )
 
+        if len(text) + len(bloque) > MAXIMO_CARACTERES:
 
-    return text[:3900]
+            cortado_por_tamano = True
+            break
+
+        text += bloque
+        pintados += 1
+
+
+    if pintados < total:
+
+        text += (
+            f"— Se enseñan {pintados} de {total}"
+            + (" (no cabían más)" if cortado_por_tamano else "")
+            + ". Filtra por gravedad o por tipo para ver el resto.\n"
+        )
+
+
+    return text
 
 
 def format_beta_cycle_status_text():
@@ -308,9 +350,45 @@ async def handle_admin_beta_callbacks(update, context, query, user_id, data):
             return
 
 
+        if data == "admin_beta_monitor_resolve_ask":
+
+            pendientes = contar_eventos_sin_resolver(hours=24)
+
+            await query.message.reply_text(
+                f"⚠️ Vas a marcar como resueltos {pendientes} evento(s) de las "
+                "últimas 24 horas.\n\n"
+                "Ahí dentro puede haber accesos no autorizados o fallos de "
+                "entrega de enlaces. Después ya no aparecen en el monitor, y "
+                "esto no se deshace.\n\n"
+                "¿Seguro?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        f"🔴 Sí, marcar los {pendientes}",
+                        callback_data="admin_beta_monitor_resolve_all"
+                    )],
+                    [InlineKeyboardButton(
+                        "⬅️ No, volver al monitor",
+                        callback_data="admin_beta_monitor_24h"
+                    )],
+                ])
+            )
+
+            return
+
+
         if data == "admin_beta_monitor_resolve_all":
 
             affected = mark_beta_monitor_events_resolved(hours=24)
+
+            log_event(
+                "beta_monitor_events_resolved",
+                category="admin",
+                severity="warning",
+                scope="global",
+                actor_user_id=user_id,
+                message="Eventos del monitor marcados como resueltos en bloque.",
+                metadata={"horas": 24, "afectados": int(affected or 0)},
+            )
 
             await query.message.reply_text(
                 f"✅ Eventos marcados como resueltos: {affected}",

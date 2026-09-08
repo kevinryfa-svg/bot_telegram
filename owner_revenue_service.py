@@ -141,7 +141,13 @@ def fetch_customer_summary(group_id):
 
 
 def fetch_top_plan(group_id):
-    """El plan que más vende, por número de pagos. (nombre, ventas) o None."""
+    """El plan que más vende, por número de pagos. (nombre, ventas) o None.
+
+    Por CUENTA a propósito: responde «qué compra la gente». La otra pregunta
+    —«qué me da más dinero»— es distinta y tiene su propia función, porque diez
+    semanas a 3,60 y tres años a 120 dan respuestas opuestas y las dos son
+    verdad.
+    """
 
     try:
 
@@ -165,6 +171,47 @@ def fetch_top_plan(group_id):
     except Exception as e:
 
         print("Ingresos: error leyendo el plan más vendido:", e)
+
+        return None
+
+
+def fetch_top_plan_por_dinero(group_id, dias=90):
+    """El plan que más DINERO trae. (nombre, ventas, importe, moneda) o None.
+
+    La pantalla solo decía el más vendido por unidades, y con eso no se puede
+    decidir qué plan empujar: diez ventas de la semana a 3,60 son 36 EUR y tres
+    del año a 120 son 360. Y se mira una ventana de 90 días, porque con todo el
+    historial un plan que ya no existe puede seguir ganando para siempre.
+
+    Se agrupa por el nombre, que es lo único que guarda `payments`: un plan
+    renombrado cuenta como dos, y la pantalla lo dice en vez de disimularlo.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COALESCE(NULLIF(plan, ''), 'Sin nombre'),
+                       COUNT(*),
+                       SUM(amount),
+                       COALESCE(NULLIF(MIN(currency), ''), 'EUR')
+                FROM payments
+                WHERE group_id = %s
+                  AND LOWER(COALESCE(status, '')) IN %s
+                  AND payment_date >= NOW() - (%s || ' days')::interval
+                GROUP BY 1
+                ORDER BY SUM(amount) DESC NULLS LAST
+                LIMIT 1
+
+            """, (group_id, PAID_STATUSES, int(dias)))
+
+            return cur.fetchone()
+
+    except Exception as e:
+
+        print("Ingresos: error leyendo el plan que más factura:", e)
 
         return None
 
@@ -786,6 +833,31 @@ def build_owner_revenue_text(group_id, group_name):
         nombre, ventas = top
         etiqueta = "venta" if ventas == 1 else "ventas"
         lineas.extend(["", f"🏆 Plan más vendido: {nombre} ({ventas} {etiqueta})"])
+
+
+    # LA OTRA PREGUNTA, QUE NO SE PODÍA HACER. «Más vendido» es por unidades, y
+    # con eso no se decide qué plan empujar: diez semanas a 3,60 son 36 EUR y
+    # tres años a 120 son 360. Las dos líneas juntas dicen algo; cada una sola,
+    # a medias.
+    por_dinero = fetch_top_plan_por_dinero(group_id)
+
+    if por_dinero:
+
+        nombre_d, ventas_d, importe_d, moneda_d = por_dinero
+
+        etiqueta_d = "venta" if ventas_d == 1 else "ventas"
+
+        lineas.append(
+            f"💰 El que más factura (90 días): {nombre_d} — "
+            f"{formato_centimos(importe_d or 0, moneda_d)} en "
+            f"{ventas_d} {etiqueta_d}"
+        )
+
+        if top and nombre_d != top[0]:
+
+            lineas.append(
+                "   Ojo: el que más se vende no es el que más te da."
+            )
 
 
     lineas.extend([

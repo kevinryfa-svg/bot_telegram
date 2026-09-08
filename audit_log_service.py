@@ -425,6 +425,37 @@ def summarize_beta_monitor_events(hours=6):
         return "📊 Resumen beta\n\nNo se pudo cargar el resumen."
 
 
+def contar_eventos_sin_resolver(hours=24):
+    """Cuántos eventos del monitor quedan sin resolver. 0 si no se puede saber.
+
+    Se dice el número ANTES de preguntar si se cierran todos: «vas a marcar
+    resueltos» no da idea de nada, y «vas a marcar 47» sí.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*)
+                FROM beta_monitor_events
+                WHERE created_at >= NOW() - (%s || ' hours')::interval
+                  AND resolved=FALSE
+
+            """, (hours,))
+
+            fila = cur.fetchone()
+
+            return int(fila[0]) if fila else 0
+
+    except Exception as e:
+
+        print("Monitor beta: no se pudieron contar los eventos:", str(e)[:160])
+
+        return 0
+
+
 def mark_beta_monitor_events_resolved(hours=24):
 
     try:

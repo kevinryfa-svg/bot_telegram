@@ -25731,7 +25731,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             [InlineKeyboardButton("👥 Usuarios activos", callback_data="admin_active_users")],
 
-            [InlineKeyboardButton("💰 Ingresos", callback_data="admin_income")]
+            [InlineKeyboardButton("💰 Ingresos", callback_data="admin_income")],
+
+            # Mil líneas escribiéndole a gente que casi paga, y su resultado
+            # no se veía en ninguna pantalla.
+            [InlineKeyboardButton("🛒 Ventas recuperadas",
+                                  callback_data="admin_recovery")]
 
         ]
 
@@ -28181,6 +28186,44 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "💳 ¿Se puede cobrar ahora mismo?\n\n" + linea,
             reply_markup=build_admin_screen_keyboard("admin_sale_readiness")
+        )
+
+        return
+
+
+    # =========================
+    # LO QUE SE RECUPERA DE LOS QUE CASI PAGAN
+    # =========================
+    # Los dos recuperadores —carritos abandonados e interesados que no llegaron
+    # a la pantalla de pago— llevan meses escribiéndole a clientes de verdad sin
+    # que su resultado apareciera en ningún sitio: vivía en `log_event` y en un
+    # `print` del servidor. Ni siquiera se podía saber si estaban ENCENDIDOS,
+    # porque se apagan con una variable de entorno y apagados no dicen nada.
+
+    if data == "admin_recovery":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        try:
+
+            from recovery_report_service import build_recovery_report_text
+
+            texto = build_recovery_report_text()
+
+        except Exception as e:
+
+            texto = f"🛒 No se pudo montar el informe: {str(e)[:200]}"
+
+        await query.message.reply_text(
+            texto,
+            reply_markup=build_admin_screen_keyboard("admin_recovery")
         )
 
         return
