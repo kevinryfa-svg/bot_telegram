@@ -74,7 +74,7 @@ def fetch_broken_delivery():
 
         print("Salud de plataforma: error leyendo la entrega:", e)
 
-        return []
+        return None
 
 
 def fetch_open_incidents():
@@ -106,7 +106,7 @@ def fetch_open_incidents():
 
         print("Salud de plataforma: error leyendo incidencias:", e)
 
-        return []
+        return None
 
 
 def fetch_unsellable_but_visible():
@@ -147,7 +147,7 @@ def fetch_unsellable_but_visible():
 
         print("Salud de plataforma: error buscando comunidades sin planes:", e)
 
-        return []
+        return None
 
 
 def fetch_failed_charge_streaks():
@@ -184,7 +184,7 @@ def fetch_failed_charge_streaks():
 
         print("Salud de plataforma: error contando cobros fallidos:", e)
 
-        return []
+        return None
 
 
 def count_failed_notices_without_portal(days=30):
@@ -224,7 +224,7 @@ def count_failed_notices_without_portal(days=30):
 
         print("Salud de plataforma: error contando avisos sin portal:", e)
 
-        return (0, 0)
+        return None
 
 
 def _seccion(lineas, titulo, filas, formatear):
@@ -254,10 +254,25 @@ def _seccion(lineas, titulo, filas, formatear):
 def build_platform_health_text():
     """La pantalla entera. En español, como el resto del panel de plataforma."""
 
-    entrega = fetch_broken_delivery()
-    incidencias = fetch_open_incidents()
-    sin_planes = fetch_unsellable_but_visible()
-    fallidos = fetch_failed_charge_streaks()
+    # «VACÍO» Y «NO SE PUDO PREGUNTAR» NO SON LO MISMO. Cada consulta devolvía
+    # lista vacía también cuando fallaba, y esta pantalla remataba con «✅ Nada
+    # roto». O sea que un error de base de datos se leía IGUAL que una
+    # plataforma sana, en la única pantalla que existe para decir qué está roto.
+    consultas = {
+        "entrega de accesos": fetch_broken_delivery(),
+        "cobros sin acceso": fetch_open_incidents(),
+        "comunidades sin plan": fetch_unsellable_but_visible(),
+        "rachas de cobros fallidos": fetch_failed_charge_streaks(),
+    }
+
+    no_comprobado = [
+        nombre for nombre, filas in consultas.items() if filas is None
+    ]
+
+    entrega = consultas["entrega de accesos"] or []
+    incidencias = consultas["cobros sin acceso"] or []
+    sin_planes = consultas["comunidades sin plan"] or []
+    fallidos = consultas["rachas de cobros fallidos"] or []
 
     lineas = ["🩺 Salud de las comunidades", ""]
 
@@ -292,7 +307,13 @@ def build_platform_health_text():
         lambda f: f"{f[1]} (id {f[0]}) — {f[2]} fallidos"
     )
 
-    sin_portal, total_fallidos = count_failed_notices_without_portal()
+    portal = count_failed_notices_without_portal()
+
+    if portal is None:
+
+        no_comprobado.append("portal de facturación")
+
+    sin_portal, total_fallidos = portal or (0, 0)
 
     if sin_portal:
 
@@ -310,7 +331,25 @@ def build_platform_health_text():
         ])
 
 
+    if no_comprobado:
+
+        lineas.extend([
+            "⚠️ No se ha podido comprobar: " + ", ".join(no_comprobado) + ".",
+            "   La base de datos no ha contestado a esa parte, así que de eso "
+            "esta pantalla NO dice nada. Vuelve a abrirla con «🔄 Actualizar».",
+            "",
+        ])
+
+
     if not hay_algo:
+
+        if no_comprobado:
+
+            lineas.append(
+                "De lo que sí se ha podido comprobar, no hay nada roto."
+            )
+
+            return "\n".join(lineas).rstrip()
 
         lineas.append(
             "✅ Nada roto: todas las comunidades activas pueden entregar, no "

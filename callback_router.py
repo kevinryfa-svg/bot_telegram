@@ -37,7 +37,10 @@ from admin_button_audit import (
     format_admin_button_audit_summary,
     load_callback_router_source
 )
-from admin_menu_catalog import build_admin_menu_button_rows
+from admin_menu_catalog import (
+    build_admin_menu_button_rows,
+    build_admin_screen_keyboard,
+)
 from audit_log_service import (
     complete_active_beta_cycle,
     complete_expired_beta_cycles,
@@ -1409,6 +1412,30 @@ def _boton_de_cambio_de_plan(user_id, group_id, telegram_group_id):
         "🔀 Cambiar a otro plan",
         callback_data=f"mysub_switch_{telegram_group_id or group_id}"
     )
+
+
+def contar_enlaces_activos():
+    """Cuántos enlaces de invitación hay guardados. 0 si no se puede saber.
+
+    Se dice el número ANTES de preguntar si se revocan todos: «vas a revocar
+    todos» no da idea de nada, y «vas a revocar 412» sí.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("SELECT COUNT(*) FROM invite_links")
+
+            fila = cur.fetchone()
+
+            return int(fila[0]) if fila else 0
+
+    except Exception as e:
+
+        print("No se pudieron contar los enlaces:", str(e)[:160])
+
+        return 0
 
 
 def build_existing_group_access_keyboard(group_id, access_state, retry_callback=None,
@@ -27825,7 +27852,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         from platform_health_service import build_platform_health_text
 
-        await query.message.reply_text(build_platform_health_text())
+        # CON BOTONES. Esta pantalla se mira DOS veces —antes y después de
+        # arreglar algo— y se enviaba sin uno solo: para volver a verla había
+        # que teclear /admin y navegar otra vez.
+        await query.message.reply_text(
+            build_platform_health_text(),
+            reply_markup=build_admin_screen_keyboard("admin_health")
+        )
 
         return
 
@@ -27859,7 +27892,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             texto = build_scoped_income_text(group_ids)
 
 
-        await query.message.reply_text(texto)
+        # El equivalente del propietario lleva exportar a CSV y desglose; esta
+        # no llevaba ni volver.
+        await query.message.reply_text(
+            texto,
+            reply_markup=build_admin_screen_keyboard("admin_income")
+        )
 
         return
 
@@ -28215,10 +28253,53 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # REVOCAR TODOS LOS LINKS
     # =========================
 
+    # PIDE CONFIRMACIÓN, Y DICE A CUÁNTOS AFECTA. Esto revoca TODOS los
+    # enlaces de invitación de TODA la plataforma —sin filtro, sin alcance de
+    # comunidad— y estaba a un solo toque desde el menú, justo encima de
+    # «Volver». Un dedo torcido dejaba sin entrada a todos los socios que
+    # pagan, de todas las comunidades, y no quedaba registro de quién lo hizo.
     if data == "admin_revoke_links":
 
         if not is_super_admin(query.from_user.id):
             return
+
+        cuantos = contar_enlaces_activos()
+
+        await query.message.reply_text(
+            "⚠️ Vas a revocar TODOS los enlaces de invitación de TODA la "
+            f"plataforma: {cuantos} enlace(s), de todas las comunidades.\n\n"
+            "Quien tenga uno guardado y no haya entrado todavía se queda "
+            "fuera, aunque haya pagado. Esto no se puede deshacer: los "
+            "enlaces nuevos hay que pedirlos de uno en uno.\n\n"
+            "¿Seguro?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"🔴 Sí, revocar los {cuantos}",
+                    callback_data="admin_revoke_links_yes"
+                )],
+                [InlineKeyboardButton(
+                    "⬅️ No, volver",
+                    callback_data="admin_back_main"
+                )],
+            ])
+        )
+
+        return
+
+
+    if data == "admin_revoke_links_yes":
+
+        if not is_super_admin(query.from_user.id):
+            return
+
+        log_event(
+            "admin_revoke_all_links",
+            category="access",
+            severity="warning",
+            scope="global",
+            actor_user_id=query.from_user.id,
+            message="Revocación masiva de enlaces de invitación.",
+        )
 
         try:
 
@@ -28280,10 +28361,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
 
+            fallidos = len(links) - total
+
+            resumen = f"🔄 {total} enlace(s) revocado(s)."
+
+            if fallidos > 0:
+
+                # Antes solo se contaban los que salieron bien, así que una
+                # revocación a medias se leía como completa: los que quedaron
+                # vivos seguían dando entrada sin que nadie lo supiera.
+                resumen += (
+                    f"\n\n⚠️ {fallidos} no se pudieron revocar y siguen "
+                    "dando acceso. Vuelve a lanzarlo o revísalos en el grupo."
+                )
+
             await query.message.reply_text(
-
-                f"🔄 {total} links revocados correctamente."
-
+                resumen,
+                reply_markup=build_admin_screen_keyboard()
             )
 
         except Exception as e:
