@@ -26,6 +26,7 @@ import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from admin_menu_catalog import nota_de_recorte
 from audit_log_service import log_event
 from db import conn
 from group_registration_handler import confirm_backup_destination_token
@@ -486,6 +487,56 @@ def fetch_backup_owner_groups(user_id):
 
 
         return cur.fetchall()
+
+
+# CUÁNTOS HAY DE VERDAD. Las dos pantallas de abajo piden 20 y pintan 20, y en
+# un backup con trabajo eso son 20 de los cientos que hay: quien va a buscar
+# por qué falló una copia cree estar viendo el historial entero. Sin un total no
+# se puede decir «se enseñan 20 de 340», así que se cuenta.
+
+def contar_backup_errores(user_id):
+    """Errores de backup de este propietario. None si no se pudo contar."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT COUNT(*)::bigint FROM backup_errors "
+                "WHERE owner_user_id=%s",
+                (user_id,)
+            )
+
+            return int((cur.fetchone() or [0])[0] or 0)
+
+    except Exception as e:
+
+        print("Backup: no se pudieron contar los errores:", str(e)[:200])
+        return None
+
+
+def contar_backup_mensajes(user_id):
+    """Mensajes copiados de este propietario. None si no se pudo contar."""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT COUNT(*)::bigint
+                FROM backup_message_log l
+                JOIN group_backup_configs c ON c.id = l.config_id
+                WHERE c.owner_user_id=%s
+
+            """, (user_id,))
+
+            return int((cur.fetchone() or [0])[0] or 0)
+
+    except Exception as e:
+
+        print("Backup: no se pudieron contar los mensajes:", str(e)[:200])
+        return None
 
 
 def fetch_backup_recent_errors(user_id, limit=20):
@@ -1712,8 +1763,12 @@ async def handle_owner_backup_callbacks(update, context, query, user_id, data):
 
         text = "📜 Últimos mensajes copiados\n\n"
 
+        pintados = 0
+
 
         for created_at, source_name, destination_name, source_message_id, destination_message_id, message_type, status in rows[:20]:
+
+            pintados += 1
 
             text += (
                 f"Origen: {source_name or '-'}\n"
@@ -1724,6 +1779,9 @@ async def handle_owner_backup_callbacks(update, context, query, user_id, data):
                 f"Estado: {status or '-'}\n"
                 f"Fecha: {created_at or '-'}\n\n"
             )
+
+
+        text += nota_de_recorte(pintados, contar_backup_mensajes(user_id))
 
 
         await query.message.reply_text(
@@ -1751,8 +1809,12 @@ async def handle_owner_backup_callbacks(update, context, query, user_id, data):
 
         text = "⚠️ Últimos errores de backup\n\n"
 
+        pintados = 0
+
 
         for created_at, severity, error_type, message in rows[:20]:
+
+            pintados += 1
 
             text += (
                 f"Tipo: {error_type or '-'}\n"
@@ -1760,6 +1822,9 @@ async def handle_owner_backup_callbacks(update, context, query, user_id, data):
                 f"Detalle: {message or '-'}\n"
                 f"Fecha: {created_at or '-'}\n\n"
             )
+
+
+        text += nota_de_recorte(pintados, contar_backup_errores(user_id))
 
 
         await query.message.reply_text(

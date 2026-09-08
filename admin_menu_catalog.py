@@ -209,3 +209,60 @@ def build_admin_screen_keyboard(callback_de_esta_pantalla=None, extra=None):
     )])
 
     return InlineKeyboardMarkup(filas)
+
+
+# =========================
+# «SE ENSEÑAN N DE M», UNA SOLA VEZ
+# =========================
+# Media docena de pantallas del panel se traen una lista, pintan las primeras
+# veinte o treinta y no dicen nada: logs, mensajes copiados, errores de backup,
+# eventos del monitor, actividad de usuarios. Quien las mira está buscando la
+# avería de hoy y cree estar viendo TODO lo que hay.
+#
+# Vive aquí para que sea la MISMA frase en todas y para que arreglarla o
+# cambiarla sea un sitio, no seis.
+
+def nota_de_recorte(pintados, total, como_ver_mas=None):
+    """
+    La línea de «faltan cosas», o "" si no falta ninguna.
+
+    `total` puede ser None cuando no se ha podido contar: entonces se dice eso,
+    porque un total inventado es peor que no dar total.
+    """
+
+    try:
+        pintados = int(pintados or 0)
+    except (TypeError, ValueError):
+        return ""
+
+
+    # Sin nada pintado no hay nada que recortar: la pantalla ya está diciendo
+    # «no hay» por su cuenta, y añadirle «se enseñan 0» es ruido.
+    if pintados <= 0:
+        return ""
+
+
+    if total is None:
+
+        return (
+            f"— Se enseñan {pintados}. No se ha podido contar cuántos hay en "
+            "total.\n"
+        )
+
+
+    try:
+        total = int(total)
+    except (TypeError, ValueError):
+        return ""
+
+
+    if pintados >= total:
+        return ""
+
+
+    linea = f"— Se enseñan {pintados} de {total}."
+
+    if como_ver_mas:
+        linea += f" {como_ver_mas}"
+
+    return linea + "\n"

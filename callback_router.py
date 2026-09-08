@@ -40,10 +40,12 @@ from admin_button_audit import (
 from admin_menu_catalog import (
     build_admin_menu_button_rows,
     build_admin_screen_keyboard,
+    nota_de_recorte,
 )
 from audit_log_service import (
     complete_active_beta_cycle,
     complete_expired_beta_cycles,
+    contar_eventos,
     create_beta_cycle,
     get_active_beta_cycle,
     get_beta_cycle_monitor_counts,
@@ -1744,6 +1746,14 @@ async def send_existing_group_access_notice(context, chat_id, user_id, group_id,
             user_id=user_id
         )
     )
+
+
+# Cuántos eventos de registro se piden y cuántos caben en la pantalla: los dos
+# números, con nombre y juntos. Estaban a noventa líneas de distancia —50
+# arriba, 30 abajo— y nadie los había visto a la vez, que es por lo que veinte
+# se perdían sin decirlo.
+MAXIMO_EVENTOS_DE_LOG = 50
+MAXIMO_EVENTOS_EN_PANTALLA_DE_LOG = 30
 
 
 LEGACY_CALLBACK_PREFIXES = (
@@ -6418,6 +6428,11 @@ def build_admin_global_panel_keyboard():
         [InlineKeyboardButton("🏪 Marketplace global", callback_data="admin_global_marketplace")],
         [InlineKeyboardButton("👥 Propietarios / solicitudes comerciales", callback_data="admin_owners_panel")],
         [InlineKeyboardButton("⚙️ Configuración global", callback_data="admin_global_config")],
+        # DINERO COBRADO SIN ENTREGAR. Estas incidencias solo se podían tocar
+        # desde el MENSAJE que las anunció: si el aviso se perdió en el scroll
+        # o le llegó a otro responsable, la incidencia quedaba inalcanzable con
+        # el pago ya hecho. No había ninguna pantalla que las listara.
+        [InlineKeyboardButton("🚨 Incidencias de cobro", callback_data="admin_incidents")],
         [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_panel")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")],
@@ -6452,6 +6467,10 @@ def build_admin_global_tools_keyboard():
         [InlineKeyboardButton("📊 Monitor beta", callback_data="admin_beta_monitor")],
         [InlineKeyboardButton("🗄️ Copia de la base de datos", callback_data="admin_db_backup")],
         [InlineKeyboardButton("🧱 Migraciones de base de datos", callback_data="admin_db_migrations")],
+        # Los arreglos de DATOS de producción no se veían en ningún sitio: iban
+        # a un print del arranque. Lo grave era no poder saber si alguna estaba
+        # ARMADA, porque armada significa que se repite en cada despliegue.
+        [InlineKeyboardButton("🧰 Puesta a punto", callback_data="admin_bootstrap")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_tools")],
         [InlineKeyboardButton("⬅️ Volver al panel global", callback_data="admin_global_panel")],
         [InlineKeyboardButton("🏠 Inicio", callback_data="public_back_start")]
@@ -21791,9 +21810,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # dice el importe exacto y a quién, y el segundo toque es el que mueve el
     # dinero.
 
+    # Y CON SALIDA. Las once salidas de este tramo —resuelta ya, no se pudo,
+    # devolución pedida, acceso concedido, sin plan válido— contestaban con un
+    # texto pelado y CERO botones. El operador acababa de mover dinero de
+    # verdad y se quedaba sin manera de ver si quedan más incidencias ni de
+    # volver al panel: había que teclear /admin y navegar otra vez.
     if data.startswith("incident_refund_go_"):
 
-        from incident_repair_service import close_incident, fetch_open_incident
+        from incident_repair_service import (
+            build_open_incidents_keyboard,
+            close_incident,
+            fetch_open_incident
+        )
         from refund_request_service import refund_last_payment
 
         resto = data[len("incident_refund_go_"):]
@@ -21815,7 +21843,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "✅ Esa incidencia ya estaba resuelta. No se ha devuelto nada "
-                "otra vez."
+                "otra vez.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21854,7 +21883,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "❌ " + motivos.get(resultado["reason"], "No se ha podido "
-                                   "devolver el pago.")
+                                   "devolver el pago."),
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21870,7 +21900,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{comprador_id}.\n\n"
             "Cuando Stripe la confirme, el bot retira el acceso, revoca sus "
             "enlaces y avisa a la persona: eso ya lo hace el webhook de "
-            "devoluciones, no hace falta tocar nada más."
+            "devoluciones, no hace falta tocar nada más.",
+            reply_markup=build_open_incidents_keyboard()
         )
 
         return
@@ -21878,7 +21909,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("incident_refund_"):
 
-        from incident_repair_service import fetch_open_incident
+        from incident_repair_service import (
+            build_open_incidents_keyboard,
+            fetch_open_incident
+        )
         from refund_request_service import describe_refundable
 
         resto = data[len("incident_refund_"):]
@@ -21898,7 +21932,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not incidencia:
 
-            await query.message.reply_text("✅ Esa incidencia ya estaba resuelta.")
+            await query.message.reply_text("✅ Esa incidencia ya estaba resuelta.",
+                reply_markup=build_open_incidents_keyboard()
+            )
 
             return
 
@@ -21922,7 +21958,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 f"No hay ningún pago cobrado de {comprador_id} en "
-                f"{group_name} que devolver."
+                f"{group_name} que devolver.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21935,7 +21972,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "no se puede devolver desde aquí: la referencia guardada no "
                 f"permite pedirlo por API ({devolvible['referencia']}).\n\n"
                 "Hazlo en el panel del proveedor y resuelve la incidencia "
-                "después."
+                "después.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -21965,7 +22003,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("incident_fix_go_"):
 
-        from incident_repair_service import fetch_open_incident, repair_incident
+        from incident_repair_service import (
+            build_open_incidents_keyboard,
+            fetch_open_incident,
+            repair_incident
+        )
 
         resto = data[len("incident_fix_go_"):].split("_")
 
@@ -21986,7 +22028,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(
                 "✅ Esa incidencia ya estaba resuelta. No se ha concedido "
-                "nada otra vez."
+                "nada otra vez.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -22012,7 +22055,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "❌ No se ha podido conceder el acceso "
                 f"({resultado['reason']}). El pago sigue registrado y la "
-                "incidencia, abierta."
+                "incidencia, abierta.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -22027,7 +22071,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Acceso concedido a {resultado['user_id']} durante "
             f"{duration_days} días.\n\n{entrega}\n\n"
             "No se ha registrado ningún pago nuevo: el cobro original ya "
-            "estaba contado."
+            "estaba contado.",
+            reply_markup=build_open_incidents_keyboard()
         )
 
         return
@@ -22036,6 +22081,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("incident_fix_"):
 
         from incident_repair_service import (
+            build_open_incidents_keyboard,
             fetch_open_incident,
             fetch_repair_durations,
         )
@@ -22058,7 +22104,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not incidencia:
 
             await query.message.reply_text(
-                "✅ Esa incidencia ya estaba resuelta."
+                "✅ Esa incidencia ya estaba resuelta.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -22082,7 +22129,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 f"⚠️ {group_name} no tiene ningún plan activo con duración "
                 "válida, así que no hay duración que conceder. Arregla el "
-                "plan y vuelve a pulsar."
+                "plan y vuelve a pulsar.",
+                reply_markup=build_open_incidents_keyboard()
             )
 
             return
@@ -28192,6 +28240,98 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    # =========================
+    # LOS ARREGLOS DE DATOS DE PRODUCCIÓN, VISIBLES
+    # =========================
+    # `bootstrap_tasks` reescribe precios, descripciones y proveedores de cobro
+    # en producción, y se activa poniendo BOOTSTRAP_TASKS en el servidor. Su
+    # resultado iba a un `print` del arranque y a nada más: no había forma de
+    # saber si alguna tarea seguía ARMADA —lo que significa que se ejecuta otra
+    # vez en CADA despliegue— ni qué contestó la última.
+
+    # =========================
+    # LAS INCIDENCIAS DE COBRO, ALCANZABLES
+    # =========================
+    # Cada incidencia es alguien que PAGÓ y no tiene acceso. Los dos botones
+    # que las arreglan —conceder el acceso, devolver el pago— vivían solo en el
+    # aviso de Telegram que las anunció. Perdido el aviso, perdida la
+    # incidencia: ni panel, ni lista, ni forma de saber cuántas hay.
+
+    if data == "admin_incidents":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from incident_repair_service import (
+            build_open_incidents_keyboard,
+            build_open_incidents_text
+        )
+
+        await query.message.reply_text(
+            build_open_incidents_text()[:3800],
+            reply_markup=build_open_incidents_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_bootstrap":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from bootstrap_panel_service import (
+            build_bootstrap_panel_keyboard,
+            build_bootstrap_panel_text
+        )
+
+        await query.message.reply_text(
+            build_bootstrap_panel_text(),
+            reply_markup=build_bootstrap_panel_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_bootstrap_list_plans":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from bootstrap_panel_service import (
+            build_bootstrap_panel_keyboard,
+            ejecutar_listado_de_planes
+        )
+
+        # La única de las ocho que no escribe nada. Las demás cambian datos de
+        # producción y siguen necesitando la variable y un despliegue: un botón
+        # que reescribe precios a un toque es justo lo que no debe existir.
+        await query.message.reply_text(
+            "📋 Planes de la comunidad\n\n" + ejecutar_listado_de_planes()[:3800],
+            reply_markup=build_bootstrap_panel_keyboard()
+        )
+
+        return
+
+
     if data == "admin_health":
 
         # Solo plataforma: es la foto de TODAS las comunidades, incluidas las
@@ -28623,19 +28763,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             category_filter = "user"
 
 
+        # EL FILTRO IBA DESPUÉS DEL LÍMITE. Se pedían los últimos 50 eventos
+        # de TODO y luego se descartaban los de otra categoría: si los últimos
+        # 50 eran de pagos, «Logs de usuarios» contestaba «Sin actividad
+        # registrada» con la tabla llena. Ahora filtra la consulta.
         rows = list_recent_events(
-            limit=50,
-            group_ids=group_ids
+            limit=MAXIMO_EVENTOS_DE_LOG,
+            group_ids=group_ids,
+            category=category_filter
         )
 
-
-        if category_filter:
-
-            rows = [
-                row
-                for row in rows
-                if row[2] == category_filter
-            ]
+        cuantos_hay = contar_eventos(
+            group_ids=group_ids,
+            category=category_filter
+        )
 
 
         if not rows:
@@ -28653,6 +28794,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else "📜 Logs de mi grupo\n\n"
         )
 
+        pintados = 0
+
 
         for (
             created_at,
@@ -28664,7 +28807,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             actor_user_id,
             target_user_id,
             message
-        ) in rows[:30]:
+        ) in rows[:MAXIMO_EVENTOS_EN_PANTALLA_DE_LOG]:
+
+            pintados += 1
 
             text += (
                 f"Evento: {event_type or '-'}\n"
@@ -28676,6 +28821,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Detalle: {message or '-'}\n"
                 f"Fecha: {created_at or '-'}\n\n"
             )
+
+
+        # Y SE DICE CUÁNTOS FALTAN. Se pintaban 30 y no había una sola señal
+        # de que hubiera más: el operador cree estar viendo el registro entero.
+        text += nota_de_recorte(
+            pintados,
+            cuantos_hay,
+            "Filtra por categoría para ver más."
+        )
 
 
         await query.message.reply_text(

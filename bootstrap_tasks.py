@@ -1054,35 +1054,88 @@ TAREAS = {
 }
 
 
+# =========================
+# QUE SE PUEDA VER LO QUE HIZO
+# =========================
+# El resultado de estas tareas iba a un `print` del arranque y a nada más. Dos
+# cosas que un operador no podía saber de ninguna manera:
+#
+#   - si BOOTSTRAP_TASKS está puesta AHORA MISMO en el servidor. Una tarea que
+#     alguien dejó armada se vuelve a ejecutar en CADA despliegue y en cada
+#     reinicio, para siempre, y no hay una sola pantalla que lo diga.
+#   - qué contestó la última vez. Si una tarea dijo «el grupo 4 no existe», eso
+#     se lo llevó el log del contenedor anterior.
+#
+# Se guarda en memoria: se pierde al reiniciar, y eso está bien —lo que importa
+# es el arranque de ESTE proceso, que es el que dejó los datos como están—. Los
+# cambios en sí siguen en audit_logs, que es donde tienen que estar.
+
+_ULTIMA_EJECUCION = {"cuando": None, "lineas": []}
+
+
+def ultima_ejecucion_de_puesta_a_punto():
+    """{'cuando': datetime|None, 'lineas': [...]} del arranque de este proceso."""
+
+    return {
+        "cuando": _ULTIMA_EJECUCION["cuando"],
+        "lineas": list(_ULTIMA_EJECUCION["lineas"]),
+    }
+
+
+def nombres_de_tareas():
+    """Los nombres válidos, para poder enseñarlos sin copiarlos a mano."""
+
+    return sorted(TAREAS)
+
+
+def ejecutar_una_tarea(nombre):
+    """
+    Ejecuta UNA tarea por su nombre y devuelve su línea de resultado.
+
+    Es la puerta para el panel. No comprueba permisos ni si la tarea es
+    inofensiva: eso lo decide quien llama, que es el único que sabe quién está
+    pulsando.
+    """
+
+    tarea = TAREAS.get(nombre)
+
+    if not tarea:
+
+        return (
+            f"{nombre}: no existe esa tarea. Disponibles: "
+            + ", ".join(nombres_de_tareas())
+        )
+
+    try:
+        return tarea()
+
+    except Exception as e:
+        return f"{nombre}: ERROR inesperado ({str(e)[:160]})"
+
+
 def run_bootstrap_tasks():
     """Ejecuta lo pedido. Devuelve una línea por tarea, para el arranque."""
 
+    from datetime import datetime
+
     pedidas = tareas_pedidas()
 
+    _ULTIMA_EJECUCION["cuando"] = datetime.now()
+
     if not pedidas:
+
+        _ULTIMA_EJECUCION["lineas"] = []
+
         return []
 
     lineas = []
 
+    # Una sola definición de «ejecutar una tarea y no reventar»: la usa el
+    # arranque y la usa el panel.
     for nombre in pedidas:
 
-        tarea = TAREAS.get(nombre)
+        lineas.append(ejecutar_una_tarea(nombre))
 
-        if not tarea:
-
-            lineas.append(
-                f"{nombre}: no existe esa tarea. Disponibles: "
-                + ", ".join(sorted(TAREAS))
-            )
-
-            continue
-
-        try:
-
-            lineas.append(tarea())
-
-        except Exception as e:
-
-            lineas.append(f"{nombre}: ERROR inesperado ({str(e)[:160]})")
+    _ULTIMA_EJECUCION["lineas"] = list(lineas)
 
     return lineas

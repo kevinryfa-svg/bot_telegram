@@ -862,54 +862,56 @@ def log_event(
         return False
 
 
-def list_recent_events(limit=50, group_ids=None):
+# EL FILTRO IBA DESPUÉS DEL LÍMITE. Las pantallas «Logs de usuarios», «de
+# pagos» y «de seguridad» pedían los ÚLTIMOS 50 eventos de todo y luego se
+# quedaban con los de su categoría. En un bot con tráfico eso significa que si
+# los últimos 50 eventos son de pagos, la pantalla de usuarios dice «Sin
+# actividad registrada» — con la tabla llena de eventos de usuario. El operador
+# que va a mirar quién ha entrado se lleva un «no hay nada» que es falso.
+#
+# El filtro entra en el SQL, que es donde el LIMIT tiene sentido.
+def list_recent_events(limit=50, group_ids=None, category=None):
+
+    condiciones = []
+    parametros = []
+
+    if group_ids is not None:
+
+        condiciones.append("group_id = ANY(%s)")
+        parametros.append(group_ids)
+
+
+    if category:
+
+        condiciones.append("category = %s")
+        parametros.append(str(category))
+
+
+    donde = ("WHERE " + " AND ".join(condiciones)) if condiciones else ""
+
+    parametros.append(limit)
 
     try:
 
         with conn.cursor() as cur:
 
-            if group_ids is None:
+            cur.execute(f"""
 
-                cur.execute("""
+                SELECT created_at,
+                       event_type,
+                       category,
+                       severity,
+                       group_id,
+                       telegram_group_id,
+                       actor_user_id,
+                       target_user_id,
+                       message
+                FROM audit_logs
+                {donde}
+                ORDER BY created_at DESC
+                LIMIT %s
 
-                    SELECT created_at,
-                           event_type,
-                           category,
-                           severity,
-                           group_id,
-                           telegram_group_id,
-                           actor_user_id,
-                           target_user_id,
-                           message
-                    FROM audit_logs
-                    ORDER BY created_at DESC
-                    LIMIT %s
-
-                """, (limit,))
-
-            else:
-
-                cur.execute("""
-
-                    SELECT created_at,
-                           event_type,
-                           category,
-                           severity,
-                           group_id,
-                           telegram_group_id,
-                           actor_user_id,
-                           target_user_id,
-                           message
-                    FROM audit_logs
-                    WHERE group_id = ANY(%s)
-                    ORDER BY created_at DESC
-                    LIMIT %s
-
-                """, (
-                    group_ids,
-                    limit
-                ))
-
+            """, tuple(parametros))
 
             return cur.fetchall()
 
@@ -1058,3 +1060,41 @@ def list_recent_audit_logs(limit=50, group_id=None):
         )
 
         return []
+
+
+def contar_eventos(group_ids=None, category=None):
+    """Cuántos eventos hay en total con ese filtro. None si no se pudo contar."""
+
+    condiciones = []
+    parametros = []
+
+    if group_ids is not None:
+
+        condiciones.append("group_id = ANY(%s)")
+        parametros.append(group_ids)
+
+
+    if category:
+
+        condiciones.append("category = %s")
+        parametros.append(str(category))
+
+
+    donde = ("WHERE " + " AND ".join(condiciones)) if condiciones else ""
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                f"SELECT COUNT(*)::bigint FROM audit_logs {donde}",
+                tuple(parametros)
+            )
+
+            return int((cur.fetchone() or [0])[0] or 0)
+
+    except Exception as e:
+
+        print("Error contando audit events:", str(e)[:200])
+
+        return None
