@@ -899,7 +899,11 @@ def get_group_plan_for_access(group_id, plan_id):
                    p.price_id,
                    g.telegram_group_id,
                    g.name,
-                   COALESCE(g.community_type, 'group')
+                   COALESCE(g.community_type, 'group'),
+                   -- Hace falta para poder decirle al comprador que se le va a
+                   -- volver a cobrar: sin esto, el mensaje de una suscripción
+                   -- se leía igual que el de un pago único.
+                   COALESCE(p.is_recurring, FALSE)
             FROM plans p
             JOIN groups g ON g.id=p.group_id
             WHERE p.id=%s
@@ -930,7 +934,8 @@ def get_group_plan_for_access(group_id, plan_id):
         "price_id": row[5],
         "telegram_group_id": row[6],
         "group_name": row[7],
-        "community_type": normalize_community_type(row[8])
+        "community_type": normalize_community_type(row[8]),
+        "is_recurring": bool(row[9]),
     }
 
 
@@ -1375,7 +1380,10 @@ def grant_group_access_after_payment(
         language=load_user_language(user_id),
         # Para el botón de invitar: el momento en que a alguien le apetece
         # recomendar una comunidad es el minuto en que acaba de entrar.
-        group_id=group_id
+        group_id=group_id,
+        # Y para decirle que la tarjeta se le va a volver a cobrar, si es que
+        # se le va a volver a cobrar.
+        es_recurrente=bool(plan.get("is_recurring"))
     )
 
     send_telegram_message(

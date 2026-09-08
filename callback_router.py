@@ -251,6 +251,7 @@ from group_delivery_health_service import (
 )
 from payment_access_service import (
     MAX_PLAN_DURATION_DAYS,
+    PENDING_PAYMENT_STALE_AFTER,
     get_user_group_access_state,
     grant_group_access_after_payment,
     log_purchase_blocked_existing_access,
@@ -1112,12 +1113,20 @@ def build_existing_group_access_text(access_state):
                 "Si ya pagaste, revisa el estado o abre soporte."
             )
 
+        # Decía «puedes crear un nuevo intento desde Ver planes», y no se
+        # puede: la compra está bloqueada mientras ese intento siga pendiente.
+        # Ahora se dice cuánto hay que esperar, que es lo único útil aquí.
+        horas = int(PENDING_PAYMENT_STALE_AFTER.total_seconds() // 3600) or 1
+
         return (
-            f"⏳ Hay un intento de pago pendiente para {group_name}, pero no puedo recuperar el enlace de pago.\n\n"
-            f"Proveedor: {provider}\n"
-            f"Estado: {access_state.get('last_payment_status') or 'pending'}\n\n"
-            "Si ya pagaste, no crees otro pago: abre soporte para revisarlo y evitar duplicados.\n"
-            "Si no llegaste a pagar, puedes crear un nuevo intento desde Ver planes."
+            f"⏳ Hay un intento de pago pendiente para {group_name} y no "
+            "consigo recuperar su enlace.\n\n"
+            "Si ya pagaste, NO pagues otra vez: abre soporte y lo revisamos "
+            "—si el cobro está hecho, te damos el acceso sin cobrarte de "
+            "nuevo.\n\n"
+            f"Si no llegaste a pagar, el intento se libera solo en {horas} h y "
+            "podrás comprar con normalidad. Si tienes prisa, escríbenos y lo "
+            "soltamos al momento."
         )
 
     if access_state.get("reason") == "paid_without_access_record":
@@ -20063,8 +20072,14 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
                 "Se abre la página segura de Stripe. En cuanto el pago se "
                 "confirme, recibes aquí mismo tu enlace de entrada, sin tener "
                 "que hacer nada más.\n\n"
-                "Si cierras la página sin pagar, no se te cobra nada y puedes "
-                "volver a intentarlo cuando quieras."
+                # NO SE PROMETE LO QUE NO SE CUMPLE. Aquí decía «puedes volver
+                # a intentarlo cuando quieras», y el bot bloquea una compra
+                # nueva mientras el intento anterior siga pendiente —dos horas—
+                # para no cobrar dos veces con los métodos que confirman tarde.
+                # La contradicción caía justo en el momento de pagar.
+                "Si cierras la página sin pagar, no se te cobra nada: vuelve a "
+                "este mismo enlace para terminar, o pídelo otra vez desde "
+                "«Mis accesos»."
             ),
             reply_markup=build_payment_link_keyboard(group_id)
         )
@@ -24662,9 +24677,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         changenow_available = is_changenow_group_checkout_available(group_id)
         guardarian_available = is_guardarian_group_checkout_available(group_id)
 
+        # EL RESUMEN SE HACE CON LOS QUE SE PUEDEN PAGAR. El texto de arriba
+        # listaba TODOS los planes activos, y este bucle se salta los que no
+        # tienen precio de Stripe o cuyo proveedor está apagado. Resultado: una
+        # pantalla que decía «Mensual — 15 EUR · Anual — 120 EUR» y debajo solo
+        # «Canjear código / Ayuda / Volver». Precios sin forma de pagarlos.
+        planes_con_boton = []
 
-        for (plan_id, name, price_id, amount, currency, payment_provider,
-             duration_days, amount_tarifa, oferta_percent) in plans:
+
+        for plan in plans:
+
+            (plan_id, name, price_id, amount, currency, payment_provider,
+             duration_days, amount_tarifa, oferta_percent) = plan
 
             payment_provider = normalize_plan_payment_provider(payment_provider)
 
@@ -24705,6 +24729,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     continue
 
+                planes_con_boton.append(plan)
+
                 keyboard.append([
 
                     InlineKeyboardButton(
@@ -24719,6 +24745,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
             if payment_provider == OWNER_PAYMENT_PROVIDER_PAYPAL and paypal_available:
+
+                planes_con_boton.append(plan)
 
                 keyboard.append([
 
@@ -24735,6 +24763,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if payment_provider == OWNER_PAYMENT_PROVIDER_REVOLUT and revolut_available:
 
+                planes_con_boton.append(plan)
+
                 keyboard.append([
 
                     InlineKeyboardButton(
@@ -24750,6 +24780,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if payment_provider == OWNER_PAYMENT_PROVIDER_CHANGENOW and changenow_available:
 
+                planes_con_boton.append(plan)
+
                 keyboard.append([
 
                     InlineKeyboardButton(
@@ -24764,6 +24796,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
             if payment_provider == OWNER_PAYMENT_PROVIDER_GUARDARIAN and guardarian_available:
+
+                planes_con_boton.append(plan)
 
                 keyboard.append([
 
@@ -24827,10 +24861,42 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # encuentra unos precios sueltos y no sabe qué está comprando.
         nombre_comunidad = _nombre_de_comunidad(group_id)
 
+        # Si NINGUNO se puede pagar, no se enseña una lista vacía con botones
+        # de ayuda: se dice lo que pasa. Antes esta pantalla podía salir con
+        # tres precios y ni una forma de pagarlos.
+        if not planes_con_boton:
+
+            await send_clean_message(
+                context,
+                query.message.chat_id,
+                (f"⚠️ {nombre_comunidad}: los accesos están sin activar ahora "
+                 "mismo.\n\n" if nombre_comunidad else
+                 "⚠️ Los accesos de esta comunidad están sin activar ahora "
+                 "mismo.\n\n")
+                + "No es cosa tuya y no se te ha cobrado nada. Ya hemos "
+                "avisado a quien puede arreglarlo; mientras, puedes mirar las "
+                "demás comunidades.",
+                reply_markup=build_recover_navigation_keyboard()
+            )
+
+            log_event(
+                "plans_screen_without_payable_plan",
+                category="payment",
+                severity="warning",
+                scope="group",
+                group_id=group_id,
+                actor_user_id=user_id,
+                message="La pantalla de planes no tenía ningún plan pagable.",
+                metadata={"planes_activos": len(plans)},
+            )
+
+            return
+
+
         intro_text = (
             (f"💳 {nombre_comunidad} — elige tu acceso\n\n"
              if nombre_comunidad else "💳 Elige tu acceso\n\n")
-            + f"{format_plans_summary(plans)}\n\n"
+            + f"{format_plans_summary(planes_con_boton)}\n\n"
             "Recibes tu enlace de entrada al instante tras el pago.\n"
             "Puedes pagar con tarjeta, PayPal, Revolut o cripto, según lo que "
             "tenga activo esta comunidad."
@@ -24844,7 +24910,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 + (f"Comunidad: {nombre_comunidad}\n\n"
                    if nombre_comunidad else "")
                 + "Puedes recuperarlo eligiendo un plan:\n\n"
-                + f"{format_plans_summary(plans)}\n\n"
+                + f"{format_plans_summary(planes_con_boton)}\n\n"
                 "Recuperas el acceso al instante tras el pago."
             )
 

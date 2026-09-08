@@ -174,6 +174,50 @@ async def report_access_link_unavailable(context, query, user_id, group_id,
 NOT_HANDLED = object()
 
 
+def linea_de_renovacion_activa(user_id, group_id, expiration, language):
+    """«El 08/10/2026 se te cobrarán 15 EUR y se renueva sola».
+
+    Decía «se renueva sola al final de cada periodo»: ni cuándo ni cuánto. Es
+    justo lo que se busca en esta pantalla cuando llega el cargo al banco y no
+    se reconoce, y es de donde salen la mitad de las reclamaciones.
+
+    Si no se sabe el importe, al menos la fecha. Si tampoco, la frase de antes:
+    nunca una fecha o un precio inventados.
+    """
+
+    fecha = None
+
+    if expiration:
+
+        try:
+            fecha = expiration.strftime("%d/%m/%Y")
+        except Exception:
+            fecha = None
+
+    if not fecha:
+        return t("mysub.renewal_active", language)
+
+    precio = None
+
+    try:
+
+        from renewal_service import precio_de_renovacion
+
+        precio = precio_de_renovacion(user_id, group_id)
+
+    except Exception as e:
+
+        print("Mis accesos: no se pudo leer su precio:", str(e)[:160])
+
+    if precio:
+
+        return t(
+            "mysub.renewal_active_dated", language, date=fecha, price=precio
+        )
+
+    return t("mysub.renewal_active_date_only", language, date=fecha)
+
+
 def buscar_enlace_vivo(user_id, group_id, telegram_group_id):
     """El enlace de esta persona que todavía sirve, o None.
 
@@ -1174,6 +1218,23 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
             language=language
         )
 
+        # Y LA FECHA, no solo la cuenta atrás. «364d 23h 15m» no se puede
+        # apuntar en un calendario ni comprobar contra el extracto del banco, y
+        # era el ÚNICO dato que tenía un socio sobre cuándo se le acaba: ni la
+        # pantalla ni la lista de accesos decían nunca un día concreto.
+        if expiration:
+
+            try:
+
+                tiempo_texto = (
+                    f"{tiempo_texto}\n"
+                    f"📅 Hasta el {expiration.strftime('%d/%m/%Y')}"
+                )
+
+            except Exception:
+
+                pass
+
 
         # =========================
         # ¿HACE FALTA UNO NUEVO?
@@ -1501,7 +1562,9 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
             else:
 
-                linea_renovacion = t("mysub.renewal_active", language)
+                linea_renovacion = linea_de_renovacion_activa(
+                    user_id, real_group_id, expiration, language
+                )
 
                 keyboard.insert(1, [
                     InlineKeyboardButton(

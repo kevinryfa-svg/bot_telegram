@@ -248,6 +248,24 @@ TRANSLATIONS = {
         "en": "Your access does not expire.",
     },
 
+    # Lo que faltaba en el mensaje más importante del bot: que la tarjeta se
+    # va a volver a cobrar. Sin esta línea, quien compraba una suscripción
+    # entendía que pagaba una vez, y el cargo siguiente le llegaba de sorpresa.
+    "purchase.renews": {
+        "es": (
+            "🔁 Es una suscripción: el {date} se te vuelve a cobrar "
+            "automáticamente, y así cada periodo.\n"
+            "Puedes desactivar la renovación cuando quieras en «Mis accesos», "
+            "sin perder los días que ya has pagado."
+        ),
+        "en": (
+            "🔁 This is a subscription: on {date} you'll be charged again "
+            "automatically, and every period after that.\n"
+            "You can turn auto-renewal off any time in «My access», without "
+            "losing the days you already paid for."
+        ),
+    },
+
     "purchase.link_title": {
         "es": "🔗 Entra desde aquí:",
         "en": "🔗 Join from here:",
@@ -1027,6 +1045,31 @@ TRANSLATIONS = {
     "mysub.permanent_intro": {
         "es": "✅ Tienes acceso permanente activo a este {kind}.\n\n",
         "en": "✅ You have permanent active access to this {kind}.\n\n",
+    },
+
+    # Con la fecha y el importe cuando se saben: «se renueva sola al final de
+    # cada periodo» no dice ni cuándo ni cuánto, y es exactamente lo que se
+    # busca en esta pantalla cuando llega el cargo al banco.
+    "mysub.renewal_active_dated": {
+        "es": (
+            "🔁 Renovación automática: activa.\n"
+            "El {date} se te cobrarán {price} y se renueva sola.\n\n"
+        ),
+        "en": (
+            "🔁 Auto-renewal: on.\n"
+            "On {date} you'll be charged {price} and it renews itself.\n\n"
+        ),
+    },
+
+    "mysub.renewal_active_date_only": {
+        "es": (
+            "🔁 Renovación automática: activa.\n"
+            "Se renueva sola el {date}.\n\n"
+        ),
+        "en": (
+            "🔁 Auto-renewal: on.\n"
+            "It renews itself on {date}.\n\n"
+        ),
     },
 
     "mysub.renewal_active": {

@@ -192,7 +192,7 @@ def test_paypal_full_cycle_from_the_price_the_owner_typed(entorno):
     assert activo is True
 
     al_comprador = [t for c, t in entorno["avisos"] if c == 9701]
-    assert al_comprador and "15.00 EUR" in al_comprador[0]
+    assert al_comprador and "15 EUR" in al_comprador[0]
 
 
 def test_paypal_retry_does_not_extend_access_or_repeat_the_message(entorno):
@@ -258,7 +258,7 @@ def test_revolut_full_cycle_grants_access_and_says_the_right_amount(entorno):
     assert activo is True
 
     al_comprador = [t for c, t in entorno["avisos"] if c == 9702]
-    assert al_comprador and "15.00 EUR" in al_comprador[0]
+    assert al_comprador and "15 EUR" in al_comprador[0]
 
 
 def test_revolut_rejects_a_forged_amount_before_payment(entorno):
