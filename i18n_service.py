@@ -1123,6 +1123,113 @@ TRANSLATIONS = {
         "en": "🔄 Send me another link",
     },
 
+    # PEDIR DEVOLUCIÓN. No existía en ninguna pantalla del comprador: el
+    # servicio de devoluciones estaba entero y solo se llegaba a él desde el
+    # flujo de incidencias del operador. Quien quería su dinero tenía que
+    # escribir a soporte y esperar — o irse al banco a reclamar, que le cuesta
+    # al vendedor la comisión además del reembolso.
+    # La pantalla de cambio de plan estaba en español duro DENTRO de un flujo
+    # traducido: sus mensajes y sus botones usan t() y el cuerpo no, así que un
+    # comprador inglés recibía un envoltorio en inglés con el contenido en
+    # español, justo en la pantalla donde va a pagar.
+    "switch.title": {
+        "es": "🔀 Cambiar de plan en {group}",
+        "en": "🔀 Change plan in {group}",
+    },
+
+    "switch.current": {
+        "es": "Tu plan ahora: {plan}",
+        "en": "Your current plan: {plan}",
+    },
+
+    "switch.how_it_works": {
+        "es": (
+            "Al activarse el plan nuevo, tu suscripción actual se apaga sola "
+            "al final del periodo que ya tienes pagado: no se te cobra dos "
+            "veces y no pierdes ni un día de acceso."
+        ),
+        "en": (
+            "When the new plan starts, your current subscription switches "
+            "itself off at the end of the period you already paid for: you "
+            "are not charged twice and you don't lose a single day of access."
+        ),
+    },
+
+    "switch.available": {
+        "es": "Planes disponibles:",
+        "en": "Available plans:",
+    },
+
+    "mysub.btn_refund": {
+        "es": "💸 Pedir devolución",
+        "en": "💸 Request a refund",
+    },
+
+    "mysub.refund_ask": {
+        "es": (
+            "💸 Pedir la devolución de {group}\n\n"
+            "Último pago: {plan} — {price}\n\n"
+            "Se envía la petición a quien gestiona la comunidad. No se te "
+            "devuelve el dinero automáticamente: lo revisa una persona.\n\n"
+            "Si te la aprueban, pierdes el acceso.\n\n"
+            "¿Enviamos la petición?"
+        ),
+        "en": (
+            "💸 Request a refund for {group}\n\n"
+            "Last payment: {plan} — {price}\n\n"
+            "The request goes to whoever runs the community. Your money is not "
+            "refunded automatically: a person reviews it.\n\n"
+            "If it's approved, you lose access.\n\n"
+            "Send the request?"
+        ),
+    },
+
+    "mysub.refund_sent": {
+        "es": (
+            "✅ Petición enviada.\n\n"
+            "Quien gestiona {group} la va a revisar. Te avisamos por aquí en "
+            "cuanto haya respuesta.\n\n"
+            "Mientras tanto conservas tu acceso."
+        ),
+        "en": (
+            "✅ Request sent.\n\n"
+            "Whoever runs {group} will review it. We'll let you know here as "
+            "soon as there's an answer.\n\n"
+            "You keep your access in the meantime."
+        ),
+    },
+
+    "mysub.refund_already": {
+        "es": (
+            "⏳ Ya tienes una petición de devolución en marcha para {group}.\n\n"
+            "No hace falta enviarla otra vez: te avisamos por aquí en cuanto "
+            "haya respuesta."
+        ),
+        "en": (
+            "⏳ You already have a refund request open for {group}.\n\n"
+            "No need to send it again: we'll let you know here as soon as "
+            "there's an answer."
+        ),
+    },
+
+    "mysub.refund_none": {
+        "es": (
+            "No encuentro ningún pago tuyo para {group} que se pueda "
+            "devolver.\n\n"
+            "Si crees que es un error, escríbenos y lo miramos."
+        ),
+        "en": (
+            "I can't find any payment of yours for {group} that could be "
+            "refunded.\n\n"
+            "If you think that's wrong, write to us and we'll check."
+        ),
+    },
+
+    "mysub.btn_refund_yes": {
+        "es": "💸 Sí, enviar la petición",
+        "en": "💸 Yes, send the request",
+    },
+
     "mysub.btn_help": {
         "es": "💬 Ayuda sobre este menú",
         "en": "💬 Help with this menu",

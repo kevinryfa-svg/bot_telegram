@@ -1045,6 +1045,94 @@ def build_payment_link_keyboard(group_id):
     return InlineKeyboardMarkup(keyboard)
 
 
+def importe_vigente_de_plan(group_id, plan_id, user_id=None):
+    """(importe, moneda) del plan, con su oferta viva si la tiene. (None, None).
+
+    La pantalla de «paga aquí» de PayPal, Revolut y las de cripto no decía el
+    importe porque en esas funciones solo llega el número del plan. Decir el
+    precio justo antes de irse a pagar es lo mínimo: es el último sitio donde
+    se puede comprobar que es el que se anunciaba.
+    """
+
+    try:
+
+        from weekly_offer_service import sql_importe_vigente
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT """ + sql_importe_vigente("p", "comprador") + """,
+                       COALESCE(NULLIF(p.currency, ''), 'EUR')
+                FROM plans p
+                WHERE p.id = %(plan)s AND p.group_id = %(grupo)s
+                LIMIT 1
+
+            """, {
+                "plan": plan_id,
+                "grupo": group_id,
+                "comprador": user_id,
+            })
+
+            fila = cur.fetchone()
+
+            return (fila[0], fila[1]) if fila else (None, None)
+
+    except Exception as e:
+
+        print("Pago: no se pudo leer el importe del plan:", str(e)[:160])
+
+        return (None, None)
+
+
+def build_pay_here_text(nombre_proveedor, url, group_id=None, importe=None,
+                        moneda=None):
+    """El mensaje de «paga aquí», igual para los cinco proveedores.
+
+    Cada uno lo escribía a su manera y con lo que le apetecía. El de Revolut
+    era «Paga con Revolut aquí: <url>» y quitaba el teclado —cero botones—, y
+    el de PayPal decía «Checkout PayPal creado» y «el acceso se enviará cuando
+    PayPal confirme el pago por webhook verificado»: «checkout» y «webhook» no
+    significan nada para quien está comprando, y ninguno de los dos decía QUÉ
+    se está pagando ni CUÁNTO.
+
+    Aquí se dice lo mismo siempre: qué comunidad, cuánto, qué pasa al pagar y
+    qué pasa si cierras sin pagar.
+    """
+
+    from group_service import nombre_de_comunidad
+
+    comunidad = nombre_de_comunidad(group_id) if group_id else None
+
+    lineas = [f"💳 Último paso: el pago con {nombre_proveedor}", ""]
+
+    if comunidad:
+        lineas.append(f"Comunidad: {comunidad}")
+
+    if importe is not None:
+
+        from start_offer_service import formato_importe
+
+        escrito = formato_importe(importe, moneda)
+
+        if escrito:
+            lineas.append(f"Importe: {escrito}")
+
+    if len(lineas) > 2:
+        lineas.append("")
+
+    lineas.extend([
+        str(url or ""),
+        "",
+        "En cuanto el pago se confirme, recibes aquí mismo tu enlace de "
+        "entrada, sin tener que hacer nada más.",
+        "",
+        "Si cierras sin pagar, no se te cobra nada.",
+    ])
+
+    return "\n".join(lineas)
+
+
 PAYMENT_FAILED_TEXT = (
     "❌ No he podido abrir la pasarela de pago\n\n"
     "No se te ha cobrado nada.\n\n"
@@ -1054,12 +1142,18 @@ PAYMENT_FAILED_TEXT = (
 
 
 def format_access_expiration(expires_at):
+    """«hasta el 08/10/2026» o «permanente».
+
+    Devolvía «2026-10-08 15:22»: una marca de tiempo de máquina, con la hora
+    —que no le importa a nadie— y en el orden que no se usa en español. Y la
+    pantalla lo pegaba detrás de «Acceso:», así que se leía como un código.
+    """
 
     if not expires_at:
         return "permanente"
 
     try:
-        return expires_at.strftime("%Y-%m-%d %H:%M")
+        return "hasta el " + expires_at.strftime("%d/%m/%Y")
     except Exception:
         return str(expires_at)
 
@@ -1084,9 +1178,10 @@ def build_existing_group_access_text(access_state):
 
         return (
             f"✅ Ya tienes acceso activo a {group_name}.\n\n"
-            f"Acceso: {format_access_expiration(expires_at)}\n\n"
-            f"Si necesitas volver a entrar al {community_kind}, usa Recuperar/Reenviar enlace.\n"
-            "Si crees que esto es un error, abre soporte."
+            f"📅 Tu acceso vale {format_access_expiration(expires_at)}.\n\n"
+            f"Si necesitas volver a entrar al {community_kind}, pide otro "
+            "enlace con el botón de abajo.\n"
+            "Si crees que esto es un error, escríbenos."
         )
 
     if access_state.get("reason") == "payment_pending_stale":
@@ -5896,11 +5991,16 @@ async def request_location_verification(
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            "📍 Esta comunidad requiere verificar tu ubicación.\n\n"
+            "📍 Esta comunidad solo admite a gente de una zona\n\n"
             f"Región permitida: {region_label}\n\n"
-            "Pulsa el botón de Telegram “📍 Enviar ubicación”. No escribas tu ciudad manualmente.\n\n"
-            "Usaremos tu ubicación solo para comprobar la región y no guardaremos tus coordenadas exactas.\n\n"
-            "Si estás dentro de la zona permitida y te rechaza, contacta con soporte."
+            "Antes de cobrarte nada hay que comprobarlo. Pulsa el botón "
+            "“📍 Enviar ubicación” que te sale abajo (el de Telegram, no "
+            "escribas tu ciudad a mano).\n\n"
+            "Solo se usa para comprobar la región: no se guardan tus "
+            "coordenadas.\n\n"
+            "No se te ha cobrado nada todavía. Si no quieres compartir la "
+            "ubicación, con /start vuelves al inicio y puedes mirar otras "
+            "comunidades."
         ),
         reply_markup=keyboard
     )
@@ -15593,7 +15693,7 @@ def marketplace_access_text(group):
         return "🔓 Entrar gratis"
 
 
-    return "💳 Ver acceso"
+    return "💳 Ver planes y precios"
 
 
 def format_marketplace_number(value):
@@ -15885,7 +15985,7 @@ def build_marketplace_access_keyboard(
 
 
     keyboard.append([InlineKeyboardButton(
-        f"🔓 Entrar al {kind}" if is_free_group else "💳 Ver acceso",
+        f"🔓 Entrar al {kind}" if is_free_group else "💳 Ver planes y precios",
         callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
     )])
 
@@ -15938,7 +16038,7 @@ def build_marketplace_preview_keyboard(group, user_id=None):
 
 
     keyboard.append([InlineKeyboardButton(
-        f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Ver acceso",
+        f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Ver planes y precios",
         callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
     )])
 
@@ -16739,6 +16839,35 @@ def format_marketplace_card(group):
     )
 
 
+def linea_de_region_restringida(group_id):
+    """[«📍 Solo desde X»] si la comunidad pide ubicación. [] si no.
+
+    La restricción de región solo aparecía DESPUÉS de elegir un plan, cuando
+    ya se había decidido comprar: ni la ficha de la comunidad ni el precio la
+    mencionaban. Quien no puede o no quiere compartir su ubicación llegaba
+    hasta el último paso para enterarse — y el que está fuera de la zona
+    recorría el embudo entero para nada.
+    """
+
+    if not group_id:
+        return []
+
+    try:
+
+        activada, region = get_group_location_gate_display(group_id)
+
+    except Exception as e:
+
+        print("Ficha: no se pudo leer la región:", str(e)[:160])
+
+        return []
+
+    if not activada:
+        return []
+
+    return [f"📍 Solo desde {region}" if region else "📍 Solo desde una zona"]
+
+
 def format_marketplace_group_caption(group):
 
     preview_mode = group.get("preview_mode") or "manual"
@@ -16754,6 +16883,7 @@ def format_marketplace_group_caption(group):
             f"📡 Tipo: {kind_cap}",
             f"📂 {format_marketplace_category(group)}"
         ]
+        + linea_de_region_restringida(group.get("id"))
         + format_marketplace_social_proof(group, members_label)
         + [format_marketplace_kind(group)]
     )
@@ -16824,7 +16954,7 @@ def build_marketplace_group_keyboard(group, user_id=None):
 
 
     keyboard.append([InlineKeyboardButton(
-        f"🔓 Entrar al {kind}" if is_free_group else "💳 Comprar acceso",
+        f"🔓 Entrar al {kind}" if is_free_group else "💳 Ver planes y precios",
         callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
     )])
 
@@ -16934,7 +17064,7 @@ def build_dynamic_preview_access_keyboard(group, user_id=None):
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Comprar acceso",
+            f"🔓 Entrar al {kind}" if group.get("is_free_group") else "💳 Ver planes y precios",
             callback_data=f"free_access_{group_id}" if group.get("is_free_group") else f"group_{group_id}"
         )],
         [InlineKeyboardButton(
@@ -20037,7 +20167,13 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Este método de pago aún no está disponible.",
+            # Era el único error de pago que NO decía que no se ha cobrado.
+            text=(
+                "❌ El pago con tarjeta no está disponible ahora mismo.\n\n"
+                "No se te ha cobrado nada.\n\n"
+                "Ya hemos avisado a quien puede arreglarlo. Prueba con otro "
+                "método si esta comunidad tiene alguno, o inténtalo más tarde."
+            ),
             reply_markup=build_group_recovery_keyboard(group_id)
         )
 
@@ -20113,6 +20249,11 @@ async def create_checkout_for_user(context, chat_id, user_id, group_id, price_id
 
 async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
 
+    # El importe, para poder decirlo en la pantalla de pago.
+    importe_del_plan, moneda_del_plan = importe_vigente_de_plan(
+        group_id, plan_id, user_id
+    )
+
     access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
 
@@ -20177,7 +20318,17 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=response_data.get("error") or "PayPal no está disponible para esta comunidad.",
+                # EL ERROR DE ARRIBA NO SE LE SUELTA AL COMPRADOR. Aquí se
+                # reenviaba `error` tal cual como lo devuelve el servidor: al
+                # que está comprando no le dice nada, y lo único que necesita
+                # saber —que no se le ha cobrado— no aparecía.
+                text=(
+                    f"❌ No he podido abrir el pago con PayPal.\n\n"
+                    "No se te ha cobrado nada.\n\n"
+                    "Prueba con otro método de pago o vuelve a intentarlo en "
+                    "un momento. Si sigue igual, escríbenos: puede ser algo de "
+                    "la comunidad y no tuyo."
+                ),
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 
@@ -20186,13 +20337,19 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text=(
-                "✅ Checkout PayPal creado. Completa el pago para recibir acceso.\n\n"
-                "El acceso se enviará cuando PayPal confirme el pago por webhook verificado."
+            text=build_pay_here_text(
+                "PayPal",
+                response_data["url"],
+                group_id=group_id,
+                importe=importe_del_plan,
+                moneda=moneda_del_plan,
             ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🅿️ Pagar con PayPal", url=response_data["url"])]
-            ])
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton(
+                    "🅿️ Pagar con PayPal", url=response_data["url"]
+                )]]
+                + list(build_payment_link_keyboard(group_id).inline_keyboard)
+            )
         )
 
     except Exception as e:
@@ -20220,6 +20377,11 @@ async def create_paypal_group_checkout_for_user(context, chat_id, user_id, group
 
 
 async def create_revolut_group_checkout_for_user(context, chat_id, user_id, group_id, plan_id):
+
+    # El importe, para poder decirlo en la pantalla de pago.
+    importe_del_plan, moneda_del_plan = importe_vigente_de_plan(
+        group_id, plan_id, user_id
+    )
 
     access_state = await resolve_group_access_state_for_user(context, user_id, group_id)
 
@@ -20269,7 +20431,17 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=response_data.get("error") or "Revolut no está disponible para esta comunidad.",
+                # EL ERROR DE ARRIBA NO SE LE SUELTA AL COMPRADOR. Aquí se
+                # reenviaba `error` tal cual como lo devuelve el servidor: al
+                # que está comprando no le dice nada, y lo único que necesita
+                # saber —que no se le ha cobrado— no aparecía.
+                text=(
+                    f"❌ No he podido abrir el pago con Revolut.\n\n"
+                    "No se te ha cobrado nada.\n\n"
+                    "Prueba con otro método de pago o vuelve a intentarlo en "
+                    "un momento. Si sigue igual, escríbenos: puede ser algo de "
+                    "la comunidad y no tuyo."
+                ),
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 
@@ -20278,12 +20450,14 @@ async def create_revolut_group_checkout_for_user(context, chat_id, user_id, grou
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text=(
-                "🏦 Paga con Revolut aquí:\n"
-                f"{response_data['url']}\n\n"
-                "El acceso se enviará cuando Revolut confirme el pago por webhook verificado."
+            text=build_pay_here_text(
+                "Revolut",
+                response_data["url"],
+                group_id=group_id,
+                importe=importe_del_plan,
+                moneda=moneda_del_plan,
             ),
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=build_payment_link_keyboard(group_id)
         )
 
     except Exception as e:
@@ -20360,7 +20534,17 @@ async def create_changenow_group_checkout_for_user(context, chat_id, user_id, gr
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=response_data.get("error") or "ChangeNOW no está disponible para esta comunidad.",
+                # EL ERROR DE ARRIBA NO SE LE SUELTA AL COMPRADOR. Aquí se
+                # reenviaba `error` tal cual como lo devuelve el servidor: al
+                # que está comprando no le dice nada, y lo único que necesita
+                # saber —que no se le ha cobrado— no aparecía.
+                text=(
+                    f"❌ No he podido abrir el pago con ChangeNOW.\n\n"
+                    "No se te ha cobrado nada.\n\n"
+                    "Prueba con otro método de pago o vuelve a intentarlo en "
+                    "un momento. Si sigue igual, escríbenos: puede ser algo de "
+                    "la comunidad y no tuyo."
+                ),
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 
@@ -20450,7 +20634,17 @@ async def create_guardarian_group_checkout_for_user(context, chat_id, user_id, g
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=response_data.get("error") or "Guardarian no está disponible para esta comunidad.",
+                # EL ERROR DE ARRIBA NO SE LE SUELTA AL COMPRADOR. Aquí se
+                # reenviaba `error` tal cual como lo devuelve el servidor: al
+                # que está comprando no le dice nada, y lo único que necesita
+                # saber —que no se le ha cobrado— no aparecía.
+                text=(
+                    f"❌ No he podido abrir el pago con Guardarian.\n\n"
+                    "No se te ha cobrado nada.\n\n"
+                    "Prueba con otro método de pago o vuelve a intentarlo en "
+                    "un momento. Si sigue igual, escríbenos: puede ser algo de "
+                    "la comunidad y no tuyo."
+                ),
                 reply_markup=build_group_recovery_keyboard(group_id)
             )
 

@@ -32,37 +32,70 @@ from wizard_state_helpers import clear_location_flow_state
 # BIENVENIDA CON DATOS REALES
 # =========================
 
-def build_public_start_message():
+def build_public_start_message(vendibles=None):
     """
     La bienvenida es la pantalla que ve todo el mundo, y era puramente
     genérica: no decía cuántas comunidades hay, ni desde qué precio, ni qué
-    pasa al pagar. Aquí se compone con datos reales del catálogo. Si algo
-    falla o no hay catálogo, se usa el texto original.
+    pasa al pagar. Aquí se compone con datos reales del catálogo.
+
+    LA CABECERA Y LOS BOTONES CUENTAN LO MISMO. La cabecera salía de
+    fetch_offer_snapshot y los botones de fetch_sellable_communities, y las dos
+    consultas filtran cosas distintas: la primera no aplica el techo de
+    duración, ni la salud de entrega, ni si el propietario está al día. Así que
+    se podía leer «Hay 4 comunidades privadas disponibles, desde 3 EUR» encima
+    de UN botón de 15 EUR —o encima de ninguno—. Ahora, si se le pasa la lista
+    con la que se van a pintar los botones, la cabecera se hace con ELLA.
     """
 
-    try:
+    if vendibles is not None:
 
-        offer = fetch_offer_snapshot(limit=3)
+        comprables = [o for o in vendibles if not o.get("ya_dentro")]
 
-    except Exception as e:
+        if not comprables:
+            return PUBLIC_START_TEXT_ES
 
-        print("Inicio: no se pudo leer el catálogo:", e)
-        return PUBLIC_START_TEXT_ES
+        total = len(comprables)
+
+        importes = [
+            (o.get("amount"), o.get("currency"))
+            for o in comprables
+            if o.get("amount") is not None
+        ]
+
+        price = None
+
+        if importes:
+
+            barato = min(importes, key=lambda par: float(par[0]))
+            price = format_price(barato[0], barato[1])
+
+        free_total = 0
+
+    else:
+
+        try:
+
+            offer = fetch_offer_snapshot(limit=3)
+
+        except Exception as e:
+
+            print("Inicio: no se pudo leer el catálogo:", e)
+            return PUBLIC_START_TEXT_ES
 
 
-    total = offer.get("total") or 0
+        total = offer.get("total") or 0
 
 
-    if not total:
+        if not total:
 
-        return PUBLIC_START_TEXT_ES
+            return PUBLIC_START_TEXT_ES
 
 
-    price = format_price(
-        offer.get("cheapest_amount"),
-        offer.get("cheapest_currency")
-    )
-    free_total = offer.get("free_total") or 0
+        price = format_price(
+            offer.get("cheapest_amount"),
+            offer.get("cheapest_currency")
+        )
+        free_total = offer.get("free_total") or 0
 
     noun = "comunidad privada" if total == 1 else "comunidades privadas"
     plural = "" if total == 1 else "s"
@@ -1227,7 +1260,9 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     # MENSAJE BIENVENIDA
     # =========================
 
-    start_text = build_public_start_message()
+    # Con la MISMA lista con la que se pintan los botones: si no, la cabecera
+    # puede prometer cuatro comunidades y aparecer un solo botón.
+    start_text = build_public_start_message(vendibles=ofertas)
 
 
     # UNA SOLA COSA QUE VENDER, UNA SOLA OFERTA. Con un único acceso a la
