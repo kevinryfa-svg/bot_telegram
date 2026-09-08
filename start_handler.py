@@ -736,18 +736,32 @@ async def send_start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
             else None
         )
 
+        # ES LA PRIMERA PANTALLA DEL BOT. Se enviaba sin un solo botón, así que
+        # quien llega desde un anuncio y se topa con esto no tiene a dónde ir:
+        # el clic está pagado y se pierde entero.
+        from callback_router import build_recover_navigation_keyboard
+
+        texto_de_fallo = (
+            "❌ No he podido cargar las comunidades ahora mismo. "
+            "Inténtalo otra vez en un momento."
+        )
+
+        try:
+            teclado = build_recover_navigation_keyboard()
+        except Exception:
+            teclado = None
+
         if chat_id:
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="❌ Error cargando comunidades disponibles."
+                text=texto_de_fallo,
+                reply_markup=teclado
             )
 
         elif message:
 
-            await message.reply_text(
-                "❌ Error cargando comunidades disponibles."
-            )
+            await message.reply_text(texto_de_fallo, reply_markup=teclado)
 
         return
 

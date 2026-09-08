@@ -19810,7 +19810,13 @@ async def create_free_access_for_user(context, chat_id, telegram_user, group_id)
 
         if reason == "not_free_group":
 
-            message = "Este grupo aún no está configurado como gratuito ni tiene planes activos."
+            # Decía cómo está la base de datos («configurado como gratuito»),
+            # no lo que le pasa a quien lo lee.
+            message = (
+                "Esta comunidad todavía no tiene ningún acceso a la venta ni "
+                "entrada gratuita. Mira las demás o escríbenos y te avisamos "
+                "cuando abra."
+            )
 
         elif reason == "telegram_error":
 
@@ -21397,7 +21403,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -21450,7 +21457,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -21921,7 +21929,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -21964,7 +21973,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -22049,7 +22059,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
                 context,
                 query.message.chat_id,
-                "❌ Comunidad no encontrada o no disponible."
+                "❌ Comunidad no encontrada o no disponible.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -24502,7 +24513,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_clean_message(
             context,
             query.message.chat_id,
-                        "❌ Comunidad no encontrada o no disponible."
+                        "❌ Comunidad no encontrada o no disponible.",
+                        reply_markup=build_recover_navigation_keyboard()
                     )
 
                     return
@@ -24578,7 +24590,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
             context,
             query.message.chat_id,
-                "❌ Error cargando planes."
+                "❌ Error cargando planes. No se te ha cobrado nada.",
+                reply_markup=build_group_recovery_keyboard(group_id)
             )
 
             return
@@ -24635,7 +24648,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_clean_message(
             context,
             query.message.chat_id,
-                "Este grupo aún no está configurado como gratuito ni tiene planes activos."
+                "Esta comunidad todavía no tiene ningún acceso a la venta. "
+                "Mira las demás o escríbenos y te avisamos cuando abra.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return
@@ -27024,7 +27039,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Error cargando planes:", e)
 
             await query.message.reply_text(
-                "❌ Error cargando planes."
+                "❌ Error cargando planes. No se te ha cobrado nada.",
+                reply_markup=build_recover_navigation_keyboard()
             )
 
             return

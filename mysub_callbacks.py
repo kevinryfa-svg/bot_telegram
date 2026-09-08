@@ -174,6 +174,50 @@ async def report_access_link_unavailable(context, query, user_id, group_id,
 NOT_HANDLED = object()
 
 
+def buscar_enlace_vivo(user_id, group_id, telegram_group_id):
+    """El enlace de esta persona que todavía sirve, o None.
+
+    Telegram caduca el enlace a las ACCESS_LINK_EXPIRE_SECONDS de crearlo. Esa
+    fecha NO se guarda en la tabla, así que se deduce de created_at con la misma
+    política con la que se creó: es la única fuente que hay.
+
+    Si le queda uno, se le vuelve a enseñar ESE en vez de matarlo para darle
+    otro igual.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT invite_link
+                FROM invite_links
+                WHERE user_id = %s
+                  AND (group_id = %s OR telegram_group_id = %s OR group_id = %s)
+                  AND COALESCE(is_active, TRUE) = TRUE
+                  AND revoked_at IS NULL
+                  AND created_at > NOW() - (%s || ' seconds')::interval
+                ORDER BY id DESC
+                LIMIT 1
+
+            """, (
+                user_id, group_id, telegram_group_id, telegram_group_id,
+                max(ACCESS_LINK_EXPIRE_SECONDS, 60),
+            ))
+
+            fila = cur.fetchone()
+
+            return fila[0] if fila else None
+
+    except Exception as e:
+
+        # Sin saberlo, mejor crear uno nuevo que dejarle sin enlace.
+        print("Mis accesos: no se pudo mirar su enlace:", str(e)[:160])
+
+        return None
+
+
 def _resolver_grupo_por_ref(ref):
     """(group_id, name, telegram_group_id) desde un id interno o de Telegram."""
 
@@ -893,6 +937,21 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
         return
 
 
+    # =========================
+    # «ENVIARME OTRO ENLACE» ES UNA PETICIÓN, NO UN EFECTO SECUNDARIO
+    # =========================
+    # El botón de reenviar llevaba EL MISMO callback que abrir la pantalla, así
+    # que no había forma de distinguirlos: cada vez que alguien entraba en «Mis
+    # accesos» —a mirar cuándo le caduca, a ver sus recibos, o al volver desde
+    # otra pantalla— el bot revocaba y BORRABA todos sus enlaces y creaba uno
+    # nuevo. Quien tenía guardado o reenviado el enlace de su compra se lo
+    # encontraba muerto sin que nadie le hubiera avisado.
+    if data.startswith("mysubnew_"):
+
+        data = "mysub_" + data[len("mysubnew_"):]
+        context.user_data["mysub_forzar_enlace_nuevo"] = True
+
+
     if data.startswith("mysub_"):
 
         try:
@@ -1117,85 +1176,105 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
 
         # =========================
+        # ¿HACE FALTA UNO NUEVO?
+        # =========================
+        # Solo cuando lo ha pedido con su botón, o cuando no le queda ninguno
+        # vivo. Abrir la pantalla a mirar la caducidad no puede costarle el
+        # enlace que tiene guardado.
+        forzar = bool(context.user_data.pop("mysub_forzar_enlace_nuevo", False))
+
+        enlace_vivo = None
+
+        if not forzar:
+
+            enlace_vivo = buscar_enlace_vivo(
+                user_id, real_group_id, telegram_group_id
+            )
+
+
+        # =========================
         # REVOCAR LINKS ANTIGUOS
         # =========================
 
-        with conn.cursor() as cur:
+        # Solo se destruye lo que tiene si de verdad vamos a darle otro.
+        if not enlace_vivo:
 
-            cur.execute("""
+            with conn.cursor() as cur:
 
-                SELECT invite_link
+                cur.execute("""
 
-                FROM invite_links
+                    SELECT invite_link
 
-                WHERE user_id=%s
-                AND (
-                    group_id=%s
-                    OR telegram_group_id=%s
-                    OR group_id=%s
-                )
+                    FROM invite_links
 
-            """, (
-
-                user_id,
-                real_group_id,
-                telegram_group_id,
-                telegram_group_id
-
-            ))
-
-            old_links = cur.fetchall()
-
-
-            for (old_link,) in old_links:
-
-                try:
-
-                    revoke_link(
-                        telegram_group_id,
-                        old_link
+                    WHERE user_id=%s
+                    AND (
+                        group_id=%s
+                        OR telegram_group_id=%s
+                        OR group_id=%s
                     )
 
-                    cur.execute("""
+                """, (
 
-                        UPDATE invite_links
+                    user_id,
+                    real_group_id,
+                    telegram_group_id,
+                    telegram_group_id
 
-                        SET is_active=FALSE,
-                            revoked_at=NOW()
+                ))
 
-                        WHERE invite_link=%s
+                old_links = cur.fetchall()
 
-                    """, (old_link,))
 
-                except Exception as e:
+                for (old_link,) in old_links:
 
-                    print(
-                        "Error revocando link:",
-                        e
+                    try:
+
+                        revoke_link(
+                            telegram_group_id,
+                            old_link
+                        )
+
+                        cur.execute("""
+
+                            UPDATE invite_links
+
+                            SET is_active=FALSE,
+                                revoked_at=NOW()
+
+                            WHERE invite_link=%s
+
+                        """, (old_link,))
+
+                    except Exception as e:
+
+                        print(
+                            "Error revocando link:",
+                            e
+                        )
+
+
+                cur.execute("""
+
+                    DELETE FROM invite_links
+
+                    WHERE user_id=%s
+                    AND (
+                        group_id=%s
+                        OR telegram_group_id=%s
+                        OR group_id=%s
                     )
 
+                """, (
 
-            cur.execute("""
+                    user_id,
+                    real_group_id,
+                    telegram_group_id,
+                    telegram_group_id
 
-                DELETE FROM invite_links
+                ))
 
-                WHERE user_id=%s
-                AND (
-                    group_id=%s
-                    OR telegram_group_id=%s
-                    OR group_id=%s
-                )
-
-            """, (
-
-                user_id,
-                real_group_id,
-                telegram_group_id,
-                telegram_group_id
-
-            ))
-
-            conn.commit()
+                conn.commit()
 
 
         # =========================
@@ -1233,7 +1312,9 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
         )
 
 
-        link = create_telegram_invite_link(
+        # El que ya tenía, si sigue vivo: no se le pide otro a Telegram ni se
+        # le cambia el que pueda tener guardado.
+        link = enlace_vivo or create_telegram_invite_link(
             TOKEN,
             telegram_group_id,
             expire_seconds=expire_seconds,
@@ -1265,25 +1346,29 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
         # GUARDAR LINK NUEVO
         # =========================
 
-        with conn.cursor() as cur:
+        # Si es el que ya tenía, su fila ya está: guardarla otra vez chocaría
+        # con UNIQUE (user_id, group_id).
+        if not enlace_vivo:
 
-            cur.execute("""
+            with conn.cursor() as cur:
 
-                INSERT INTO invite_links
-                (user_id, group_id, telegram_group_id, invite_link)
+                cur.execute("""
 
-                VALUES (%s, %s, %s, %s)
+                    INSERT INTO invite_links
+                    (user_id, group_id, telegram_group_id, invite_link)
 
-            """, (
+                    VALUES (%s, %s, %s, %s)
 
-                user_id,
-                real_group_id,
-                telegram_group_id,
-                link
+                """, (
 
-            ))
+                    user_id,
+                    real_group_id,
+                    telegram_group_id,
+                    link
 
-            conn.commit()
+                ))
+
+                conn.commit()
 
 
         keyboard = [
@@ -1298,7 +1383,7 @@ async def handle_mysub_callbacks(update, context, query, user_id, data):
 
                     t("mysub.btn_another_link", language),
 
-                    callback_data=f"mysub_{telegram_group_id}"
+                    callback_data=f"mysubnew_{telegram_group_id}"
 
                 )
 
