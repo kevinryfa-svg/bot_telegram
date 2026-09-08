@@ -18,8 +18,6 @@ CLIENT_GRACE_PERIOD_DAYS = 15
 # CALLBACKS — PUBLIC MENU
 # =========================
 
-CALLBACK_EXPLORE_COMMUNITIES = "public_explore_communities"
-CALLBACK_MY_ACCESS = "public_my_access"
 CALLBACK_MONETIZE_COMMUNITY = "public_monetize_community"
 CALLBACK_SUPPORT = "public_support"
 CALLBACK_AI_HELP = "public_ai_help"
@@ -86,27 +84,24 @@ COMMERCIAL_PRODUCTS = {
     }
 }
 
-PUBLIC_MENU_BUTTONS = [
-    {"text": "🔥 Explorar comunidades privadas", "callback_data": CALLBACK_EXPLORE_COMMUNITIES},
-    {"text": "🎟 Gestionar mi acceso", "callback_data": CALLBACK_MY_ACCESS},
-    {"text": "🚀 Soluciones para mi comunidad", "callback_data": CALLBACK_MONETIZE_COMMUNITY},
-    {"text": "🛟 Soporte", "callback_data": CALLBACK_SUPPORT},
-    {"text": "💬 Ayuda IA", "callback_data": CALLBACK_AI_HELP},
-]
+# =========================
+# AQUÍ NO ESTÁ EL MENÚ PÚBLICO
+# =========================
+# Había una lista PUBLIC_MENU_BUTTONS con su get_public_menu_buttons(), y era
+# un SEÑUELO: nadie la usaba, y dos de sus cinco botones —«Explorar
+# comunidades privadas» y «Gestionar mi acceso»— llevaban callbacks que el
+# router no atiende. O sea que quien viniera a «cambiar los botones del menú»
+# editaba código muerto, y quien decidiera pintar esa lista shipeaba dos
+# botones que no hacen nada.
+#
+# El menú de verdad se construye en start_handler.py, con sus propias
+# etiquetas. Se borra la lista para que no haya dos sitios donde parezca que
+# vive lo mismo.
 
 ADMIN_MENU_BUTTON = {
     "text": "⚙️ Panel de gestión",
     "callback_data": CALLBACK_ADMIN_PANEL
 }
-
-
-def get_public_menu_buttons(include_admin_panel=False):
-    buttons = list(PUBLIC_MENU_BUTTONS)
-
-    if include_admin_panel:
-        buttons.append(ADMIN_MENU_BUTTON)
-
-    return buttons
 
 
 def get_commercial_product(product_type):

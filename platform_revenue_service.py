@@ -16,7 +16,7 @@ a sus grupos ve lo suyo con las mismas reglas.
 """
 
 from db import conn
-from owner_revenue_service import PAID_STATUSES, formato_importe
+from owner_revenue_service import PAID_STATUSES, formato_centimos
 
 
 def fetch_platform_windows():
@@ -193,7 +193,7 @@ def formato_filas(filas):
     for currency, total, pagos in filas:
 
         etiqueta = "pago" if pagos == 1 else "pagos"
-        partes.append(f"{formato_importe(total, currency)} ({pagos} {etiqueta})")
+        partes.append(f"{formato_centimos(total, currency)} ({pagos} {etiqueta})")
 
 
     return " · ".join(partes)
@@ -248,7 +248,7 @@ def build_platform_revenue_text():
         for provider, currency, total, n in proveedores:
 
             lineas.append(
-                f"• {provider}: {formato_importe(total, currency)} ({n})"
+                f"• {provider}: {formato_centimos(total, currency)} ({n})"
             )
 
 
@@ -259,7 +259,7 @@ def build_platform_revenue_text():
         for nombre, currency, total, n in top:
 
             lineas.append(
-                f"• {nombre}: {formato_importe(total, currency)} ({n})"
+                f"• {nombre}: {formato_centimos(total, currency)} ({n})"
             )
 
 
@@ -319,7 +319,7 @@ def build_scoped_income_text(group_ids):
     for nombre, currency, total, n in filas:
 
         etiqueta = "pago" if n == 1 else "pagos"
-        lineas.append(f"• {nombre}: {formato_importe(total, currency)} ({n} {etiqueta})")
+        lineas.append(f"• {nombre}: {formato_centimos(total, currency)} ({n} {etiqueta})")
 
 
     return "\n".join(lineas)

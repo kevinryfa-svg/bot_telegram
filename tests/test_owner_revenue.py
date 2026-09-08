@@ -20,8 +20,8 @@ import owner_revenue_service as ors
 # =========================
 
 def test_amounts_are_cents_and_read_as_money():
-    assert ors.formato_importe(1500, "EUR") == "15.00 EUR"
-    assert ors.formato_importe(999, "usd") == "9.99 USD"
+    assert ors.formato_centimos(1500, "EUR") == "15.00 EUR"
+    assert ors.formato_centimos(999, "usd") == "9.99 USD"
 
 
 def test_an_empty_window_reads_as_zero_not_as_crash():

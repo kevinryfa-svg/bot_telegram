@@ -25,8 +25,22 @@ from group_delivery_health_service import describe_group_delivery
 PAID_STATUSES = ("paid", "completed")
 
 
-def formato_importe(cents, currency):
-    """1500 -> '15.00 EUR'. Los importes de payments van en céntimos."""
+def formato_centimos(cents, currency):
+    """1500 -> «15.00 EUR». Los importes de payments van en CÉNTIMOS.
+
+    Se llamaba `formato_importe`, igual que el de la tienda —que espera
+    unidades MAYORES—, y con la unidad contraria. Dos funciones con el mismo
+    nombre y contratos opuestos es exactamente de donde salen los errores de
+    dinero por cien: me pilló a mí escribiendo esta tanda. El nombre lo dice
+    ahora.
+
+    El formato se queda con sus dos decimales fijos a propósito: esto son
+    pantallas de INFORME —columnas de importes que se leen de arriba abajo— y
+    ahí «15.00» y «3.60» se comparan de un vistazo, mientras el estilo de la
+    tienda («15 EUR», «3,60 EUR») está pensado para un precio suelto en un
+    botón. Son dos sitios distintos con dos necesidades distintas; lo que no
+    puede haber es dos funciones con el MISMO nombre y unidades contrarias.
+    """
 
     try:
 
@@ -315,13 +329,13 @@ def formato_comparativa(filas):
 
     for currency, actual, anterior in filas:
 
-        trozo = formato_importe(actual, currency)
+        trozo = formato_centimos(actual, currency)
 
         if anterior:
 
             delta = (int(actual) - int(anterior)) * 100 // int(anterior)
             signo = "+" if delta >= 0 else ""
-            trozo += (f" (mes anterior: {formato_importe(anterior, currency)}, "
+            trozo += (f" (mes anterior: {formato_centimos(anterior, currency)}, "
                       f"{signo}{delta}%)")
 
         partes.append(trozo)
@@ -478,6 +492,96 @@ def build_members_csv(group_id):
     return "\n".join(lineas)
 
 
+# La condición de «socio con renovación automática», escrita una vez: la usan
+# la lista que se enseña (topada) y el recuento/previsión (sin topar). Si se
+# escribieran dos veces, el total y la lista acabarían hablando de conjuntos
+# distintos, que es peor que no tener el total.
+CONDICION_SUSCRIPTOR = """
+    u.group_id = %s
+    AND COALESCE(u.subscription_active, FALSE) = TRUE
+    AND (
+        u.stripe_subscription_id IS NOT NULL
+        OR EXISTS (
+            SELECT 1 FROM payment_transactions pt
+            WHERE pt.provider = 'paypal'
+              AND pt.user_id = u.user_id
+              AND pt.group_id = u.group_id
+              AND pt.purchase_type = 'group_access'
+              AND pt.status = 'paid'
+              AND pt.external_checkout_id IS NOT NULL
+        )
+    )
+"""
+
+
+def resumen_de_suscriptores(group_id, dias=7):
+    """(total, proximos, {moneda: importe}) sobre TODOS, no sobre los listados.
+
+    La lista se topa a 30 para que quepa en un mensaje, y el pie decía
+    «Suscriptores listados: 30», que se lee como el total. Peor: la previsión
+    de «cobros en los próximos 7 días» se calculaba con esas 30 filas, así que
+    un propietario con 200 socios veía una previsión que no era la suya.
+
+    Devuelve (None, None, {}) si no se puede leer: un cero inventado en una
+    pantalla de dinero es peor que un «?».
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(f"""
+
+                SELECT COUNT(*),
+                       COUNT(*) FILTER (
+                           WHERE u.expiration IS NOT NULL
+                             AND u.expiration >= NOW()
+                             AND u.expiration < NOW() + (%s || ' days')::interval
+                       )
+                FROM users u
+                WHERE {CONDICION_SUSCRIPTOR}
+
+            """, (int(dias), group_id))
+
+            total, proximos = cur.fetchone() or (0, 0)
+
+            cur.execute(f"""
+
+                SELECT COALESCE(NULLIF(ultimo.currency, ''), 'EUR'),
+                       SUM(ultimo.amount)
+                FROM users u
+                JOIN LATERAL (
+                    SELECT p.amount, p.currency
+                    FROM payments p
+                    WHERE p.user_id = u.user_id
+                      AND p.group_id = u.group_id
+                      AND LOWER(COALESCE(p.status, '')) IN %s
+                    ORDER BY p.payment_date DESC NULLS LAST, p.id DESC
+                    LIMIT 1
+                ) ultimo ON TRUE
+                WHERE {CONDICION_SUSCRIPTOR}
+                  AND u.expiration IS NOT NULL
+                  AND u.expiration >= NOW()
+                  AND u.expiration < NOW() + (%s || ' days')::interval
+                GROUP BY 1
+
+            """, (PAID_STATUSES, group_id, int(dias)))
+
+            # Por moneda y sin mezclarlas: sumar euros con dólares da un número
+            # que no es dinero de nada.
+            totales = {
+                moneda: int(suma or 0) for moneda, suma in (cur.fetchall() or [])
+            }
+
+            return (int(total or 0), int(proximos or 0), totales)
+
+    except Exception as e:
+
+        print("Ingresos: no se pudo resumir a los socios:", str(e)[:200])
+
+        return (None, None, {})
+
+
 def fetch_subscriber_rows(group_id, limit=30):
     """
     Los socios con renovación automática, ordenados por próximo cobro. La
@@ -560,9 +664,6 @@ def build_owner_subscribers_text(group_id, group_name):
         return "\n".join(lineas)
 
 
-    proximos_7d = 0
-    total_7d = {}
-
     for user_id, username, expiration, provider, importe, currency in filas:
 
         try:
@@ -571,39 +672,45 @@ def build_owner_subscribers_text(group_id, group_name):
             fecha = "—"
 
         quien = f"@{username}" if username else f"id {user_id}"
-        precio = formato_importe(importe, currency) if importe else "—"
+
+        precio = formato_centimos(importe, currency) if importe else "—"
 
         lineas.append(f"• {quien} — {precio} · próximo cobro {fecha} · {provider}")
 
-        try:
-
-            from datetime import datetime, timedelta
-
-            if expiration and expiration <= datetime.now() + timedelta(days=7):
-
-                proximos_7d += 1
-
-                if importe:
-
-                    clave = (currency or "EUR").upper()
-                    total_7d[clave] = total_7d.get(clave, 0) + int(importe)
-
-        except Exception:
-
-            pass
-
 
     lineas.append("")
-    lineas.append(f"Suscriptores listados: {len(filas)}")
 
-    if proximos_7d:
+    # El total y la previsión salen de TODOS los socios, no de los 30 que
+    # caben en el mensaje.
+    total_socios, proximos_reales, totales_reales = resumen_de_suscriptores(
+        group_id
+    )
+
+    if total_socios is None:
+
+        lineas.append(f"Suscriptores listados: {len(filas)} (total: ?)")
+
+    elif total_socios > len(filas):
+
+        lineas.append(
+            f"Suscriptores: {total_socios} en total "
+            f"(se listan los {len(filas)} que cobran antes)"
+        )
+
+    else:
+
+        lineas.append(f"Suscriptores: {total_socios}")
+
+
+    if proximos_reales:
 
         importes = " · ".join(
-            formato_importe(total, cur_) for cur_, total in total_7d.items()
+            formato_centimos(total / 100.0, cur_)
+            for cur_, total in totales_reales.items()
         )
 
         lineas.append(
-            f"📅 Cobros en los próximos 7 días: {proximos_7d}"
+            f"📅 Cobros en los próximos 7 días: {proximos_reales}"
             + (f" (≈ {importes})" if importes else "")
         )
 
@@ -630,7 +737,7 @@ def formato_ventana(filas):
     for currency, total, pagos in filas:
 
         etiqueta = "pago" if pagos == 1 else "pagos"
-        partes.append(f"{formato_importe(total, currency)} ({pagos} {etiqueta})")
+        partes.append(f"{formato_centimos(total, currency)} ({pagos} {etiqueta})")
 
 
     return " · ".join(partes)

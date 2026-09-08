@@ -31,7 +31,7 @@ cobrados: una devolución no es un ingreso ni una vida más larga.
 """
 
 from db import conn
-from owner_revenue_service import PAID_STATUSES, formato_importe
+from owner_revenue_service import PAID_STATUSES, formato_centimos
 
 
 def fetch_churn_numbers(group_id):
@@ -298,7 +298,7 @@ def build_owner_retention_text(group_id, group_name):
 
         lineas.append(
             "Ha pagado de media cada cliente: "
-            f"{formato_importe(vida['valor'], vida['currency'])}"
+            f"{formato_centimos(vida['valor'], vida['currency'])}"
         )
         lineas.append(
             "Es el techo de lo que tiene sentido gastar en traer uno nuevo."

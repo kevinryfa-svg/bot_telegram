@@ -29,7 +29,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from audit_log_service import log_event
 from db import conn
-from owner_revenue_service import PAID_STATUSES, formato_importe
+from owner_revenue_service import PAID_STATUSES, formato_centimos
 
 
 DIGEST_ENABLED = os.environ.get(
@@ -286,7 +286,7 @@ def formato_semana(filas):
 
     for currency, semana, anterior in filas:
 
-        trozo = formato_importe(semana, currency)
+        trozo = formato_centimos(semana, currency)
 
         if anterior:
 
