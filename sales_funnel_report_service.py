@@ -250,6 +250,8 @@ def describe_fichas():
     estaba puesto. Una línea por comunidad visible.
     """
 
+    from reengagement_service import VISIBLE_GROUP_CONDITIONS
+
     lineas = []
 
     try:
@@ -267,8 +269,11 @@ def describe_fichas():
                          WHERE v.group_id = g.id AND v.is_active = TRUE),
                        COALESCE(NULLIF(g.category, ''), 'sin categoría')
                 FROM groups g
-                WHERE COALESCE(g.is_active, TRUE) = TRUE
-                  AND COALESCE(g.is_marketplace_visible, FALSE) = TRUE
+                -- La MISMA definición de «visible» que usa el catálogo: una
+                -- comunidad se ve por is_marketplace_visible O por
+                -- public_visibility, y mirar solo la primera dejaba fuera
+                -- justo a StarsVip.
+                WHERE """ + VISIBLE_GROUP_CONDITIONS + """
                 ORDER BY g.id
 
             """)
@@ -280,6 +285,21 @@ def describe_fichas():
         conn.rollback()
         return [f"Fichas: no se pudieron leer ({str(e)[:160]})"]
 
+
+    # Una ficha visible en la que no se puede comprar nada es un desvío: quien
+    # explora la abre, no encuentra cómo entrar y se va.
+    try:
+
+        from start_offer_service import fetch_sellable_communities
+
+        vendibles = {
+            o.get("group_id") for o in
+            (fetch_sellable_communities(0, limit=100) or [])
+        }
+
+    except Exception:
+
+        vendibles = set()
 
     for gid, nombre, texto, foto, video, videos_dinamicos, categoria in filas:
 
@@ -293,7 +313,7 @@ def describe_fichas():
             descripcion = f"descripción de {len(texto)} caracteres"
 
         lineas.append(
-            f"Ficha «{nombre}» (#{gid}): {descripcion} · "
+            f"Ficha «{nombre}» (#{gid}, {'SE VENDE' if gid in vendibles else 'NO se vende'}): {descripcion} · "
             + ("con foto" if foto else "SIN foto") + " · "
             + ("con vídeo" if (video or videos_dinamicos) else "SIN vídeo")
             + f" · categoría {categoria}."
