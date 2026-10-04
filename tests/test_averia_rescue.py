@@ -202,3 +202,44 @@ def test_the_send_button_only_exists_when_there_is_someone(averia):
 
 def test_the_startup_line_says_how_many_are_waiting(averia):
     assert "2 persona(s)" in ars.describe_para_el_arranque()
+
+
+# =========================
+# UNA DISCULPA POR PERSONA
+# =========================
+
+def test_the_relaunch_skips_whoever_is_waiting_for_the_rescue(averia):
+    """El rescate es más concreto; el reenganche no se le adelanta."""
+
+    import reengagement_service as rs
+
+    objetivos = [(8001, 0), (8007, 2), (9999, 1)]
+
+    assert rs.sin_los_del_rescate(objetivos) == [(9999, 1)]
+
+
+def test_and_skips_whoever_already_got_it(averia):
+    import reengagement_service as rs
+
+    asyncio.run(ars.enviar_rescate(FakeBot()))
+
+    assert ars.fetch_afectados() == [], "ya no está pendiente…"
+
+    assert rs.sin_los_del_rescate([(8001, 0), (9999, 1)]) == [(9999, 1)], (
+        "…pero ya recibió su disculpa: no se le manda otra"
+    )
+
+
+def test_without_a_rescue_nothing_is_filtered(clean_db):
+    import reengagement_service as rs
+
+    assert rs.sin_los_del_rescate([(1, 0), (2, 0)]) == [(1, 0), (2, 0)]
+
+
+def test_the_batch_applies_the_filter():
+    fuente = open("reengagement_service.py", encoding="utf-8").read()
+
+    inicio = fuente.index("async def process_reengagement_batch")
+    tramo = fuente[inicio:inicio + 3000]
+
+    assert "targets = sin_los_del_rescate(targets)" in tramo
