@@ -897,10 +897,31 @@ def _recorrer_paginas(pagina):
     if callable(paginar):
         return paginar()
 
-    if hasattr(pagina, "get"):
-        return (pagina.get("data") or [])
+    return _campo(pagina, "data") or []
 
-    return []
+
+def _campo(objeto, nombre, defecto=None):
+    """
+    Lee un campo de un objeto de Stripe o de un diccionario, sin romper.
+
+    Las versiones nuevas del SDK ya no dejan usar `.get()` en sus objetos
+    («'get' is a dict method, but a Price is not a dict»), y eso dejó esta
+    limpieza sin funcionar en producción desde el día que se escribió. Los
+    dobles de los tests son diccionarios. Este lector vale para los dos.
+    """
+
+    if objeto is None:
+        return defecto
+
+    if isinstance(objeto, dict):
+        return objeto.get(nombre, defecto)
+
+    try:
+        valor = objeto[nombre]
+    except Exception:
+        valor = getattr(objeto, nombre, defecto)
+
+    return defecto if valor is None else valor
 
 
 def precios_huerfanos(limite=100):
@@ -948,19 +969,19 @@ def precios_huerfanos(limite=100):
 
     for precio in recorridos:
 
-        identificador = precio.get("id")
-        metadata = precio.get("metadata") or {}
+        identificador = _campo(precio, "id")
+        metadata = _campo(precio, "metadata") or {}
 
         # Solo lo que creó este bot para acceso a comunidades, y solo pagos
         # únicos: archivar el precio de una suscripción viva es meterse donde no
         # hay que meterse.
-        if metadata.get("purpose") != "group_access":
+        if _campo(metadata, "purpose") != "group_access":
             continue
 
-        if precio.get("type") != "one_time":
+        if _campo(precio, "type") != "one_time":
             continue
 
-        if int(precio.get("created") or 0) > corte:
+        if int(_campo(precio, "created") or 0) > corte:
             continue
 
         if identificador in en_uso:
@@ -968,9 +989,9 @@ def precios_huerfanos(limite=100):
 
         huerfanos.append({
             "id": identificador,
-            "amount": precio.get("unit_amount"),
-            "currency": precio.get("currency"),
-            "plan_id": metadata.get("plan_id"),
+            "amount": _campo(precio, "unit_amount"),
+            "currency": _campo(precio, "currency"),
+            "plan_id": _campo(metadata, "plan_id"),
         })
 
     return huerfanos

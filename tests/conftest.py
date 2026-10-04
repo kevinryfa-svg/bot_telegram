@@ -104,6 +104,7 @@ def clean_db(db_module):
         # sin limpiarla los recuentos de una prueba incluyen los eventos que
         # dejaron las anteriores.
         "audit_logs",
+        "averia_rescue_sent",
         "group_user_promo_codes",
         "user_preferences",
         "payment_incidents",

@@ -422,3 +422,82 @@ def test_cada_mensaje_del_bot_lleva_hasta_el_pago(tienda_como_produccion, puerta
         f"  camino: {' → '.join(camino)}\n"
         f"  último que vio: {ultimo}"
     )
+
+
+# =========================
+# LA ALARMA QUE HABRÍA CAZADO ESTO EL PRIMER DÍA
+# =========================
+
+def test_la_comprobacion_horaria_mira_los_botones_de_la_lista(tienda_como_produccion):
+    from sale_readiness_service import check_botones_de_la_lista
+
+    rotos, comprobados = check_botones_de_la_lista()
+
+    assert comprobados == 3, "los tres planes a la venta"
+    assert rotos == [], rotos
+
+
+def test_si_un_boton_no_lleva_a_su_plan_salta_la_alarma(tienda_como_produccion, monkeypatch):
+    """
+    Se rompe la regla a propósito, como estaba antes: el clic buscando solo
+    por price_id. La comprobación tiene que decirlo.
+    """
+
+    import weekly_offer_service as ofs
+
+    monkeypatch.setattr(
+        ofs, "sql_plan_cobra_este_precio",
+        lambda alias="p", param_precio="plan", param_persona=None:
+            f"({alias}.price_id = %({param_precio})s)"
+    )
+
+    from sale_readiness_service import check_botones_de_la_lista
+
+    rotos, comprobados = check_botones_de_la_lista()
+
+    assert len(rotos) == 3, "los tres estaban rotos así en producción"
+    assert all("no se encuentra ningún plan" in r["detalle"] for r in rotos)
+
+
+def test_el_clic_del_bot_usa_la_regla_compartida():
+    """
+    Que nadie vuelva a escribir su propia búsqueda del plan en el clic: era
+    una copia, y la copia se quedó atrás seis semanas.
+    """
+
+    fuente = open("callback_router.py", encoding="utf-8").read()
+
+    inicio = fuente.index("LA AVERÍA QUE SE COMÍA LAS VENTAS")
+    tramo = fuente[inicio:inicio + 4000]
+
+    assert "sql_plan_cobra_este_precio(" in tramo
+    assert "WHERE price_id=%s" not in tramo
+
+    cobro = open("checkout_routes.py", encoding="utf-8").read()
+
+    assert "sql_plan_cobra_este_precio(" in cobro, (
+        "y el servidor de cobro, la MISMA"
+    )
+
+
+def test_la_limpieza_de_precios_lee_objetos_reales_del_sdk():
+    """
+    Los dobles eran diccionarios, así que las pruebas pasaban; en producción
+    el SDK nuevo contestaba «'get' is a dict method, but a Price is not a dict»
+    y la limpieza no funcionó ni un día.
+    """
+
+    import stripe
+
+    from plan_price_service import _campo
+
+    precio = stripe.Price.construct_from({
+        "id": "price_x", "type": "one_time", "unit_amount": 900,
+        "metadata": {"purpose": "group_access", "plan_id": "26"},
+    }, "sk_test")
+
+    assert _campo(precio, "id") == "price_x"
+    assert _campo(precio, "unit_amount") == 900
+    assert _campo(_campo(precio, "metadata"), "plan_id") == "26"
+    assert _campo(precio, "no_existe", "x") == "x"
+    assert _campo({"id": "d"}, "id") == "d"

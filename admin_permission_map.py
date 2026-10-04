@@ -84,6 +84,8 @@ ADMIN_CALLBACK_PERMISSION_MAP = {
     "admin_income": ("can_view_stats",),
     "admin_recovery": (SUPER_ADMIN_ONLY,),
     "admin_incidents": (SUPER_ADMIN_ONLY,),
+    "admin_averia_rescue": (SUPER_ADMIN_ONLY,),
+    "admin_averia_rescue_send": (SUPER_ADMIN_ONLY,),
     "admin_bootstrap": (SUPER_ADMIN_ONLY,),
     "admin_bootstrap_list_plans": (SUPER_ADMIN_ONLY,),
     "admin_active_users": ("can_view_stats",),

@@ -413,6 +413,118 @@ def check_stripe_prices(ofertas=None):
     return rotos, comprobados
 
 
+# =========================
+# ¿CADA BOTÓN DE LA LISTA LLEVA A SU PLAN?
+# =========================
+# Esta comprobación existe por la avería que más ventas ha costado: el servidor
+# de cobro respondía, los precios existían en Stripe, este fichero decía
+# «Cobro: listo» cada hora… y NINGÚN botón de la lista de planes llevaba a
+# pagar. La lista pintaba el precio vigente (el de la oferta, o stripe_price_id)
+# y el clic lo buscaba en otra columna. Seis semanas sin una venta con tarjeta y
+# sin un solo aviso, porque aquí se miraba todo menos el clic.
+#
+# Ahora se mira: para cada plan a la venta, el precio EXACTO que lleva su botón
+# se pasa por la misma regla que usa el clic, y tiene que salir ese plan.
+
+def check_botones_de_la_lista():
+    """
+    (rotos, comprobados). `rotos` es [{nombre, price_id, detalle}].
+
+    Nunca lanza: si no se puede comprobar, se dice como fallo, porque un «no se
+    sabe» en la ruta del dinero no puede leerse como «todo bien».
+    """
+
+    from db import conn
+    from plan_price_service import planes_stripe_vendibles
+    from weekly_offer_service import sql_plan_cobra_este_precio, sql_precio_vigente
+
+    rotos = []
+    comprobados = 0
+
+    try:
+        planes = planes_stripe_vendibles()
+
+    except Exception as e:
+
+        return [{
+            "nombre": "lista de planes",
+            "price_id": None,
+            "detalle": f"no se pudo leer ({str(e)[:120]})",
+        }], 0
+
+
+    for plan in planes:
+
+        nombre = " · ".join(
+            x for x in (plan.get("group_name"), plan.get("name")) if x
+        ) or f"plan {plan.get('id')}"
+
+        try:
+
+            with conn.cursor() as cur:
+
+                # El precio que pinta la lista en el botón. Sin persona: la
+                # oferta general, que es la que ve todo el mundo.
+                cur.execute(
+                    "SELECT " + sql_precio_vigente("p") +
+                    " FROM plans p WHERE p.id = %(id)s",
+                    {"id": plan["id"]}
+                )
+
+                boton = (cur.fetchone() or [None])[0]
+
+                if not boton:
+
+                    rotos.append({
+                        "nombre": nombre, "price_id": None,
+                        "detalle": "su botón saldría sin precio",
+                    })
+                    continue
+
+                # Y lo que contesta el clic al pulsarlo.
+                cur.execute("""
+
+                    SELECT p.id FROM plans p
+                    WHERE """ + sql_plan_cobra_este_precio("p", "plan", "comprador") + """
+                      AND p.group_id = %(grupo)s
+                      AND p.is_active = TRUE
+                    LIMIT 1
+
+                """, {
+                    "plan": boton,
+                    "grupo": plan["group_id"],
+                    "comprador": 0,
+                })
+
+                resuelto = (cur.fetchone() or [None])[0]
+
+        except Exception as e:
+
+            rotos.append({
+                "nombre": nombre, "price_id": None,
+                "detalle": f"no se pudo comprobar ({str(e)[:120]})",
+            })
+            continue
+
+
+        comprobados += 1
+
+        if resuelto != plan["id"]:
+
+            rotos.append({
+                "nombre": nombre,
+                "price_id": boton,
+                "detalle": (
+                    f"su botón lleva {boton} y al pulsarlo "
+                    + ("no se encuentra ningún plan"
+                       if resuelto is None
+                       else f"se cobraría OTRO plan (#{resuelto})")
+                ),
+            })
+
+    return rotos, comprobados
+
+
 def describe_sale_readiness(avisar=True):
     """Una línea para el arranque, y aviso al admin si no se puede cobrar."""
 
@@ -459,6 +571,24 @@ def describe_sale_readiness(avisar=True):
             )
 
 
+    try:
+
+        botones_rotos, botones_comprobados = check_botones_de_la_lista()
+
+    except Exception as e:
+
+        botones_rotos, botones_comprobados = [], 0
+
+        problemas.append(f"Botones de la lista: no se pudieron comprobar ({str(e)[:160]})")
+
+    for roto in botones_rotos:
+
+        problemas.append(
+            f"Botón de «{roto['nombre']}» en la lista de planes: "
+            f"{roto['detalle']}. Quien lo pulse no llegará a pagar."
+        )
+
+
     # El nombre de la página de pago NO es un cobro roto: se cobra
     # perfectamente. Es peor de otra manera —se pierde al comprador sin que
     # nada falle— así que se dice aparte y no dispara la alarma de avería.
@@ -480,7 +610,8 @@ def describe_sale_readiness(avisar=True):
 
         linea_ok = (
             f"Cobro: listo (servidor de pago accesible, {comprobados} "
-            "precio(s) de Stripe verificado(s))."
+            f"precio(s) de Stripe verificado(s), {botones_comprobados} "
+            "botón(es) de la lista que llevan a su plan)."
         )
 
         if avisos:

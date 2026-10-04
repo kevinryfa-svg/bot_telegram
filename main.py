@@ -3715,6 +3715,19 @@ def main():
         print("Escaparate: no se pudo comprobar:", str(e)[:200])
 
 
+    # Cuánta gente se llevó el error del cobro y espera la disculpa. En el
+    # registro para que se vea sin abrir el panel.
+    try:
+
+        from averia_rescue_service import describe_para_el_arranque
+
+        print(describe_para_el_arranque())
+
+    except Exception as e:
+
+        print("Rescate de la avería: no se pudo contar:", str(e)[:200])
+
+
     print("Bot iniciado correctamente")
 
     telegram_app.run_polling()
