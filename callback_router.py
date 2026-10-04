@@ -16328,15 +16328,62 @@ def marketplace_filter_callback_data(filter_kind):
     return "start_explore_groups"
 
 
+def ids_de_comunidades_vendibles():
+    """
+    Las comunidades que se pueden comprar AHORA. Lista vacía ante la duda.
+
+    De `fetch_sellable_communities`, la misma fuente que /start: si el catálogo
+    tuviera su propia idea de «se vende», las dos se separarían con el primer
+    cambio.
+    """
+
+    try:
+
+        from start_offer_service import fetch_sellable_communities
+
+        return [
+            int(o["group_id"])
+            for o in (fetch_sellable_communities(0, limit=200) or [])
+            if o.get("group_id")
+        ]
+
+    except Exception as e:
+
+        print("Catálogo: no se pudo saber qué se vende:", str(e)[:200])
+
+        return []
+
+
 def fetch_marketplace_groups(filter_kind="trending", limit=8):
+
+    # =========================
+    # EL CATÁLOGO ENSEÑABA LO QUE NO SE VENDE Y ESCONDÍA LO QUE SÍ
+    # =========================
+    # En producción, «🔎 Explorar comunidades» —que está en /start, en cada
+    # mensaje de reenganche y en la respuesta a quien escribe— listaba dos
+    # fichas: «GrupoStarsVip», una comunidad de PRUEBA cuya descripción es
+    # «Versión prueba», y «Links de grupos», vacía. Ninguna se podía comprar.
+    # StarsVip, la única que se vende, NO salía: tiene la visibilidad por
+    # defecto (`start_home`), que la enseña en /start pero no aquí.
+    #
+    # Dos reglas, sin tocar los datos de nadie:
+    #
+    #   1. Lo que se puede comprar se puede encontrar. Si una comunidad ya es
+    #      pública en /start y se vende, también sale aquí. Solo `hidden` la
+    #      esconde, que es la decisión explícita del dueño.
+    #   2. Una comunidad de pago sin nada que comprar NO sale: quien la abre no
+    #      encuentra cómo entrar y se va. Las gratis siguen saliendo.
+    vendibles = ids_de_comunidades_vendibles()
 
     filters = [
         "g.is_active=TRUE",
         "g.telegram_group_id != 0",
-        "(\n            COALESCE(g.is_marketplace_visible, FALSE)=TRUE\n            OR COALESCE(g.public_visibility, 'start_home') IN ('explore_only', 'both')\n        )",
+        "(\n            COALESCE(g.is_marketplace_visible, FALSE)=TRUE\n            OR COALESCE(g.public_visibility, 'start_home') IN ('explore_only', 'both')\n"
+        "            OR (g.id = ANY(%s) AND COALESCE(g.public_visibility, 'start_home') <> 'hidden')\n        )",
+        "(\n            COALESCE(g.is_free_group, FALSE)=TRUE\n            OR COALESCE(g.is_free, FALSE)=TRUE\n            OR g.id = ANY(%s)\n        )",
         marketplace_trial_visibility_filter()
     ]
-    params = []
+    params = [vendibles, vendibles]
 
 
     if filter_kind == "free":
