@@ -16900,6 +16900,34 @@ def linea_de_region_restringida(group_id):
     return [f"📍 Solo desde {region}" if region else "📍 Solo desde una zona"]
 
 
+def oferta_de_la_ficha(group_id, user_id=0):
+    """
+    Lo que se vende en esta comunidad, con la MISMA fuente que /start.
+
+    La ficha decía «desde 3,60 EUR» y callaba el resto: ni el -60%, ni el
+    precio de antes, ni cuándo se acaba. Es el gancho más fuerte que hay, y se
+    escondía justo en la pantalla donde se va el 88% de la gente. Se lee de
+    `fetch_sellable_communities` para que la ficha, /start y el reenganche
+    cuenten la misma oferta. None si no hay nada vendible o algo falla.
+    """
+
+    try:
+
+        from start_offer_service import fetch_sellable_communities
+
+        ofertas = fetch_sellable_communities(
+            int(user_id or 0), limit=1, solo_grupo=group_id
+        )
+
+        return ofertas[0] if ofertas else None
+
+    except Exception as e:
+
+        print("Ficha: no se pudo leer la oferta:", str(e)[:200])
+
+        return None
+
+
 def format_marketplace_group_caption(group):
 
     preview_mode = group.get("preview_mode") or "manual"
@@ -16918,6 +16946,7 @@ def format_marketplace_group_caption(group):
         + linea_de_region_restringida(group.get("id"))
         + format_marketplace_social_proof(group, members_label)
         + [format_marketplace_kind(group)]
+        + _linea_de_rebaja_de_la_ficha(group)
     )
 
 
@@ -16940,6 +16969,43 @@ def format_marketplace_group_caption(group):
     )
 
 
+def _linea_de_rebaja_de_la_ficha(group):
+    """[«🔥 -60% esta semana (antes 9 EUR) · quedan 2 días»] o []."""
+
+    if group.get("is_free_group"):
+        return []
+
+    oferta = oferta_de_la_ficha(group.get("id"))
+
+    if not oferta:
+        return []
+
+    from start_offer_service import frase_de_oferta
+
+    frase = frase_de_oferta(oferta)
+
+    return [frase] if frase else []
+
+
+def etiqueta_de_compra_de_la_ficha(oferta):
+    """
+    «💳 Entrar por 3,60 EUR/semana · -60%». Sin oferta, la de siempre.
+
+    El botón decía «Ver planes y precios»: una promesa de leer más, no de
+    entrar. Con el precio dentro, quien ya ha decidido sabe que es ESE botón.
+    """
+
+    if not oferta or not oferta.get("precio"):
+        return "💳 Ver planes y precios"
+
+    etiqueta = f"💳 Entrar por {oferta['precio']}"
+
+    if oferta.get("oferta_percent"):
+        etiqueta += f" · -{int(oferta['oferta_percent'])}%"
+
+    return etiqueta
+
+
 def build_marketplace_group_keyboard(group, user_id=None):
 
     group_id = group.get("id")
@@ -16949,6 +17015,23 @@ def build_marketplace_group_keyboard(group, user_id=None):
     preview_mode = group.get("preview_mode") or "manual"
     keyboard = []
     access_state = get_user_group_access_state(user_id, group_id) if user_id else None
+
+
+    # EL BOTÓN DE COMPRAR, PRIMERO. Estaba el tercero de seis, detrás de
+    # «Ver preview» y «Guardar favorito», y decía «Ver planes y precios» sin
+    # un solo número. En esta pantalla se va el 88% de quien la ve (embudo de
+    # producción, 30 días: 23 de 26). Va arriba, con el precio y la rebaja.
+    # Quien ya tiene acceso no lo ve: para él hay otros botones más abajo.
+    if not is_free_group and not (
+        access_state and should_block_new_group_purchase(access_state)
+    ):
+
+        keyboard.append([InlineKeyboardButton(
+            etiqueta_de_compra_de_la_ficha(
+                oferta_de_la_ficha(group_id, user_id or 0)
+            ),
+            callback_data=f"group_{group_id}"
+        )])
 
 
     if preview_mode in ("manual", "hybrid"):
@@ -16985,10 +17068,13 @@ def build_marketplace_group_keyboard(group, user_id=None):
         return InlineKeyboardMarkup(keyboard)
 
 
-    keyboard.append([InlineKeyboardButton(
-        f"🔓 Entrar al {kind}" if is_free_group else "💳 Ver planes y precios",
-        callback_data=f"free_access_{group_id}" if is_free_group else f"group_{group_id}"
-    )])
+    # El de pago ya va arriba del todo; aquí solo queda el de entrar gratis.
+    if is_free_group:
+
+        keyboard.append([InlineKeyboardButton(
+            f"🔓 Entrar al {kind}",
+            callback_data=f"free_access_{group_id}"
+        )])
 
     keyboard.append([InlineKeyboardButton(
         "🎟 Canjear código de esta comunidad",

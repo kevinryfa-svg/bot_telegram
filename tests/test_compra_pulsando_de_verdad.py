@@ -501,3 +501,78 @@ def test_la_limpieza_de_precios_lee_objetos_reales_del_sdk():
     assert _campo(_campo(precio, "metadata"), "plan_id") == "26"
     assert _campo(precio, "no_existe", "x") == "x"
     assert _campo({"id": "d"}, "id") == "d"
+
+
+# =========================
+# LA FICHA, DONDE SE VA EL 88%
+# =========================
+# Embudo de producción (30 días): 26 ven la ficha de StarsVip, 3 abren los
+# planes. La ficha escondía el -60% y enterraba el botón de comprar el 3º de 6.
+
+def _ficha(comprador_id):
+    comprador = Comprador(comprador_id)
+    llamadas, error = comprador.pulsar(f"marketplace_group_{GRUPO}")
+    assert error is None, error
+    texto = " ".join(textos_de(l) for l in llamadas)
+    botones = [b for l in llamadas for b in botones_de(l)]
+    return texto, botones
+
+
+def test_el_boton_de_comprar_es_el_primero_y_dice_el_precio(tienda_como_produccion):
+    _texto, botones = _ficha(32001)
+
+    primero = botones[0]
+
+    assert primero.callback_data == f"group_{GRUPO}"
+    assert "3,60" in primero.text, "con el precio que se va a pagar"
+    assert "-60%" in primero.text, "y con la rebaja"
+
+
+def test_la_ficha_ensena_la_rebaja_y_el_precio_de_antes(tienda_como_produccion):
+    texto, _ = _ficha(32002)
+
+    assert "-60% esta semana" in texto
+    assert "antes 9" in texto
+
+
+def test_sin_oferta_la_ficha_no_se_inventa_una(tienda_como_produccion):
+    from db import conn
+
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM plan_offers")
+
+    texto, botones = _ficha(32003)
+
+    assert "esta semana" not in texto
+    assert "%" not in botones[0].text, "sin rebaja no se anuncia ninguna"
+    assert botones[0].callback_data == f"group_{GRUPO}"
+
+
+def test_quien_ya_esta_dentro_no_ve_el_boton_de_comprar(tienda_como_produccion):
+    """A un socio no se le vende lo que ya tiene."""
+
+    from db import conn
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (32004, %s, NOW() + INTERVAL '20 days', TRUE)", (GRUPO,)
+        )
+
+    _texto, botones = _ficha(32004)
+
+    assert not any((b.text or "").startswith("💳 Entrar por") for b in botones)
+
+
+def test_el_boton_de_la_ficha_lleva_hasta_stripe(tienda_como_produccion):
+    """El primero de la ficha, pulsado de verdad, hasta la página de pago."""
+
+    comprador = Comprador(32005)
+
+    llamadas, _ = comprador.pulsar(f"marketplace_group_{GRUPO}")
+
+    primero = [b for l in llamadas for b in botones_de(l)][0]
+
+    llego, camino, ultimo = _llega_a_stripe(comprador, [primero.callback_data])
+
+    assert llego, f"{camino} → {ultimo}"
