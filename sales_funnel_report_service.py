@@ -240,6 +240,68 @@ def donde_se_pierde(dias=30):
     )
 
 
+def describe_fichas():
+    """
+    Qué ve un comprador en la ficha de cada comunidad a la venta.
+
+    En producción el 88% de quien ve la ficha de StarsVip se va sin abrir los
+    planes. Lo que la ficha enseña —descripción, foto, vídeo de muestra— lo
+    pone el dueño desde el panel, y desde fuera no había forma de saber si
+    estaba puesto. Una línea por comunidad visible.
+    """
+
+    lineas = []
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+
+                SELECT g.id, COALESCE(g.name, '?'),
+                       COALESCE(g.preview_text, ''),
+                       COALESCE(NULLIF(g.preview_image_file_id, ''),
+                                NULLIF(g.preview_file_id, '')) IS NOT NULL,
+                       NULLIF(g.preview_video_file_id, '') IS NOT NULL,
+                       (SELECT COUNT(*) FROM group_preview_videos v
+                         WHERE v.group_id = g.id AND v.is_active = TRUE),
+                       COALESCE(NULLIF(g.category, ''), 'sin categoría')
+                FROM groups g
+                WHERE COALESCE(g.is_active, TRUE) = TRUE
+                  AND COALESCE(g.is_marketplace_visible, FALSE) = TRUE
+                ORDER BY g.id
+
+            """)
+
+            filas = cur.fetchall() or []
+
+    except Exception as e:
+
+        conn.rollback()
+        return [f"Fichas: no se pudieron leer ({str(e)[:160]})"]
+
+
+    for gid, nombre, texto, foto, video, videos_dinamicos, categoria in filas:
+
+        texto = (texto or "").strip()
+
+        if not texto:
+            descripcion = "SIN descripción"
+        elif len(texto) < 60:
+            descripcion = f"descripción de {len(texto)} caracteres: «{texto}»"
+        else:
+            descripcion = f"descripción de {len(texto)} caracteres"
+
+        lineas.append(
+            f"Ficha «{nombre}» (#{gid}): {descripcion} · "
+            + ("con foto" if foto else "SIN foto") + " · "
+            + ("con vídeo" if (video or videos_dinamicos) else "SIN vídeo")
+            + f" · categoría {categoria}."
+        )
+
+    return lineas
+
+
 def describe_para_el_arranque():
     """Las líneas del embudo para el registro. Nunca lanza."""
 
@@ -254,6 +316,8 @@ def describe_para_el_arranque():
 
         if caida:
             lineas.append(caida)
+
+        lineas.extend(describe_fichas())
 
         a = fetch_audiencia()
 

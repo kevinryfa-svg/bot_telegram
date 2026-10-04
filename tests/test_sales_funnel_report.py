@@ -87,3 +87,35 @@ def test_a_failing_count_says_question_mark_not_zero(clean_db, monkeypatch):
 
     assert e["pagan"] is None
     assert "? pagan" in sfr.linea_de_embudo(30)
+
+
+def test_the_card_report_says_what_is_missing(clean_db):
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active, "
+            "is_marketplace_visible, preview_text) VALUES "
+            "(1159, 'StarsVip', -1001159, TRUE, TRUE, 'Contenido exclusivo.')"
+        )
+
+    linea = sfr.describe_fichas()[0]
+
+    assert "«Contenido exclusivo.»" in linea, "una descripción corta se cita"
+    assert "SIN foto" in linea
+    assert "SIN vídeo" in linea
+    assert "sin categoría" in linea
+
+
+def test_a_complete_card_says_so(clean_db):
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active, "
+            "is_marketplace_visible, preview_text, preview_image_file_id, "
+            "preview_video_file_id, category) VALUES "
+            "(1160, 'Otra', -1001160, TRUE, TRUE, %s, 'AgACfoto', 'BAACvideo', 'vip')",
+            ("x" * 200,)
+        )
+
+    linea = sfr.describe_fichas()[0]
+
+    assert "200 caracteres" in linea
+    assert "con foto" in linea and "con vídeo" in linea
