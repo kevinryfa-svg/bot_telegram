@@ -585,6 +585,64 @@ def sql_precio_vigente(alias="p", param_persona=None):
     )
 
 
+# =========================
+# QUÉ PLAN COBRA ESTE PRECIO — UNA SOLA REGLA
+# =========================
+# El botón de pagar lleva un identificador de precio, y luego alguien tiene que
+# decir de qué plan es. Había DOS sitios haciéndolo, y no hacían lo mismo:
+#
+#   - el servidor de cobro aceptaba el precio VIGENTE (el de la oferta, si hay)
+#     o el EFECTIVO del plan (stripe_price_id, y si no price_id);
+#   - el clic del bot buscaba `WHERE price_id = %s` a secas.
+#
+# La lista de planes pinta sus botones con el precio vigente. Así que con una
+# oferta viva el botón llevaba el precio de la oferta, que el clic no
+# encontraba; y el plan anual de producción tiene price_id ≠ stripe_price_id, así
+# que tampoco. Resultado: «⚠️ Este plan no está configurado para Stripe» en LOS
+# TRES planes de StarsVip, desde finales de agosto. Cero ventas con tarjeta desde
+# la lista, y sin rastro: el error saltaba antes de llamar al servidor de cobro.
+#
+# Ahora hay una regla, y la usan los dos.
+
+def sql_plan_cobra_este_precio(alias="p", param_precio="plan",
+                               param_persona=None):
+    """
+    Condición SQL: «este plan se cobra con el precio %(param_precio)s».
+
+    Vale el precio vigente (la oferta viva, incluida la personal de
+    `param_persona`) y el efectivo del plan (cualquiera de sus dos columnas).
+    Un botón viejo con el precio normal sigue funcionando mientras haya oferta:
+    cobra el vigente, que es más barato. Al revés no puede pasar.
+    """
+
+    from plan_price_service import sql_precio_efectivo
+
+    return (
+        "(" + sql_precio_vigente(alias, param_persona)
+        + f" = %({param_precio})s OR "
+        + sql_precio_efectivo(alias) + f" = %({param_precio})s)"
+    )
+
+
+def oferta_terminada_con_este_precio(cur, price_id):
+    """
+    True si ese precio era el de una oferta que ya ha terminado.
+
+    Sirve para contestar «esa oferta ha terminado» en vez de un error que suena
+    a avería: quien pulsa un botón del lunes el martes merece saber qué pasa.
+    """
+
+    cur.execute("""
+
+        SELECT 1 FROM plan_offers
+        WHERE stripe_price_id = %s AND ends_at <= NOW()
+        LIMIT 1
+
+    """, (price_id,))
+
+    return cur.fetchone() is not None
+
+
 def sql_importe_vigente(alias="p", param_persona=None):
     """El importe que se va a cobrar hoy (el de la oferta si la hay)."""
 

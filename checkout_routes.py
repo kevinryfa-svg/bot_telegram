@@ -194,7 +194,9 @@ def register_checkout_routes(app):
                 # anunciarlo: si el botón enseñó el precio de oferta, es ese el
                 # que tiene que cobrarse.
                 from weekly_offer_service import (
+                    oferta_terminada_con_este_precio,
                     sql_importe_vigente,
+                    sql_plan_cobra_este_precio,
                     sql_precio_vigente,
                     sql_solo_si_cobra_por_stripe,
                 )
@@ -225,10 +227,9 @@ def register_checkout_routes(app):
 
                     FROM plans p
 
-                    WHERE (
-                              """ + sql_precio_vigente("p", "comprador") + """=%(plan)s
-                              OR """ + sql_precio_efectivo("p") + """=%(plan)s
-                          )
+                    -- LA MISMA regla que el clic del bot: cuando eran dos
+                    -- copias, el bot rechazaba lo que este servidor sí cobraba.
+                    WHERE """ + sql_plan_cobra_este_precio("p", "plan", "comprador") + """
                     AND p.group_id=%(grupo)s
                     AND p.is_active=TRUE
                     AND COALESCE(NULLIF(p.payment_provider, ''), 'stripe')='stripe'
@@ -252,15 +253,7 @@ def register_checkout_routes(app):
                     # se pintó el botón y se pulsó? Decirlo así es mejor que
                     # «Plan inválido» —que suena a error del bot— y muchísimo
                     # mejor que cobrarle el precio normal sin avisar.
-                    cur.execute("""
-
-                        SELECT 1 FROM plan_offers
-                        WHERE stripe_price_id = %s AND ends_at <= NOW()
-                        LIMIT 1
-
-                    """, (plan,))
-
-                    oferta_caducada = cur.fetchone() is not None
+                    oferta_caducada = oferta_terminada_con_este_precio(cur, plan)
 
             if not row:
 
