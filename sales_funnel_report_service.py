@@ -254,6 +254,21 @@ def describe_fichas():
 
     lineas = []
 
+    # Una ficha visible en la que no se puede comprar nada es un desvío: quien
+    # explora la abre, no encuentra cómo entrar y se va.
+    try:
+
+        from start_offer_service import fetch_sellable_communities
+
+        vendibles = {
+            o.get("group_id") for o in
+            (fetch_sellable_communities(0, limit=100) or [])
+        }
+
+    except Exception:
+
+        vendibles = set()
+
     try:
 
         with conn.cursor() as cur:
@@ -273,10 +288,13 @@ def describe_fichas():
                 -- comunidad se ve por is_marketplace_visible O por
                 -- public_visibility, y mirar solo la primera dejaba fuera
                 -- justo a StarsVip.
-                WHERE """ + VISIBLE_GROUP_CONDITIONS + """
+                -- Y las que se venden aunque no estén en el catálogo: son las
+                -- fichas que de verdad abre un comprador desde /start.
+                WHERE (""" + VISIBLE_GROUP_CONDITIONS + """)
+                   OR g.id = ANY(%(vendibles)s)
                 ORDER BY g.id
 
-            """)
+            """, {"vendibles": list(vendibles) or [0]})
 
             filas = cur.fetchall() or []
 
@@ -285,21 +303,6 @@ def describe_fichas():
         conn.rollback()
         return [f"Fichas: no se pudieron leer ({str(e)[:160]})"]
 
-
-    # Una ficha visible en la que no se puede comprar nada es un desvío: quien
-    # explora la abre, no encuentra cómo entrar y se va.
-    try:
-
-        from start_offer_service import fetch_sellable_communities
-
-        vendibles = {
-            o.get("group_id") for o in
-            (fetch_sellable_communities(0, limit=100) or [])
-        }
-
-    except Exception:
-
-        vendibles = set()
 
     for gid, nombre, texto, foto, video, videos_dinamicos, categoria in filas:
 
