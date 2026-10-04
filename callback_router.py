@@ -30284,27 +30284,79 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    # =========================
+    # LA AVERÍA QUE SE COMÍA LAS VENTAS
+    # =========================
+    # Aquí había un `WHERE price_id = %s` a secas. La lista de planes pinta sus
+    # botones con el precio VIGENTE —el de la oferta si la hay, si no
+    # stripe_price_id—, así que este clic buscaba un identificador que no estaba
+    # en esa columna:
+    #
+    #   - 7 días en oferta (3,60 €)  → el precio de la oferta, en plan_offers
+    #   - 30 días en oferta (9 €)    → ídem
+    #   - 360 días (29 €)            → price_id ≠ stripe_price_id en producción
+    #
+    # Los TRES contestaban «⚠️ Este plan no está configurado para Stripe». Desde
+    # finales de agosto nadie podía pagar con tarjeta desde la lista de planes,
+    # y no quedaba rastro: el error saltaba antes de llamar al servidor de cobro.
+    # Ahora se usa la MISMA regla que el servidor, para que no vuelvan a
+    # discrepar.
+    from weekly_offer_service import (
+        oferta_terminada_con_este_precio,
+        sql_plan_cobra_este_precio,
+    )
+
+    oferta_terminada = False
+
     with conn.cursor() as cur:
 
         cur.execute("""
 
-            SELECT id,
-                   COALESCE(NULLIF(payment_provider, ''), 'stripe')
-            FROM plans
-            WHERE price_id=%s
-            AND group_id=%s
-            AND is_active=TRUE
+            SELECT p.id,
+                   COALESCE(NULLIF(p.payment_provider, ''), 'stripe')
+            FROM plans p
+            WHERE """ + sql_plan_cobra_este_precio("p", "plan", "comprador") + """
+            AND p.group_id = %(grupo)s
+            AND p.is_active = TRUE
             LIMIT 1
 
-        """, (
-            data,
-            group_id
-        ))
+        """, {
+            "plan": data,
+            "grupo": group_id,
+            "comprador": user_id,
+        })
 
         stripe_plan_row = cur.fetchone()
 
+        if not stripe_plan_row:
+            oferta_terminada = oferta_terminada_con_este_precio(cur, data)
+
+
+    if oferta_terminada:
+
+        # Un botón del lunes pulsado el martes. Decirlo así, y llevarle al
+        # precio de ahora, es mejor que un error que suena a avería.
+        registrar_venta_rechazada(
+            user_id, group_id, "oferta_terminada", detalle=data
+        )
+
+        await query.message.reply_text(
+            "⏰ Esa oferta ya ha terminado. No se te ha cobrado nada.\n\n"
+            "Pulsa abajo para ver los precios de ahora.",
+            reply_markup=build_group_recovery_keyboard(group_id)
+        )
+
+        return
+
 
     if not stripe_plan_row or normalize_plan_payment_provider(stripe_plan_row[1]) != OWNER_PAYMENT_PROVIDER_STRIPE:
+
+        # Y si vuelve a pasar, que se SEPA. Este rechazo era invisible: no
+        # llegaba al servidor de cobro, así que no salía en ningún registro, y
+        # el dueño solo tenía «me dicen que no pueden pagar».
+        registrar_venta_rechazada(
+            user_id, group_id, "plan_no_encontrado_al_pulsar", detalle=data
+        )
 
         await query.message.reply_text(
             "⚠️ Este plan no está configurado para Stripe.",
