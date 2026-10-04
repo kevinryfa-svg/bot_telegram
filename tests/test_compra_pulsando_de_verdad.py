@@ -576,3 +576,104 @@ def test_el_boton_de_la_ficha_lleva_hasta_stripe(tienda_como_produccion):
     llego, camino, ultimo = _llega_a_stripe(comprador, [primero.callback_data])
 
     assert llego, f"{camino} → {ultimo}"
+
+
+# =========================
+# EL CATÁLOGO, COMO ESTÁ EN PRODUCCIÓN
+# =========================
+# «🔎 Explorar comunidades» enseñaba una comunidad de PRUEBA y una vacía, y no
+# enseñaba StarsVip, que tiene la visibilidad por defecto (`start_home`).
+
+@pytest.fixture
+def catalogo_como_produccion(tienda_como_produccion):
+
+    from db import conn
+
+    with conn.cursor() as cur:
+
+        # StarsVip con la visibilidad de producción: la de por defecto.
+        cur.execute(
+            "UPDATE groups SET is_marketplace_visible = FALSE, "
+            "public_visibility = 'start_home' WHERE id = %s", (GRUPO,)
+        )
+
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active, "
+            "is_marketplace_visible, public_visibility, preview_text) VALUES "
+            "(1287, 'GrupoStarsVip', -1001287, TRUE, TRUE, 'both', 'Versión prueba'), "
+            "(2053, 'Links de grupos', -1002053, TRUE, TRUE, 'both', NULL)"
+        )
+
+    return tienda_como_produccion
+
+
+def _catalogo(comprador_id):
+    comprador = Comprador(comprador_id)
+    llamadas, error = comprador.pulsar("start_explore_groups")
+    assert error is None, error
+    return " ".join(textos_de(l) for l in llamadas), [
+        b for l in llamadas for b in botones_de(l)
+    ]
+
+
+def test_explorar_ensena_la_comunidad_que_se_vende(catalogo_como_produccion):
+    texto, botones = _catalogo(33001)
+
+    assert any(b.callback_data == f"marketplace_group_{GRUPO}" for b in botones), (
+        "StarsVip se vende y es pública en /start: tiene que poder encontrarse"
+    )
+
+
+def test_explorar_no_ensena_lo_que_no_se_puede_comprar(catalogo_como_produccion):
+    texto, botones = _catalogo(33002)
+
+    destinos = {b.callback_data for b in botones}
+
+    assert "marketplace_group_1287" not in destinos, (
+        "una comunidad de prueba, sin nada que comprar, no va en el catálogo"
+    )
+    assert "marketplace_group_2053" not in destinos
+    assert "Versión prueba" not in texto
+
+
+def test_hidden_sigue_escondiendo(catalogo_como_produccion):
+    """Esconder es la decisión explícita del dueño, y se respeta."""
+
+    from db import conn
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE groups SET public_visibility = 'hidden' WHERE id = %s",
+            (GRUPO,)
+        )
+
+    _texto, botones = _catalogo(33003)
+
+    assert not any(
+        b.callback_data == f"marketplace_group_{GRUPO}" for b in botones
+    )
+
+
+def test_una_comunidad_gratis_sigue_saliendo_aunque_no_venda_nada(catalogo_como_produccion):
+    from db import conn
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active, "
+            "is_marketplace_visible, is_free_group) VALUES "
+            "(3001, 'Gratis', -1003001, TRUE, TRUE, TRUE)"
+        )
+
+    _texto, botones = _catalogo(33004)
+
+    assert any(b.callback_data == "marketplace_group_3001" for b in botones)
+
+
+def test_desde_explorar_se_llega_a_pagar(catalogo_como_produccion):
+    """El botón de Explorar está en cada mensaje de reenganche."""
+
+    comprador = Comprador(33005)
+
+    llego, camino, ultimo = _llega_a_stripe(comprador, ["start_explore_groups"])
+
+    assert llego, f"{camino} → {ultimo}"

@@ -138,3 +138,23 @@ def test_a_card_visible_through_public_visibility_is_reported(clean_db):
 
     assert any("StarsVip" in l for l in sfr.describe_fichas())
 
+
+
+def test_the_card_that_is_sold_is_reported_even_if_not_in_the_catalog(clean_db):
+    """StarsVip se vende desde /start con visibilidad start_home."""
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active, "
+            "is_marketplace_visible, public_visibility, preview_text) VALUES "
+            "(1159, 'StarsVip', -1001159, TRUE, FALSE, 'start_home', 'Algo')"
+        )
+        cur.execute(
+            "INSERT INTO plans (id, group_id, name, price_id, stripe_price_id, "
+            "duration_days, amount, currency, is_active) VALUES "
+            "(24, 1159, 'Anual', 'p24', 'p24', 360, 29, 'EUR', TRUE)"
+        )
+
+    lineas = sfr.describe_fichas()
+
+    assert any("StarsVip" in l and "SE VENDE" in l for l in lineas), lineas
