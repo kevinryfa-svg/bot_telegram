@@ -99,6 +99,8 @@ def test_the_card_report_says_what_is_missing(clean_db):
 
     linea = sfr.describe_fichas()[0]
 
+    assert "NO se vende" in linea, "sin planes, no hay nada que comprar"
+
     assert "«Contenido exclusivo.»" in linea, "una descripción corta se cita"
     assert "SIN foto" in linea
     assert "SIN vídeo" in linea
@@ -119,3 +121,20 @@ def test_a_complete_card_says_so(clean_db):
 
     assert "200 caracteres" in linea
     assert "con foto" in linea and "con vídeo" in linea
+
+
+def test_a_card_visible_through_public_visibility_is_reported(clean_db):
+    """
+    En producción StarsVip se ve por public_visibility y no por
+    is_marketplace_visible: el informe la dejaba fuera.
+    """
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active, "
+            "is_marketplace_visible, public_visibility, preview_text) VALUES "
+            "(1161, 'StarsVip', -1001161, TRUE, FALSE, 'both', 'Algo')"
+        )
+
+    assert any("StarsVip" in l for l in sfr.describe_fichas())
+
