@@ -1,0 +1,89 @@
+"""El embudo de seis etapas que sale en el registro del arranque."""
+
+import pytest
+
+import sales_funnel_report_service as sfr
+
+
+@pytest.fixture
+def embudo(clean_db):
+    """
+    10 llegan, 6 ven la comunidad, 4 abren planes, 2 pulsan pagar,
+    1 llega a Stripe, 1 paga. Y uno que pulsa seis veces cuenta UNA.
+    """
+
+    db = clean_db
+
+    with db.conn.cursor() as cur:
+
+        ev = ("INSERT INTO bot_user_events (user_id, event_type, event_key) "
+              "VALUES (%s, %s, %s)")
+
+        for uid in range(9001, 9011):
+            cur.execute(ev, (uid, "start", "/start"))
+
+        for uid in range(9001, 9007):
+            cur.execute(ev, (uid, "community_viewed", None))
+
+        for uid in range(9001, 9005):
+            cur.execute(ev, (uid, "callback", "group_1159"))
+
+        for _ in range(6):
+            cur.execute(ev, (9001, "callback", "price_abc"))
+
+        cur.execute(ev, (9002, "callback", "startbuy_1159_26"))
+
+        # Botones que NO son abrir planes: group_admin_panel, group_plans_help.
+        cur.execute(ev, (9009, "callback", "group_plans_help"))
+
+        cur.execute(
+            "INSERT INTO payment_transactions (provider, status, user_id, "
+            "group_id) VALUES ('stripe', 'pending', 9001, 1159)"
+        )
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, status) "
+            "VALUES (9001, 1159, 360, 'EUR', 'paid')"
+        )
+
+    return db
+
+
+def test_each_stage_counts_distinct_people(embudo):
+    e = sfr.fetch_embudo(30)
+
+    assert e == {
+        "llegan": 10, "ven": 6, "planes": 4,
+        "pulsan": 2, "stripe": 1, "pagan": 1,
+    }
+
+
+def test_a_help_button_is_not_opening_the_plans(embudo):
+    """«group_plans_help» empieza por group_ pero no es la lista de planes."""
+
+    assert sfr.fetch_embudo(30)["planes"] == 4
+
+
+def test_the_biggest_drop_is_named(embudo):
+    caida = sfr.donde_se_pierde(30)
+
+    assert "4 de 10" in caida
+    assert "abren el bot" in caida and "ven una comunidad" in caida
+
+
+def test_the_startup_lines_include_the_audience_and_the_money(embudo):
+    lineas = sfr.describe_para_el_arranque()
+
+    texto = "\n".join(lineas)
+
+    assert "Embudo 30 días: 10 abren el bot" in texto
+    assert "1 pagan" in texto
+    assert "Ingresos 30 días: 3.60 EUR" in texto
+
+
+def test_a_failing_count_says_question_mark_not_zero(clean_db, monkeypatch):
+    monkeypatch.setitem(sfr.SQL_ETAPAS, "pagan", "SELECT * FROM tabla_que_no_existe")
+
+    e = sfr.fetch_embudo(30)
+
+    assert e["pagan"] is None
+    assert "? pagan" in sfr.linea_de_embudo(30)
