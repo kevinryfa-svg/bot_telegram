@@ -6433,6 +6433,9 @@ def build_admin_global_panel_keyboard():
         # o le llegó a otro responsable, la incidencia quedaba inalcanzable con
         # el pago ya hecho. No había ninguna pantalla que las listara.
         [InlineKeyboardButton("🚨 Incidencias de cobro", callback_data="admin_incidents")],
+        # La gente que pulsó «pagar» durante la avería del cobro y se llevó un
+        # error. Un único mensaje de disculpa con el pago ya funcionando.
+        [InlineKeyboardButton("🛟 Rescate de la avería", callback_data="admin_averia_rescue")],
         [InlineKeyboardButton("🛠 Herramientas internas", callback_data="admin_global_tools")],
         [InlineKeyboardButton("❓ Ayuda", callback_data="admin_help_global_panel")],
         [InlineKeyboardButton("⬅️ Volver", callback_data="admin_back_main")],
@@ -28256,6 +28259,80 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # que las arreglan —conceder el acceso, devolver el pago— vivían solo en el
     # aviso de Telegram que las anunció. Perdido el aviso, perdida la
     # incidencia: ni panel, ni lista, ni forma de saber cuántas hay.
+
+    # =========================
+    # EL RESCATE DE LA AVERÍA DEL COBRO
+    # =========================
+    # Quien pulsó «💳 Tarjeta» entre finales de agosto y el 4 de octubre se
+    # llevó «Este plan no está configurado para Stripe». Son los compradores más
+    # decididos que hay. Esto les escribe UNA vez: la verdad y el botón.
+    # Primero la vista previa —a cuántos y qué dice— y después el envío: es un
+    # mensaje en nombre del negocio a clientes de verdad.
+
+    if data == "admin_averia_rescue":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from averia_rescue_service import build_preview_keyboard, build_preview_text
+
+        await query.message.reply_text(
+            build_preview_text()[:3900],
+            reply_markup=build_preview_keyboard()
+        )
+
+        return
+
+
+    if data == "admin_averia_rescue_send":
+
+        if not is_super_admin(user_id):
+
+            await query.message.reply_text(
+                "⛔ Esta acción solo está disponible para el propietario principal."
+            )
+
+            return
+
+
+        from averia_rescue_service import contar_afectados, enviar_rescate
+
+        cuantos = contar_afectados() or 0
+
+        if not cuantos:
+
+            await query.message.reply_text(
+                "✅ No queda nadie por escribir.",
+                reply_markup=build_admin_screen_keyboard("admin_averia_rescue")
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            f"📨 Enviando a {cuantos} persona(s)… te digo cuando termine."
+        )
+
+        resumen = await enviar_rescate(context.bot, actor_user_id=user_id)
+
+        await query.message.reply_text(
+            "✅ Rescate enviado.\n\n"
+            f"Enviados: {resumen['enviados']}\n"
+            f"Bloquearon el bot: {resumen['bloqueados']}\n"
+            f"Fallidos: {resumen['fallidos']}\n\n"
+            "Las compras que salgan de aquí las verás en «🛒 Ventas "
+            "recuperadas» e «Ingresos».",
+            reply_markup=build_admin_screen_keyboard("admin_averia_rescue")
+        )
+
+        return
+
 
     if data == "admin_incidents":
 
