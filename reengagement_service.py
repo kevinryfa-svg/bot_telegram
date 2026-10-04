@@ -1095,6 +1095,48 @@ def is_blocked_error(error):
     )
 
 
+def ids_del_rescate():
+    """Quién tiene el rescate de la avería pendiente o ya recibido. set()."""
+
+    ids = set()
+
+    try:
+
+        from averia_rescue_service import fetch_afectados
+
+        ids |= {int(f[0]) for f in (fetch_afectados() or [])}
+
+    except Exception as e:
+
+        print("Reenganche: no se pudo leer el rescate pendiente:", str(e)[:160])
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute("SELECT user_id FROM averia_rescue_sent")
+
+            ids |= {int(f[0]) for f in (cur.fetchall() or [])}
+
+    except Exception:
+
+        # La tabla nace con el primer uso del rescate: sin ella, no hay nadie.
+        conn.rollback()
+
+    return ids
+
+
+def sin_los_del_rescate(targets):
+    """Los destinatarios, quitando a quien recibe (o recibió) el rescate."""
+
+    excluidos = ids_del_rescate()
+
+    if not excluidos:
+        return targets
+
+    return [t for t in (targets or []) if int(t[0]) not in excluidos]
+
+
 async def process_reengagement_batch(context):
     """Job programado: escribe a una tanda de usuarios sin compras."""
 
@@ -1139,6 +1181,15 @@ async def process_reengagement_batch(context):
 
         print("Reenganche: error seleccionando destinatarios:", e)
         return summary
+
+
+    # UNA DISCULPA POR PERSONA. Quien pulsó «pagar» durante la avería del
+    # cobro tiene su propio mensaje —el rescate, más concreto: «intentaste
+    # pagar y te dio error»—, que manda el dueño desde el panel. Si este
+    # reenganche le escribiera antes, recibiría dos disculpas por lo mismo.
+    # Se le salta mientras el rescate esté pendiente, y para siempre cuando ya
+    # lo ha recibido.
+    targets = sin_los_del_rescate(targets)
 
 
     if not targets:
