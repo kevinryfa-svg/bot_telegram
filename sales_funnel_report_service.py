@@ -349,6 +349,21 @@ def describe_para_el_arranque():
             else f"{a['ingresos_30_dias_centimos'] / 100:.2f} EUR"
         )
 
+        try:
+
+            from reengagement_service import contar_audiencia_de_relanzamiento
+
+            relanzables = contar_audiencia_de_relanzamiento()
+
+        except Exception:
+
+            relanzables = None
+
+        lineas.append(
+            f"Relanzamiento: le llegaría a {_num(relanzables)} persona(s) "
+            "(visitaron, nunca pagaron, sin acceso, sin baja ni bloqueo)."
+        )
+
         lineas.append(
             "Audiencia: "
             f"{_num(a.get('alguna_vez'))} han usado el bot alguna vez, "

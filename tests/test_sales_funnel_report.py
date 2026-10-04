@@ -158,3 +158,34 @@ def test_the_card_that_is_sold_is_reported_even_if_not_in_the_catalog(clean_db):
     lineas = sfr.describe_fichas()
 
     assert any("StarsVip" in l and "SE VENDE" in l for l in lineas), lineas
+
+
+def test_the_relaunch_audience_excludes_payers_members_and_the_no(clean_db, monkeypatch):
+    import reengagement_service as rs
+
+    monkeypatch.setattr(rs, "ADMIN_ID", 1)
+
+    with clean_db.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO groups (id, name, telegram_group_id, is_active) "
+            "VALUES (70, 'G', -1070, TRUE)"
+        )
+        ev = "INSERT INTO bot_user_events (user_id, event_type) VALUES (%s, 'start')"
+        for uid in (7001, 7002, 7003, 7004, 7005):
+            cur.execute(ev, (uid,))
+        cur.execute(
+            "INSERT INTO payments (user_id, group_id, amount, currency, status) "
+            "VALUES (7002, 70, 900, 'EUR', 'paid')"
+        )
+        cur.execute(
+            "INSERT INTO users (user_id, group_id, expiration, subscription_active) "
+            "VALUES (7003, 70, NOW() + INTERVAL '9 days', TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO user_reengagement (user_id, opted_out) VALUES (7004, TRUE)"
+        )
+        cur.execute(
+            "INSERT INTO user_reengagement (user_id, is_blocked) VALUES (7005, TRUE)"
+        )
+
+    assert rs.contar_audiencia_de_relanzamiento() == 1, "solo 7001"
