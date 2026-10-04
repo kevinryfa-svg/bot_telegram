@@ -3715,6 +3715,20 @@ def main():
         print("Escaparate: no se pudo comprobar:", str(e)[:200])
 
 
+    # El embudo entero en el registro: dónde se pierde la gente, sin abrir
+    # Telegram ni tener credenciales de la base de datos.
+    try:
+
+        from sales_funnel_report_service import describe_para_el_arranque as embudo
+
+        for linea in embudo():
+            print(linea)
+
+    except Exception as e:
+
+        print("Embudo: no se pudo calcular:", str(e)[:200])
+
+
     # Cuánta gente se llevó el error del cobro y espera la disculpa. En el
     # registro para que se vea sin abrir el panel.
     try:
