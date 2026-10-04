@@ -319,3 +319,106 @@ def test_si_vuelve_a_fallar_queda_rastro(tienda_como_produccion, capsys):
 
     assert "Venta rechazada" in salida
     assert "plan_no_encontrado_al_pulsar" in salida
+
+
+# =========================
+# TODAS LAS PUERTAS QUE LLEVAN A PAGAR
+# =========================
+# El bot no vende desde un sitio: escribe a la gente desde media docena de
+# mensajes, y cada uno lleva su botón por su propio camino. La avería de arriba
+# estaba en UNO. Aquí se pasa por todos, con un comprador nuevo cada vez.
+
+def _llega_a_stripe(comprador, primeros, profundidad=4):
+    """(llegó, camino, último_texto). Para en cuanto ve el enlace de Stripe."""
+
+    alejan = ("public_support", "reengagement_stop", "public_back_start",
+              "admin_", "public_monetize", "ai_", "lang_", "mis_subs",
+              "favorite_", "unfavorite_", "marketplace_filter",
+              "group_user_promo", "user_support", "support_help",
+              "group_plans_help", "interest_stop", "abandoned_stop")
+
+    pendientes = [(c, 0, [c]) for c in primeros]
+    vistos = set()
+    ultimo = ""
+
+    while pendientes:
+
+        data, nivel, camino = pendientes.pop(0)
+
+        if data in vistos or nivel > profundidad:
+            continue
+
+        vistos.add(data)
+
+        llamadas, error = comprador.pulsar(data)
+
+        if error:
+            return False, camino, f"EXCEPCIÓN: {error}"
+
+        textos = " ".join(textos_de(l) for l in llamadas)
+        ultimo = textos[:300]
+
+        urls = [b.url for l in llamadas for b in botones_de(l)
+                if getattr(b, "url", None)]
+
+        if "checkout.stripe.com" in textos or any(
+            "checkout.stripe.com" in u for u in urls
+        ):
+            return True, camino, ultimo
+
+        for l in llamadas:
+            for b in botones_de(l):
+                cb = getattr(b, "callback_data", None)
+                if cb and not cb.startswith(alejan):
+                    pendientes.append((cb, nivel + 1, camino + [cb]))
+
+    return False, camino, ultimo
+
+
+def _puertas():
+    """Cada mensaje que el bot manda a un comprador, con sus botones."""
+
+    import abandoned_checkout_service as acs
+    import interest_followup_service as ifs
+    import renewal_service as rs
+    import weekly_offer_service as ofs
+
+    def cbs(teclado):
+        return [b.callback_data for fila in teclado.inline_keyboard
+                for b in fila if b.callback_data]
+
+    puertas = {
+        "carrito abandonado": lambda: cbs(acs.build_abandoned_keyboard(GRUPO)),
+        "interesado que no compró": lambda: cbs(ifs.build_interest_keyboard(GRUPO)),
+        "socio que se fue (winback)": lambda: cbs(rs.build_winback_keyboard(GRUPO)),
+    }
+
+    for plan_id in (26, 27):
+
+        def ultimo_dia(plan_id=plan_id):
+            return cbs(ofs._teclado_de_ultimo_dia({
+                "group_id": GRUPO, "plan_id": plan_id,
+                "amount": 3.6, "currency": "EUR",
+            }))
+
+        puertas[f"último día de oferta (plan {plan_id})"] = ultimo_dia
+
+    return puertas
+
+
+@pytest.mark.parametrize("puerta", list(_puertas().keys()))
+def test_cada_mensaje_del_bot_lleva_hasta_el_pago(tienda_como_produccion, puerta):
+
+    primeros = _puertas()[puerta]()
+
+    assert primeros, f"«{puerta}» no tiene botones"
+
+    comprador = Comprador(7000 + abs(hash(puerta)) % 900)
+
+    llego, camino, ultimo = _llega_a_stripe(comprador, primeros)
+
+    assert llego, (
+        f"desde «{puerta}» no se llega a pagar.\n"
+        f"  camino: {' → '.join(camino)}\n"
+        f"  último que vio: {ultimo}"
+    )
