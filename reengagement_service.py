@@ -1095,6 +1095,73 @@ def is_blocked_error(error):
     )
 
 
+# =========================
+# HORARIO: DE NOCHE NO SE ESCRIBE
+# =========================
+# La hora es la de quien recibe el mensaje, y el público de este bot está en
+# España: se usa la de Madrid, con su cambio de hora incluido.
+#
+# Se lee al llamar y no al importar: así se puede cambiar en el servidor sin
+# tocar código, y las pruebas lo fijan sin depender del orden de importación.
+
+def _horario_de_silencio():
+    """(inicio, fin, zona). Con un valor que no es un número, el de serie."""
+
+    def hora(nombre, defecto):
+        try:
+            return int(os.environ.get(nombre, defecto))
+        except (TypeError, ValueError):
+            return int(defecto)
+
+    return (
+        hora("REENGAGEMENT_QUIET_START", "22"),
+        hora("REENGAGEMENT_QUIET_END", "9"),
+        os.environ.get("REENGAGEMENT_TIMEZONE", "Europe/Madrid"),
+    )
+
+
+def es_hora_de_silencio(ahora=None):
+    """
+    True entre las 22:00 y las 9:00 (hora de Madrid, por defecto).
+
+    `ahora` es para las pruebas. Si la zona horaria no existe, NO se silencia:
+    un fallo de configuración no puede apagar las ventas sin avisar.
+    """
+
+    from datetime import datetime
+
+    inicio, fin, nombre_zona = _horario_de_silencio()
+
+    try:
+
+        from zoneinfo import ZoneInfo
+
+        zona = ZoneInfo(nombre_zona)
+
+    except Exception as e:
+
+        print("Reenganche: zona horaria desconocida, no se silencia:", str(e)[:120])
+
+        return False
+
+    ahora = ahora or datetime.now(zona)
+
+    if ahora.tzinfo is None:
+        ahora = ahora.replace(tzinfo=zona)
+    else:
+        ahora = ahora.astimezone(zona)
+
+    hora = ahora.hour
+
+    if inicio == fin:
+        return False
+
+    if inicio > fin:
+        return hora >= inicio or hora < fin
+
+    return inicio <= hora < fin
+
+
 def ids_del_rescate():
     """Quién tiene el rescate de la avería pendiente o ya recibido. set()."""
 
@@ -1143,6 +1210,15 @@ async def process_reengagement_batch(context):
     summary = {"targets": 0, "sent": 0, "blocked": 0, "failed": 0}
 
     if not REENGAGEMENT_ENABLED:
+
+        return summary
+
+
+    # De noche no se escribe. La tanda de las 3:38 de la madrugada era real
+    # (está en los registros), y un mensaje comercial a esa hora es la forma
+    # más rápida de que te bloqueen. No se pierde nadie: quien toca esta noche
+    # recibe el mensaje en la primera tanda de la mañana.
+    if es_hora_de_silencio():
 
         return summary
 

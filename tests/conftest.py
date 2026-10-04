@@ -151,3 +151,35 @@ def clean_db(db_module):
 
 
     return db_module
+
+
+# =========================
+# LAS PRUEBAS NO DEPENDEN DEL RELOJ
+# =========================
+# El reenganche no escribe de noche (hora de Madrid). Sin esto, las pruebas que
+# ejecutan la tanda saldrían rojas o verdes según la hora a la que corra CI —y
+# pasó: a las 23:46 fallaron dos—. Aquí el silencio se apaga para todas; las
+# pruebas del horario lo encienden ellas mismas con horas fijas.
+
+@pytest.fixture(autouse=True)
+def _sin_horario_de_silencio():
+
+    # A mano y no con `monkeypatch`: pedir monkeypatch desde un fixture
+    # automático cambia el orden en que se desmontan los de cada prueba, y una
+    # que recarga su módulo al terminar (test_stripe_tax) lo recargaba con la
+    # variable de entorno de la prueba anterior todavía puesta.
+    import os as _os
+
+    claves = ("REENGAGEMENT_QUIET_START", "REENGAGEMENT_QUIET_END")
+    previos = {k: _os.environ.get(k) for k in claves}
+
+    for k in claves:
+        _os.environ[k] = "0"
+
+    yield
+
+    for k, v in previos.items():
+        if v is None:
+            _os.environ.pop(k, None)
+        else:
+            _os.environ[k] = v
