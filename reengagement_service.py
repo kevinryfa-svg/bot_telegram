@@ -374,6 +374,36 @@ def count_reengagement_candidates():
         return (cur.fetchone() or [0])[0] or 0
 
 
+def contar_audiencia_de_relanzamiento():
+    """
+    A cuántas personas les llegaría un relanzamiento NUEVO. None si no se sabe.
+
+    Las mismas del perfil (visitó, nunca pagó, sin acceso, sin veto, no admin)
+    menos quien se dio de baja o bloqueó el bot, que es justo lo que filtra el
+    envío. Es el número que hay que tener delante antes de decidir escribir a
+    todo el mundo otra vez.
+    """
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                "SELECT COUNT(*) FROM (" + SQL_CANDIDATOS + ") AS candidatos "
+                "WHERE NOT candidatos.de_baja AND NOT candidatos.bloqueado",
+                {"admin": int(ADMIN_ID)},
+            )
+
+            return int((cur.fetchone() or [0])[0] or 0)
+
+    except Exception as e:
+
+        conn.rollback()
+        print("Reenganche: no se pudo contar la audiencia:", str(e)[:160])
+
+        return None
+
+
 def count_reengagement_pending():
 
     with conn.cursor() as cur:
