@@ -243,3 +243,70 @@ def test_the_batch_applies_the_filter():
     tramo = fuente[inicio:inicio + 3000]
 
     assert "targets = sin_los_del_rescate(targets)" in tramo
+
+
+# =========================
+# DE NOCHE NO SE ESCRIBE
+# =========================
+
+def test_quiet_hours_in_madrid(monkeypatch):
+    # El conftest apaga el silencio para que nada dependa del reloj: aquí se
+    # enciende con el horario de producción.
+    monkeypatch.setenv("REENGAGEMENT_QUIET_START", "22")
+    monkeypatch.setenv("REENGAGEMENT_QUIET_END", "9")
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import reengagement_service as rs
+
+    madrid = ZoneInfo("Europe/Madrid")
+
+    assert rs.es_hora_de_silencio(datetime(2026, 10, 4, 23, 46, tzinfo=madrid))
+    assert rs.es_hora_de_silencio(datetime(2026, 10, 5, 3, 38, tzinfo=madrid))
+    assert rs.es_hora_de_silencio(datetime(2026, 10, 5, 8, 59, tzinfo=madrid))
+    assert not rs.es_hora_de_silencio(datetime(2026, 10, 5, 9, 0, tzinfo=madrid))
+    assert not rs.es_hora_de_silencio(datetime(2026, 10, 5, 13, 0, tzinfo=madrid))
+    assert not rs.es_hora_de_silencio(datetime(2026, 10, 5, 21, 59, tzinfo=madrid))
+
+
+def test_quiet_hours_follow_madrid_not_the_server(monkeypatch):
+    # El conftest apaga el silencio para que nada dependa del reloj: aquí se
+    # enciende con el horario de producción.
+    monkeypatch.setenv("REENGAGEMENT_QUIET_START", "22")
+    monkeypatch.setenv("REENGAGEMENT_QUIET_END", "9")
+
+    """El servidor está en UTC: las 7:00 UTC de octubre son las 9:00 en Madrid."""
+
+    from datetime import datetime, timezone
+
+    import reengagement_service as rs
+
+    assert rs.es_hora_de_silencio(datetime(2026, 10, 5, 6, 59, tzinfo=timezone.utc))
+    assert not rs.es_hora_de_silencio(datetime(2026, 10, 5, 7, 0, tzinfo=timezone.utc))
+
+
+def test_an_unknown_timezone_never_silences_sales(monkeypatch):
+    import reengagement_service as rs
+
+    monkeypatch.setenv("REENGAGEMENT_QUIET_START", "22")
+    monkeypatch.setenv("REENGAGEMENT_QUIET_END", "9")
+    monkeypatch.setenv("REENGAGEMENT_TIMEZONE", "Marte/Olimpo")
+
+    assert rs.es_hora_de_silencio() is False
+
+
+def test_the_batch_does_nothing_at_night(monkeypatch):
+    import reengagement_service as rs
+
+    monkeypatch.setattr(rs, "es_hora_de_silencio", lambda ahora=None: True)
+
+    def no_deberia(*a, **k):
+        raise AssertionError("de noche no se busca a quién escribir")
+
+    monkeypatch.setattr(rs, "fetch_reengagement_targets", no_deberia)
+    monkeypatch.setattr(rs, "merece_la_pena_escribir", lambda: (True, ""))
+
+    resumen = asyncio.run(rs.process_reengagement_batch(object()))
+
+    assert resumen["sent"] == 0
