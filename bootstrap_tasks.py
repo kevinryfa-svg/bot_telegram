@@ -1042,6 +1042,200 @@ def tarea_crear_planes():
     return "crear_planes: " + " | ".join(resultados)
 
 
+# =========================
+# LA FICHA DE UNA PERSONA, PARA CUANDO «NO LE DEJA ENTRAR»
+# =========================
+# «A este usuario no le deja entrar, ¿lo ha bloqueado el bot?» no se podía
+# contestar desde fuera: la base de datos no sale del servidor y el panel solo
+# enseña los accesos. Esta tarea es de SOLO LECTURA: con
+# BOOTSTRAP_USER_LOOKUP=<id>[,<id>…] escribe en el registro del arranque todo
+# lo que puede impedir entrar —veto, accesos, pagos, pagos a medias, códigos
+# canjeados, intentos fallidos— y le pregunta a Telegram en qué estado está esa
+# persona en cada comunidad (dentro, fuera o BLOQUEADA en el grupo, que es lo
+# que deja una expulsión a medias). No cambia nada.
+
+def _estado_en_telegram(telegram_group_id, user_id):
+    """«member», «left», «kicked»… o el error de Telegram, en una palabra."""
+
+    from datetime import datetime
+
+    import requests
+
+    from bot_config import TOKEN
+
+    try:
+
+        respuesta = requests.get(
+            f"https://api.telegram.org/bot{TOKEN}/getChatMember",
+            params={"chat_id": telegram_group_id, "user_id": user_id},
+            timeout=10,
+        ).json()
+
+    except Exception as e:
+
+        return f"no se pudo preguntar ({str(e)[:80]})"
+
+    if not respuesta.get("ok"):
+        return f"Telegram: {str(respuesta.get('description'))[:120]}"
+
+    miembro = respuesta.get("result") or {}
+    estado = miembro.get("status")
+
+    if estado == "kicked":
+        hasta = miembro.get("until_date") or 0
+        return "BLOQUEADO en el grupo" + (
+            f" hasta {datetime.fromtimestamp(hasta):%d/%m/%Y %H:%M}" if hasta else
+            " (para siempre)"
+        )
+
+    if estado == "restricted" and not miembro.get("is_member"):
+        return "fuera (restringido)"
+
+    return {
+        "member": "dentro",
+        "left": "fuera (puede entrar con un enlace válido)",
+        "administrator": "dentro, como administrador",
+        "creator": "dentro, es el dueño",
+        "restricted": "dentro, restringido",
+    }.get(estado, str(estado))
+
+
+def tarea_ficha_usuario():
+    """BOOTSTRAP_USER_LOOKUP=<id>[,<id>…]. Solo lectura."""
+
+    crudo = (os.environ.get("BOOTSTRAP_USER_LOOKUP") or "").strip()
+
+    if not crudo:
+        return "ficha_usuario: falta BOOTSTRAP_USER_LOOKUP, no se mira a nadie."
+
+    lineas = []
+
+    for trozo in [t.strip() for t in crudo.split(",") if t.strip()]:
+
+        try:
+            uid = int(trozo)
+        except ValueError:
+            lineas.append(f"«{trozo}» no es un id de Telegram")
+            continue
+
+        lineas.append(f"=== Usuario {uid} ===")
+
+        consultas = [
+            ("Vetos", """
+                SELECT b.group_id, COALESCE(g.name, '?'), b.banned_at
+                FROM banned_users b LEFT JOIN groups g ON g.id = b.group_id
+                WHERE b.user_id = %(u)s
+            """),
+            ("Accesos", """
+                SELECT u.group_id, COALESCE(g.name, '?'), u.expiration,
+                       u.subscription_active, u.created_at
+                FROM users u LEFT JOIN groups g ON g.id = u.group_id
+                WHERE u.user_id = %(u)s
+            """),
+            ("Pagos", """
+                SELECT group_id, amount, currency, status, payment_date
+                FROM payments WHERE user_id = %(u)s
+                ORDER BY payment_date DESC LIMIT 5
+            """),
+            ("Pagos empezados", """
+                SELECT group_id, provider, status, amount, created_at
+                FROM payment_transactions WHERE user_id = %(u)s
+                ORDER BY created_at DESC LIMIT 5
+            """),
+            ("Códigos canjeados", """
+                SELECT r.group_id, c.code, r.redeemed_at, r.expiration
+                FROM group_user_promo_redemptions r
+                LEFT JOIN group_user_promo_codes c ON c.id = r.code_id
+                WHERE r.user_id = %(u)s
+                ORDER BY r.redeemed_at DESC LIMIT 5
+            """),
+            ("Avisos", """
+                SELECT opted_out, is_blocked, sent_count, last_sent_at
+                FROM user_reengagement WHERE user_id = %(u)s
+            """),
+            ("Registro (últimos 15)", """
+                SELECT created_at, event_type, LEFT(COALESCE(message, ''), 90)
+                FROM audit_logs
+                WHERE actor_user_id = %(u)s OR target_user_id = %(u)s
+                ORDER BY created_at DESC LIMIT 15
+            """),
+            ("Pulsaciones (últimas 15)", """
+                SELECT created_at, event_type, LEFT(COALESCE(event_key, ''), 60)
+                FROM bot_user_events WHERE user_id = %(u)s
+                ORDER BY created_at DESC LIMIT 15
+            """),
+        ]
+
+        grupos = set()
+
+        for titulo, sql in consultas:
+
+            try:
+
+                with conn.cursor() as cur:
+                    cur.execute(sql, {"u": uid})
+                    filas = cur.fetchall() or []
+
+            except Exception as e:
+
+                conn.rollback()
+                lineas.append(f"{titulo}: no se pudo leer ({str(e)[:100]})")
+                continue
+
+            if not filas:
+                lineas.append(f"{titulo}: ninguno")
+                continue
+
+            for fila in filas:
+                lineas.append(f"{titulo}: " + " · ".join(
+                    "-" if v is None else str(v)[:90] for v in fila
+                ))
+                if titulo in ("Vetos", "Accesos", "Pagos empezados",
+                              "Códigos canjeados") and fila[0]:
+                    try:
+                        grupos.add(int(fila[0]))
+                    except (TypeError, ValueError):
+                        pass
+
+        # Las comunidades que se venden, aunque no tenga nada en ellas: es ahí
+        # donde intenta entrar.
+        try:
+
+            from start_offer_service import fetch_sellable_communities
+
+            for o in fetch_sellable_communities(0, limit=20) or []:
+                if o.get("group_id"):
+                    grupos.add(int(o["group_id"]))
+
+        except Exception:
+            pass
+
+        for gid in sorted(grupos):
+
+            try:
+
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT telegram_group_id, COALESCE(name, '?') "
+                        "FROM groups WHERE id = %s", (gid,)
+                    )
+                    g = cur.fetchone()
+
+            except Exception:
+
+                conn.rollback()
+                g = None
+
+            if not g or not g[0]:
+                continue
+
+            lineas.append(
+                f"Telegram, «{g[1]}» (#{gid}): {_estado_en_telegram(g[0], uid)}"
+            )
+
+    return "ficha_usuario:\n  " + "\n  ".join(lineas)
+
+
 TAREAS = {
     "listar_planes": tarea_listar_planes,
     "crear_planes": tarea_crear_planes,
@@ -1051,6 +1245,7 @@ TAREAS = {
     "precio_comunidad": tarea_precio_comunidad,
     "cobrar_por_stripe": tarea_cobrar_por_stripe,
     "renombrar_plan": tarea_renombrar_plan,
+    "ficha_usuario": tarea_ficha_usuario,
 }
 
 
