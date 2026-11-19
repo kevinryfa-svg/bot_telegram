@@ -88,6 +88,7 @@ def clean_db(db_module):
 
     tables = (
         "invite_links",
+        "publicity_group_invite_links",
         "payments",
         "payment_transactions",
         # Regla 8: toda tabla en la que una prueba escribe entra en esta lista,

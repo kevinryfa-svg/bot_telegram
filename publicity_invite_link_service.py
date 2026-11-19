@@ -184,6 +184,40 @@ def is_active_publicity_invite_link(invite_link, telegram_group_id):
         return False
 
 
+    # EL ENLACE RECORTADO. Telegram solo da el enlace completo si lo creó el
+    # propio bot; si lo creó otro administrador —un enlace del dueño
+    # autorizado como publicidad— lo manda así: «https://t.me/+AbCdE…». Se
+    # compara por el principio, dentro de la misma comunidad: sin esto, quien
+    # entrara por un enlace de publicidad legítimo del dueño sería expulsado.
+    for marca in ("…", "..."):
+
+        if normalized_link.endswith(marca):
+
+            prefijo = normalized_link[: -len(marca)]
+
+            # Un prefijo demasiado corto podría casar con otro enlace.
+            if len(prefijo) < len("https://t.me/+") + 4:
+                return False
+
+            with conn.cursor() as cur:
+
+                cur.execute("""
+
+                    SELECT 1
+                    FROM publicity_group_invite_links
+                    WHERE invite_link LIKE %s
+                    AND telegram_group_id=%s
+                    AND COALESCE(is_active, TRUE)=TRUE
+                    LIMIT 1
+
+                """, (
+                    prefijo.replace("%", "\\%").replace("_", "\\_") + "%",
+                    telegram_group_id
+                ))
+
+                return cur.fetchone() is not None
+
+
     original_link = (invite_link or "").strip()
     candidate_links = [normalized_link]
 
