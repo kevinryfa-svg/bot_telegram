@@ -94,7 +94,7 @@ from guardian_service import (
     process_guardian_group_message,
     process_guardian_left_chat_member
 )
-from user_join_handler import detect_user_join
+from user_join_handler import detect_user_join, detect_user_join_chat_member
 from user_activity_logger import log_user_event
 from ai_handler import (
     ia_command,
@@ -219,6 +219,14 @@ def build_telegram_app():
 
 
 telegram_app = build_telegram_app()
+
+
+def actualizaciones_que_se_piden():
+    """Las de Telegram por defecto, más chat_member."""
+
+    no_se_piden = {Update.MESSAGE_REACTION, Update.MESSAGE_REACTION_COUNT}
+
+    return [t for t in Update.ALL_TYPES if t not in no_se_piden]
 
 app = Flask(__name__)
 
@@ -3541,6 +3549,19 @@ def main():
         group=1
     )
 
+    # LA ENTRADA QUE SÍ DICE CON QUÉ ENLACE SE ENTRÓ. El mensaje de servicio de
+    # arriba no lo trae nunca, y con eso, en una comunidad con un enlace de
+    # publicidad activo, cualquier enlace dejaba entrar a cualquiera. Esta es
+    # la vía que decide en esos grupos (y la que ve entradas aunque el grupo
+    # oculte los mensajes de «X se ha unido»).
+    telegram_app.add_handler(
+        ChatMemberHandler(
+            detect_user_join_chat_member,
+            ChatMemberHandler.CHAT_MEMBER
+        ),
+        group=1
+    )
+
     telegram_app.add_handler(
         MessageHandler(
             filters.StatusUpdate.LEFT_CHAT_MEMBER,
@@ -3744,7 +3765,11 @@ def main():
 
     print("Bot iniciado correctamente")
 
-    telegram_app.run_polling()
+    # chat_member hay que PEDIRLO: Telegram no lo manda por defecto, y sin él
+    # el manejador de entradas con enlace no recibe nada. Se pide lo de
+    # siempre más chat_member; las reacciones, que tampoco vienen por defecto,
+    # siguen sin pedirse porque nadie las usa.
+    telegram_app.run_polling(allowed_updates=actualizaciones_que_se_piden())
 
 
 if __name__ == "__main__":
